@@ -1,0 +1,1480 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>초안 검토 프로토타입</title>
+<!--
+  PROTOTYPE — 버리는 코드다. 구현에 재사용하지 않는다.
+  질문: 초안 검토 화면 프로토타입 (../../issues/04-draft-review-prototype.md)
+  계획: 초안 검토 화면 변형 3개를 ?variant=A|B|C 로 전환해 비교한다. 트레이 아이콘과 OS 알림까지 가짜 데스크톱 위에 그린다.
+    A 메일함형      트레이 클릭 → 목록+상세 2단 창
+    B 트레이 메뉴 큐형 트레이 클릭 → OS 기본 메뉴에 멘션 목록, 항목을 누르면 멘션 하나만 담은 작은 창
+    C 대조 검증형    트레이 클릭 → 웹뷰 팝오버, 창에서는 원문·초안·근거를 세 열로 나란히 본다
+    D 확정안        A·B·C를 본 뒤 사용자가 고른 조합. 트레이 클릭 → 작은 창(B), "펼쳐 보기" → 목록+상세(A)
+  데이터는 모두 가짜이고 메모리에만 있다. 새로고침하면 처음 상태로 돌아간다. 게시·에디터 열기는 흉내만 낸다.
+-->
+<style>
+  :root {
+    --desk: #d3d6da;
+    --surface: #ffffff;
+    --surface-2: #f5f6f7;
+    --side: #f8f9fa;
+    --border: #e1e3e6;
+    --border-strong: #c5c9ce;
+    --text: #1d2024;
+    --muted: #686e75;
+    --accent: #2160c4;
+    --accent-bg: #e7eefa;
+    --danger: #b42318;
+    --danger-bg: #fdecea;
+    --ok: #1e7438;
+    --ok-bg: #e6f3ea;
+    --warn: #845400;
+    --warn-bg: #fdf4de;
+    --sel: #e3ebf8;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--desk); color: var(--text); font: 13px/1.5 var(--font); overflow: hidden; }
+  button { font: inherit; color: inherit; }
+  textarea, input[type=text], select { font: inherit; color: inherit; border: 1px solid var(--border-strong); border-radius: 6px; background: #fff; }
+  textarea { width: 100%; padding: 8px 10px; resize: vertical; line-height: 1.6; display: block; }
+  input[type=text] { height: 28px; padding: 0 8px; }
+  select { height: 26px; padding: 0 6px; }
+  textarea:focus, input:focus, select:focus { outline: 2px solid #a9c2ec; outline-offset: 0; border-color: var(--accent); }
+  #desktop { position: fixed; inset: 0; }
+  .muted { color: var(--muted); }
+  .sp { flex: 1; }
+  .clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty { padding: 24px; color: var(--muted); text-align: center; }
+  .note { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+  .row-r { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 6px; }
+
+  /* OS 껍데기 */
+  .menubar { position: absolute; top: 0; left: 0; right: 0; height: 26px; background: #f1f1f2; border-bottom: 1px solid #c8cacd; display: flex; align-items: center; gap: 16px; padding: 0 12px; z-index: 50; }
+  .menubar .app { font-weight: 600; }
+  .menubar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .taskbar { position: absolute; bottom: 0; left: 0; right: 0; height: 44px; background: #eceff2; border-top: 1px solid #cdd1d6; display: flex; align-items: center; justify-content: center; z-index: 50; }
+  .taskbar .apps { display: flex; gap: 6px; }
+  .taskbar .apps span { width: 28px; height: 28px; border-radius: 6px; background: #d2d6dc; display: block; }
+  .taskbar .right { position: absolute; right: 10px; top: 0; bottom: 0; display: flex; align-items: center; gap: 8px; }
+  .clock-win { text-align: right; font-size: 11px; line-height: 1.35; }
+  .glyph { color: #3b3f44; display: inline-flex; }
+  .tray-wrap { position: relative; }
+  .tray { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px; border: 0; background: transparent; border-radius: 4px; }
+  .win .tray { height: 32px; padding: 0 8px; }
+  .tray:hover, .tray.on { background: rgba(0, 0, 0, .1); }
+  .tray-count { font-size: 12px; font-weight: 600; }
+  .tray-icon { position: relative; display: inline-flex; }
+  .tray-dot { position: absolute; right: -3px; top: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+  .tray-badge-win { position: absolute; right: -6px; bottom: -5px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: #fff; font-size: 9px; line-height: 13px; text-align: center; font-weight: 700; }
+
+  /* OS 기본 메뉴 흉내 */
+  .menu { position: absolute; right: 0; min-width: 320px; max-width: 380px; background: #f6f6f7; border: 1px solid #c4c6ca; border-radius: 7px; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); padding: 5px; z-index: 80; }
+  .mac .menu { top: calc(100% + 3px); }
+  .win .menu { bottom: calc(100% + 8px); border-radius: 6px; }
+  .menu-h { padding: 5px 8px 1px; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .menu-i { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 3px 8px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+  .menu-i .mk { display: inline-block; width: 16px; color: var(--accent); font-size: 10px; }
+  .menu-i:hover:not(:disabled) { background: var(--accent); color: #fff; }
+  .menu-i:hover:not(:disabled) .mk { color: #fff; }
+  .menu-i:disabled { color: #9a9ea4; }
+  .menu-sep { height: 1px; background: #d5d7da; margin: 5px 8px; }
+
+  /* 웹뷰 팝오버(C) */
+  .popover { position: absolute; right: -8px; width: 360px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .2); z-index: 80; display: flex; flex-direction: column; max-height: 70vh; }
+  .mac .popover { top: calc(100% + 6px); }
+  .win .popover { bottom: calc(100% + 8px); }
+  .pop-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 4px; }
+  .pop-count { padding: 0 12px 8px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+  .pop-list { overflow: auto; padding: 4px 0; }
+  .pop-row { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 12px; cursor: pointer; }
+  .pop-row:hover { background: var(--surface-2); }
+  .pop-foot { display: flex; justify-content: space-between; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+
+  /* OS 알림 흉내 */
+  .notif { position: absolute; width: 340px; background: #fafafa; border: 1px solid #c8cacd; border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .18); padding: 10px 12px; display: flex; gap: 10px; z-index: 90; cursor: default; }
+  .mac .notif { top: 34px; right: 12px; }
+  .win .notif { bottom: 54px; right: 12px; border-radius: 8px; }
+  .notif-icon { width: 28px; height: 28px; border-radius: 6px; background: #e4e7eb; display: flex; align-items: center; justify-content: center; flex: none; }
+  .notif-text { min-width: 0; flex: 1; }
+  .notif-app { font-size: 11px; color: var(--muted); }
+  .notif-x { border: 0; background: none; color: var(--muted); width: 20px; height: 20px; padding: 0; cursor: pointer; }
+
+  /* 창 */
+  .window { position: absolute; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .22); display: flex; flex-direction: column; overflow: hidden; z-index: 60; }
+  .win .window { border-radius: 8px; }
+  .titlebar { height: 30px; flex: none; display: flex; align-items: center; padding: 0 10px; background: #f2f3f4; border-bottom: 1px solid var(--border); font-size: 12px; color: #4a4f55; position: relative; }
+  .titlebar .t { position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+  .win .titlebar { padding: 0; }
+  .win .titlebar .t { text-align: left; padding-left: 12px; }
+  .tl { display: flex; gap: 7px; position: relative; z-index: 1; }
+  .tl button { width: 12px; height: 12px; border-radius: 50%; border: 0; padding: 0; }
+  .tl .c { background: #ec6a5e; cursor: pointer; } .tl .m { background: #f4bf4f; } .tl .x { background: #61c554; }
+  .winctl { margin-left: auto; display: flex; position: relative; z-index: 1; }
+  .winctl button { width: 40px; height: 30px; border: 0; background: none; }
+  .winctl button:hover { background: #e1e3e6; }
+  .winctl .close:hover { background: #c42b1c; color: #fff; }
+  .wbody { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+
+  /* 버튼과 태그 */
+  .btn { height: 28px; padding: 0 12px; border: 1px solid var(--border-strong); background: var(--surface); border-radius: 7px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { background: var(--surface-2); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover { background: #1b52aa; }
+  .btn.link { height: auto; padding: 0; border: 0; background: none; color: var(--accent); }
+  .btn.link:hover { text-decoration: underline; }
+  .btn.sm { height: 24px; padding: 0 8px; font-size: 12px; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 4px; white-space: nowrap; line-height: 18px; }
+  .tag.ready { background: var(--accent-bg); color: var(--accent); }
+  .tag.generating, .tag.posting { background: #eceef1; color: #4a4f55; }
+  .tag.failed { background: var(--danger-bg); color: var(--danger); }
+  .tag.posted { background: var(--ok-bg); color: var(--ok); }
+  .tag.ignored { background: #eceef1; color: var(--muted); }
+
+  /* 공통 블록 */
+  .at { color: var(--accent); font-weight: 600; }
+  blockquote { margin: 0; padding: 8px 12px; background: var(--surface-2); border-left: 3px solid var(--border-strong); border-radius: 4px; white-space: pre-wrap; }
+  .thread { margin-top: 8px; border-left: 2px solid var(--border); padding-left: 10px; }
+  .thread-item { padding: 5px 0; }
+  .thread-item .tx { white-space: pre-wrap; }
+  .thread-item.me { background: #fffaea; margin: 0 -6px; padding: 5px 6px; border-radius: 4px; }
+  .progress { margin: 0; padding-left: 20px; }
+  .progress li { color: var(--muted); }
+  .progress li:last-child { color: var(--text); }
+  .err { padding: 10px 12px; border: 1px solid #f0c4be; background: var(--danger-bg); border-radius: 6px; color: #7a1d14; }
+  .err .d { font-size: 12px; margin-top: 2px; color: #8f3a31; }
+  .code { margin: 6px 0 0; padding: 6px 0; background: #f7f8f9; border: 1px solid var(--border); border-radius: 6px; font: 12px/1.55 var(--mono); overflow: auto; }
+  .code .ln { display: block; padding-right: 10px; white-space: pre; }
+  .code .ln.hl { background: #fff2cc; }
+  .code .no { display: inline-block; width: 40px; padding-right: 10px; text-align: right; color: #9aa0a6; user-select: none; }
+  .ev { border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; overflow: hidden; }
+  .ev.on { border-color: #a9c2ec; }
+  .ev-row { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 6px 10px; border: 0; background: none; text-align: left; cursor: pointer; }
+  .ev-row:hover { background: var(--surface-2); }
+  .ev-path { font: 12px var(--mono); }
+  .ev-why { color: var(--muted); font-size: 12px; }
+  .ev-body { padding: 0 10px 8px; }
+  .evn { display: inline-block; min-width: 18px; text-align: center; font-size: 11px; font-weight: 700; color: var(--accent); background: var(--accent-bg); border-radius: 3px; }
+  .foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--side); }
+  .confirm { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--warn-bg); border-top: 1px solid #ecd9a8; }
+  .toast { position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); background: #2a2d32; color: #fff; padding: 8px 14px; border-radius: 8px; display: flex; gap: 14px; align-items: center; z-index: 95; box-shadow: 0 4px 12px rgba(0, 0, 0, .25); max-width: 560px; }
+  .win .toast { bottom: 104px; }
+  .toast .btn.link { color: #9ec2ff; }
+  .edited { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+
+  /* A: 메일함형 */
+  .win-a { left: 50%; transform: translateX(-50%); top: 40px; width: min(1000px, calc(100vw - 24px)); height: calc(100vh - 116px); }
+  .win .win-a { top: 16px; height: calc(100vh - 150px); }
+  .a-layout { flex: 1; min-height: 0; display: flex; }
+  .a-list { width: 260px; flex: none; border-right: 1px solid var(--border); background: var(--side); display: flex; flex-direction: column; }
+  .a-list-scroll { flex: 1; overflow: auto; padding: 4px 0 8px; }
+  .a-group-h { padding: 10px 14px 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .a-row { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 14px 8px 11px; cursor: pointer; border-left: 3px solid transparent; }
+  .a-row:hover { background: #eff1f3; }
+  .a-row.sel { background: var(--sel); border-left-color: var(--accent); }
+  .row-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .row-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-3 { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-3.bad { color: var(--danger); }
+  .a-list-foot { border-top: 1px solid var(--border); padding: 8px 14px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+  .a-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .a-scroll { flex: 1; overflow: auto; }
+  .a-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 14px 20px 12px; border-bottom: 1px solid var(--border); }
+  .a-head h2 { margin: 0 0 2px; font-size: 16px; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .sec { padding: 12px 20px; border-bottom: 1px solid var(--border); }
+  .sec:last-child { border-bottom: 0; }
+  .sec h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .repo-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .repo-line code { font: 13px var(--mono); }
+
+  /* B: 트레이 메뉴 큐형 */
+  .win-b { width: 440px; right: 16px; top: 32px; max-height: calc(100vh - 100px); }
+  .win .win-b { top: auto; bottom: 52px; max-height: calc(100vh - 160px); }
+  .b-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; }
+  .b-nav { width: 26px; height: 24px; border: 1px solid var(--border-strong); background: #fff; border-radius: 6px; cursor: pointer; padding: 0; }
+  .b-nav:disabled { opacity: .4; cursor: default; }
+  .b-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px 14px; }
+  .b-meta { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .b-need { margin: 0 0 8px; }
+  .b-need b { font-weight: 600; color: var(--muted); font-size: 12px; margin-right: 6px; }
+  .b-draft-wrap { position: relative; }
+  .b-draft { white-space: pre-wrap; line-height: 1.65; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; min-height: 80px; }
+  .b-disc { display: flex; align-items: center; gap: 6px; width: 100%; padding: 7px 0; border: 0; border-top: 1px solid var(--border); background: none; text-align: left; cursor: pointer; margin-top: 10px; }
+  .b-disc + .b-disc-body { padding-bottom: 4px; }
+  .b-disc .chev { width: 12px; color: var(--muted); }
+  .dd-wrap { position: relative; }
+  .ddmenu { position: absolute; bottom: calc(100% + 4px); right: 0; width: 240px; background: #f6f6f7; border: 1px solid #c4c6ca; border-radius: 7px; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); padding: 5px; z-index: 5; }
+
+  /* C: 대조 검증형 */
+  .win-c { left: 50%; transform: translateX(-50%); top: 36px; width: min(1200px, calc(100vw - 16px)); height: calc(100vh - 108px); }
+  .win .win-c { top: 12px; height: calc(100vh - 142px); }
+  .c-tabs { display: flex; border-bottom: 1px solid var(--border); overflow-x: auto; background: var(--side); flex: none; }
+  .c-tab { border: 0; border-right: 1px solid var(--border); background: none; padding: 7px 12px; text-align: left; min-width: 180px; max-width: 220px; cursor: pointer; flex: none; }
+  .c-tab:hover { background: #eff1f3; }
+  .c-tab.sel { background: #fff; box-shadow: inset 0 -2px 0 var(--accent); }
+  .c-tab.more { min-width: 0; color: var(--muted); font-size: 12px; }
+  .c-ctx { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; flex: none; }
+  .c-ctx .repo-why { max-width: 380px; }
+  .c-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr); }
+  .c-col { min-width: 0; overflow: auto; padding: 12px 16px 16px; border-right: 1px solid var(--border); }
+  .c-col:last-child { border-right: 0; }
+  .c-col h3 { margin: 0 0 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .c-col h3.mt { margin-top: 16px; }
+  .c-draft { line-height: 1.75; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; }
+  .c-draft.plain { white-space: pre-wrap; }
+  .cite { border: 0; background: var(--accent-bg); color: var(--accent); font-size: 10px; font-weight: 700; padding: 0 4px; border-radius: 3px; margin-left: 2px; cursor: pointer; vertical-align: super; line-height: 1.3; }
+  .cite.on { background: var(--accent); color: #fff; }
+  .cite.none { background: var(--warn-bg); color: var(--warn); cursor: help; font-weight: 600; }
+  .sent.noev { text-decoration: underline dotted #c49a3a; text-underline-offset: 3px; }
+  .sent.hl { background: #e3ebf8; }
+  .c-instr { display: flex; gap: 6px; margin-top: 12px; }
+  .c-instr input { flex: 1; min-width: 0; }
+
+  /* D: 확정안 */
+  .d-ev { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; cursor: pointer; }
+  .d-ev:hover { background: var(--surface-2); }
+  .d-ev.on { border-color: #a9c2ec; background: #f3f7fd; }
+  .d-evn { color: var(--accent); font-weight: 700; margin-right: 4px; }
+  .d-loc { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+  .cite.d { font-size: 11px; padding: 0 3px; }
+  .strip { flex: none; display: flex; gap: 6px; align-items: center; padding: 8px 16px; border-top: 1px solid var(--border); background: var(--surface-2); }
+  .strip input { flex: 1; min-width: 0; }
+  .d-sec { border-top: 1px solid var(--border); margin-top: 8px; }
+  .d-sec-h { display: flex; align-items: center; gap: 4px; }
+  .d-tg { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 7px 0; border: 0; background: none; text-align: left; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .d-tg:hover { color: var(--text); }
+  .d-tg .chev { width: 12px; flex: none; }
+  .d-sec .d-sec-body { padding-bottom: 6px; }
+  .sec .d-tg { padding: 0; }
+  .sec .d-sec-body { margin-top: 6px; }
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid transparent; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; padding: 0; }
+  .icon-btn:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+  .icon-btn.on { background: var(--accent-bg); color: var(--accent); }
+
+  /* 프로토타입 조작부: 설계 대상이 아니다 */
+  .proto-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 12px; z-index: 1000; display: flex; align-items: center; gap: 4px; background: #111; color: #fff; border-radius: 999px; padding: 4px; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); font-size: 12px; }
+  .win .proto-bar { bottom: 56px; }
+  .proto-bar button { border: 0; background: #333; color: #fff; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; }
+  .proto-bar .lbl { padding: 0 10px; min-width: 180px; text-align: center; }
+  .proto-sim { position: fixed; left: 10px; bottom: 12px; z-index: 1000; background: #111; color: #e8e8e8; border-radius: 8px; padding: 8px 10px; font-size: 11px; width: 250px; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); }
+  .win .proto-sim { bottom: 56px; }
+  .proto-sim .h { display: flex; justify-content: space-between; align-items: center; }
+  .proto-sim .row { display: flex; align-items: center; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .proto-sim .row > span { width: 48px; color: #aaa; }
+  .proto-sim button { background: #2c2c2c; color: #e8e8e8; border: 1px solid #444; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
+  .proto-sim button.on { background: #f2f2f2; color: #111; border-color: #f2f2f2; }
+  .proto-sim .hint { margin-top: 8px; color: #bbb; line-height: 1.45; }
+  .proto-state { position: fixed; right: 10px; bottom: 12px; z-index: 1000; width: 320px; max-height: 46vh; overflow: auto; background: #111; color: #ddd; font: 11px/1.45 var(--mono); padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; margin: 0; }
+  .win .proto-state { bottom: 56px; }
+</style>
+</head>
+<body>
+<div id="desktop"></div>
+<div id="proto"></div>
+<script>
+/** 변형 목록. */
+const VARIANTS = [
+  { key: 'A', name: '메일함형', hint: '트레이 아이콘 클릭 → 창 열기/닫기. 목록과 상세를 한 창에서 본다. 게시는 5초 동안 취소할 수 있다.' },
+  { key: 'B', name: '트레이 메뉴 큐형', hint: '트레이 아이콘 클릭 → OS 기본 메뉴(항목은 한 줄 텍스트만 가능). 항목을 누르면 그 멘션만 담은 작은 창이 뜨고, 게시·무시하면 다음 멘션으로 넘어간다.' },
+  { key: 'C', name: '대조 검증형', hint: '트레이 아이콘 클릭 → 웹뷰 팝오버. 창에서는 원문·초안·근거를 세 열로 대조한다. 초안 문장마다 근거 번호가 붙고, 요구를 고쳐 다시 만들 수 있다. ⌘↵로 게시.' },
+  { key: 'D', name: '확정안', hint: '트레이 아이콘 클릭 → 작은 창(멘션 하나, 1/n, 초안 먼저). "펼쳐 보기" → 목록+상세. 근거는 코드 대신 자연어 설명과 파일·줄 위치. 게시는 5초 취소 가능하고 다음 멘션으로 바로 넘어간다.' },
+];
+
+/** 근거의 자연어 설명(D에서 쓴다). 파일 경로로 찾는다. */
+const EXPLAIN = {
+  'src/web/menu/MenuGuard.tsx': '권한이 없는 사람에게는 화면에서 해당 메뉴를 아예 보여 주지 않는다.',
+  'src/server/auth/PermissionInterceptor.kt': '기능이 실제로 실행될 때마다, 그 기능에 필요한 권한이 있는지 다시 확인한다.',
+  'src/server/bulk/BulkController.kt': '여러 사람을 한꺼번에 처리하는 기능 3가지(사용자 비활성화, 비밀번호 초기화, 사용자 목록 내보내기)에는 이 두 번째 확인이 빠져 있다.',
+  'src/main/java/com/acme/settlement/retry/RetryPolicy.java': '프로그램에 기본으로 정해진 재시도 횟수는 3번이고, 따로 설정한 값이 있으면 그 값을 쓴다.',
+  'src/main/resources/application-prod.yml': '실제 서비스용 설정에서 재시도 횟수를 5번으로 정해 두었다. 그래서 실제 서비스에서는 3번 대신 5번이 쓰인다.',
+  'src/oauth/error-map.ts': '로그인 서비스가 알려 준 오류를 한국어 안내 문구로 바꾸는 목록이 있고, 목록에 없는 오류는 그 서비스가 보낸 영어 문장을 그대로 쓴다.',
+  'src/oauth/callback.ts': '로그인에 실패하면 이렇게 정한 문구를 앱에 보내 화면에 띄우게 한다.',
+  'jobs/weekly_report/aggregate.sql': '주간 리포트는 날짜를 한국 시간이 아니라 국제 표준시 기준으로 나눈다. 한국 시간 9일 0시~9시는 국제 표준시로 8일이라 앞 주에 들어간다.',
+  'src/fee/FeeCalculator.kt': '수수료는 주문 금액에서 부가세를 뺀 금액에 수수료율을 곱해 계산한다.',
+  'src/refund/RefundController.kt': '남은 환불 가능 금액보다 많이 환불하려고 하면 409를 돌려준다. 요청 내용이 잘못된 경우는 그 전에 400으로 걸러진다.',
+  'src/navigation/deeplink.ts': '푸시를 누르면 정해진 한 자리에서만 이동할 화면 주소를 찾고, 없으면 홈 화면으로 보낸다.',
+};
+
+/** 작업 폴더 안의 저장소 목록(가짜). */
+const REPOS = ['settlement-batch', 'payment-api', 'mobile-auth-gateway', 'mobile-app', 'admin-console', 'data-pipeline'];
+
+/** 상태 코드별 표시 이름. */
+const STATUS_LABEL = { generating: '생성 중', ready: '준비됨', posting: '게시 중', posted: '게시됨', failed: '실패', ignored: '무시함' };
+
+/** 가짜 멘션 원본. results[i]는 i번째 생성 결과다. */
+const SEED = [
+  {
+    id: 'm3', sender: '최도윤', project: '사내 어드민', postTitle: '권한 그룹 개편안 검토 요청', where: '본문', at: '오늘 10:55',
+    text: '@나 지금 어드민 권한 검사가 메뉴 단위인지 API 단위인지 확인 부탁드립니다. 개편안에서 API 단위로 바꾸려고 해서요.',
+    thread: [],
+    repo: 'admin-console', repoSource: 'mapping', repoReason: 'Flow 프로젝트 "사내 어드민"의 저장소 매핑', agent: 'Claude Code', readHint: 'src/server/auth/**',
+    status: 'generating',
+    results: [{
+      need: '관리자 화면에서 권한을 메뉴별로 확인하는지, 기능(API)별로 확인하는지 알려 달라.', needShort: '관리자 화면 권한 확인 방식',
+      sentences: [
+        { t: '질문하신 두 가지를 모두 하고 있습니다.', ev: [1, 2] },
+        { t: '권한이 없는 사람에게는 메뉴가 아예 보이지 않고, 메뉴 뒤의 기능이 실제로 실행될 때도 권한을 한 번 더 확인합니다.', ev: [1, 2] },
+        { br: true },
+        { t: '다만 여러 사람을 한꺼번에 처리하는 기능 3가지(사용자 비활성화, 비밀번호 초기화, 사용자 목록 내보내기)에는 두 번째 확인이 빠져 있어서, 이번 개편 때 함께 채워야 합니다.', ev: [3] },
+      ],
+      evidence: [
+        { id: 1, path: 'src/web/menu/MenuGuard.tsx', start: 18, hl: [21], why: '권한이 없으면 메뉴를 숨김', code: ['export function MenuGuard({ menuKey, children }: Props) {', '  const { permissions } = useSession();', '  // 권한이 없으면 메뉴 자체를 숨긴다', '  if (!permissions.menus.includes(menuKey)) return null;', '  return <>{children}</>;', '}'] },
+        { id: 2, path: 'src/server/auth/PermissionInterceptor.kt', start: 40, hl: [42, 44], why: 'API마다 @RequiresPermission 검사', code: ['override fun preHandle(req: HttpServletRequest, res: HttpServletResponse, handler: Any): Boolean {', '    val required = (handler as? HandlerMethod)', '        ?.getMethodAnnotation(RequiresPermission::class.java)', '        ?: return true', '    return session.has(required.value)', '}'] },
+        { id: 3, path: 'src/server/bulk/BulkController.kt', start: 22, hl: [22, 25, 28], why: '일괄 처리 API 3개에 @RequiresPermission 없음', code: ['@PostMapping("/bulk/disable-users")', 'fun disableUsers(@RequestBody ids: List<Long>) = bulkService.disable(ids)', '', '@PostMapping("/bulk/reset-passwords")', 'fun resetPasswords(@RequestBody ids: List<Long>) = bulkService.reset(ids)', '', '@PostMapping("/bulk/export-users")', 'fun exportUsers(@RequestBody query: UserQuery) = bulkService.export(query)'] },
+      ],
+    }],
+  },
+  {
+    id: 'm1', sender: '박준호', project: '결제 플랫폼', postTitle: '정산 배치 지연 이슈 공유', where: '대댓글', at: '오늘 10:42',
+    text: '@나 정산 배치 재시도 횟수가 몇 번으로 되어 있는지 확인 부탁드려요. 운영팀은 3번으로 알고 있는데 로그를 보면 5번 도는 것 같아서요.',
+    thread: [
+      { who: '김서연', where: '본문', text: '어젯밤 정산 배치가 40분 늦게 끝났습니다. 외부 PG 응답이 느려서 재시도가 반복된 것으로 보입니다.' },
+      { who: '이한결', where: '댓글', text: '재시도는 3번까지만 하도록 되어 있는 걸로 압니다.' },
+    ],
+    repo: 'settlement-batch', repoSource: 'mapping', repoReason: 'Flow 프로젝트 "결제 플랫폼"의 저장소 매핑', agent: 'Claude Code', readHint: 'src/main/**/retry/*',
+    status: 'ready',
+    results: [{
+      need: '정산 배치가 실제로 몇 번 재시도하는지와, 그 값이 어디서 정해지는지 알려 달라.', needShort: '정산 배치 재시도 횟수 확인',
+      sentences: [
+        { t: '확인해 보니 실제 서비스에서는 5번까지 다시 시도하는 게 맞습니다.', ev: [2] },
+        { t: '프로그램에 기본으로 정해진 횟수는 3번이지만, 실제 서비스용 설정에서 이 값을 5번으로 바꿔 두었습니다.', ev: [1, 2] },
+        { br: true },
+        { t: '그래서 기록에 5번 남은 것은 오류가 아니라 설정대로 동작한 것이고, 3번으로 맞추려면 이 설정 값만 바꾸면 됩니다.', ev: [2] },
+      ],
+      evidence: [
+        { id: 1, path: 'src/main/java/com/acme/settlement/retry/RetryPolicy.java', start: 24, hl: [26, 28], why: '기본값 3, 설정값이 있으면 덮어씀', code: ['public final class RetryPolicy {', '    /** 정산 배치의 기본 재시도 횟수 */', '    public static final int DEFAULT_MAX_ATTEMPTS = 3;', '', '    @Value("${settlement.retry.max-attempts:" + DEFAULT_MAX_ATTEMPTS + "}")', '    private int maxAttempts;', '', '    private final Duration backoff = Duration.ofSeconds(30);'] },
+        { id: 2, path: 'src/main/resources/application-prod.yml', start: 86, hl: [88], why: '운영 프로필에서 5로 지정', code: ['settlement:', '  retry:', '    max-attempts: 5', '    backoff-seconds: 30', '  batch-size: 500'] },
+      ],
+    }, {
+      need: '정산 배치가 실제로 몇 번 재시도하는지와, 그 값이 어디서 정해지는지 알려 달라.', needShort: '정산 배치 재시도 횟수 확인',
+      sentences: [
+        { t: '실제 서비스에서는 5번이 맞습니다.', ev: [2] },
+        { t: '기본은 3번인데 서비스용 설정에서 5번으로 바꿔 두어서, 3번으로 줄이려면 그 설정만 고치면 됩니다.', ev: [1, 2] },
+      ],
+      evidence: null,
+    }],
+  },
+  {
+    id: 'm2', sender: '이수민', project: '모바일 앱 리뉴얼', postTitle: '로그인 화면 QA 결과', where: '댓글', at: '오늘 10:31',
+    text: '@나 소셜 로그인 실패할 때 에러 문구가 영어로 나오는데, 어디서 내려오는 건지 아실까요?',
+    thread: [
+      { who: '이수민', where: '본문', text: 'QA 2차 결과 공유드립니다. 로그인 화면 관련 이슈 4건이 남았습니다.' },
+    ],
+    repo: 'mobile-auth-gateway', repoSource: 'auto', repoReason: '저장소 매핑이 없어 작업 폴더의 저장소 6개를 살폈다. 소셜 로그인 오류 응답을 만드는 코드는 이 저장소에만 있다.', agent: 'Claude Code', readHint: 'src/oauth/*',
+    status: 'ready',
+    results: [{
+      need: '소셜 로그인이 실패할 때 보이는 영어 오류 문구가 어디서 만들어지는지 알려 달라.', needShort: '소셜 로그인 영어 오류 문구 출처',
+      sentences: [
+        { t: '그 문구는 앱 화면이 아니라, 로그인을 중간에서 처리하는 서버가 보내는 것입니다.', ev: [2] },
+        { t: '이 서버는 소셜 로그인 서비스가 알려 준 오류를 한국어 안내 문구로 바꿔 주는데, 미리 정해 둔 목록에 없는 오류는 그 서비스가 보낸 영어 문장을 그대로 보여 줍니다.', ev: [1] },
+        { br: true },
+        { t: '로그인 중 동의 화면에서 "취소"를 누르면 이 목록에 없는 오류가 와서 영어로 보인 것으로 짐작됩니다.', ev: [] },
+        { t: '목록에 이 경우의 한국어 안내 문구를 추가하면 한국어로 나옵니다.', ev: [1] },
+      ],
+      evidence: [
+        { id: 1, path: 'src/oauth/error-map.ts', start: 12, hl: [13, 20], why: '표에 없는 코드는 제공자 메시지를 그대로 반환', code: ['// 소셜 제공자 오류 코드 → 사용자 문구', 'const ERROR_MESSAGES: Record<string, string> = {', "  invalid_grant: '로그인 정보가 만료되었습니다. 다시 시도해 주세요.',", "  server_error: '잠시 후 다시 시도해 주세요.',", "  temporarily_unavailable: '잠시 후 다시 시도해 주세요.',", '};', '', 'export function toUserMessage(code: string, providerMessage: string) {', '  return ERROR_MESSAGES[code] ?? providerMessage;', '}'] },
+        { id: 2, path: 'src/oauth/callback.ts', start: 58, hl: [62], why: '응답 message로 앱에 내려보냄', code: ['  } catch (err) {', "    const code = err.code ?? 'unknown';", '    return res.status(400).json({', '      code,', '      message: toUserMessage(code, err.message),', '    });', '  }'] },
+      ],
+    }],
+  },
+  {
+    id: 'm4', sender: '정하은', project: '데이터 파이프라인', postTitle: '주간 리포트 누락 건', where: '댓글', at: '오늘 09:58',
+    text: '@나 지난주 주간 리포트에서 9일 데이터가 빠졌는데, 집계 쿼리 쪽 문제일까요?',
+    thread: [
+      { who: '정하은', where: '본문', text: '지난주 주간 리포트 주문 수가 실제보다 적게 나왔습니다. 원인 확인 중입니다.' },
+    ],
+    repo: 'data-pipeline', repoSource: 'auto', repoReason: '저장소 매핑이 없어 작업 폴더의 저장소 6개를 살폈다. "주간 리포트" 집계 작업이 있는 곳은 이 저장소뿐이다.', agent: 'Claude Code', readHint: 'jobs/weekly_report/*.sql',
+    status: 'failed', error: '에이전트가 5분 안에 끝나지 않아 중단했습니다.', errorDetail: '마지막 단계: 파일 읽는 중 (jobs/weekly_report/*.sql)',
+    results: [{
+      need: '지난주 주간 리포트에서 9일 데이터가 빠진 원인이 집계 쿼리인지 알려 달라.', needShort: '주간 리포트 9일 누락 원인',
+      sentences: [
+        { t: '계산 방식보다는 날짜를 나누는 기준 시간이 문제로 보입니다.', ev: [] },
+        { t: '주간 리포트가 날짜를 한국 시간이 아니라 국제 표준시(한국보다 9시간 늦음)로 나누고 있어서, 9일 0시~9시에 들어온 주문이 8일 주문으로 잡혀 앞 주 리포트에 들어갔습니다.', ev: [1] },
+        { t: '날짜를 나누는 기준을 한국 시간으로 바꾸면 해결됩니다.', ev: [1] },
+      ],
+      evidence: [
+        { id: 1, path: 'jobs/weekly_report/aggregate.sql', start: 7, hl: [10, 11], why: '기간 조건이 UTC 기준', code: ["SELECT date_trunc('week', created_at) AS week,", '       count(*) AS orders', 'FROM orders', 'WHERE created_at >= :week_start', '  AND created_at <  :week_end   -- UTC 기준', 'GROUP BY 1;'] },
+      ],
+    }],
+  },
+  {
+    id: 'm5', sender: '한지우', project: '결제 플랫폼', postTitle: 'PG 수수료 계산식 문의', where: '댓글', at: '어제 17:05',
+    text: '@나 수수료 계산할 때 부가세 포함 금액 기준인가요?',
+    thread: [
+      { who: '한지우', where: '본문', text: '정산 리포트의 수수료가 계약서 금액과 조금씩 다릅니다.' },
+    ],
+    repo: 'payment-api', repoSource: 'mapping', repoReason: 'Flow 프로젝트 "결제 플랫폼"의 저장소 매핑', agent: 'Claude Code', readHint: 'src/fee/*',
+    status: 'posted', postedAt: '어제 17:31',
+    results: [{
+      need: 'PG 수수료를 부가세 포함 금액으로 계산하는지 알려 달라.', needShort: 'PG 수수료 계산 기준',
+      sentences: [
+        { t: '부가세를 뺀 금액을 기준으로 계산합니다.', ev: [1] },
+        { t: '계약서가 부가세 포함 금액 기준이라면 그 차이만큼 어긋납니다.', ev: [] },
+      ],
+      evidence: [
+        { id: 1, path: 'src/fee/FeeCalculator.kt', start: 15, hl: [17], why: '공급가액 기준 계산', code: ['fun fee(order: Order): Money {', '    // 공급가액(부가세 제외) 기준으로 계산한다', '    val base = order.amount - order.vat', '    return base * rate(order.pgCode)', '}'] },
+      ],
+    }],
+  },
+  {
+    id: 'm6', sender: '오세린', project: '디자인 시스템', postTitle: '버튼 컴포넌트 크기 체계 변경 공지', where: '본문', at: '어제 15:20',
+    text: '@나 @이수민 버튼 컴포넌트 크기 체계가 다음 주부터 바뀝니다. 참고 부탁드려요.',
+    thread: [],
+    repo: 'mobile-app', repoSource: 'auto', repoReason: '저장소 매핑이 없어 작업 폴더에서 버튼 컴포넌트를 쓰는 저장소를 골랐다.', agent: 'Claude Code', readHint: 'src/components/Button*',
+    status: 'ignored',
+    results: [{
+      need: '버튼 크기 체계 변경을 알리는 공지로, 답해야 할 질문은 없다.', needShort: '버튼 크기 체계 변경 공지',
+      sentences: [{ t: '확인했습니다. 앱의 버튼은 다음 업데이트 때 새 크기 기준에 맞추겠습니다.', ev: [] }],
+      evidence: [],
+    }],
+  },
+];
+
+/** "새 멘션 도착"으로 차례로 들어오는 가짜 멘션. */
+const ARRIVALS = [
+  {
+    sender: '윤가람', project: '결제 플랫폼', postTitle: '환불 API 응답 코드 정리', where: '댓글',
+    text: '@나 부분 환불이 실패할 때 409로 내려가는 게 맞나요? 클라이언트에서는 400을 기대하고 있어서요.',
+    thread: [{ who: '윤가람', where: '본문', text: '환불 API 응답 코드를 문서로 정리하고 있습니다.' }],
+    repo: 'payment-api', repoSource: 'mapping', repoReason: 'Flow 프로젝트 "결제 플랫폼"의 저장소 매핑', agent: 'Claude Code', readHint: 'src/refund/*',
+    results: [{
+      need: '부분 환불이 실패할 때 409를 돌려주는 것이 의도된 동작인지 알려 달라.', needShort: '부분 환불 실패 응답 코드',
+      sentences: [
+        { t: '네, 일부러 그렇게 만든 것입니다.', ev: [1] },
+        { t: '환불할 수 있는 남은 금액보다 많이 환불하려고 하면, "지금 주문 상태와 맞지 않는 요청"이라는 뜻으로 409를 돌려줍니다.', ev: [1] },
+        { t: '400은 요청 내용 자체가 잘못 입력된 경우에만 씁니다.', ev: [1] },
+      ],
+      evidence: [
+        { id: 1, path: 'src/refund/RefundController.kt', start: 31, hl: [33, 35], why: '잔액 초과 시 409, 형식 오류 시 400', code: ['fun partialRefund(@Valid @RequestBody req: PartialRefundRequest): ResponseEntity<*> {', '    val order = orders.get(req.orderId)', '    if (req.amount > order.refundableAmount)', '        // 남은 금액보다 크면 주문 상태와 충돌', '        return ResponseEntity.status(409).body(Error("REFUND_EXCEEDS_BALANCE"))', '    return ResponseEntity.ok(refunds.partial(order, req.amount))', '}'] },
+      ],
+    }],
+  },
+  {
+    sender: '강민재', project: '모바일 앱 리뉴얼', postTitle: '푸시 알림 딥링크 오류', where: '대댓글',
+    text: '@나 푸시를 눌렀을 때 홈으로만 가는 문제, 딥링크 파싱 쪽인지 봐 주실 수 있나요?',
+    thread: [{ who: '강민재', where: '본문', text: '푸시 알림을 누르면 상세 화면 대신 홈으로 이동합니다.' }, { who: '이수민', where: '댓글', text: 'iOS에서만 재현됩니다.' }],
+    repo: 'mobile-app', repoSource: 'auto', repoReason: '저장소 매핑이 없어 작업 폴더의 저장소 6개를 살폈다. 딥링크 파싱 코드가 있는 곳은 이 저장소뿐이다.', agent: 'Claude Code', readHint: 'src/navigation/deeplink*',
+    results: [{
+      need: '푸시를 눌렀을 때 홈으로만 가는 원인이 딥링크 파싱인지 알려 달라.', needShort: '푸시 딥링크가 홈으로만 가는 원인',
+      sentences: [
+        { t: '네, 푸시에 담긴 이동 주소를 읽는 부분의 문제가 맞습니다.', ev: [1] },
+        { t: '앱은 푸시 안의 정해진 한 자리에서만 이동할 화면 주소를 찾고, 거기에 주소가 없으면 홈 화면으로 보냅니다.', ev: [1] },
+        { t: '아이폰으로 오는 푸시는 그 주소를 다른 자리에 담아 보내는 것으로 보여서, 아이폰에서만 홈으로 가는 것 같습니다.', ev: [] },
+      ],
+      evidence: [
+        { id: 1, path: 'src/navigation/deeplink.ts', start: 9, hl: [10, 12], why: 'data.link만 읽고 없으면 홈', code: ['export function routeFromPush(payload: PushPayload) {', '  const link = payload.data?.link;', '  // 링크가 없으면 홈으로 보낸다', "  if (!link) return { screen: 'Home' };", '  return parseDeepLink(link);', '}'] },
+      ],
+    }],
+  },
+];
+
+/** 생성 결과의 근거가 비어 있으면 첫 결과의 근거를 쓴다. */
+function evidenceOf(m, r) {
+  return r.evidence ?? m.results[0].evidence;
+}
+
+/** 초안 문장 배열을 평문으로 바꾼다. */
+function toText(sentences) {
+  return sentences.map((s) => (s.br ? '\n\n' : s.t)).join(' ').replace(/ ?\n\n ?/g, '\n\n');
+}
+
+/** 원본 데이터에 화면 상태 필드를 붙여 멘션 객체를 만든다. */
+function makeMention(seed) {
+  const m = { progress: [], edited: false, draft: '', out: null, gen: -1, homeRepo: seed.repo, error: null, errorDetail: null, postIn: null, ...seed };
+  if (['ready', 'posted', 'ignored'].includes(m.status)) {
+    m.gen = 0;
+    m.out = { ...m.results[0], evidence: evidenceOf(m, m.results[0]) };
+    m.draft = toText(m.out.sentences);
+  }
+  return m;
+}
+
+/** 메모리에만 있는 멘션 목록. */
+const M = SEED.map(makeMention);
+
+/** 공통 화면 상태. */
+const S = {
+  variant: 'D', os: 'mac', notifMode: 'works', nextFails: false, showState: false, simOpen: true,
+  selected: 'm1', confirm: null, toast: null, osNotif: null, lastCheck: '오후 2:29', arrivals: 0, log: [],
+};
+
+/** 변형별 화면 상태. */
+const UI = {
+  A: { windowOpen: true, threadOpen: {}, evOpen: {} },
+  B: { windowOpen: false, menuOpen: true, editing: false, open: { orig: false, ev: false, repo: false }, regenMenu: false },
+  C: { windowOpen: true, popoverOpen: false, editing: false, activeEv: {}, hl: {}, needDraft: {}, instr: {}, showDone: false },
+  D: { windowOpen: true, expanded: false, editing: false, needEdit: {}, needDraft: {}, instrOpen: false, instr: {}, open: { orig: true, need: true, draft: true, progress: true, ev: false, repo: false }, openX: { orig: true, need: true, draft: true, progress: true, ev: true, repo: true }, regenMenu: false, hl: {}, threadOpen: {} },
+};
+
+/** HTML 이스케이프. */
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** id로 멘션 찾기. */
+const byId = (id) => M.find((m) => m.id === id);
+/** 지금 고른 멘션. */
+const sel = () => byId(S.selected) || M[0];
+/** 아직 처리가 끝나지 않은 멘션인가. */
+const isActive = (m) => ['ready', 'posting', 'generating', 'failed'].includes(m.status);
+/** 게시하거나 무시한 멘션인가. */
+const isDone = (m) => ['posted', 'ignored'].includes(m.status);
+/** 저장소를 고른 방법의 표시 이름. */
+const repoSourceLabel = (m) => ({ mapping: '저장소 매핑', auto: '자동 선택', manual: '직접 고름' }[m.repoSource]);
+/** 파일 경로의 마지막 부분. */
+const basename = (p) => p.split('/').pop();
+/** 근거의 줄 범위 표기. */
+const evRange = (e) => `${e.start}–${e.start + e.code.length - 1}`;
+/** 근거가 가리키는 줄의 자연어 표기. 강조한 줄만 센다. */
+const lineLabel = (e) => {
+  const a = Math.min(...e.hl);
+  const b = Math.max(...e.hl);
+  return a === b ? `${a}번째 줄` : `${a}–${b}번째 줄`;
+};
+/** 근거 번호를 원문자(①②…)로 바꾼다. */
+const circled = (n) => String.fromCharCode(0x2460 + n - 1);
+
+/** 상태별 멘션 수. */
+function counts() {
+  const c = { ready: 0, generating: 0, failed: 0 };
+  M.forEach((m) => {
+    if (m.status === 'ready' || m.status === 'posting') c.ready += 1;
+    if (m.status === 'generating') c.generating += 1;
+    if (m.status === 'failed') c.failed += 1;
+  });
+  return c;
+}
+
+/** 프로토타입 이벤트 기록. 상태 보기 패널에 보인다. */
+function log(text) {
+  const t = new Date().toTimeString().slice(0, 8);
+  S.log.unshift(`${t} ${text}`);
+  S.log.length = Math.min(S.log.length, 12);
+}
+
+/** 창 아래쪽 토스트를 띄운다. */
+function toast(text, action) {
+  S.toast = { text, action };
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { S.toast = null; render(); }, 5000);
+}
+
+/** 초안이 준비됐을 때 OS 알림을 흉내 낸다. */
+function notify(m) {
+  log(`초안 준비됨: ${m.sender}`);
+  if (S.notifMode === 'none') { log('OS 알림 안 뜸(시뮬레이션) → 트레이 표시로만 알 수 있음'); return; }
+  S.osNotif = { id: m.id };
+  clearTimeout(notify.timer);
+  notify.timer = setTimeout(() => { S.osNotif = null; render(); }, 8000);
+}
+
+/** 변형마다 다른 방식으로 멘션 하나를 연다. */
+function openMention(id) {
+  S.selected = id;
+  S.confirm = null;
+  if (S.variant === 'A') UI.A.windowOpen = true;
+  if (S.variant === 'B') { UI.B.windowOpen = true; UI.B.menuOpen = false; UI.B.editing = false; }
+  if (S.variant === 'C') { UI.C.windowOpen = true; UI.C.popoverOpen = false; UI.C.editing = false; }
+  if (S.variant === 'D') {
+    // 닫혀 있던 창은 작은 창으로 연다. 이미 펼쳐 둔 창이면 그대로 둔다.
+    if (!UI.D.windowOpen) UI.D.expanded = false;
+    UI.D.windowOpen = true;
+    UI.D.editing = false;
+    UI.D.instrOpen = false;
+  }
+}
+
+/** 에이전트 실행 단계(가짜 로그). */
+function genSteps(m, opts) {
+  const steps = [`게시물 본문과 댓글 ${m.thread.length + 1}개 가져옴`, `저장소 ${m.repo} (${repoSourceLabel(m)})`, `${m.agent} 실행 (읽기 전용)`];
+  if (opts.instruction) steps.push(`지시 반영: ${opts.instruction}`);
+  if (opts.need) steps.push('고친 요구로 다시 작성');
+  steps.push(`파일 읽는 중: ${m.readHint}`, '초안 작성 중');
+  return steps;
+}
+
+/** 다음 생성 결과를 고른다. 원래 저장소가 아니면 근거를 못 찾은 결과를 돌려준다. */
+function nextResult(m, opts) {
+  m.gen += 1;
+  const base = m.results[Math.min(m.gen, m.results.length - 1)];
+  // 다른 저장소로 다시 만든 경우
+  if (m.repo !== m.homeRepo) {
+    return { need: base.need, needShort: base.needShort, evidence: [], sentences: [{ t: '확인해 본 범위에서는 이 질문과 관련된 내용을 찾지 못했습니다.', ev: [] }, { t: '어느 서비스나 화면 이야기인지 조금 더 알려 주시면 다시 확인하겠습니다.', ev: [] }] };
+  }
+  return { ...base, need: opts.need || base.need, evidence: evidenceOf(m, base) };
+}
+
+/** 초안 생성(또는 재생성)을 흉내 낸다. */
+function generate(m, opts = {}) {
+  // 저장소를 바꿔서 다시 만드는 경우
+  if (opts.repo) { m.repo = opts.repo; m.repoSource = 'manual'; m.repoReason = '사용자가 직접 골라 다시 만들었다.'; }
+  m.status = 'generating';
+  m.progress = [];
+  m.error = null;
+  const token = {};
+  m.genToken = token;
+  const steps = genSteps(m, opts);
+  log(`생성 시작: ${m.sender}${opts.repo ? ` (저장소 ${opts.repo})` : ''}${opts.instruction ? ` (지시: ${opts.instruction})` : ''}`);
+  steps.forEach((s, i) => setTimeout(() => {
+    if (m.genToken !== token) return;
+    m.progress.push(s);
+    render();
+  }, 650 * (i + 1)));
+  setTimeout(() => {
+    if (m.genToken !== token) return;
+    m.genToken = null;
+    // 실패를 시뮬레이션하는 경우
+    if (S.nextFails) {
+      S.nextFails = false;
+      m.status = 'failed';
+      m.error = '에이전트가 오류로 끝났습니다(종료 코드 1).';
+      m.errorDetail = '출력: Not logged in · Please run /login';
+      log(`생성 실패: ${m.sender}`);
+      render();
+      return;
+    }
+    m.out = nextResult(m, opts);
+    m.draft = toText(m.out.sentences);
+    m.edited = false;
+    m.status = 'ready';
+    delete UI.C.needDraft[m.id];
+    delete UI.C.instr[m.id];
+    notify(m);
+    render();
+  }, 650 * (steps.length + 1));
+}
+
+/** 편집한 초안이 있으면 확인을 받고 다시 만든다. */
+function regenRequest(m, opts) {
+  if (m.edited && !opts.force) { S.confirm = { kind: 'regen', id: m.id, opts }; return; }
+  S.confirm = null;
+  UI.B.regenMenu = false;
+  UI.D.regenMenu = false;
+  generate(m, opts);
+}
+
+/** 게시를 시작한다. withUndo면 5초 동안 취소할 수 있다. */
+function startPost(m, withUndo) {
+  m.status = 'posting';
+  log(`게시 시작: ${m.sender}${withUndo ? ' (5초 취소 가능)' : ''}`);
+  if (withUndo) { m.postIn = 5; return; }
+  m.postIn = null;
+  setTimeout(() => { finishPost(m); render(); }, 900);
+}
+
+/** 게시를 끝낸다. */
+function finishPost(m) {
+  if (m.status !== 'posting') return;
+  m.status = 'posted';
+  m.postIn = null;
+  m.postedAt = '방금';
+  log(`게시됨: ${m.sender}`);
+  if (S.variant === 'B') { toast(`${m.sender}님 멘션에 게시했습니다.`); advanceQueue(m.id); }
+  if (S.variant === 'D' && S.toast && S.toast.postId === m.id) toast(`${m.sender}님 멘션에 게시했습니다.`);
+}
+
+/** B·D: 게시·무시 뒤 다음 준비된 멘션으로 넘어간다. */
+function advanceQueue(fromId) {
+  const next = M.find((m) => m.id !== fromId && m.status === 'ready');
+  if (next) { S.selected = next.id; UI.B.editing = false; UI.D.editing = false; UI.D.instrOpen = false; }
+}
+
+/** 게시 취소 카운트다운. */
+setInterval(function tickPosting() {
+  let changed = false;
+  M.forEach((m) => {
+    if (m.status !== 'posting' || m.postIn == null) return;
+    m.postIn -= 1;
+    changed = true;
+    if (m.postIn <= 0) finishPost(m);
+  });
+  if (changed) render();
+}, 1000);
+
+/** "새 멘션 도착" 시뮬레이션. */
+function simArrival() {
+  const seed = structuredClone(ARRIVALS[S.arrivals % ARRIVALS.length]);
+  S.arrivals += 1;
+  const m = makeMention({ ...seed, id: `n${S.arrivals}`, at: '방금', status: 'generating' });
+  M.unshift(m);
+  log(`새 멘션: ${m.sender}`);
+  generate(m);
+}
+
+/* ---------- 그리기: 공통 조각 ---------- */
+
+/** 상태 태그. */
+function statusTag(m) {
+  const extra = m.status === 'posting' && m.postIn != null ? ` ${m.postIn}초` : '';
+  return `<span class="tag ${m.status}">${STATUS_LABEL[m.status]}${extra}</span>`;
+}
+
+/** 멘션 본문의 @표기를 강조한다. */
+function mentionText(text) {
+  return esc(text).replace(/@(\S+)/g, '<span class="at">@$1</span>');
+}
+
+/** 목록 행의 세 번째 줄. 상태마다 보여 줄 것이 다르다. */
+function rowLine(m) {
+  switch (m.status) {
+    case 'ready': return `<div class="row-3">${esc(m.out.needShort)}</div>`;
+    case 'posting': return `<div class="row-3">${m.postIn != null ? `${m.postIn}초 뒤 게시` : '게시 중…'}</div>`;
+    case 'generating': return `<div class="row-3 muted">${esc(m.progress[m.progress.length - 1] || '대기 중')}…</div>`;
+    case 'failed': return `<div class="row-3 bad">${esc(m.error)}</div>`;
+    case 'posted': return `<div class="row-3 muted">${esc(m.postedAt)} 게시함</div>`;
+    default: return `<div class="row-3 muted">${esc(m.out ? m.out.needShort : '')}</div>`;
+  }
+}
+
+/** 스레드 맥락. 멘션이 일어난 글을 강조한다. */
+function threadHtml(m) {
+  const items = [...m.thread, { who: m.sender, where: m.where, text: m.text, me: true }];
+  return items.map((t) => `<div class="thread-item${t.me ? ' me' : ''}"><div><strong>${esc(t.who)}</strong> <span class="muted">${esc(t.where)}${t.me ? ' · 나를 멘션' : ''}</span></div><div class="tx">${mentionText(t.text)}</div></div>`).join('');
+}
+
+/** 근거 코드 조각. */
+function codeHtml(e) {
+  const lines = e.code.map((line, i) => {
+    const n = e.start + i;
+    return `<span class="ln${e.hl.includes(n) ? ' hl' : ''}"><span class="no">${n}</span>${esc(line) || ' '}</span>`;
+  }).join('');
+  return `<pre class="code">${lines}</pre>`;
+}
+
+/** 생성 진행 목록. */
+function progressHtml(m) {
+  const items = m.progress.map((p) => `<li>${esc(p)}</li>`).join('');
+  return `<ol class="progress">${items || '<li>에이전트 준비 중</li>'}</ol>`;
+}
+
+/** 실패 상자. */
+function errorHtml(m) {
+  return `<div class="err"><strong>${esc(m.error)}</strong>${m.errorDetail ? `<div class="d">${esc(m.errorDetail)}</div>` : ''}</div>`;
+}
+
+/** 확인 줄(게시 확인, 편집한 초안 버리기 확인). */
+function confirmHtml(m) {
+  if (!S.confirm || S.confirm.id !== m.id) return '';
+  if (S.confirm.kind === 'post') {
+    return `<div class="confirm"><span>${esc(m.sender)}님 멘션에 내 명의로 Flow에 게시합니다.</span><span class="sp"></span><button class="btn sm" data-action="confirm-cancel">취소</button><button class="btn sm primary" data-action="post-confirm" data-id="${m.id}">게시</button></div>`;
+  }
+  return `<div class="confirm"><span>편집한 초안은 사라집니다. 다시 만들까요?</span><span class="sp"></span><button class="btn sm" data-action="confirm-cancel">취소</button><button class="btn sm primary" data-action="regen-confirm">다시 만들기</button></div>`;
+}
+
+/** 트레이 아이콘 그림. 준비된 초안이 있으면 채우고, 생성 중이면 점 세 개를 넣는다. */
+function bubbleSvg(c) {
+  const filled = c.ready > 0;
+  const dots = c.generating > 0 && !filled;
+  return `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.75h11a.75.75 0 0 1 .75.75v7a.75.75 0 0 1-.75.75H8.2L4.75 14v-2.75H2.5a.75.75 0 0 1-.75-.75v-7a.75.75 0 0 1 .75-.75z" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>${dots ? '<circle cx="5.3" cy="7" r="1" fill="currentColor"/><circle cx="8" cy="7" r="1" fill="currentColor"/><circle cx="10.7" cy="7" r="1" fill="currentColor"/>' : ''}</svg>`;
+}
+
+/** 트레이 아이콘과, 변형에 따라 그 아래(위)에 붙는 메뉴·팝오버. */
+function trayHtml() {
+  const c = counts();
+  const on = (S.variant === 'B' && UI.B.menuOpen) || (S.variant === 'C' && UI.C.popoverOpen);
+  const tip = `멘션 초안 — 검토 대기 ${c.ready} · 생성 중 ${c.generating} · 실패 ${c.failed}`;
+  const badge = S.os === 'win' && c.ready ? `<span class="tray-badge-win">${c.ready}</span>` : '';
+  const dot = c.failed ? '<span class="tray-dot"></span>' : '';
+  const title = S.os === 'mac' && c.ready ? `<span class="tray-count">${c.ready}</span>` : '';
+  let layer = '';
+  if (S.variant === 'B' && UI.B.menuOpen) layer = bMenu();
+  if (S.variant === 'C' && UI.C.popoverOpen) layer = cPopover();
+  return `<div class="tray-wrap"><button class="tray${on ? ' on' : ''}" data-action="tray" title="${esc(tip)}"><span class="tray-icon">${bubbleSvg(c)}${dot}${badge}</span>${title}</button>${layer}</div>`;
+}
+
+/** 메뉴 막대(mac) 또는 작업 표시줄(Windows). */
+function osChromeHtml() {
+  const wifi = '<span class="glyph"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 6.5a9 9 0 0 1 12 0M4.2 8.8a6 6 0 0 1 7.6 0M6.4 11a3 3 0 0 1 3.2 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>';
+  const battery = '<span class="glyph"><svg width="22" height="16" viewBox="0 0 22 16"><rect x="1" y="4" width="17" height="8" rx="2" fill="none" stroke="currentColor"/><rect x="3" y="6" width="11" height="4" rx="1" fill="currentColor"/><rect x="19" y="6.5" width="1.5" height="3" rx=".5" fill="currentColor"/></svg></span>';
+  if (S.os === 'mac') {
+    return `<div class="menubar"><span class="app">Finder</span><span>파일</span><span>편집</span><span>보기</span><div class="right">${battery}${wifi}${trayHtml()}<span>10월 14일 (수) 오후 2:31</span></div></div>`;
+  }
+  return `<div class="taskbar"><div class="apps"><span></span><span></span><span></span><span></span></div><div class="right"><span class="glyph">⌃</span>${trayHtml()}${wifi}<div class="clock-win">오후 2:31<br>2026-10-14</div></div></div>`;
+}
+
+/** OS 알림. */
+function notifHtml() {
+  if (!S.osNotif) return '';
+  const m = byId(S.osNotif.id);
+  if (!m || !m.out) return '';
+  return `<div class="notif" data-action="notif" data-id="${m.id}"><span class="notif-icon">${bubbleSvg({ ready: 1 })}</span><div class="notif-text"><div class="notif-app">멘션 초안 · 지금</div><strong>${esc(m.sender)}님 멘션의 초안이 준비됐습니다</strong><div class="clip">${esc(m.out.needShort)}</div></div><button class="notif-x" data-action="notif-close" title="닫기">×</button></div>`;
+}
+
+/** 창 틀. */
+function windowFrame(cls, title, body) {
+  const bar = S.os === 'mac'
+    ? `<div class="titlebar"><div class="tl"><button class="c" data-action="close-window" title="닫기"></button><button class="m"></button><button class="x"></button></div><div class="t">${title}</div></div>`
+    : `<div class="titlebar"><div class="t">${title}</div><div class="winctl"><button>―</button><button>□</button><button class="close" data-action="close-window">✕</button></div></div>`;
+  return `<div class="window ${cls}">${bar}<div class="wbody">${body}</div></div>`;
+}
+
+/* ---------- 변형 A: 메일함형 ---------- */
+
+/** A: 목록과 상세가 있는 창. */
+function renderA() {
+  if (!UI.A.windowOpen) return '';
+  return windowFrame('win-a', '멘션 초안', `<div class="a-layout">${aList()}${aDetail(sel())}</div>`);
+}
+
+/** A: 상태별로 묶은 멘션 목록. */
+function aList() {
+  const groups = [
+    ['검토 대기', M.filter((m) => m.status === 'ready' || m.status === 'posting')],
+    ['생성 중', M.filter((m) => m.status === 'generating')],
+    ['실패', M.filter((m) => m.status === 'failed')],
+    ['처리됨', M.filter(isDone)],
+  ];
+  const html = groups.filter(([, list]) => list.length).map(([name, list]) => `<div class="a-group-h">${name} ${list.length}</div>${list.map((m) => `
+    <button class="a-row${m.id === S.selected ? ' sel' : ''}" data-action="select" data-id="${m.id}">
+      <div class="row-top"><strong>${esc(m.sender)}</strong><span class="muted" style="font-size:12px">${esc(m.at)}</span></div>
+      <div class="row-sub">${esc(m.project)} · ${esc(m.postTitle)}</div>
+      ${rowLine(m)}
+    </button>`).join('')}`).join('');
+  return `<aside class="a-list"><div class="a-list-scroll" data-scroll="a-list">${html}</div><div class="a-list-foot"><span>마지막 확인 ${S.lastCheck}</span><button class="btn link" data-action="check-now">지금 확인</button></div></aside>`;
+}
+
+/** A: 멘션 하나의 상세. 원문 → 요구 → 저장소 → 초안 → 근거 순서. */
+function aDetail(m) {
+  if (!m) return '<section class="a-detail"><div class="empty">멘션을 고르세요</div></section>';
+  const threadOpen = UI.A.threadOpen[m.id];
+  const busy = ['generating', 'posting'].includes(m.status) || isDone(m);
+  const repoSelect = `<select data-change="regen-repo" data-id="${m.id}" ${busy ? 'disabled' : ''}><option value="">다른 저장소로 재생성…</option>${REPOS.filter((r) => r !== m.repo).map((r) => `<option value="${r}">${r}</option>`).join('')}</select>`;
+  let body = `
+    <section class="sec"><h3>원문</h3><blockquote>${mentionText(m.text)}</blockquote>
+      <div style="margin-top:6px"><button class="btn link" data-action="a-thread" data-id="${m.id}">${threadOpen ? '스레드 맥락 접기' : `스레드 맥락 보기 (글 ${m.thread.length + 1}개)`}</button></div>
+      ${threadOpen ? `<div class="thread">${threadHtml(m)}</div>` : ''}
+    </section>`;
+  if (m.status === 'generating') {
+    body += aRepo(m, repoSelect) + `<section class="sec"><h3>진행</h3>${progressHtml(m)}</section>`;
+  } else if (m.status === 'failed') {
+    body += aRepo(m, repoSelect) + `<section class="sec"><h3>오류</h3>${errorHtml(m)}</section>`;
+  } else {
+    const editable = m.status === 'ready';
+    const draft = editable
+      ? `<textarea id="draft-A-${m.id}" data-input="draft" data-id="${m.id}" rows="7">${esc(m.draft)}</textarea>${m.edited ? `<div class="edited">편집함 · <button class="btn link" data-action="revert-draft" data-id="${m.id}">원래 초안으로 되돌리기</button></div>` : ''}`
+      : `<blockquote>${esc(m.draft)}</blockquote>`;
+    body += `<section class="sec"><h3>요구</h3><div>${esc(m.out.need)}</div></section>`
+      + aRepo(m, repoSelect)
+      + `<section class="sec"><h3>초안</h3>${draft}</section>`
+      + `<section class="sec"><h3>근거 ${m.out.evidence.length}</h3>${aEvidence(m)}</section>`;
+  }
+  const head = `<header class="a-head"><div><h2>${esc(m.postTitle)}</h2><div class="meta">${esc(m.project)} · ${esc(m.sender)}님이 ${esc(m.where)}에서 멘션 · ${esc(m.at)} · <button class="btn link" data-action="open-flow" data-id="${m.id}">Flow에서 열기</button></div></div>${statusTag(m)}</header>`;
+  return `<section class="a-detail">${head}<div class="a-scroll" data-scroll="a-detail-${m.id}">${body}</div>${confirmHtml(m)}${footHtml(m)}</section>`;
+}
+
+/** A: 저장소 블록. */
+function aRepo(m, repoSelect) {
+  return `<section class="sec"><h3>저장소</h3><div class="repo-line"><code>${esc(m.repo)}</code><span class="muted">${repoSourceLabel(m)}</span><span class="sp"></span>${repoSelect}</div>${m.repoSource !== 'mapping' ? `<div class="note">${esc(m.repoReason)}</div>` : ''}</section>`;
+}
+
+/** A: 근거 목록. 행을 누르면 코드 조각이 펼쳐진다. */
+function aEvidence(m) {
+  if (!m.out.evidence.length) return '<div class="muted">근거가 없습니다. 초안이 저장소 코드를 근거로 하지 않았습니다.</div>';
+  return m.out.evidence.map((e) => {
+    const key = `${m.id}:${e.id}`;
+    const open = UI.A.evOpen[key];
+    return `<div class="ev${open ? ' on' : ''}"><div class="ev-row" data-action="ev" data-id="${m.id}" data-ev="${e.id}" role="button"><span class="muted">${open ? '▾' : '▸'}</span><span class="ev-path">${esc(e.path)}:${evRange(e)}</span><span class="sp"></span><button class="btn link" data-action="open-editor" data-id="${m.id}" data-ev="${e.id}">에디터에서 열기</button></div>${open ? `<div class="ev-body"><div class="ev-why">${esc(e.why)}</div>${codeHtml(e)}</div>` : `<div class="ev-body ev-why">${esc(e.why)}</div>`}</div>`;
+  }).join('');
+}
+
+/* ---------- 변형 B: 트레이 메뉴 큐형 ---------- */
+
+/** B: OS 기본 메뉴. 항목은 한 줄 텍스트만 넣을 수 있다. */
+function bMenu() {
+  const item = (m, mark) => {
+    const suffix = { generating: ' (생성 중…)', failed: ' (실패)', posting: ' (게시 중)' }[m.status] || '';
+    return `<button class="menu-i" data-action="open" data-id="${m.id}"><span class="mk">${mark}</span>${esc(m.sender)} — ${esc(m.out ? m.out.needShort : m.postTitle)}${suffix}</button>`;
+  };
+  const ready = M.filter((m) => m.status === 'ready' || m.status === 'posting');
+  const gen = M.filter((m) => m.status === 'generating');
+  const fail = M.filter((m) => m.status === 'failed');
+  let h = '';
+  if (ready.length) h += `<div class="menu-h">검토 대기</div>${ready.map((m) => item(m, '●')).join('')}`;
+  if (gen.length) h += `<div class="menu-h">생성 중</div>${gen.map((m) => item(m, '')).join('')}`;
+  if (fail.length) h += `<div class="menu-h">실패</div>${fail.map((m) => item(m, '!')).join('')}`;
+  if (!h) h = '<button class="menu-i" disabled>검토할 멘션이 없습니다</button>';
+  const sep = '<div class="menu-sep"></div>';
+  h += `${sep}<button class="menu-i" data-action="b-history"><span class="mk"></span>최근 처리한 멘션…</button><button class="menu-i" data-action="check-now"><span class="mk"></span>지금 확인</button><button class="menu-i" disabled><span class="mk"></span>마지막 확인 ${S.lastCheck}</button>${sep}<button class="menu-i" data-action="nyi" data-what="설정"><span class="mk"></span>설정…</button><button class="menu-i" data-action="nyi" data-what="종료"><span class="mk"></span>종료</button>`;
+  return `<div class="menu">${h}</div>`;
+}
+
+/** B: 멘션 하나만 담은 작은 창. 초안이 가장 크고, 나머지는 접혀 있다. */
+function renderB() {
+  if (!UI.B.windowOpen) return '';
+  const m = sel();
+  const queue = M.filter(isActive);
+  const idx = queue.findIndex((x) => x.id === m.id);
+  const pos = idx >= 0 ? `${idx + 1} / ${queue.length}` : '처리한 멘션';
+  const head = `<div class="b-head"><button class="b-nav" data-action="b-step" data-d="-1" ${idx <= 0 ? 'disabled' : ''}>‹</button><button class="b-nav" data-action="b-step" data-d="1" ${idx < 0 || idx >= queue.length - 1 ? 'disabled' : ''}>›</button><span class="muted" style="margin-left:4px">${pos}</span><span class="sp"></span>${statusTag(m)}</div>`;
+  let body = `<div class="b-meta"><strong style="color:var(--text)">${esc(m.sender)}</strong> · ${esc(m.project)} › ${esc(m.postTitle)} · ${esc(m.where)} · ${esc(m.at)}</div>`;
+  if (m.status === 'generating') {
+    body += `<p class="b-need muted">초안을 만드는 중입니다. 준비되면 트레이 아이콘에 표시됩니다.</p>${progressHtml(m)}`;
+  } else if (m.status === 'failed') {
+    body += errorHtml(m);
+  } else {
+    body += `<p class="b-need"><b>요구</b>${esc(m.out.need)}</p>`;
+    const editing = UI.B.editing && m.status === 'ready';
+    body += editing
+      ? `<textarea id="draft-B-${m.id}" data-input="draft" data-id="${m.id}" rows="9">${esc(m.draft)}</textarea><div class="row-r">${m.edited ? `<span class="muted" style="font-size:12px">편집함</span><button class="btn link" data-action="revert-draft" data-id="${m.id}">되돌리기</button>` : ''}<button class="btn sm" data-action="b-edit">편집 끝내기</button></div>`
+      : `<div class="b-draft-wrap"><div class="b-draft">${esc(m.draft)}</div>${m.status === 'ready' ? `<div class="row-r">${m.edited ? '<span class="muted" style="font-size:12px">편집함</span>' : ''}<button class="btn sm" data-action="b-edit">편집</button></div>` : ''}</div>`;
+  }
+  body += bDisclosures(m);
+  return windowFrame('win-b', '멘션 초안', `${head}<div class="b-body" data-scroll="b-body-${m.id}">${body}</div>${confirmHtml(m)}${footHtml(m)}`);
+}
+
+/** B: 접힌 부가 정보(원문, 근거, 저장소). */
+function bDisclosures(m) {
+  const o = UI.B.open;
+  const disc = (k, label) => `<button class="b-disc" data-action="b-toggle" data-k="${k}"><span class="chev">${o[k] ? '▾' : '▸'}</span>${label}</button>`;
+  let h = disc('orig', `원문과 스레드 (글 ${m.thread.length + 1}개)`);
+  if (o.orig) h += `<div class="b-disc-body"><div class="thread" style="margin-top:0">${threadHtml(m)}</div></div>`;
+  if (m.out && m.status !== 'generating' && m.status !== 'failed') {
+    h += disc('ev', `근거 ${m.out.evidence.length}개`);
+    if (o.ev) {
+      h += `<div class="b-disc-body">${m.out.evidence.length ? m.out.evidence.map((e) => `<div class="ev"><div class="ev-row" data-action="open-editor" data-id="${m.id}" data-ev="${e.id}" role="button" title="에디터에서 열기"><span class="ev-path">${esc(basename(e.path))}:${evRange(e)}</span><span class="ev-why">${esc(e.why)}</span></div></div>`).join('') : '<div class="muted">근거가 없습니다.</div>'}<div class="note">항목을 누르면 에디터에서 해당 줄을 엽니다.</div></div>`;
+    }
+  }
+  h += disc('repo', `저장소 ${esc(m.repo)} · ${repoSourceLabel(m)}`);
+  if (o.repo) h += `<div class="b-disc-body"><div class="note" style="margin-top:0">${esc(m.repoReason)}</div></div>`;
+  return h;
+}
+
+/* ---------- 변형 C: 대조 검증형 ---------- */
+
+/** C: 트레이 아이콘을 누르면 뜨는 웹뷰 팝오버. */
+function cPopover() {
+  const c = counts();
+  const act = M.filter(isActive);
+  const done = M.filter(isDone).slice(0, 2);
+  const rows = (list) => list.map((m) => `<button class="pop-row" data-action="open" data-id="${m.id}"><div class="row-top"><strong>${esc(m.sender)}</strong>${statusTag(m)}</div>${rowLine(m)}<div class="row-sub">${esc(m.project)} · ${esc(m.postTitle)}</div></button>`).join('');
+  return `<div class="popover"><div class="pop-head"><strong>멘션 초안</strong><button class="btn sm" data-action="open-window">창 열기</button></div><div class="pop-count">검토 대기 ${c.ready} · 생성 중 ${c.generating} · 실패 ${c.failed}</div><div class="pop-list">${rows(act) || '<div class="empty">검토할 멘션이 없습니다</div>'}${done.length ? `<div class="a-group-h">최근 처리</div>${rows(done)}` : ''}</div><div class="pop-foot"><span>마지막 확인 ${S.lastCheck}</span><button class="btn link" data-action="check-now">지금 확인</button></div></div>`;
+}
+
+/** C: 원문·초안·근거를 세 열로 대조하는 넓은 창. */
+function renderC() {
+  if (!UI.C.windowOpen) return '';
+  const m = sel();
+  const act = M.filter(isActive);
+  const done = M.filter(isDone);
+  const tabList = UI.C.showDone ? [...act, ...done] : act;
+  const tabs = tabList.map((x) => `<button class="c-tab${x.id === m.id ? ' sel' : ''}" data-action="select" data-id="${x.id}"><div class="row-top"><strong>${esc(x.sender)}</strong>${statusTag(x)}</div><div class="row-sub">${esc(x.out ? x.out.needShort : x.postTitle)}</div></button>`).join('')
+    + `<button class="c-tab more" data-action="c-show-done">${UI.C.showDone ? '처리됨 숨기기' : `처리됨 ${done.length}개 보기`}</button>`;
+  const busy = ['generating', 'posting'].includes(m.status) || isDone(m);
+  const ctx = `<div class="c-ctx"><span>${esc(m.project)} › <strong>${esc(m.postTitle)}</strong></span><span class="muted">${esc(m.sender)} · ${esc(m.where)} 멘션 · ${esc(m.at)}</span><button class="btn link" data-action="open-flow" data-id="${m.id}">Flow에서 열기</button><span class="sp"></span><label>저장소 <select data-change="regen-repo" data-id="${m.id}" ${busy ? 'disabled' : ''}>${REPOS.map((r) => `<option value="${r}" ${r === m.repo ? 'selected' : ''}>${r}</option>`).join('')}</select></label><span class="muted clip repo-why" title="${esc(m.repoReason)}">${repoSourceLabel(m)}${m.repoSource !== 'mapping' ? ` — ${esc(m.repoReason)}` : ''}</span><span class="muted">에이전트 ${esc(m.agent)}</span></div>`;
+  const cols = `<div class="c-cols">${cCol1(m)}${cCol2(m)}${cCol3(m)}</div>`;
+  return windowFrame('win-c', '멘션 초안', `<div class="c-tabs">${tabs}</div>${ctx}${cols}${confirmHtml(m)}${footHtml(m)}`);
+}
+
+/** C 1열: 받은 멘션과 요구. 요구는 고쳐서 다시 만들 수 있다. */
+function cCol1(m) {
+  let h = `<h3>받은 멘션</h3><div class="thread" style="margin-top:0">${threadHtml(m)}</div>`;
+  h += '<h3 class="mt">요구 <span style="font-weight:400">(에이전트가 해석한 내용, 고칠 수 있음)</span></h3>';
+  if (m.out && m.status !== 'generating') {
+    const val = UI.C.needDraft[m.id] ?? m.out.need;
+    const changed = val.trim() && val !== m.out.need;
+    h += `<textarea id="need-C-${m.id}" data-input="need" data-id="${m.id}" rows="3" ${m.status === 'ready' ? '' : 'disabled'}>${esc(val)}</textarea><div class="row-r"><button class="btn sm" data-action="c-need-regen" data-id="${m.id}" ${changed && m.status === 'ready' ? '' : 'disabled'}>요구를 고쳐 재생성</button></div>`;
+  } else {
+    h += '<p class="muted">초안을 만들면 표시됩니다.</p>';
+  }
+  return `<div class="c-col" data-scroll="c1-${m.id}">${h}</div>`;
+}
+
+/** C 2열: 문장마다 근거 번호가 붙은 초안. */
+function cCol2(m) {
+  let h = '<h3>초안</h3>';
+  if (m.status === 'generating') return `<div class="c-col">${h}${progressHtml(m)}<div class="row-r"><button class="btn sm" data-action="cancel-gen" data-id="${m.id}">생성 취소</button></div></div>`;
+  if (m.status === 'failed') return `<div class="c-col">${h}${errorHtml(m)}</div>`;
+  if (UI.C.editing && m.status === 'ready') {
+    h += `<textarea id="draft-C-${m.id}" data-input="draft" data-id="${m.id}" rows="10">${esc(m.draft)}</textarea><div class="row-r">${m.edited ? `<button class="btn link" data-action="revert-draft" data-id="${m.id}">원래 초안으로 되돌리기</button>` : ''}<button class="btn sm" data-action="c-edit">편집 끝내기</button></div><p class="note">편집하면 문장별 근거 번호가 사라집니다.</p>`;
+  } else if (m.edited) {
+    h += `<div class="c-draft plain">${esc(m.draft)}</div><p class="note">편집한 초안에는 근거 번호가 붙지 않습니다.</p>${m.status === 'ready' ? '<div class="row-r"><button class="btn sm" data-action="c-edit">편집</button></div>' : ''}`;
+  } else {
+    const hl = UI.C.hl[m.id];
+    const parts = m.out.sentences.map((s) => {
+      if (s.br) return '<br><br>';
+      const cites = s.ev.length
+        ? s.ev.map((n) => `<button class="cite${hl === n ? ' on' : ''}" data-action="cite" data-id="${m.id}" data-ev="${n}">${n}</button>`).join('')
+        : '<span class="cite none" title="이 문장을 뒷받침하는 근거가 연결되지 않았습니다">근거 없음</span>';
+      return `<span class="sent${s.ev.length ? '' : ' noev'}${hl && s.ev.includes(hl) ? ' hl' : ''}">${esc(s.t)}</span>${cites}`;
+    }).join(' ');
+    h += `<div class="c-draft">${parts}</div>${m.status === 'ready' ? '<div class="row-r"><button class="btn sm" data-action="c-edit">편집</button></div>' : ''}`;
+  }
+  if (m.status === 'ready') {
+    h += `<div class="c-instr"><input type="text" id="instr-C-${m.id}" data-input="instr" data-id="${m.id}" placeholder="지시를 덧붙여 재생성 (예: 더 짧게, 근거 파일명 빼고)" value="${esc(UI.C.instr[m.id] || '')}"><button class="btn sm" data-action="c-instr-regen" data-id="${m.id}">재생성</button></div>`;
+  }
+  return `<div class="c-col" data-scroll="c2-${m.id}">${h}</div>`;
+}
+
+/** C 3열: 근거. 고른 근거의 코드 조각을 펼쳐 보여 준다. */
+function cCol3(m) {
+  let h = '<h3>근거</h3>';
+  if (!m.out || m.status === 'generating') return `<div class="c-col">${h}<p class="muted">초안을 만들면 표시됩니다.</p></div>`;
+  if (m.status === 'failed') return `<div class="c-col">${h}</div>`;
+  if (!m.out.evidence.length) return `<div class="c-col">${h}<p class="muted">근거가 없습니다.</p></div>`;
+  const active = UI.C.activeEv[m.id] ?? m.out.evidence[0].id;
+  h += m.out.evidence.map((e) => {
+    const on = e.id === active;
+    return `<div class="ev${on ? ' on' : ''}"><div class="ev-row" data-action="ev" data-id="${m.id}" data-ev="${e.id}" role="button"><span class="evn">${e.id}</span><span class="ev-path">${esc(basename(e.path))}:${evRange(e)}</span></div><div class="ev-body"><div class="ev-why">${esc(e.why)}</div>${on ? `${codeHtml(e)}<div class="row-r"><span class="muted clip" style="font-size:11px;min-width:0" title="${esc(e.path)}">${esc(e.path)}</span><button class="btn sm" data-action="open-editor" data-id="${m.id}" data-ev="${e.id}">에디터에서 열기</button></div>` : ''}</div></div>`;
+  }).join('');
+  return `<div class="c-col" data-scroll="c3-${m.id}">${h}</div>`;
+}
+
+/* ---------- 변형 D: 확정안 ---------- */
+
+/** D: 작은 창과 펼친 창 중 하나를 그린다. */
+function renderD() {
+  if (!UI.D.windowOpen) return '';
+  return UI.D.expanded ? dExpanded() : dCompact();
+}
+
+/** 망치 아이콘(요구 고치기). */
+const HAMMER_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><g transform="rotate(45 8 8)" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><rect x="3" y="1.5" width="10" height="4" rx="1"/><path d="M8 5.5v9"/></g></svg>';
+
+/** D: 지금 창 모드의 영역별 펼침 상태. 작은 창과 펼친 창이 따로 기억한다. */
+const dOpenMap = () => (UI.D.expanded ? UI.D.openX : UI.D.open);
+
+/** D: 접고 펼 수 있는 영역. extra는 머리 오른쪽에 붙는 버튼이다. */
+function dSection(k, label, content, extra = '') {
+  const open = dOpenMap()[k];
+  const head = `<div class="d-sec-h"><button class="d-tg" data-action="d-toggle" data-k="${k}" aria-expanded="${open}"><span class="chev">${open ? '▾' : '▸'}</span>${label}</button>${extra}</div>`;
+  return `<section class="${UI.D.expanded ? 'sec' : 'd-sec'}">${head}${open ? `<div class="d-sec-body">${content}</div>` : ''}</section>`;
+}
+
+/** D: 원문. 앞선 글(스레드)은 따로 펼친다. */
+function dOrig(m) {
+  const t = UI.D.threadOpen[m.id];
+  const main = t ? `<div class="thread" style="margin-top:0">${threadHtml(m)}</div>` : `<blockquote>${mentionText(m.text)}</blockquote>`;
+  const toggle = m.thread.length ? `<div style="margin-top:4px"><button class="btn link" data-action="d-thread" data-id="${m.id}">${t ? '스레드 접기' : `스레드 보기 (앞선 글 ${m.thread.length}개)`}</button></div>` : '';
+  return main + toggle;
+}
+
+/** D: 요구 고치기 망치 버튼. */
+function dHammer(m) {
+  if (m.status !== 'ready') return '';
+  return `<button class="icon-btn${UI.D.needEdit[m.id] ? ' on' : ''}" data-action="d-need-edit" data-id="${m.id}" title="요구 고치기" aria-label="요구 고치기">${HAMMER_SVG}</button>`;
+}
+
+/** D: 에이전트가 이해한 요구. 고치는 중이면 입력란과 재생성 버튼을 보여 준다. */
+function dNeedBody(m) {
+  if (!(UI.D.needEdit[m.id] && m.status === 'ready')) return `<div>${esc(m.out.need)}</div>`;
+  const val = UI.D.needDraft[m.id] ?? m.out.need;
+  const changed = val.trim() && val !== m.out.need;
+  return `<textarea id="need-D-${m.id}" data-input="need-d" data-id="${m.id}" rows="3">${esc(val)}</textarea><div class="row-r"><button class="btn sm" data-action="d-need-edit" data-id="${m.id}">취소</button><button class="btn sm primary" data-action="d-need-regen" data-id="${m.id}" ${changed ? '' : 'disabled'}>이 요구로 재생성</button></div>`;
+}
+
+/** D: 문장마다 근거 번호(①②…)가 붙은 초안. 편집하면 번호가 사라진다. */
+function dDraft(m) {
+  const ready = m.status === 'ready';
+  if (UI.D.editing && ready) {
+    return `<textarea id="draft-D-${m.id}" data-input="draft" data-id="${m.id}" rows="8">${esc(m.draft)}</textarea><div class="row-r">${m.edited ? `<button class="btn link" data-action="revert-draft" data-id="${m.id}">원래 초안으로 되돌리기</button>` : ''}<button class="btn sm" data-action="d-edit">편집 끝내기</button></div><p class="note">편집하면 문장별 근거 번호가 사라집니다.</p>`;
+  }
+  const editBtn = ready ? '<div class="row-r"><button class="btn sm" data-action="d-edit">편집</button></div>' : '';
+  if (m.edited) return `<div class="c-draft plain">${esc(m.draft)}</div><p class="note">편집한 초안에는 근거 번호가 붙지 않습니다.</p>${editBtn}`;
+  const hl = UI.D.hl[m.id];
+  const parts = m.out.sentences.map((s) => {
+    if (s.br) return '<br><br>';
+    const cites = s.ev.length
+      ? s.ev.map((n) => `<button class="cite d${hl === n ? ' on' : ''}" data-action="cite" data-id="${m.id}" data-ev="${n}">${circled(n)}</button>`).join('')
+      : '<span class="cite none" title="이 문장을 뒷받침하는 근거가 연결되지 않았습니다">근거 없음</span>';
+    return `<span class="sent${s.ev.length ? '' : ' noev'}${hl && s.ev.includes(hl) ? ' hl' : ''}">${esc(s.t)}</span>${cites}`;
+  }).join(' ');
+  return `<div class="c-draft">${parts}</div>${editBtn}`;
+}
+
+/** D: 근거를 코드 대신 자연어 설명과 파일·줄 위치로 보여 준다. */
+function dEvidence(m) {
+  if (!m.out.evidence.length) return '<div class="muted">근거가 없습니다. 초안이 저장소 코드를 근거로 하지 않았습니다.</div>';
+  const hl = UI.D.hl[m.id];
+  return m.out.evidence.map((e) => `<div class="d-ev${hl === e.id ? ' on' : ''}" data-action="d-ev" data-id="${m.id}" data-ev="${e.id}" role="button"><div><span class="d-evn">${circled(e.id)}</span>${esc(EXPLAIN[e.path] || e.why)}</div><div class="d-loc"><span title="${esc(e.path)}">${esc(basename(e.path))} · ${lineLabel(e)}</span><button class="btn link" data-action="open-editor" data-id="${m.id}" data-ev="${e.id}">에디터에서 열기</button></div></div>`).join('');
+}
+
+/** D: 지시를 덧붙여 다시 만드는 입력 줄. 재생성 메뉴에서 연다. */
+function dInstrStrip(m) {
+  if (!UI.D.instrOpen || m.status !== 'ready') return '';
+  return `<div class="strip"><input type="text" id="instr-D-${m.id}" data-input="instr-d" data-id="${m.id}" placeholder="지시 (예: 더 짧게, 존댓말로, 결론 먼저)" value="${esc(UI.D.instr[m.id] || '')}"><button class="btn sm" data-action="d-instr-open">취소</button><button class="btn sm primary" data-action="d-instr-regen" data-id="${m.id}">재생성</button></div>`;
+}
+
+/** D: 트레이를 누르면 뜨는 작은 창. 멘션 하나씩, 초안이 먼저 보인다. */
+function dCompact() {
+  const m = sel();
+  const queue = M.filter(isActive);
+  const idx = queue.findIndex((x) => x.id === m.id);
+  const pos = idx >= 0 ? `${idx + 1} / ${queue.length}` : '처리한 멘션';
+  const head = `<div class="b-head"><button class="b-nav" data-action="b-step" data-d="-1" ${idx <= 0 ? 'disabled' : ''}>‹</button><button class="b-nav" data-action="b-step" data-d="1" ${idx < 0 || idx >= queue.length - 1 ? 'disabled' : ''}>›</button><span class="muted" style="margin-left:4px">${pos}</span><span class="sp"></span>${statusTag(m)}<button class="btn sm" data-action="d-expand">펼쳐 보기</button></div>`;
+  let body = `<div class="b-meta"><strong style="color:var(--text)">${esc(m.sender)}</strong> · ${esc(m.project)} › ${esc(m.postTitle)} · ${esc(m.where)} · ${esc(m.at)}</div>`;
+  // 모든 영역을 접고 펼 수 있다. 처음에는 원문·요구·초안만 펼쳐 둔다.
+  body += dSection('orig', '원문', dOrig(m));
+  if (m.status === 'generating') {
+    body += dSection('progress', '진행', `<p class="b-need muted">초안을 만드는 중입니다. 준비되면 트레이 아이콘에 표시됩니다.</p>${progressHtml(m)}`);
+  } else if (m.status === 'failed') {
+    body += dSection('progress', '오류', errorHtml(m));
+  } else {
+    body += dSection('need', '에이전트가 이해한 요구', dNeedBody(m), dHammer(m)) + dSection('draft', '초안', dDraft(m));
+    body += dSection('ev', `근거 ${m.out.evidence.length}개`, dEvidence(m));
+  }
+  body += dSection('repo', `저장소 ${esc(m.repo)} · ${repoSourceLabel(m)}`, `<div class="note" style="margin-top:0">${esc(m.repoReason)}</div>`);
+  return windowFrame('win-b', '멘션 초안', `${head}<div class="b-body" data-scroll="d-body-${m.id}">${body}</div>${confirmHtml(m)}${dInstrStrip(m)}${footHtml(m)}`);
+}
+
+/** D: 펼친 창. A의 목록+상세에 자연어 근거와 요구 고치기를 얹었다. */
+function dExpanded() {
+  const m = sel();
+  // 작은 창과 같은 영역 머리를 쓰되, 처음에는 모두 펼쳐 둔다.
+  let body = dSection('orig', '원문', dOrig(m));
+  const repo = dSection('repo', '저장소', `<div class="repo-line"><code>${esc(m.repo)}</code><span class="muted">${repoSourceLabel(m)}</span></div>${m.repoSource !== 'mapping' ? `<div class="note">${esc(m.repoReason)}</div>` : ''}`);
+  if (m.status === 'generating') {
+    body += repo + dSection('progress', '진행', progressHtml(m));
+  } else if (m.status === 'failed') {
+    body += repo + dSection('progress', '오류', errorHtml(m));
+  } else {
+    body += dSection('need', '에이전트가 이해한 요구', dNeedBody(m), dHammer(m)) + repo + dSection('draft', '초안', dDraft(m)) + dSection('ev', `근거 ${m.out.evidence.length}개`, dEvidence(m));
+  }
+  const head = `<header class="a-head"><div><h2>${esc(m.postTitle)}</h2><div class="meta">${esc(m.project)} · ${esc(m.sender)}님이 ${esc(m.where)}에서 멘션 · ${esc(m.at)} · <button class="btn link" data-action="open-flow" data-id="${m.id}">Flow에서 열기</button></div></div><div style="display:flex;gap:8px;align-items:center">${statusTag(m)}<button class="btn sm" data-action="d-expand">접어 보기</button></div></header>`;
+  const detail = `<section class="a-detail">${head}<div class="a-scroll" data-scroll="d-detail-${m.id}">${body}</div>${confirmHtml(m)}${dInstrStrip(m)}${footHtml(m)}</section>`;
+  return windowFrame('win-a', '멘션 초안', `<div class="a-layout">${aList()}${detail}</div>`);
+}
+
+/* ---------- 공통 바닥 줄 ---------- */
+
+/** 상태와 변형에 따른 행동 버튼 줄. */
+function footHtml(m) {
+  const id = m.id;
+  let f = '';
+  switch (m.status) {
+    case 'ready': {
+      let regen = `<button class="btn" data-action="regen" data-id="${id}">재생성</button>`;
+      if (S.variant === 'B') {
+        regen = `<div class="dd-wrap"><button class="btn" data-action="b-regen-menu">재생성 ▾</button>${UI.B.regenMenu ? `<div class="ddmenu"><button class="menu-i" data-action="regen" data-id="${id}">같은 저장소로 다시 만들기</button><div class="menu-sep"></div><div class="menu-h">다른 저장소로 다시 만들기</div>${REPOS.filter((r) => r !== m.repo).map((r) => `<button class="menu-i" data-action="regen-to" data-id="${id}" data-repo="${r}">${r}</button>`).join('')}</div>` : ''}</div>`;
+      }
+      if (S.variant === 'D') {
+        regen = `<div class="dd-wrap"><button class="btn" data-action="d-regen-menu">재생성 ▾</button>${UI.D.regenMenu ? `<div class="ddmenu"><button class="menu-i" data-action="regen" data-id="${id}">다시 만들기</button><button class="menu-i" data-action="d-instr-open">지시를 덧붙여 다시 만들기…</button><div class="menu-sep"></div><div class="menu-h">다른 저장소로 다시 만들기</div>${REPOS.filter((r) => r !== m.repo).map((r) => `<button class="menu-i" data-action="regen-to" data-id="${id}" data-repo="${r}">${r}</button>`).join('')}</div>` : ''}</div>`;
+      }
+      // C는 재생성을 초안 열의 지시 입력과 저장소 선택으로 한다.
+      if (S.variant === 'C') regen = '<span class="muted" style="font-size:12px">⌘↵ 게시</span>';
+      f = `<button class="btn" data-action="ignore" data-id="${id}">무시</button><span class="sp"></span>${regen}<button class="btn primary" data-action="post" data-id="${id}">게시</button>`;
+      break;
+    }
+    case 'posting':
+      f = m.postIn != null
+        ? `<span>${m.postIn}초 뒤 내 명의로 Flow에 게시합니다.</span><span class="sp"></span><button class="btn" data-action="post-undo" data-id="${id}">게시 취소</button>`
+        : '<span class="muted">게시 중…</span>';
+      break;
+    case 'generating':
+      f = `<span class="muted">초안을 만드는 중입니다.</span><span class="sp"></span>${S.variant === 'C' ? '' : `<button class="btn" data-action="cancel-gen" data-id="${id}">생성 취소</button>`}`;
+      break;
+    case 'failed':
+      f = `<button class="btn" data-action="ignore" data-id="${id}">무시</button><span class="sp"></span><button class="btn primary" data-action="retry" data-id="${id}">다시 시도</button>`;
+      break;
+    case 'posted':
+      f = `<span class="muted">${esc(m.postedAt)} 게시함</span><span class="sp"></span><button class="btn" data-action="open-flow" data-id="${id}">Flow에서 보기</button>`;
+      break;
+    case 'ignored':
+      f = `<span class="muted">무시한 멘션입니다.</span><span class="sp"></span><button class="btn" data-action="restore" data-id="${id}">되돌리기</button>`;
+      break;
+  }
+  return `<footer class="foot">${f}</footer>`;
+}
+
+/* ---------- 프로토타입 조작부 ---------- */
+
+/** 상태 보기 패널 내용. */
+function stateDump() {
+  const lines = [`variant=${S.variant} os=${S.os} notif=${S.notifMode} nextFails=${S.nextFails}`, `selected=${S.selected} confirm=${S.confirm ? S.confirm.kind : '-'}`, '', 'mentions:'];
+  M.forEach((m) => lines.push(`  ${m.id.padEnd(3)} ${m.sender} ${m.status}${m.postIn != null ? `(${m.postIn}s)` : ''}${m.edited ? ' edited' : ''} repo=${m.repo}(${m.repoSource}) gen=${m.gen}`));
+  const ui = UI[S.variant];
+  lines.push('', `ui.${S.variant}=${JSON.stringify(ui)}`, '', 'log:', ...S.log.map((l) => `  ${l}`));
+  return lines.join('\n');
+}
+
+/** 변형 전환 막대와 시뮬레이션 패널. */
+function protoHtml() {
+  const v = VARIANTS.find((x) => x.key === S.variant);
+  const bar = `<div class="proto-bar"><button data-action="variant" data-d="-1" title="이전 변형 (←)">‹</button><span class="lbl">${v.key} · ${v.name}</span><button data-action="variant" data-d="1" title="다음 변형 (→)">›</button></div>`;
+  const b = (on, attrs, label) => `<button class="${on ? 'on' : ''}" ${attrs}>${label}</button>`;
+  const sim = `<div class="proto-sim"><div class="h"><strong>프로토타입 조작</strong><button data-action="sim-collapse">${S.simOpen ? '접기' : '펴기'}</button></div>${S.simOpen ? `
+    <div class="row"><span>OS</span>${b(S.os === 'mac', 'data-action="sim-os" data-os="mac"', 'macOS')}${b(S.os === 'win', 'data-action="sim-os" data-os="win"', 'Windows')}</div>
+    <div class="row"><span>OS 알림</span>${b(S.notifMode === 'works', 'data-action="sim-notif" data-mode="works"', '클릭 동작')}${b(S.notifMode === 'noclick', 'data-action="sim-notif" data-mode="noclick"', '클릭 안 됨')}${b(S.notifMode === 'none', 'data-action="sim-notif" data-mode="none"', '안 뜸')}</div>
+    <div class="row">${b(false, 'data-action="sim-new"', '새 멘션 도착')}${b(S.nextFails, 'data-action="sim-fail"', '다음 생성 실패')}${b(S.showState, 'data-action="sim-state"', '상태 보기')}</div>
+    <div class="hint">${esc(v.hint)}</div>` : ''}</div>`;
+  const state = S.showState ? `<pre class="proto-state">${esc(stateDump())}</pre>` : '';
+  return bar + sim + state;
+}
+
+/* ---------- 그리기와 이벤트 ---------- */
+
+/** 다시 그리기 전에 입력 포커스와 스크롤 위치를 기억한다. */
+function captureView() {
+  const a = document.activeElement;
+  const scroll = {};
+  document.querySelectorAll('[data-scroll]').forEach((el) => { scroll[el.dataset.scroll] = el.scrollTop; });
+  return { id: a && a.id, s: a && a.selectionStart, e: a && a.selectionEnd, scroll };
+}
+
+/** 다시 그린 뒤 포커스와 스크롤 위치를 되살린다. */
+function restoreView(k) {
+  document.querySelectorAll('[data-scroll]').forEach((el) => {
+    if (k.scroll[el.dataset.scroll] != null) el.scrollTop = k.scroll[el.dataset.scroll];
+  });
+  if (!k.id) return;
+  const el = document.getElementById(k.id);
+  if (!el) return;
+  el.focus();
+  if (k.s != null && el.setSelectionRange) {
+    try { el.setSelectionRange(k.s, k.e); } catch (err) { /* 선택 범위를 못 쓰는 입력은 넘어간다 */ }
+  }
+}
+
+/** 전체를 다시 그린다. */
+function render() {
+  const view = captureView();
+  document.body.className = S.os;
+  const variant = { A: renderA, B: renderB, C: renderC, D: renderD }[S.variant]();
+  let toastHtml = '';
+  // D: 다음 멘션으로 넘어간 뒤에도 게시 취소를 할 수 있게 토스트로 남긴다.
+  if (S.toast && S.toast.postId) {
+    const p = byId(S.toast.postId);
+    if (p.status === 'posting') toastHtml = `<div class="toast"><span>${esc(p.sender)}님 멘션에 ${p.postIn}초 뒤 게시합니다.</span><button class="btn link" data-action="toast-action">게시 취소</button></div>`;
+  } else if (S.toast) {
+    toastHtml = `<div class="toast"><span>${esc(S.toast.text)}</span>${S.toast.action ? `<button class="btn link" data-action="toast-action">${S.toast.action.label}</button>` : ''}</div>`;
+  }
+  document.getElementById('desktop').innerHTML = osChromeHtml() + notifHtml() + variant + toastHtml;
+  document.getElementById('proto').innerHTML = protoHtml();
+  restoreView(view);
+}
+
+/** 변형을 앞뒤로 바꾼다. 주소의 ?variant= 도 함께 바꾼다. */
+function cycleVariant(d) {
+  const i = VARIANTS.findIndex((v) => v.key === S.variant);
+  S.variant = VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].key;
+  S.confirm = null;
+  // data: 주소처럼 주소를 바꿀 수 없는 곳에서 열면 그냥 넘어간다.
+  try { history.replaceState(null, '', `?variant=${S.variant}`); } catch (err) { /* 무시 */ }
+}
+
+/** data-action 이름별 처리. */
+const ACTIONS = {
+  variant: (d) => cycleVariant(Number(d.d)),
+  tray() {
+    if (S.variant === 'D') {
+      // 트레이를 누르면 항상 작은 창으로 연다.
+      if (!UI.D.windowOpen) UI.D.expanded = false;
+      UI.D.windowOpen = !UI.D.windowOpen;
+    }
+    if (S.variant === 'A') UI.A.windowOpen = !UI.A.windowOpen;
+    if (S.variant === 'B') UI.B.menuOpen = !UI.B.menuOpen;
+    if (S.variant === 'C') UI.C.popoverOpen = !UI.C.popoverOpen;
+  },
+  'close-window': () => { UI[S.variant].windowOpen = false; S.confirm = null; },
+  'open-window': () => { UI[S.variant].windowOpen = true; UI.C.popoverOpen = false; },
+  select: (d) => { S.selected = d.id; S.confirm = null; UI.B.editing = false; UI.C.editing = false; UI.D.editing = false; UI.D.instrOpen = false; },
+  open: (d) => openMention(d.id),
+  notif(d) {
+    S.osNotif = null;
+    // 미서명 앱에서 알림 클릭이 전달되지 않는 경우
+    if (S.notifMode === 'noclick') { log('알림 클릭이 앱에 전달되지 않음(시뮬레이션) → 트레이 아이콘으로 찾아가야 함'); return; }
+    log(`알림 클릭 → 검토 화면: ${byId(d.id).sender}`);
+    openMention(d.id);
+  },
+  'notif-close': () => { S.osNotif = null; },
+  'open-flow': (d) => toast(`브라우저에서 Flow 게시물을 엽니다: ${byId(d.id).postTitle} (프로토타입이라 열지 않음)`),
+  'open-editor'(d) {
+    const e = byId(d.id).out.evidence.find((x) => x.id === Number(d.ev));
+    toast(`에디터에서 엽니다: ${e.path}:${e.start} (프로토타입이라 열지 않음)`);
+    log(`에디터 열기: ${basename(e.path)}:${e.start}`);
+  },
+  post(d) {
+    const m = byId(d.id);
+    // B는 확인 줄을 거치고, A·C는 바로 시작하되 5초 동안 취소할 수 있다.
+    if (S.variant === 'B') S.confirm = { kind: 'post', id: m.id };
+    else startPost(m, true);
+    // D는 바로 다음 멘션으로 넘어가고, 취소는 토스트에서 한다.
+    if (S.variant === 'D') { clearTimeout(toast.timer); S.toast = { postId: m.id }; advanceQueue(m.id); }
+  },
+  'post-confirm': (d) => { S.confirm = null; startPost(byId(d.id), false); },
+  'post-undo': (d) => { const m = byId(d.id); m.status = 'ready'; m.postIn = null; log(`게시 취소: ${m.sender}`); },
+  regen: (d) => regenRequest(byId(d.id), {}),
+  'regen-to': (d) => regenRequest(byId(d.id), { repo: d.repo }),
+  'regen-confirm': () => { const c = S.confirm; regenRequest(byId(c.id), { ...c.opts, force: true }); },
+  'confirm-cancel': () => { S.confirm = null; },
+  retry: (d) => regenRequest(byId(d.id), {}),
+  'cancel-gen'(d) {
+    const m = byId(d.id);
+    m.genToken = null;
+    m.status = m.out ? 'ready' : 'failed';
+    if (!m.out) { m.error = '생성을 취소했습니다.'; m.errorDetail = null; }
+    log(`생성 취소: ${m.sender}`);
+  },
+  ignore(d) {
+    const m = byId(d.id);
+    m.status = 'ignored';
+    log(`무시: ${m.sender}`);
+    toast(`${m.sender}님 멘션을 무시했습니다.`, { label: '되돌리기', id: m.id });
+    if (S.variant === 'B' || S.variant === 'D') advanceQueue(m.id);
+  },
+  restore(d) { const m = byId(d.id); m.status = m.out ? 'ready' : 'failed'; log(`되돌리기: ${m.sender}`); },
+  'toast-action'() {
+    // D: 게시 취소
+    if (S.toast && S.toast.postId) {
+      const p = byId(S.toast.postId);
+      p.status = 'ready';
+      p.postIn = null;
+      S.selected = p.id;
+      S.toast = null;
+      log(`게시 취소: ${p.sender}`);
+      return;
+    }
+    const a = S.toast && S.toast.action;
+    if (!a) return;
+    const m = byId(a.id);
+    m.status = m.out ? 'ready' : 'failed';
+    S.selected = m.id;
+    S.toast = null;
+    log(`무시 되돌리기: ${m.sender}`);
+  },
+  'revert-draft': (d) => { const m = byId(d.id); m.draft = toText(m.out.sentences); m.edited = false; },
+  'a-thread': (d) => { UI.A.threadOpen[d.id] = !UI.A.threadOpen[d.id]; },
+  ev(d) {
+    const key = `${d.id}:${d.ev}`;
+    if (S.variant === 'A') UI.A.evOpen[key] = !UI.A.evOpen[key];
+    if (S.variant === 'C') { UI.C.activeEv[d.id] = Number(d.ev); UI.C.hl[d.id] = Number(d.ev); }
+  },
+  'b-step'(d) {
+    const queue = M.filter(isActive);
+    const i = queue.findIndex((x) => x.id === S.selected);
+    const next = queue[i + Number(d.d)];
+    if (next) { S.selected = next.id; S.confirm = null; UI.B.editing = false; UI.D.editing = false; UI.D.instrOpen = false; }
+  },
+  'b-toggle': (d) => { UI.B.open[d.k] = !UI.B.open[d.k]; },
+  'b-edit': () => { UI.B.editing = !UI.B.editing; },
+  'b-regen-menu': () => { UI.B.regenMenu = !UI.B.regenMenu; },
+  'b-history'() {
+    const m = M.find(isDone);
+    if (m) openMention(m.id);
+  },
+  'c-edit': () => { UI.C.editing = !UI.C.editing; },
+  cite(d) {
+    UI.C.activeEv[d.id] = Number(d.ev);
+    UI.C.hl[d.id] = Number(d.ev);
+    // D: 같은 번호를 다시 누르면 강조를 끈다. 작은 창에서는 근거 칸을 펼친다.
+    UI.D.hl[d.id] = UI.D.hl[d.id] === Number(d.ev) ? null : Number(d.ev);
+    UI.D.open.ev = true;
+    UI.D.openX.ev = true;
+  },
+  'd-ev': (d) => { UI.D.hl[d.id] = UI.D.hl[d.id] === Number(d.ev) ? null : Number(d.ev); },
+  'd-expand': () => { UI.D.expanded = !UI.D.expanded; UI.D.regenMenu = false; },
+  'd-toggle': (d) => { const o = dOpenMap(); o[d.k] = !o[d.k]; },
+  'd-thread': (d) => { UI.D.threadOpen[d.id] = !UI.D.threadOpen[d.id]; },
+  'd-edit': () => { UI.D.editing = !UI.D.editing; },
+  'd-need-edit'(d) {
+    UI.D.needEdit[d.id] = !UI.D.needEdit[d.id];
+    delete UI.D.needDraft[d.id];
+    // 접힌 상태에서 망치를 누르면 요구 영역을 펼친다.
+    if (UI.D.needEdit[d.id]) dOpenMap().need = true;
+  },
+  'd-need-regen'(d) {
+    UI.D.needEdit[d.id] = false;
+    regenRequest(byId(d.id), { need: UI.D.needDraft[d.id] });
+  },
+  'd-regen-menu': () => { UI.D.regenMenu = !UI.D.regenMenu; },
+  'd-instr-open': () => { UI.D.instrOpen = !UI.D.instrOpen; UI.D.regenMenu = false; },
+  'd-instr-regen'(d) {
+    UI.D.instrOpen = false;
+    regenRequest(byId(d.id), { instruction: (UI.D.instr[d.id] || '').trim() || undefined });
+  },
+  'c-show-done': () => { UI.C.showDone = !UI.C.showDone; },
+  'c-need-regen': (d) => regenRequest(byId(d.id), { need: UI.C.needDraft[d.id] }),
+  'c-instr-regen': (d) => regenRequest(byId(d.id), { instruction: (UI.C.instr[d.id] || '').trim() || undefined }),
+  'check-now': () => { S.lastCheck = '오후 2:31'; toast('새 멘션이 없습니다.'); log('지금 확인'); },
+  nyi: (d) => toast(`${d.what}은 이 프로토타입에 없습니다.`),
+  'sim-os': (d) => { S.os = d.os; },
+  'sim-notif': (d) => { S.notifMode = d.mode; },
+  'sim-new': () => simArrival(),
+  'sim-fail': () => { S.nextFails = !S.nextFails; },
+  'sim-state': () => { S.showState = !S.showState; },
+  'sim-collapse': () => { S.simOpen = !S.simOpen; },
+};
+
+/** 클릭 위임. 메뉴·팝오버 바깥을 누르면 닫는다. */
+document.addEventListener('click', function handleClick(e) {
+  let changed = false;
+  // 트레이 메뉴·팝오버 바깥 클릭
+  if (!e.target.closest('.tray-wrap') && !e.target.closest('#proto') && (UI.B.menuOpen || UI.C.popoverOpen)) {
+    UI.B.menuOpen = false;
+    UI.C.popoverOpen = false;
+    changed = true;
+  }
+  // B 재생성 드롭다운 바깥 클릭
+  if (!e.target.closest('.dd-wrap') && (UI.B.regenMenu || UI.D.regenMenu)) { UI.B.regenMenu = false; UI.D.regenMenu = false; changed = true; }
+  const el = e.target.closest('[data-action]');
+  if (el && !el.disabled && ACTIONS[el.dataset.action]) {
+    ACTIONS[el.dataset.action](el.dataset, e);
+    changed = true;
+  }
+  if (changed) render();
+});
+
+/** 입력 위임. 다시 그리지 않고 값만 저장해 커서가 튀지 않게 한다. */
+document.addEventListener('input', function handleInput(e) {
+  const t = e.target;
+  const m = t.dataset.id && byId(t.dataset.id);
+  if (!m) return;
+  if (t.dataset.input === 'draft') {
+    const was = m.edited;
+    m.draft = t.value;
+    m.edited = t.value !== toText(m.out.sentences);
+    if (was !== m.edited) render();
+  }
+  if (t.dataset.input === 'need') {
+    const before = UI.C.needDraft[m.id] ?? m.out.need;
+    UI.C.needDraft[m.id] = t.value;
+    // 버튼 활성 여부가 바뀔 때만 다시 그린다.
+    if ((before !== m.out.need) !== (t.value !== m.out.need)) render();
+  }
+  if (t.dataset.input === 'instr') UI.C.instr[m.id] = t.value;
+  if (t.dataset.input === 'need-d') {
+    const before = UI.D.needDraft[m.id] ?? m.out.need;
+    UI.D.needDraft[m.id] = t.value;
+    if ((before !== m.out.need) !== (t.value !== m.out.need)) render();
+  }
+  if (t.dataset.input === 'instr-d') UI.D.instr[m.id] = t.value;
+});
+
+/** 선택 상자 위임: 저장소를 바꾸면 그 저장소로 다시 만든다. */
+document.addEventListener('change', function handleChange(e) {
+  const t = e.target;
+  if (t.dataset.change !== 'regen-repo' || !t.value) return;
+  const m = byId(t.dataset.id);
+  if (t.value === m.repo) return;
+  regenRequest(m, { repo: t.value });
+  render();
+});
+
+/** 키보드: ←/→ 변형 전환, C에서 ⌘↵ 게시, Esc 메뉴 닫기. */
+document.addEventListener('keydown', function handleKey(e) {
+  const typing = e.target.closest && e.target.closest('input, textarea, select, [contenteditable]');
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && S.variant === 'C' && UI.C.windowOpen) {
+    const m = sel();
+    if (m.status === 'ready') { startPost(m, true); render(); e.preventDefault(); }
+    return;
+  }
+  if (e.key === 'Escape') { UI.B.menuOpen = false; UI.C.popoverOpen = false; UI.B.regenMenu = false; UI.D.regenMenu = false; UI.D.instrOpen = false; S.confirm = null; render(); return; }
+  // D: 지시 입력 줄에서 Enter로 재생성
+  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.input === 'instr-d') { ACTIONS['d-instr-regen'](e.target.dataset); render(); return; }
+  if (typing) return;
+  if (e.key === 'ArrowLeft') { cycleVariant(-1); render(); }
+  if (e.key === 'ArrowRight') { cycleVariant(1); render(); }
+});
+
+/** 처음 상태: 주소의 변형을 읽고, 생성 중인 멘션 하나를 실제로 진행시킨다. */
+(function boot() {
+  const v = new URLSearchParams(location.search).get('variant');
+  if (VARIANTS.some((x) => x.key === v)) S.variant = v;
+  render();
+  generate(byId('m3'));
+})();
+</script>
+</body>
+</html>

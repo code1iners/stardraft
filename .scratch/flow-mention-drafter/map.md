@@ -27,7 +27,7 @@ Created: 2026-10-14
   - research 티켓: `research`
   - 화면이 걸린 결정: `ui-design`을 함께 쓴다.
 - **문서 언어**: 이 지도의 모든 문서는 한국어로 쓴다.
-- **조사 결과 위치**: 저장소에 아직 커밋이 없다. 그래서 조사 결과는 research 브랜치 대신 이 폴더의 `research/`에 파일로 두고, 티켓에서 링크한다.
+- **조사 결과 위치**: 조사 결과는 research 브랜치 대신 이 폴더의 `research/`에 파일로 두고, 티켓에서 링크한다. 이슈 트래커가 로컬 마크다운이라서, 티켓과 조사 결과가 같은 작업 트리에 있어야 링크가 바로 열린다.
 - **Flow API 사실**: [flow-api-facts.md](research/flow-api-facts.md)
   - 아웃고잉 웹훅이 없다.
   - 멘션 감지 수단은 개인 키로 `/user/alarms?filters=MENTION`을 폴링하는 것뿐이다.

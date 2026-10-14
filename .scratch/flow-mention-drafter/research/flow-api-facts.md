@@ -3,6 +3,7 @@
 - 조사일: 2026-10-14 (API 포털 v2.1.0 기준)
 - 출처: https://api.flow.team/docs
 - 조사 방법: 포털 페이지는 SPA라서 엔드포인트 상세 설명이 페이지 HTML에 없다. 공개 JS 번들에 들어 있는 문서 텍스트를 읽었다. 로그인이나 키 호출은 하지 않았다.
+- 재확인: 2026-10-14에 실호출 티켓을 실행하기 전에 같은 방법으로 알림·게시글·댓글 명세를 다시 읽었다. 그때 보탠 내용에는 "(재확인)"을 붙였다.
 - 실제 호출로 검증해야 하는 항목은 [Flow 알림 API 실호출로 멘션 데이터 확인](../issues/01-flow-alarm-api-check.md) 티켓에서 다룬다.
 
 ## 인증
@@ -37,17 +38,40 @@
   - 응답 필드: `alarmId`, `projectId`, `postId`, `remarkId`, `replyId`, `receiverId`, `registerId`, `registerName`, `registeredDateTime`, `message`, `content`, `alarmType`, `mentionYn`
   - 개인 키로 "나에게 온 멘션"을 조회할 수 있다.
   - 출처: https://api.flow.team/docs/api/user/alarms
+  - (재확인) 쿼리
+    - `filters`, `readYn`, `cursor`, `size`는 모두 선택값이다.
+    - `filters`의 허용 값은 `MENTION`, `REGISTRANT`, `WORKER` 세 가지이고, 쉼표로 여러 개를 고를 수 있다.
+    - `cursor`는 0 이상의 숫자다. `readYn`을 생략했을 때의 동작은 문서에 없다.
+  - (재확인) 응답 구조
+    - `response.data.alarms` 아래에 `hasNext`, `lastCursor`, `alarms[]`가 온다. `lastCursor`를 다음 조회의 `cursor`로 쓴다.
+  - (재확인) 응답 필드
+    - 위 목록에 `readYn`, `registrantYn`(내가 등록한 글 알림 여부), `workerYn`이 더 있다. `mentionYn`과 이 두 필드는 필수 필드다.
+    - 문서 예시에서는 댓글이 없는 알림의 `remarkId`, `replyId`가 `"-1"`이다.
+    - 문서 예시에서는 `registeredDateTime`이 `yyyyMMddHHmmss` 형식이다.
+    - 문서 예시에서는 `message`가 "OOO님이 회원님을 언급했습니다." 같은 시스템 문구이고, `content`는 원문 본문이다.
 - **읽음 처리**: `PATCH /user/alarms/read`, `PATCH /user/alarms/read/all`
+  - (재확인) 단건 처리는 body에 `alarmId`를 넣는다. 서버는 그 알림의 프로젝트, 게시글, 댓글 정보를 써서 읽음 처리한다.
+  - (재확인) 전체 처리는 body가 비어 있으면 모든 알림을 처리한다. `projectId`를 넣으면 그 Flow 프로젝트의 알림만 처리한다.
 - **문서로 확인하지 못한 것**: 알림 목록에 **채팅 멘션이 포함되는지**. 응답 필드가 프로젝트·게시글·댓글 기준이라 채팅은 빠져 있을 수 있다.
 
 ## 맥락 조회
 
 - **게시물** (개인 키): `GET /user/posts/projects/{projectId}`, 게시글 단건 상세, 업무 필터 조회
   - 상세 응답 필드: `content`, `htmlContent`, `contentJsonYn`
+  - (재확인) 단건 상세의 경로는 `GET /user/posts/{postId}`(operationId `getProjectPost`)다. `projectId`는 넣지 않는다.
+  - (재확인) 상세 응답에는 `title`, `registerId`, `registerName`, `remarkCount`(댓글 수)도 있다.
 - **댓글** (개인 키)
   - `GET /user/comments/{postId}`: `replyYn=Y`를 주면 댓글마다 대댓글을 최대 10개까지 함께 준다.
   - `GET /user/comments/{postId}/replies/{commentId}`
   - 출처: https://api.flow.team/docs/api/user/comments
+  - (재확인) 조회 권한은 게시글 단건 조회 권한과 같다.
+  - (재확인) 댓글 목록의 `size`는 기본 100이다. 페이징은 부모 댓글을 기준으로 한다.
+    - `replyYn=Y`이면 댓글마다 `replies`와 `replyHasNext`가 온다.
+    - 대댓글 목록 API는 `replyId` 오름차순이고, `cursor`는 기본 0이다.
+  - (재확인) 댓글 응답 필드
+    - `commentId`, `contents`, `registerId`, `registerName`, `registerDivisionName`, `attachments`
+    - 대댓글에는 `replyId`와 `parentCommentId`가 더 있다.
+    - `encrypted`(암호화 여부) 필드도 있다. 값이 `Y`일 때 `contents`가 평문으로 오는지는 문서에 없다.
 - **채팅**
   - 채팅 메시지 내용을 조회하는 REST API는 없다.
   - v1(관리자 키)에서는 채팅방 정보만 조회할 수 있다.

@@ -56,6 +56,7 @@ Created: 2026-10-14
 <!-- 닫힌 티켓마다 한 줄씩: [티켓 이름](issues/NN-slug.md): 결론 요약 -->
 - [CLI 에이전트 비대화형 실행 능력 조사](issues/02-cli-agent-headless-research.md): Claude Code(`claude -p --json-schema`)와 Codex(`codex exec --output-schema`) 모두 비대화형 구조화 출력과 읽기 전용 실행이 되지만, 비밀 파일 제외는 Codex에서 베타 기능에 의존하고, `claude -p`는 저장소 훅을 막는 플래그가 필수다.
 - [트레이 데스크톱 앱 프레임워크와 미서명 배포 조사](issues/03-tray-app-framework-research.md): 미서명 전제에서는 Tauri v2가 유리하다(Electron 42 이상은 macOS 알림과 로그인 항목에 서명이 필요하다). 다만 Tauri의 macOS 알림 클릭은 폐기 예정 API에 기대 실기 검증이 필요하고, Apple Silicon에는 ad-hoc 서명이 필수이며, Windows 스마트 앱 컨트롤이 켜진 PC에서는 미서명 앱이 실행되지 않는다.
+- [Flow 알림 API 실호출로 멘션 데이터 확인](issues/01-flow-alarm-api-check.md): 업무 멘션 알림은 `mentionYn`으로만 구분되고(`alarmType`은 `null`), `@전체`도 섞여 온다. 그래서 게시글·댓글의 `@[이름](ID)` 표기에 내 ID가 있는지로 걸러야 한다. 게시글·댓글 API로 맥락을 가져올 수 있지만, 대댓글이 10개를 넘으면 대댓글 API로 페이지를 더 넘겨야 한다. GET 조회는 읽음 상태를 바꾸지 않는다. 채팅 멘션 확인은 구현 후로 넘겼다.
 
 ## Not yet specified
 
@@ -63,7 +64,6 @@ Created: 2026-10-14
   - GUI 앱은 셸 PATH를 물려받지 못한다. 그래서 온보딩에 CLI 경로를 찾는 단계와 로그인 상태(`claude auth status`, `codex login status`)를 점검하는 단계가 들어가야 한다.
   - 미서명 앱은 업데이트할 때마다 Keychain 접근 허용을 다시 물을 수 있다. 개인 API 키를 어디에 보관할지 정할 때 이 점을 고려한다.
   - 데스크톱 프레임워크가 정해진 뒤에 구체화한다.
-- **게시 세부**: 초안을 원 게시물의 댓글로 달지, 멘션이 달린 댓글의 대댓글로 달지 정해야 한다. 근거를 게시 본문에 넣을지 검토 화면에만 둘지도 남아 있다. 검토 화면 프로토타입과 멘션 감지 방식 결정 뒤에 구체화한다.
 
 ## Out of scope
 

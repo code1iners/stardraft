@@ -1,0 +1,2481 @@
+{
+  "probe": "flow-alarm-probe",
+  "ranAt": "2026-10-14T04:17:37+00:00",
+  "note": "이름·이메일·본문 글자는 가렸다(한글→가, 영문→a/A, 숫자→0). ID·유형 코드·일시는 원본이다.",
+  "summary": {
+    "markers": {
+      "PROBE-POST": {
+        "place": "업무 게시물 본문",
+        "alarmIds": [],
+        "inPosts": []
+      },
+      "PROBE-COMMENT": {
+        "place": "업무 댓글",
+        "alarmIds": [],
+        "inPosts": []
+      },
+      "PROBE-REPLY": {
+        "place": "업무 대댓글(선택)",
+        "alarmIds": [],
+        "inPosts": []
+      },
+      "PROBE-GROUP": {
+        "place": "그룹·프로젝트 채팅방",
+        "alarmIds": [],
+        "inPosts": []
+      },
+      "PROBE-DM": {
+        "place": "1:1 채팅",
+        "alarmIds": [],
+        "inPosts": []
+      }
+    },
+    "mentionAlarms": [
+      {
+        "alarmId": "9999999020",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999054",
+        "remarkId": "999999033",
+        "replyId": "9999081",
+        "registeredDateTime": "20261014124051",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가가가가 가가가가가가가. 가가가가가가가.",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999019",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999054",
+        "remarkId": "999999033",
+        "replyId": "9999080",
+        "registeredDateTime": "20261014123550",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가 가가가가가",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999017",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999053",
+        "remarkId": "999999035",
+        "replyId": "-1",
+        "registeredDateTime": "20261014095004",
+        "markers": [],
+        "message": "⟨이름2⟩님의 댓글 등록",
+        "content": "⟨이름8⟩ \n\n0. AAA /aaa/a0/aaaaaaa-aaaaaaa/aaaaaaaa\n가가 가가 가가 가가가가 AA 가가 가가 가가가가 가가가가 `aaaaaaaaaaa` 가가 가가가 ",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999016",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "N",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999056",
+        "remarkId": "999999034",
+        "replyId": "-1",
+        "registeredDateTime": "20261013171828",
+        "markers": [],
+        "message": "⟨이름4⟩님의 댓글 등록",
+        "content": "가가가가 가가가가가 가가가 (가가가가)\n\n\n- 가가가 - \nAA  : aaaaaaa\nAA : aaa0000^^\n\nㄱㄱㄱㄱㄱㄱㄱㄱㄱㄱ\n\n- 가가가가가 - \nAA  : aaaaaaa@",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999015",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "N",
+        "readYn": "Y",
+        "projectId": "9999061",
+        "postId": "99999055",
+        "remarkId": "-1",
+        "replyId": "-1",
+        "registeredDateTime": "20261013142419",
+        "markers": [],
+        "message": null,
+        "content": "[가가 AA 가가 가가 가가]",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999014",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999054",
+        "remarkId": "999999033",
+        "replyId": "9999077",
+        "registeredDateTime": "20261012120428",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가가가가가가 가가가 가가가가 가가가가가가. 가가가가 가가가가가.",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999013",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999054",
+        "remarkId": "999999033",
+        "replyId": "9999074",
+        "registeredDateTime": "20261012115442",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름6⟩ 가 가가가가가가. \n⟨이름8⟩ 가가가가가가 가가 가 가가 가가가가가가~!",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999012",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999054",
+        "remarkId": "999999033",
+        "replyId": "9999071",
+        "registeredDateTime": "20261012114828",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가가가가가.",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999011",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999054",
+        "remarkId": "999999033",
+        "replyId": "-1",
+        "registeredDateTime": "20261012111558",
+        "markers": [],
+        "message": "⟨이름2⟩님의 댓글 등록",
+        "content": "⟨이름8⟩ \n\n가가 가가가 가가가가 가가가가가가.\n가가 가가가 가가가가 가가가. aaaaaaa가 가가가가가가가.\n\n0. /aaa/a0/aa/{aaaa} 가가 /aaa/a0/aa/aaa",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999010",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999051",
+        "remarkId": "999999031",
+        "replyId": "9999069",
+        "registeredDateTime": "20261008144015",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가 가가 가가가가가!",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999009",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999051",
+        "remarkId": "999999031",
+        "replyId": "-1",
+        "registeredDateTime": "20261008143724",
+        "markers": [],
+        "message": "⟨이름6⟩님의 댓글 등록",
+        "content": "가가가가가, 가가가 가가 가가 가가 가가가가가가. ⟨이름2⟩ ⟨이름8⟩ ",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999008",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999049",
+        "remarkId": "999999025",
+        "replyId": "9999067",
+        "registeredDateTime": "20260930163606",
+        "markers": [],
+        "message": null,
+        "content": "가가가가 aa 가가가가가 가가가 가가 가 가 가가가 가가가 가 가가가가? ⟨이름8⟩ ⟨이름2⟩ \n\nAa가가 : aAAaAaa0",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999007",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999049",
+        "remarkId": "999999022",
+        "replyId": "9999066",
+        "registeredDateTime": "20260930141507",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가 가가 가가가가가 0가가가 가가 가가가가가 가가가가가가가가.",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999006",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999052",
+        "remarkId": "999999024",
+        "replyId": "-1",
+        "registeredDateTime": "20260930140154",
+        "markers": [],
+        "message": "⟨이름2⟩님의 댓글 등록",
+        "content": "⟨이름8⟩ \n\n가가 가가가 가 `/aaa/a0/aa/aaaaaaa-aaaaaaa` 가가 가가가 가가 가가가가, 가가 가가가 가 가가 `aaaaaaaaAaa` 가가 000가가 가가가가 ",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999005",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999049",
+        "remarkId": "999999022",
+        "replyId": "9999065",
+        "registeredDateTime": "20260930113152",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가가 가가 0가 00가가가가 가가가가가 가가가가가?",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999004",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999049",
+        "remarkId": "999999022",
+        "replyId": "9999064",
+        "registeredDateTime": "20260930105814",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가가가가가 가가 가가가 가가가가가가? ⟨이름2⟩ ",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999003",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999051",
+        "remarkId": "999999023",
+        "replyId": "-1",
+        "registeredDateTime": "20260930105138",
+        "markers": [],
+        "message": "⟨이름2⟩님의 댓글 등록",
+        "content": "⟨이름8⟩ \n가가 가가가 `/aaa/a0/aaaaaaa-aaaaaaa/aaaa-aaa` AAA 가가 aaaaaaa 가가 'aa' 가가가 가가 가가 가가가가 가가가가 가가가 가가 가가가",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999002",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999049",
+        "remarkId": "999999022",
+        "replyId": "9999063",
+        "registeredDateTime": "20260930104747",
+        "markers": [],
+        "message": null,
+        "content": "⟨이름8⟩ 가가가 가가가가가 00가 0가가가 가가가가 가가가가가 가가가 00가 0가 가가 00가가 가가 가가가가가 가가가?",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999001",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "Y",
+        "readYn": "Y",
+        "projectId": "9999059",
+        "postId": "99999049",
+        "remarkId": "999999021",
+        "replyId": "-1",
+        "registeredDateTime": "20260930090937",
+        "markers": [],
+        "message": "⟨이름6⟩님의 댓글 등록",
+        "content": "가가가가가.\n가가가가 가가가가 가가가가 가가가가 가가 가가가가 가가 가가 가가 가가 가 가가 가가 가가 가가가가가가. ⟨이름2⟩ ⟨이름8⟩ \n\n0. 가가가가 가가 가가가가 가가 가/가가 ",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      },
+      {
+        "alarmId": "9999999000",
+        "alarmType": null,
+        "mentionYn": "Y",
+        "registrantYn": "N",
+        "workerYn": "N",
+        "readYn": "Y",
+        "projectId": "9999060",
+        "postId": "99999050",
+        "remarkId": "-1",
+        "replyId": "-1",
+        "registeredDateTime": "20260923104413",
+        "markers": [],
+        "message": null,
+        "content": "[가가] 가가 가가 가가",
+        "extraKeys": [],
+        "seenIn": [
+          "mention_any"
+        ]
+      }
+    ],
+    "allUnreadTypeCounts": {
+      "alarmType=None/mentionYn=N/registrantYn=N/workerYn=N": 1
+    },
+    "unreadCheck": {
+      "unreadCounts": [
+        1,
+        1,
+        1
+      ],
+      "goneAfterAlarmGets": [],
+      "goneAfterPostAndCommentGets": [],
+      "arrivedDuringRun": [],
+      "fetchedPostsWithUnreadAlarm": [
+        "99999057"
+      ]
+    },
+    "posts": [
+      {
+        "postId": "99999055",
+        "contentJsonYn": "Y",
+        "markersInPost": [],
+        "commentCount": 0,
+        "repliesReturned": 0,
+        "markersInComments": [],
+        "encryptedValues": [],
+        "mentionSnippetsInPost": [
+          "{\"$jsonString\": {\"COMPS\": [{\"COMP_TYPE\": \"TEXT\", \"COMP_DETAIL\": {\"PRODUCT_MENTIONS\": [], \"MENTIONS\": [\"ALL\"], \"HASHTAGS\": [], \"CONTENTS\": \"@[AAA](AAA) \\n가가 00가 00가(가) 가가 0가, 가가 AA 가가 가가가 가가가가 가가가가.가가 가가: 00가 00가(가) 가가 0가가가 가가: 가가 AA 가가 가가가가가 가가: 가가 가 가가가가 가가가 가가 가가 가가 가가가 가가가 가 가가가가.\\n \\n가가 가가 가가 가 가"
+        ],
+        "mentionSnippetsInComments": []
+      },
+      {
+        "postId": "99999054",
+        "contentJsonYn": "Y",
+        "markersInPost": [],
+        "commentCount": 7,
+        "repliesReturned": 11,
+        "markersInComments": [],
+        "encryptedValues": [
+          "Y"
+        ],
+        "mentionSnippetsInPost": [
+          "{\"$jsonString\": {\"COMPS\": [{\"COMP_TYPE\": \"TEXT\", \"COMP_DETAIL\": {\"PRODUCT_MENTIONS\": [], \"MENTIONS\": [], \"HASHTAGS\": [], \"CONTENTS\": \" \\n가가 가가가가 AA가가가 가가가가가 가가가가 가가가 가가 가가가가가가.\\n가가가가 가가가가가가 가가 가 가가가가 가가가 가가가 가가가 가가가 가가가가가 가가가가가 가가가.\\n \\n가가가 가가가 가가가가가가 가가가가 가가 가가가 가가가가가 가 가 가가가가.\\n\"}}, {\"COMP_TYPE\": \""
+        ],
+        "mentionSnippetsInComments": [
+          "@[⟨이름8⟩](user4@masked) \n\n가가 가가가 가가가가 가가가가가가.\n가가 가가가 가가가가 가가가. aaaaaaa가 가가가가가가가.\n\n0. /aaa/a0/aa/{aaaa} 가가 /aaa/a0/aa/aaaaaaa/{aaaa} 가가 AA 가가\n\n0. {aaaa: {aaaaaa: [\"aaaaaaaa_aaaa\"]}} 가 가가 (가가 가가 가가가)\n  → 가가 가가가 가가가 가가가 가가 (가",
+          "@[⟨이름2⟩](user3@masked) \naaaaaaaa_aaaa 가 가가 가가 가가 가가 가가가가가가. 가가가 가가가 가가가 가 가가가 가가가 가가가가가.",
+          "@[⟨이름8⟩](user4@masked) 가가가가가.",
+          "@[⟨이름6⟩](user2@masked) 가가 가가가 가가가 가가가 가가가가가 가가가 가가가 가가가가가? 가가 가가가가가 가가가 가가가가 가 가 가가가..",
+          "@[⟨이름2⟩](user3@masked) 가 가가가 가가 가가가 가가가 가가가가 가가가.",
+          "@[⟨이름6⟩](user2@masked) 가 가가가가가가. \n@[⟨이름8⟩](user4@masked) 가가가가가가 가가 가 가가 가가가가가가~!",
+          "@[⟨이름2⟩](user3@masked) 가가가 가가 가가가가 가가 가가 가가 가 가가가 가가가가가가.",
+          "@[⟨이름6⟩](user2@masked) 가 가 가가 가가가 가가가 가가가 가가가 가가가가가.. 가가가가가 가가가가 가가가가가가가.",
+          "@[⟨이름8⟩](user4@masked) 가가가가가가 가가가 가가가가 가가가가가가. 가가가가 가가가가가.",
+          "@[⟨이름2⟩](user3@masked) 가가가가 가가가 가가가 가가가?"
+        ]
+      },
+      {
+        "postId": "99999057",
+        "contentJsonYn": "Y",
+        "markersInPost": [],
+        "commentCount": 0,
+        "repliesReturned": 0,
+        "markersInComments": [],
+        "encryptedValues": [],
+        "mentionSnippetsInPost": [],
+        "mentionSnippetsInComments": []
+      }
+    ]
+  },
+  "calls": [
+    {
+      "label": "mention_unread#1",
+      "path": "/user/alarms?filters=MENTION&readYn=N&size=100",
+      "status": 200,
+      "ms": 79,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "alarms": {
+              "hasNext": false,
+              "lastCursor": -1,
+              "alarms": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "all_unread_1#1",
+      "path": "/user/alarms?readYn=N&size=100",
+      "status": 200,
+      "ms": 95,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "alarms": {
+              "hasNext": false,
+              "lastCursor": 0,
+              "alarms": [
+                {
+                  "alarmId": "9999999018",
+                  "projectId": "9999062",
+                  "postId": "99999057",
+                  "remarkId": "-1",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user6@masked",
+                  "registerName": "이름1",
+                  "registeredDateTime": "20261014123028",
+                  "message": null,
+                  "content": "🍱 [가가] 00가 00가 (가) 가가 가가",
+                  "readYn": "N",
+                  "alarmType": null,
+                  "mentionYn": "N",
+                  "registrantYn": "N",
+                  "workerYn": "N"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "mention_any#1",
+      "path": "/user/alarms?filters=MENTION&size=20",
+      "status": 200,
+      "ms": 72,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "alarms": {
+              "hasNext": true,
+              "lastCursor": 20,
+              "alarms": [
+                {
+                  "alarmId": "9999999020",
+                  "projectId": "9999059",
+                  "postId": "99999054",
+                  "remarkId": "999999033",
+                  "replyId": "9999081",
+                  "receiverId": "user4@masked",
+                  "registerId": "user3@masked",
+                  "registerName": "이름2",
+                  "registeredDateTime": "20261014124051",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가가가가 가가가가가가가. 가가가가가가가.",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999019",
+                  "projectId": "9999059",
+                  "postId": "99999054",
+                  "remarkId": "999999033",
+                  "replyId": "9999080",
+                  "receiverId": "user4@masked",
+                  "registerId": "user5@masked",
+                  "registerName": "이름3",
+                  "registeredDateTime": "20261014123550",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가 가가가가가",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999017",
+                  "projectId": "9999059",
+                  "postId": "99999053",
+                  "remarkId": "999999035",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user3@masked",
+                  "registerName": "이름2",
+                  "registeredDateTime": "20261014095004",
+                  "message": "⟨이름2⟩님의 댓글 등록",
+                  "content": "⟨이름8⟩ \n\n0. AAA /aaa/a0/aaaaaaa-aaaaaaa/aaaaaaaa\n가가 가가 가가 가가가가 AA 가가 가가 가가가가 가가가가 `aaaaaaaaaaa` 가가 가가가 ",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999016",
+                  "projectId": "9999059",
+                  "postId": "99999056",
+                  "remarkId": "999999034",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user7@masked",
+                  "registerName": "이름4",
+                  "registeredDateTime": "20261013171828",
+                  "message": "⟨이름4⟩님의 댓글 등록",
+                  "content": "가가가가 가가가가가 가가가 (가가가가)\n\n\n- 가가가 - \nAA  : aaaaaaa\nAA : aaa0000^^\n\nㄱㄱㄱㄱㄱㄱㄱㄱㄱㄱ\n\n- 가가가가가 - \nAA  : aaaaaaa@",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "N"
+                },
+                {
+                  "alarmId": "9999999015",
+                  "projectId": "9999061",
+                  "postId": "99999055",
+                  "remarkId": "-1",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user1@masked",
+                  "registerName": "이름5",
+                  "registeredDateTime": "20261013142419",
+                  "message": null,
+                  "content": "[가가 AA 가가 가가 가가]",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "N"
+                },
+                {
+                  "alarmId": "9999999014",
+                  "projectId": "9999059",
+                  "postId": "99999054",
+                  "remarkId": "999999033",
+                  "replyId": "9999077",
+                  "receiverId": "user4@masked",
+                  "registerId": "user3@masked",
+                  "registerName": "이름2",
+                  "registeredDateTime": "20261012120428",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가가가가가가 가가가 가가가가 가가가가가가. 가가가가 가가가가가.",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999013",
+                  "projectId": "9999059",
+                  "postId": "99999054",
+                  "remarkId": "999999033",
+                  "replyId": "9999074",
+                  "receiverId": "user4@masked",
+                  "registerId": "user3@masked",
+                  "registerName": "이름2",
+                  "registeredDateTime": "20261012115442",
+                  "message": null,
+                  "content": "⟨이름6⟩ 가 가가가가가가. \n⟨이름8⟩ 가가가가가가 가가 가 가가 가가가가가가~!",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999012",
+                  "projectId": "9999059",
+                  "postId": "99999054",
+                  "remarkId": "999999033",
+                  "replyId": "9999071",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20261012114828",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가가가가가.",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999011",
+                  "projectId": "9999059",
+                  "postId": "99999054",
+                  "remarkId": "999999033",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user3@masked",
+                  "registerName": "이름2",
+                  "registeredDateTime": "20261012111558",
+                  "message": "⟨이름2⟩님의 댓글 등록",
+                  "content": "⟨이름8⟩ \n\n가가 가가가 가가가가 가가가가가가.\n가가 가가가 가가가가 가가가. aaaaaaa가 가가가가가가가.\n\n0. /aaa/a0/aa/{aaaa} 가가 /aaa/a0/aa/aaa",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999010",
+                  "projectId": "9999059",
+                  "postId": "99999051",
+                  "remarkId": "999999031",
+                  "replyId": "9999069",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20261008144015",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가 가가 가가가가가!",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999009",
+                  "projectId": "9999059",
+                  "postId": "99999051",
+                  "remarkId": "999999031",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20261008143724",
+                  "message": "⟨이름6⟩님의 댓글 등록",
+                  "content": "가가가가가, 가가가 가가 가가 가가 가가가가가가. ⟨이름2⟩ ⟨이름8⟩ ",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999008",
+                  "projectId": "9999059",
+                  "postId": "99999049",
+                  "remarkId": "999999025",
+                  "replyId": "9999067",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20260930163606",
+                  "message": null,
+                  "content": "가가가가 aa 가가가가가 가가가 가가 가 가 가가가 가가가 가 가가가가? ⟨이름8⟩ ⟨이름2⟩ \n\nAa가가 : aAAaAaa0",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999007",
+                  "projectId": "9999059",
+                  "postId": "99999049",
+                  "remarkId": "999999022",
+                  "replyId": "9999066",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20260930141507",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가 가가 가가가가가 0가가가 가가 가가가가가 가가가가가가가가.",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999006",
+                  "projectId": "9999059",
+                  "postId": "99999052",
+                  "remarkId": "999999024",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user3@masked",
+                  "registerName": "이름2",
+                  "registeredDateTime": "20260930140154",
+                  "message": "⟨이름2⟩님의 댓글 등록",
+                  "content": "⟨이름8⟩ \n\n가가 가가가 가 `/aaa/a0/aa/aaaaaaa-aaaaaaa` 가가 가가가 가가 가가가가, 가가 가가가 가 가가 `aaaaaaaaAaa` 가가 000가가 가가가가 ",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999005",
+                  "projectId": "9999059",
+                  "postId": "99999049",
+                  "remarkId": "999999022",
+                  "replyId": "9999065",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20260930113152",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가가 가가 0가 00가가가가 가가가가가 가가가가가?",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999004",
+                  "projectId": "9999059",
+                  "postId": "99999049",
+                  "remarkId": "999999022",
+                  "replyId": "9999064",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20260930105814",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가가가가가 가가 가가가 가가가가가가? ⟨이름2⟩ ",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999003",
+                  "projectId": "9999059",
+                  "postId": "99999051",
+                  "remarkId": "999999023",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user3@masked",
+                  "registerName": "이름2",
+                  "registeredDateTime": "20260930105138",
+                  "message": "⟨이름2⟩님의 댓글 등록",
+                  "content": "⟨이름8⟩ \n가가 가가가 `/aaa/a0/aaaaaaa-aaaaaaa/aaaa-aaa` AAA 가가 aaaaaaa 가가 'aa' 가가가 가가 가가 가가가가 가가가가 가가가 가가 가가가",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999002",
+                  "projectId": "9999059",
+                  "postId": "99999049",
+                  "remarkId": "999999022",
+                  "replyId": "9999063",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20260930104747",
+                  "message": null,
+                  "content": "⟨이름8⟩ 가가가 가가가가가 00가 0가가가 가가가가 가가가가가 가가가 00가 0가 가가 00가가 가가 가가가가가 가가가?",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999001",
+                  "projectId": "9999059",
+                  "postId": "99999049",
+                  "remarkId": "999999021",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user2@masked",
+                  "registerName": "이름6",
+                  "registeredDateTime": "20260930090937",
+                  "message": "⟨이름6⟩님의 댓글 등록",
+                  "content": "가가가가가.\n가가가가 가가가가 가가가가 가가가가 가가 가가가가 가가 가가 가가 가가 가 가가 가가 가가 가가가가가가. ⟨이름2⟩ ⟨이름8⟩ \n\n0. 가가가가 가가 가가가가 가가 가/가가 ",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "Y"
+                },
+                {
+                  "alarmId": "9999999000",
+                  "projectId": "9999060",
+                  "postId": "99999050",
+                  "remarkId": "-1",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user8@masked",
+                  "registerName": "이름7",
+                  "registeredDateTime": "20260923104413",
+                  "message": null,
+                  "content": "[가가] 가가 가가 가가",
+                  "readYn": "Y",
+                  "alarmType": null,
+                  "mentionYn": "Y",
+                  "registrantYn": "N",
+                  "workerYn": "N"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "all_unread_2#1",
+      "path": "/user/alarms?readYn=N&size=100",
+      "status": 200,
+      "ms": 60,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "alarms": {
+              "hasNext": false,
+              "lastCursor": 0,
+              "alarms": [
+                {
+                  "alarmId": "9999999018",
+                  "projectId": "9999062",
+                  "postId": "99999057",
+                  "remarkId": "-1",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user6@masked",
+                  "registerName": "이름1",
+                  "registeredDateTime": "20261014123028",
+                  "message": null,
+                  "content": "🍱 [가가] 00가 00가 (가) 가가 가가",
+                  "readYn": "N",
+                  "alarmType": null,
+                  "mentionYn": "N",
+                  "registrantYn": "N",
+                  "workerYn": "N"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "post_99999055",
+      "path": "/user/posts/99999055",
+      "status": 200,
+      "ms": 151,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999061",
+            "postId": "99999055",
+            "remarkSrno": "",
+            "templateType": "91",
+            "title": "[가가 AA 가가 가가 가가]",
+            "content": {
+              "$jsonString": {
+                "COMPS": [
+                  {
+                    "COMP_TYPE": "TEXT",
+                    "COMP_DETAIL": {
+                      "PRODUCT_MENTIONS": [],
+                      "MENTIONS": [
+                        "ALL"
+                      ],
+                      "HASHTAGS": [],
+                      "CONTENTS": "@[AAA](AAA) \n가가 00가 00가(가) 가가 0가, 가가 AA 가가 가가가 가가가가 가가가가.가가 가가: 00가 00가(가) 가가 0가가가 가가: 가가 AA 가가 가가가가가 가가: 가가 가 가가가가 가가가 가가 가가 가가 가가가 가가가 가 가가가가.\n \n가가 가가 가가 가 가가 0가 가가가가 가가, 가가 가 가가 가가가가 가가 가가 가가가 AA 가가가 가가 가가가가가 가가가가가.\n \n가가가가 가가가가 가가가 가가가 가가, 가가 0가가 가가 AA 가가가가 가가가가 가가가 가가가가 가가가 가가가가가.\n\n \n가가 가가 가 가가가가 가가 가 가가 가가가가가가가가.\n \n가가 가가가가가 가가 가 가가 가가 가가가 가가 가가가가가가. \n"
+                    }
+                  }
+                ]
+              }
+            },
+            "commentContent": {
+              "$jsonString": {
+                "COMPS": [
+                  {
+                    "COMP_TYPE": "TEXT",
+                    "COMP_DETAIL": {
+                      "PRODUCT_MENTIONS": [],
+                      "MENTIONS": [
+                        "ALL"
+                      ],
+                      "HASHTAGS": [],
+                      "CONTENTS": "@[AAA](AAA) \n가가 00가 00가(가) 가가 0가, 가가 AA 가가 가가가 가가가가 가가가가.가가 가가: 00가 00가(가) 가가 0가가가 가가: 가가 AA 가가 가가가가가 가가: 가가 가 가가가가 가가가 가가 가가 가가 가가가 가가가 가 가가가가.\n \n가가 가가 가가 가 가가 0가 가가가가 가가, 가가 가 가가 가가가가 가가 가가 가가가 AA 가가가 가가 가가가가가 가가가가가.\n \n가가가가 가가가가 가가가 가가가 가가, 가가 0가가 가가 AA 가가가가 가가가가 가가가 가가가가 가가가 가가가가가.\n\n \n가가 가가 가 가가가가 가가 가 가가 가가가가가가가가.\n \n가가 가가가가가 가가 가 가가 가가 가가가 가가 가가가가가가. \n"
+                    }
+                  }
+                ]
+              }
+            },
+            "outContent": "AAA \n가가 00가 00가(가) 가가 0가, 가가 AA 가가 가가가 가가가가 가가가가.가가 가가: 00가 00가(가) 가가 0가가가 가가: 가가 AA 가가 가가가가가 가가: 가가 가 가가가가 가가가 가가 가가 가가 가가가 가가가 가 가가가가.\n \n가가 가가 가가 가 가가 0가 가가가가 가가, 가가 가 가가 가가가가 가가 가가 가가가 AA 가가가 가가 가가가가가 가가가가가.\n \n가가가가 가가가가 가가가 가가가 가가, 가가 0가가 가가 AA 가가가가 가가가가 가가가 가가가가 가가가 가가가가가.\n\n \n가가 가가 가 가가가가 가가 가 가가 가가가가가가가가.\n \n가가 가가가가가 가가 가 가가 가가 가가가 가가 가가가가가가. \n",
+            "htmlContent": "%0Aaaa%0A%0Aaaaa%0A%0Aaaaa%00aaaaaaaaaaaaaaa%0A%00aaaaa%00%00aaaa-aa%0A%00AAA%00%00aaaaa%0A%00aaaaaaa-aaaa%00aaa%00%0A%00AAA%0A%0Aaaaa%0A%00aaaa%0A%0Aaa%0A%AA%00%A0%AA%0A%AA%00%0A%0Aaaaa%0A%0Aaaaaaa%0A%0Aaaaa%0A00%AA%0A%00%0000%AA%0A%AA(%AA%00%00)%00%AA%00%A0%AA%A0%00%000%AA%0A%0A%0A%0Aaaaa%0A%0A%0Aaaaaaa%0A%0Aaaaa%0A%0A%00%AA%0A%A0%AA%00%00%00AA%00%AA%0A%A0%AA%A0%00%00%AA%0A%00%AA%00%00%AA%0A%A0%00%AA%00%00%AA%A0%00%AA%00%00%AA%00%A0%00%AA%0A%00%AA%0A%A0%AA%0A%00%AA%0A%A0.%0A%0Aaaaa%0A%0A%0Aaaa%0A%0Aaa%0A%0Aaa%0A%0Aa%0A%0Aaaaaaa%0A%0Aaaaa%0A%AA%0A%00%AA%00%00%00%AA%0A%AA%AA%0A%0A%0A%0A%0Aaaaa%0A%0A%0Aaaaaaa%0A%0Aaaaa%0A%0000%AA%0A%00%0000%AA%0A%AA(%AA%00%00)%00%AA%00%A0%AA%A0%00%000%AA%0A%0A%0A%0Aaaaa%0A%0A%0Aa%0A%0A%0Aaa%0A%0Aaa%0A%0Aa%0A%0Aaaaaaa%0A%0Aaaaa%0A%AA%0A%00%AA%00%00%00%AA%00%A0%AA%0A%A0%0A%0A%0Aaaaa%0A%0A%0Aaaaaaa%0A%0Aaaaa%0A%00%AA%0A%A0%AA%00%00%00AA%00%AA%00%0A%AA%A0%00%00%AA%0A%A0%AA%A0%00%0A%0Aaaaa%0A%0A%0Aa%0A%0A%0Aaa%0A%0Aaa%0A%0Aa%0A%0Aaaaaaa%0A%0Aaaaa%0A%AA%00%0A%AA%A0%00%AA%0A%A0%00%AA%00%00%AA%00%A0%0A%0A%0Aaaaa%0A%0A%0Aaaaaaa%0A%0Aaaaa%0A%00%AA%0A%00%AA%00%00%00%AA%A0%00%00%AA%0A%AA%AA%0A%0A%AA%A0%00%AA%0A%A0%00%AA%00%0A%AA%A0%00%AA%0A%A0%00%AA%A0%00%AA%00%A0%00%AA%00%00%AA%0A%00%00%AA%A0%00%AA%00%0A%00%AA%0A%A0%AA%00%A0%AA%A0%00%00%AA%A0%0A%AA%00%0A%AA%00%A0%00%AA%00%00%00%AA%0A%00%AA%0A%A0%AA%0A%00%AA%0A%A0.%0A%0Aaaaa%0A%0Aaa%0A%00aaaa%0A%0A%0Aa%0A%0A%0Aaa%0A%0A%0Aaa%0A%0Aa%0A%0Aaaaa%0A%AA%0A%A0%AA%A0%00%00%AA%0A%00%AA%00%00%00%AA%00%00%AA%A0%0A%00%AA%0A%00%00%0A%0Aaaaa%0A%0Aaaaaaa%0A%0Aaaaa%0A%AA%00%A0%AA%A0%00%000%AA%0A%0A%00%AA%0A%A0%AA%A0%00%AA%A0%0A%AA%A0%00%0A%0Aaaaa%0A%0A%0Aaaaaaa%0A%0Aaaaa%0A%00%AA%A0%AA%AA%AA%A0%0A%00%AA%A0%A0%AA%A0%0A%00%AA%00%A0%00%AA%A0%AA%AA%0A%00%00%AA%00%0A%AA%A0%00%AA%0A%A0%AA%0A%00%00%AA%A0%00%AA%00%00%00%AA%0A%00%AA%0A%00%00%AA%00%AA%AA%A0%00%AA%00%00%00AA%00%AA%00%00%AA%00%0A%AA%A0%AA%00%AA%A0%00%AA%A0%00%00%AA%AA%A0%AA%0A%00%AA%00%A0%AA%A0%00%AA%00%A0%00%AA%00%00%AA%A0%00%AA%0A%00%AA%0A%00%AA%0A%A0.%0A%0Aaaaa%0A%0Aaa%0A%00aaaa%0A%0A%0Aa%0A%0Aa%0A%0Aaaaa%0A%AA%AA%A0%AA%0A%00%AA%00%A0%AA%A0%00%00%AA%A0%AA%AA%A0%00%AA%00%00%AA%00%0A%00%AA%AA%A0%AA%A0%0A%AA%A0%00%00%AA%A0%0A%AA%00%0A%AA%00%A0%00%AA%A0%AA%AA%0A%A0%0A%00%0A%0Aaaaa%0A%0Aaaaaaa%0A%0Aaaaa%0A%AA%00%A0%AA%A0%00%000%AA%0A%0A%AA%00%00%00%AA%A0%A0%AA%A0%A0%00AA%00%AA%00%00%AA%A0%AA%AA%0A%AA%AA%A0%0A%00%AA%A0%A0%AA%A0%A0%0A%0Aaaaa%0A%0A%0Aaaaaaa%0A%0Aaaaa%0A%AA%00%00%AA%00%AA%00%AA%00%0A%AA%A0%00%AA%0A%A0%00%AA%00%00%AA%A0%00%AA%00%A0%AA%0A%00%00%AA%00%00%AA%A0%A0%AA%00%A0%00%AA%A0%00%AA%0A%0A%AA%0A%00%AA%0A%00%AA%0A%A0.%0A%0Aaaaa%0A%0Aaa%0A%0Aaa%0A%00aaaa%0A%0A%0Aa%0A%0Aa%0A%0Aaaaa%0A%AA%0A%00%AA%00%00%00%AA%00%00%AA%A0%0A%00%AA%A0%0A%00%AA%0A%A0%AA%0A%A0%AA%00%AA%AA%00%AA%00%AA%A0%0A%AA%00%0A%00%AA%0A%0A%00%AA%A0%00%AA%A0%00%00%AA%A0%A0%AA%0A%A0%AA%00%0A%AA%A0%AA%AA%A0%A0%AA%0A%A0%AA%0A%00%AA%0A%A0.%0A%0Aaaaa%0A%0Aaa%0A%00aaaa%0A%0A%0Aa%0A%0Aa%0A%0Aaaaa%0A%AA%A0%00%AA%A0%A0%00%AA%A0%00%AA%00%0A%AA%00%00%AA%00%0A%AA%0A%00%00%AA%00%00%AA%AA%A0%00%AA%A0%0A%00%AA%A0%A0%AA%A0%0A%00%AA%AA%A0%AA%0A%00%00%AA%0A%00%AA%0A%00%AA%00%00%00%AA%A0%A0%AA%A0%A0%00%AA%A0%00%AA%00%00%AA%00%0A%AA%A0%AA%AA%0A%00%AA%0A%A0.%0A%0Aaaaa%0A%0A%0Aa%0A%0Aa%0A%00aaaa%0A%0A%0Aa%0A",
+            "contentJsonYn": "Y",
+            "registerId": "user1@masked",
+            "registerName": "이름5",
+            "registeredDateTime": "20261013142419",
+            "connectUrl": "https://<가림>/<가림:88자>",
+            "remarkCount": "0",
+            "existYn": "",
+            "nextYn": "N",
+            "totalCount": "0",
+            "sectionCount": "0",
+            "remarks": [],
+            "attachments": [],
+            "imageAttachments": [],
+            "todos": [],
+            "schedules": [],
+            "tasks": [],
+            "subTasks": [],
+            "upLinkTasks": [],
+            "votes": [],
+            "projectColumns": [
+              {
+                "ORDER_NUM": "1000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "TEXT",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "TASK_NM",
+                "COLUMN_LANG_CODE": "common:taskName",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "6",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "2000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "STATUS",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "STATUS",
+                "COLUMN_LANG_CODE": "dictionary:status",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "12",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "3000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "USER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "WORKER_ID",
+                "COLUMN_LANG_CODE": "dictionary:manager",
+                "MULTI_OPTION_YN": "Y",
+                "COLUMN_SRNO": "1",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "4000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "START_DT",
+                "COLUMN_LANG_CODE": "common:startDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "10",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "5000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "END_DT",
+                "COLUMN_LANG_CODE": "common:dueDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "11",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "6000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "PRIORITY",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "PRIORITY",
+                "COLUMN_LANG_CODE": "common:priority",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "7",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "7000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "PROGRESS",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "PROGRESS",
+                "COLUMN_LANG_CODE": "common:progressAsNoun",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "8",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "8000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "USER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "RGSR_ID",
+                "COLUMN_LANG_CODE": "dictionary:poster",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "2",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "9000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "RGSN_DTTM",
+                "COLUMN_LANG_CODE": "common:registeredDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "3",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "10000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "EDTR_DTTM",
+                "COLUMN_LANG_CODE": "common:modificationDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "4",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "11000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "NUMBER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "TASK_NUM",
+                "COLUMN_LANG_CODE": "common:taskNumber",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "5",
+                "COLABO_SRNO": "9999061"
+              },
+              {
+                "ORDER_NUM": "12000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "가가",
+                "COLUMN_TYPE": "SECTION",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "SECTION",
+                "COLUMN_LANG_CODE": "dictionary:group",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "0",
+                "COLABO_SRNO": "9999061"
+              }
+            ],
+            "editedDateTime": "20261013142419"
+          }
+        }
+      }
+    },
+    {
+      "label": "comments_99999055",
+      "path": "/user/comments/99999055?replyYn=Y&size=100",
+      "status": 200,
+      "ms": 161,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "hasNext": false,
+            "lastCursor": -1,
+            "comments": []
+          }
+        }
+      }
+    },
+    {
+      "label": "post_99999054",
+      "path": "/user/posts/99999054",
+      "status": 200,
+      "ms": 212,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999054",
+            "remarkSrno": "",
+            "templateType": "92",
+            "title": "AA 가가 가 가가가가가 가가가 가가가 가가 가가",
+            "content": {
+              "$jsonString": {
+                "COMPS": [
+                  {
+                    "COMP_TYPE": "TEXT",
+                    "COMP_DETAIL": {
+                      "PRODUCT_MENTIONS": [],
+                      "MENTIONS": [],
+                      "HASHTAGS": [],
+                      "CONTENTS": " \n가가 가가가가 AA가가가 가가가가가 가가가가 가가가 가가 가가가가가가.\n가가가가 가가가가가가 가가 가 가가가가 가가가 가가가 가가가 가가가 가가가가가 가가가가가 가가가.\n \n가가가 가가가 가가가가가가 가가가가 가가 가가가 가가가가가 가 가 가가가가.\n"
+                    }
+                  },
+                  {
+                    "COMP_TYPE": "IMAGE",
+                    "COMP_DETAIL": {
+                      "FILE_SIZE": "133079",
+                      "RGSN_DTTM": "20261007141038",
+                      "ATCH_SRNO": "999999045",
+                      "DRM_YN": "N",
+                      "STTS": "",
+                      "VOICE_WAVEFORM": "",
+                      "ATCH_URL": "https://flow.team/<가림:87자>",
+                      "DATA_CODE": "IMAGE",
+                      "THUM_IMG_PATH": "https://flow.team/<가림:93자>",
+                      "WIDTH": "448",
+                      "HEIGHT": "917",
+                      "FILE_DOWN_URL": "https://flow.team/<가림:229자>",
+                      "PLAYTIME": "0",
+                      "RGSR_NM": "⟨이름6⟩",
+                      "USE_INTT_ID": "BFLOW_300033026954",
+                      "FILE_NM": "aaaaa (0).aaa",
+                      "width": "612",
+                      "EXPIRE_DTTM": "",
+                      "CLOUD_YN": "Y",
+                      "FILE_TYPE": "FLOW",
+                      "IMG_PATH": "https://flow.team/<가림:87자>",
+                      "RAND_KEY": "AAAA_000000000000000_00a0aa0a-a000-00a0-000a-000000000000",
+                      "DRM_MSG": "",
+                      "height": "806"
+                    }
+                  }
+                ]
+              }
+            },
+            "commentContent": {
+              "$jsonString": {
+                "COMPS": [
+                  {
+                    "COMP_TYPE": "TEXT",
+                    "COMP_DETAIL": {
+                      "PRODUCT_MENTIONS": [],
+                      "MENTIONS": [],
+                      "HASHTAGS": [],
+                      "CONTENTS": " \n가가 가가가가 AA가가가 가가가가가 가가가가 가가가 가가 가가가가가가.\n가가가가 가가가가가가 가가 가 가가가가 가가가 가가가 가가가 가가가 가가가가가 가가가가가 가가가.\n \n가가가 가가가 가가가가가가 가가가가 가가 가가가 가가가가가 가 가 가가가가.\n"
+                    }
+                  },
+                  {
+                    "COMP_TYPE": "IMAGE",
+                    "COMP_DETAIL": {
+                      "FILE_SIZE": "133079",
+                      "RGSN_DTTM": "20261007141038",
+                      "ATCH_SRNO": "999999045",
+                      "DRM_YN": "N",
+                      "STTS": "",
+                      "VOICE_WAVEFORM": "",
+                      "ATCH_URL": "https://flow.team/<가림:87자>",
+                      "DATA_CODE": "IMAGE",
+                      "THUM_IMG_PATH": "https://flow.team/<가림:93자>",
+                      "WIDTH": "448",
+                      "HEIGHT": "917",
+                      "FILE_DOWN_URL": "https://flow.team/<가림:229자>",
+                      "PLAYTIME": "0",
+                      "RGSR_NM": "⟨이름6⟩",
+                      "FILE_NM": "aaaaa (0).aaa",
+                      "width": "612",
+                      "EXPIRE_DTTM": "",
+                      "FILE_TYPE": "FLOW",
+                      "IMG_PATH": "https://flow.team/<가림:87자>",
+                      "RAND_KEY": "AAAA_000000000000000_00a0aa0a-a000-00a0-000a-000000000000",
+                      "DRM_MSG": "",
+                      "height": "806"
+                    }
+                  }
+                ]
+              }
+            },
+            "outContent": " \n가가 가가가가 AA가가가 가가가가가 가가가가 가가가 가가 가가가가가가.\n가가가가 가가가가가가 가가 가 가가가가 가가가 가가가 가가가 가가가 가가가가가 가가가가가 가가가.\n \n가가가 가가가 가가가가가가 가가가가 가가 가가가 가가가가가 가 가 가가가가.\n",
+            "htmlContent": "%0Aaaa%00aaaaa%0A%00aa-aaaa-aaa%00aa-aaaaaa-aaaaaaaa-aaaa%00aaaaaaaa-aaaa%00aaaaa-aaaa%00aa-aaaaaaa%00%00aaaaaaaaaaaaa%0A%00aaaaaa%00aaaa%00%00aaaaaaaaaaaaa%0A%00aaaaaa%00aaaa%00%00aaaaaaaaaaa%0A%00aaaaaa%00aaaa%00%00aaaaaaaaa%0A%00aaaaaa%00aaaa%00%00aaaaaaaaaaaaaaa%0A%00aaaaa%00%00aaaa_aaaa%0A%00000000%00%00aaaa_aaaa%0A%0000000000000000%00%00aaaa_aaaa%0A%00000000000%00%00aaa_aa%0A%00A%00%00aaaa%0A%00%00%00aaaaa_aaaaaaaa%0A%00%00%00aaaa_aaa_aaaa%0A%00aaaaa%0A%0A%0Aaaaa.aaaa%0AaaaaAaa%0AAAAA_000000000000000_0aaaaaaa-a000-000a-a000-0000aa0000aa_aaaaa.aaa%00%00aaaaa%0A%00000%00%00aaaaaa%0A%00000%00%00aaaa_aaaa_aaa%0A%00aaaaa%0A%0A%0Aaaaa.aaaa%0AAAAA_AAAAAAAA_A000.aaa%0AAAAA_AAA%0AAAAA_000000000000000_00a0aa0a-a000-00a0-000a-000000000000%00aaa%0AAAAA_AAAA%0A000000000%00aaa%0AAAAA_AA%0Aaaaaa%00aaaaaaaaaaaa.aaa%00aaa%0AAAAA%0A000000-000-000-000000%00aaa%0AAAA_AAAA_AA%0A%00aaa%0AAAA_AAAA_AA%0AAAAAA_000000000000%00%00aaaaaaaa%0A%000%00%00aaaa_aa%0A%00%AA%0A%A0%AA%A0%00%AA%00%A0%00%00aaaa_aa%0A%00aaaaa%00(0).aaa%00%00aaaaaa_aaaa%0A%00%00%00aaaa_aaaa%0A%00AAAA%00%00aaa_aaaa%0A%00aaaaa%0A%0A%0Aaaaa.aaaa%0AaaaaAaa%0AAAAA_000000000000000_00a0aa0a-a000-00a0-000a-000000000000.aaa%00%00aaaa_aaa%0A%00AAAA_000000000000000_00a0aa0a-a000-00a0-000a-000000000000%00%00aaa_aaa%0A%00%00%00aaaa_aaa%0A%00aaaaa%0A%0A%0Aaaaa.aaaa%0AaaaaAaa%0AAAAA_000000000000000_00a0aa0a-a000-00a0-000a-000000000000.aaa%00%00aaaa_aaaa%0A%00AAAAA%00%0A%0Aaaa%00aaaaa%0A%00aa-aaaaaa-aaaa-aaaaaa%00aaaaaa-aaaaa%00aaaa-aaaa%00%0A%0Aaaa%00aaaaa%0A%00aaaaaa-aaa-aaaa%00%0A%0Aaaa%00aaaaa%0A%00aaaaaa-aaa%00%00%00aaa%0A%00aaaaa%0A%0A%0Aaaaa.aaaa%0AaaaaAaa%0AAAAA_000000000000000_0aaaaaaa-a000-000a-a000-0000aa0000aa_aaaaa.aaa%00%00aaaaaaa%0A%00aaaa.aaa%0A'%0Aaaaa-aaaaaaa%0Aaaaaaa%0Aaaaaaa%0Aaa_aaaaa.aaa'%0A%00%0A%0A%0Aaaa%0A%0Aaaa%00aaaaa%0A%00aa-aaa-aaa%00aaaaaa-aaaaaa-aaaa%00%0A%0Aaaa%00aaaaa%0A%00aaaaaa-aaaaaa-aaaaa%00%0A%00aaaa%0A%0A%0Aaaa%0A%0A%0Aaaa%0A%0A%0Aaaa%0A%0A%0Aaaa%0A%0Aa%0A%00aaaa%0A%0A%0Aa%0A%0Aaaa%0A%AA%0A%A0%AA%A0%00%00%AA%A0%00%AA%A0%A0%AA%A0%00%AA%A0%0A%00AA%AA%0A%A0%AA%AA%00%AA%0A%00%00%AA%A0%A0%AA%A0%0A%AA%00%00%AA%A0%A0%AA%00%00%00%AA%A0%A0%AA%A0%0A%AA%AA%00%AA%0A%00%00%AA%A0%A0%AA%0A%00%AA%0A%00%00%AA%A0%00%AA%A0%00%00%AA%0A%00%AA%A0%AA%AA%00%0A%AA%A0%AA%AA%0A%00%AA%0A%A0.%0Aaa%0A%AA%A0%A0%AA%A0%0A%AA%AA%00%AA%0A%00%00%AA%00%A0%AA%00%0A%AA%00%AA%AA%00%AA%AA%0A%AA%AA%A0%0A%00%AA%A0%A0%AA%0A%AA%00%AA%0A%00%00%AA%A0%A0%AA%A0%0A%AA%00%00%AA%A0%A0%00%AA%0A%00%AA%A0%A0%AA%00%0A%00%AA%0A%A0%AA%A0%00%AA%0A%A0%00%AA%A0%00%AA%A0%A0%AA%A0%00%00%AA%A0%00%AA%A0%AA%AA%0A%00%00%AA%0A%00%AA%0A%A0%AA%A0%00%AA%00%00%AA%0A%00%00%AA%00%A0%AA%A0%0A%AA%00%00%AA%00%A0%AA%00%AA%00%AA%00%A0%AA%0A%00%AA%0A%A0.%0A%0Aaaa%0A%0Aa%0A%00aaaa%0A%0A%0Aa%0A%0Aaaa%0A%AA%A0%00%AA%A0%A0%AA%A0%00%00%AA%A0%00%AA%A0%AA%AA%0A%00%00%AA%0A%00%AA%0A%A0%AA%A0%00%AA%00%00%AA%00%0A%AA%0A%00%00%AA%0A%A0%AA%0A%A0%AA%A0%00%AA%00%A0%00%AA%00%00%AA%00%00%00%AA%A0%A0%AA%A0%0A%AA%AA%00%00%AA%00%A0%AA%00%A0%AA%A0%AA%AA%0A%0A%AA%A0%A0%00%AA%00%A0%00%AA%A0%A0%00%AA%A0%00%AA%0A%A0%AA%0A%00%AA%0A%A0.%0A%0Aaaa%0A",
+            "contentJsonYn": "Y",
+            "registerId": "user2@masked",
+            "registerName": "이름6",
+            "registeredDateTime": "20261007141008",
+            "connectUrl": "https://<가림>/<가림:88자>",
+            "remarkCount": "7",
+            "existYn": "",
+            "nextYn": "N",
+            "totalCount": "0",
+            "sectionCount": "5",
+            "remarks": [
+              {
+                "MNGR_DSNC": "Y",
+                "PRFL_PHTG": "https://example.flow.team/<가림:136자>",
+                "REMARK_ATCH_REC": [],
+                "REPLY_CNT": "0",
+                "COLABO_COMMT_SRNO": "99999054",
+                "REMARK_IMG_ATCH_REC": [],
+                "EMT_CNT": "0",
+                "LANG": null,
+                "RGSR_JBCL_NM": null,
+                "RGSR_NM": "⟨이름2⟩",
+                "SELF_YN": "N",
+                "COLABO_SRNO": "9999059",
+                "DELETE_YN": "N",
+                "RGSN_DTTM": "20261008175212",
+                "EMT_SELF_YN": "N",
+                "REMARK_CNTN": "'가가' → '가가' 가가가 가가가가가가가.",
+                "MODIFY_YN": "N",
+                "SYSTEM_REMARK_YN": "Y",
+                "PIN_YN": "N",
+                "PHTG_USE_YN": "Y",
+                "PIN_USE_YN": "Y",
+                "SYS_CODE": "A00_0^^가가^^가가",
+                "RGSR_ID": "user3@masked",
+                "CNTN": "'가가' → '가가', A00_0 가가가가가가가.",
+                "EDTR_DTTM": "20261008175212",
+                "COLABO_REMARK_SRNO": "999999032"
+              },
+              {
+                "MNGR_DSNC": "Y",
+                "PRFL_PHTG": "https://example.flow.team/<가림:136자>",
+                "REMARK_ATCH_REC": [],
+                "REPLY_CNT": "12",
+                "COLABO_COMMT_SRNO": "99999054",
+                "REMARK_IMG_ATCH_REC": [],
+                "EMT_CNT": "0",
+                "LANG": "ko",
+                "RGSR_JBCL_NM": null,
+                "RGSR_NM": "⟨이름2⟩",
+                "SELF_YN": "N",
+                "COLABO_SRNO": "9999059",
+                "DELETE_YN": "N",
+                "RGSN_DTTM": "20261012111558",
+                "EMT_SELF_YN": "N",
+                "REMARK_CNTN": "@[⟨이름8⟩](user4@masked) \n\n가가 가가가 가가가가 가가가가가가.\n가가 가가가 가가가가 가가가. aaaaaaa가 가가가가가가가.\n\n0. /aaa/a0/aa/{aaaa} 가가 /aaa/a0/aa/aaaaaaa/{aaaa} 가가 AA 가가\n\n0. {aaaa: {aaaaaa: [\"aaaaaaaa_aaaa\"]}} 가 가가 (가가 가가 가가가)\n  → 가가 가가가 가가가 가가가 가가 (가가가가, 00가 가가)\n\n0. /aaa/a0/aa/aaaaaaa-aaaaaaa 가가 가가가가\n  → 가가 가가가가 AAAA 가가\n\n``` 가가\n{\n  \"aaaa\": \"aaAAaAaA\",\n  \"aaaaaa\": 0000,\n  \"aaaaaaAaaa\": \"AAAAAA-AA\",\n  \"aaAaaaaa\": \"A\",\n  \"aaaaaaaaAaa\": \"https://<가림>/<가림:11자>\",\n  \"aaaaaa\": \"aa\",\n  \"aaaaaa\": {\n    \"aaaaaaaa_aaaa\": \"가가가\" ◀◀ 가가가\n  }\n}\n```\n\nAA가가가 가가가가 가가 가가가가가가.\nhttps://<가림>/<가림:62자>\n",
+                "MODIFY_YN": "N",
+                "SYSTEM_REMARK_YN": "N",
+                "PIN_YN": "N",
+                "PHTG_USE_YN": "Y",
+                "PIN_USE_YN": "Y",
+                "SYS_CODE": null,
+                "RGSR_ID": "user3@masked",
+                "CNTN": "<a style='font-weight:bold;cursor: pointer;color:#4a4598;' onClick=\"aa_aaaaaaa('user4@masked');\" profile-data='%0A%00AAAA_AA%00%0A%00A%00%0A%00AAAA_AA%00%0A%00aaaaaaaaa00%00aaaaa.aaa%00%0A'>⟨이름8⟩</a> \n\n가가 가가가 가가가가 가가가가가가.\n가가 가가가 가가가가 가가가. aaaaaaa가 가가가가가가가.\n\n0. /aaa/a0/aa/{aaaa} 가가 /aaa/a0/aa/aaaaaaa/{aaaa} 가가 AA 가가\n\n0. {aaaa: {aaaaaa: [\"aaaaaaaa_aaaa\"]}} 가 가가 (가가 가가 가가가)\n  → 가가 가가가 가가가 가가가 가가 (가가가가, 00가 가가)\n\n0. /aaa/a0/aa/aaaaaaa-aaaaaaa 가가 가가가가\n  → 가가 가가가가 AAAA 가가\n\n``` 가가\n{\n  \"aaaa\": \"aaAAaAaA\",\n  \"aaaaaa\": 0000,\n  \"aaaaaaAaaa\": \"AAAAAA-AA\",\n  \"aaAaaaaa\": \"A\",\n  \"aaaaaaaaAaa\": \"https://<가림>/<가림:11자>\",\n  \"aaaaaa\": \"aa\",\n  \"aaaaaa\": {\n    \"aaaaaaaa_aaaa\": \"가가가\" ◀◀ 가가가\n  }\n}\n```\n\nAA가가가 가가가가 가가 가가가가가가.\n<a href=\"https://<가림>/<가림:62자>\" target=\"_blank\" class='urllink blue'>https://<가림>/<가림:62자></a>\n",
+                "EDTR_DTTM": "20261012120439",
+                "COLABO_REMARK_SRNO": "999999033"
+              }
+            ],
+            "attachments": [],
+            "imageAttachments": [
+              {
+                "ORCP_FILE_NM": "aaaaa (0).aaa",
+                "FILE_SIZE": "133079",
+                "RGSN_DTTM": "20261007141038",
+                "ATCH_SRNO": "AAA:AAAA_000000000000000_00a0aa0a-a000-00a0-000a-000000000000:000000000",
+                "OTPT_SQNC": "1",
+                "ATCH_URL": "https://flow.team/<가림:87자>",
+                "STTS": "U",
+                "THUM_IMG_PATH": "https://flow.team/<가림:93자>",
+                "WIDTH": "448",
+                "HEIGHT": "917",
+                "RGSR_NM": "⟨이름6⟩",
+                "USE_INTT_ID": "BFLOW_300033026954",
+                "EXPRY_YN": "N",
+                "DOWN_YN": "Y",
+                "CLOUD_YN": "Y"
+              }
+            ],
+            "todos": [],
+            "schedules": [],
+            "tasks": [
+              {
+                "SECTION_NAME": "가가/가가가 가가 가가",
+                "STTS": "0",
+                "JIRA_YN": null,
+                "JIRA_ISSUE_TYPE_NM": null,
+                "IS_START_ALL_DAY": null,
+                "PRIORITY": "2",
+                "TASK_NUM": "6510",
+                "IS_END_ALL_DAY": null,
+                "START_DT": "",
+                "TASK_NM": "AA 가가 가 가가가가가 가가가 가가가 가가 가가",
+                "CUSTOM_COLUMN_DATA_RECORD": null,
+                "SR_VAL": null,
+                "TASK_COLUMN_REC": [
+                  {
+                    "COLUMN_TYPE": "STATUS",
+                    "DEFAULT_COLUMN_TYPE": "STATUS",
+                    "COLUMN_SRNO": "12",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": "Multi06",
+                        "OPTION_NAME": "가가",
+                        "CUSTOM_COLUMN_DATA_SRNO": "99999047",
+                        "OPTION_CATEGORY": "1",
+                        "USER_NM": "",
+                        "PRFL_PHTG": "",
+                        "CUSTOM_COLUMN_DATA": "958553",
+                        "COLUMN_TYPE": "STATUS"
+                      }
+                    ]
+                  },
+                  {
+                    "COLUMN_TYPE": "USER",
+                    "DEFAULT_COLUMN_TYPE": "WORKER_ID",
+                    "COLUMN_SRNO": "1",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": null,
+                        "OPTION_NAME": null,
+                        "CUSTOM_COLUMN_DATA_SRNO": null,
+                        "OPTION_CATEGORY": null,
+                        "USER_NM": "⟨이름2⟩",
+                        "PRFL_PHTG": "https://example.flow.team/<가림:136자>",
+                        "CUSTOM_COLUMN_DATA": "user3@masked",
+                        "COLUMN_TYPE": null
+                      },
+                      {
+                        "OPTION_COLOR": null,
+                        "OPTION_NAME": null,
+                        "CUSTOM_COLUMN_DATA_SRNO": null,
+                        "OPTION_CATEGORY": null,
+                        "USER_NM": "⟨이름8⟩",
+                        "PRFL_PHTG": "https://flow.team/<가림:128자>",
+                        "CUSTOM_COLUMN_DATA": "user4@masked",
+                        "COLUMN_TYPE": null
+                      }
+                    ]
+                  },
+                  {
+                    "COLUMN_TYPE": "TEXT",
+                    "DEFAULT_COLUMN_TYPE": "TASK_NM",
+                    "COLUMN_SRNO": "6",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": "",
+                        "OPTION_NAME": "",
+                        "CUSTOM_COLUMN_DATA_SRNO": "",
+                        "OPTION_CATEGORY": "",
+                        "USER_NM": "",
+                        "PRFL_PHTG": null,
+                        "CUSTOM_COLUMN_DATA": "AA 가가 가 가가가가가 가가가 가가가 가가 가가",
+                        "COLUMN_TYPE": "TEXT"
+                      }
+                    ]
+                  },
+                  {
+                    "COLUMN_TYPE": "PRIORITY",
+                    "DEFAULT_COLUMN_TYPE": "PRIORITY",
+                    "COLUMN_SRNO": "7",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": "",
+                        "OPTION_NAME": "",
+                        "CUSTOM_COLUMN_DATA_SRNO": "",
+                        "OPTION_CATEGORY": "",
+                        "USER_NM": "",
+                        "PRFL_PHTG": null,
+                        "CUSTOM_COLUMN_DATA": "2",
+                        "COLUMN_TYPE": "PRIORITY"
+                      }
+                    ]
+                  },
+                  {
+                    "COLUMN_TYPE": "USER",
+                    "DEFAULT_COLUMN_TYPE": "RGSR_ID",
+                    "COLUMN_SRNO": "2",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": "",
+                        "OPTION_NAME": "",
+                        "CUSTOM_COLUMN_DATA_SRNO": "",
+                        "OPTION_CATEGORY": "",
+                        "USER_NM": null,
+                        "PRFL_PHTG": null,
+                        "CUSTOM_COLUMN_DATA": null,
+                        "COLUMN_TYPE": "USER"
+                      }
+                    ]
+                  },
+                  {
+                    "COLUMN_TYPE": "DATE",
+                    "DEFAULT_COLUMN_TYPE": "RGSN_DTTM",
+                    "COLUMN_SRNO": "3",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": "",
+                        "OPTION_NAME": "",
+                        "CUSTOM_COLUMN_DATA_SRNO": "",
+                        "OPTION_CATEGORY": "",
+                        "USER_NM": "",
+                        "PRFL_PHTG": null,
+                        "CUSTOM_COLUMN_DATA": null,
+                        "COLUMN_TYPE": "DATE"
+                      }
+                    ]
+                  },
+                  {
+                    "COLUMN_TYPE": "DATE",
+                    "DEFAULT_COLUMN_TYPE": "EDTR_DTTM",
+                    "COLUMN_SRNO": "4",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": "",
+                        "OPTION_NAME": "",
+                        "CUSTOM_COLUMN_DATA_SRNO": "",
+                        "OPTION_CATEGORY": "",
+                        "USER_NM": "",
+                        "PRFL_PHTG": null,
+                        "CUSTOM_COLUMN_DATA": null,
+                        "COLUMN_TYPE": "DATE"
+                      }
+                    ]
+                  },
+                  {
+                    "COLUMN_TYPE": "NUMBER",
+                    "DEFAULT_COLUMN_TYPE": "TASK_NUM",
+                    "COLUMN_SRNO": "5",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": "",
+                        "OPTION_NAME": "",
+                        "CUSTOM_COLUMN_DATA_SRNO": "",
+                        "OPTION_CATEGORY": "",
+                        "USER_NM": "",
+                        "PRFL_PHTG": null,
+                        "CUSTOM_COLUMN_DATA": "6510",
+                        "COLUMN_TYPE": "NUMBER"
+                      }
+                    ]
+                  },
+                  {
+                    "COLUMN_TYPE": "SECTION",
+                    "DEFAULT_COLUMN_TYPE": "SECTION",
+                    "COLUMN_SRNO": "0",
+                    "COLUMN_DATA_REC": [
+                      {
+                        "OPTION_COLOR": null,
+                        "OPTION_NAME": "가가/가가가 가가 가가",
+                        "CUSTOM_COLUMN_DATA_SRNO": null,
+                        "OPTION_CATEGORY": null,
+                        "USER_NM": null,
+                        "PRFL_PHTG": null,
+                        "CUSTOM_COLUMN_DATA": "999087",
+                        "COLUMN_TYPE": null
+                      }
+                    ]
+                  }
+                ],
+                "PROGRESS": "",
+                "TASK_SRNO": "99999048",
+                "WORKER_REC": [
+                  {
+                    "WORKER_ID": "user3@masked",
+                    "WORKER_PRFL_PHTG": "https://example.flow.team/<가림:136자>",
+                    "WORKER_NM": "⟨이름2⟩"
+                  },
+                  {
+                    "WORKER_ID": "user4@masked",
+                    "WORKER_PRFL_PHTG": "https://flow.team/<가림:128자>",
+                    "WORKER_NM": "⟨이름8⟩"
+                  }
+                ],
+                "DRAW_SUBTASK_YN": "Y",
+                "END_DT": "",
+                "SECTION_SRNO": "999087"
+              }
+            ],
+            "subTasks": [],
+            "upLinkTasks": [],
+            "votes": [],
+            "projectColumns": [
+              {
+                "ORDER_NUM": "1000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "TEXT",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "TASK_NM",
+                "COLUMN_LANG_CODE": "common:taskName",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "6",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "2000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "STATUS",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "STATUS",
+                "COLUMN_LANG_CODE": "dictionary:status",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "12",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "3000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "USER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "WORKER_ID",
+                "COLUMN_LANG_CODE": "dictionary:manager",
+                "MULTI_OPTION_YN": "Y",
+                "COLUMN_SRNO": "1",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "4000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "START_DT",
+                "COLUMN_LANG_CODE": "common:startDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "10",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "5000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "END_DT",
+                "COLUMN_LANG_CODE": "common:dueDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "11",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "6000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "PRIORITY",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "PRIORITY",
+                "COLUMN_LANG_CODE": "common:priority",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "7",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "7000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "PROGRESS",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "PROGRESS",
+                "COLUMN_LANG_CODE": "common:progressAsNoun",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "8",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "8000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "USER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "RGSR_ID",
+                "COLUMN_LANG_CODE": "dictionary:poster",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "2",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "9000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "RGSN_DTTM",
+                "COLUMN_LANG_CODE": "common:registeredDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "3",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "10000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "EDTR_DTTM",
+                "COLUMN_LANG_CODE": "common:modificationDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "4",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "11000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "NUMBER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "TASK_NUM",
+                "COLUMN_LANG_CODE": "common:taskNumber",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "5",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "12000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "가가",
+                "COLUMN_TYPE": "SECTION",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "SECTION",
+                "COLUMN_LANG_CODE": "dictionary:group",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "0",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "12100.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "가가 가가",
+                "COLUMN_TYPE": "OPTION",
+                "DEFAULT_COLUMN_YN": "N",
+                "DEFAULT_COLUMN_TYPE": null,
+                "COLUMN_LANG_CODE": null,
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "999085",
+                "COLABO_SRNO": "9999059"
+              },
+              {
+                "ORDER_NUM": "12300.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "가가가 가가0",
+                "COLUMN_TYPE": "OPTION",
+                "DEFAULT_COLUMN_YN": "N",
+                "DEFAULT_COLUMN_TYPE": null,
+                "COLUMN_LANG_CODE": null,
+                "MULTI_OPTION_YN": "Y",
+                "COLUMN_SRNO": "999086",
+                "COLABO_SRNO": "9999059"
+              }
+            ],
+            "editedDateTime": "20261007141213"
+          }
+        }
+      }
+    },
+    {
+      "label": "comments_99999054",
+      "path": "/user/comments/99999054?replyYn=Y&size=100",
+      "status": 200,
+      "ms": 177,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "hasNext": false,
+            "lastCursor": 6,
+            "comments": [
+              {
+                "projectId": "9999059",
+                "postId": "99999054",
+                "commentId": "999999026",
+                "contents": "가가가가 '⟨이름2⟩'가 가가가가가가가.",
+                "registerId": "user2@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "이름6",
+                "registerCorpName": "",
+                "registerDivisionName": "가가가가가가가",
+                "registeredDateTime": "20261007141214",
+                "editedDateTime": "20261007141214",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "A00^^'⟨이름2⟩'@$%",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999054",
+                "commentId": "999999027",
+                "contents": "가가가가 '⟨이름2⟩'가가 '⟨이름2⟩', '⟨이름8⟩'가가가가가가가.",
+                "registerId": "user3@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "이름2",
+                "registerCorpName": "",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261007142218",
+                "editedDateTime": "20261007142218",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "A00^^'⟨이름2⟩'^^'⟨이름2⟩', '⟨이름8⟩'",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999054",
+                "commentId": "999999028",
+                "contents": "가가가 가가AA 가가가 가가가 가 가가가가. \nAA가가가 가가가 AAA가 가가가가.",
+                "registerId": "user3@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "이름2",
+                "registerCorpName": "",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261007142323",
+                "editedDateTime": "20261007142323",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S13",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "ko",
+                "attachments": [
+                  {
+                    "attachId": "999999046",
+                    "fileName": "aaaaa.aaa",
+                    "fileSize": 110534,
+                    "attachUrl": "https://flow.team/<가림:87자>"
+                  }
+                ],
+                "replies": [
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999068",
+                    "parentCommentId": "999999028",
+                    "contents": "가가 가가가가 가가가 가가가가가가 가 가 가가가가.",
+                    "registerId": "user2@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름6",
+                    "registeredDateTime": "20261007142803",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  }
+                ],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999054",
+                "commentId": "999999029",
+                "contents": "가가가가\n\n- 가가가 AA 가가 가가가가 aa/aaa 가가 가가\n- AA AAA가 가가가 가가가가 가가\n  - /aaa/a0/aa/{aaaa}\n  - /aaa/a0/aa/aaaaaaa/{aaaa}\n- 가가 AAA가 가가가 가가 가가 가가 \n  - /aaa/a0/aa/aaaaaaa-aaaaaaa\n- 가가 가가 가가가가 가가가 가가\n- 가가가가 가가\n",
+                "registerId": "user3@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "이름2",
+                "registerCorpName": "",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261007142749",
+                "editedDateTime": "20261007142749",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "ko",
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999054",
+                "commentId": "999999030",
+                "contents": "⟨이름8⟩가가 가가 가가\n가가 : AA 가가 가 가가가가가 가가가 가가가 가가 가가\n가가 : '가가' 가가가가가 가가가가가가가.",
+                "registerId": "user4@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "이름8",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261007142814",
+                "editedDateTime": "20261007142814",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S49^^2",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999054",
+                "commentId": "999999032",
+                "contents": "가가가 '가가'가가 '가가'가가 가가가가가가가.",
+                "registerId": "user3@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "이름2",
+                "registerCorpName": "",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261008175212",
+                "editedDateTime": "20261008175212",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "A00_0^^가가^^가가",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999054",
+                "commentId": "999999033",
+                "contents": "@[⟨이름8⟩](user4@masked) \n\n가가 가가가 가가가가 가가가가가가.\n가가 가가가 가가가가 가가가. aaaaaaa가 가가가가가가가.\n\n0. /aaa/a0/aa/{aaaa} 가가 /aaa/a0/aa/aaaaaaa/{aaaa} 가가 AA 가가\n\n0. {aaaa: {aaaaaa: [\"aaaaaaaa_aaaa\"]}} 가 가가 (가가 가가 가가가)\n  → 가가 가가가 가가가 가가가 가가 (가가가가, 00가 가가)\n\n0. /aaa/a0/aa/aaaaaaa-aaaaaaa 가가 가가가가\n  → 가가 가가가가 AAAA 가가\n\n``` 가가\n{\n  \"aaaa\": \"aaAAaAaA\",\n  \"aaaaaa\": 0000,\n  \"aaaaaaAaaa\": \"AAAAAA-AA\",\n  \"aaAaaaaa\": \"A\",\n  \"aaaaaaaaAaa\": \"https://<가림>/<가림:11자>\",\n  \"aaaaaa\": \"aa\",\n  \"aaaaaa\": {\n    \"aaaaaaaa_aaaa\": \"가가가\" ◀◀ 가가가\n  }\n}\n```\n\nAA가가가 가가가가 가가 가가가가가가.\nhttps://<가림>/<가림:62자>\n",
+                "registerId": "user3@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "이름2",
+                "registerCorpName": "",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261012111558",
+                "editedDateTime": "20261012120439",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": "user3@masked",
+                "editorName": "이름2",
+                "systemCode": null,
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "ko",
+                "attachments": [],
+                "replies": [
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999070",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름2⟩](user3@masked) \naaaaaaaa_aaaa 가 가가 가가 가가 가가 가가가가가가. 가가가 가가가 가가가 가 가가가 가가가 가가가가가.",
+                    "registerId": "user4@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름8",
+                    "registeredDateTime": "20261012114412",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999071",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름8⟩](user4@masked) 가가가가가.",
+                    "registerId": "user2@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름6",
+                    "registeredDateTime": "20261012114828",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999072",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름6⟩](user2@masked) 가가 가가가 가가가 가가가 가가가가가 가가가 가가가 가가가가가? 가가 가가가가가 가가가 가가가가 가 가 가가가..",
+                    "registerId": "user3@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름2",
+                    "registeredDateTime": "20261012115134",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999073",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름2⟩](user3@masked) 가 가가가 가가 가가가 가가가 가가가가 가가가.",
+                    "registerId": "user2@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름6",
+                    "registeredDateTime": "20261012115159",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999074",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름6⟩](user2@masked) 가 가가가가가가. \n@[⟨이름8⟩](user4@masked) 가가가가가가 가가 가 가가 가가가가가가~!",
+                    "registerId": "user3@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름2",
+                    "registeredDateTime": "20261012115442",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999075",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름2⟩](user3@masked) 가가가 가가 가가가가 가가 가가 가가 가 가가가 가가가가가가.",
+                    "registerId": "user2@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름6",
+                    "registeredDateTime": "20261012115550",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999076",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름6⟩](user2@masked) 가 가 가가 가가가 가가가 가가가 가가가 가가가가가.. 가가가가가 가가가가 가가가가가가가.",
+                    "registerId": "user3@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름2",
+                    "registeredDateTime": "20261012115659",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999077",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름8⟩](user4@masked) 가가가가가가 가가가 가가가가 가가가가가가. 가가가가 가가가가가.",
+                    "registerId": "user3@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름2",
+                    "registeredDateTime": "20261012120428",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999078",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름2⟩](user3@masked) 가가가가 가가가 가가가 가가가?",
+                    "registerId": "user5@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름3",
+                    "registeredDateTime": "20261014122817",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  },
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999054",
+                    "replyId": "9999079",
+                    "parentCommentId": "999999033",
+                    "contents": "@[⟨이름3⟩](user5@masked) \n가가 가가 가가 가가 가가가가 가가 가가가가가. 가가 가가가 가가 가가 가가가가.\n가가 가가가 가가 가가 가가 가가가가가.",
+                    "registerId": "user4@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "이름8",
+                    "registeredDateTime": "20261014123356",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  }
+                ],
+                "replyHasNext": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "post_99999057",
+      "path": "/user/posts/99999057",
+      "status": 200,
+      "ms": 179,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999062",
+            "postId": "99999057",
+            "remarkSrno": "",
+            "templateType": "1",
+            "title": "🍱 [가가] 00가 00가 (가) 가가 가가",
+            "content": {
+              "$jsonString": {
+                "COMPS": [
+                  {
+                    "COMP_TYPE": "TEXT",
+                    "COMP_DETAIL": {
+                      "CONTENTS": "● 가가: 가가가가\n● 가가가 가가가 ✅\n\n──────── 가가 ────────\n● 가 — 가가가가\n● 가/가가 — 가가가가가가\n● 가가 — 가가가가가가가\n● 가가 — 가가가가,, 가가가가, 가가가가가, 가가가가, 가가가가가, ㄱ가가가가가가가\n\n──────── 가가 가가 ────────\nhttps://<가림>/<가림:101자>\nhttps://<가림>/<가림:101자>\n\nhttps://<가림>/<가림:49자>"
+                    }
+                  }
+                ]
+              }
+            },
+            "commentContent": {
+              "$jsonString": {
+                "COMPS": [
+                  {
+                    "COMP_TYPE": "TEXT",
+                    "COMP_DETAIL": {
+                      "CONTENTS": "● 가가: 가가가가\n● 가가가 가가가 ✅\n\n──────── 가가 ────────\n● 가 — 가가가가\n● 가/가가 — 가가가가가가\n● 가가 — 가가가가가가가\n● 가가 — 가가가가,, 가가가가, 가가가가가, 가가가가, 가가가가가, ㄱ가가가가가가가\n\n──────── 가가 가가 ────────\nhttps://<가림>/<가림:101자>\nhttps://<가림>/<가림:101자>\n\nhttps://<가림>/<가림:49자>"
+                    }
+                  }
+                ]
+              }
+            },
+            "outContent": "● 가가: 가가가가\n● 가가가 가가가 ✅\n\n──────── 가가 ────────\n● 가 — 가가가가\n● 가/가가 — 가가가가가가\n● 가가 — 가가가가가가가\n● 가가 — 가가가가,, 가가가가, 가가가가가, 가가가가, 가가가가가, ㄱ가가가가가가가\n\n──────── 가가 가가 ────────\nhttps://<가림>/<가림:101자>\nhttps://<가림>/<가림:101자>\n\nhttps://<가림>/<가림:49자>",
+            "htmlContent": "",
+            "contentJsonYn": "Y",
+            "registerId": "user6@masked",
+            "registerName": "이름1",
+            "registeredDateTime": "20261014123028",
+            "connectUrl": "https://<가림>/<가림:88자>",
+            "remarkCount": "0",
+            "existYn": "",
+            "nextYn": "N",
+            "totalCount": "0",
+            "sectionCount": "0",
+            "remarks": [],
+            "attachments": [],
+            "imageAttachments": [],
+            "todos": [],
+            "schedules": [],
+            "tasks": [],
+            "subTasks": [],
+            "upLinkTasks": [],
+            "votes": [],
+            "projectColumns": [
+              {
+                "ORDER_NUM": "1000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "TEXT",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "TASK_NM",
+                "COLUMN_LANG_CODE": "common:taskName",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "6",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "2000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "STATUS",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "STATUS",
+                "COLUMN_LANG_CODE": "dictionary:status",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "12",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "3000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "USER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "WORKER_ID",
+                "COLUMN_LANG_CODE": "dictionary:manager",
+                "MULTI_OPTION_YN": "Y",
+                "COLUMN_SRNO": "1",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "4000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "START_DT",
+                "COLUMN_LANG_CODE": "common:startDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "10",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "5000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "END_DT",
+                "COLUMN_LANG_CODE": "common:dueDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "11",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "6000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "PRIORITY",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "PRIORITY",
+                "COLUMN_LANG_CODE": "common:priority",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "7",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "7000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "PROGRESS",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "PROGRESS",
+                "COLUMN_LANG_CODE": "common:progressAsNoun",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "8",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "8000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "USER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "RGSR_ID",
+                "COLUMN_LANG_CODE": "dictionary:poster",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "2",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "9000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "RGSN_DTTM",
+                "COLUMN_LANG_CODE": "common:registeredDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "3",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "10000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "DATE",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "EDTR_DTTM",
+                "COLUMN_LANG_CODE": "common:modificationDate",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "4",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "11000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "",
+                "COLUMN_TYPE": "NUMBER",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "TASK_NUM",
+                "COLUMN_LANG_CODE": "common:taskNumber",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "5",
+                "COLABO_SRNO": "9999062"
+              },
+              {
+                "ORDER_NUM": "12000.0000000000",
+                "VIEW_YN": "Y",
+                "COLUMN_SETTING": null,
+                "COLUMN_NAME": "가가",
+                "COLUMN_TYPE": "SECTION",
+                "DEFAULT_COLUMN_YN": "Y",
+                "DEFAULT_COLUMN_TYPE": "SECTION",
+                "COLUMN_LANG_CODE": "dictionary:group",
+                "MULTI_OPTION_YN": "N",
+                "COLUMN_SRNO": "0",
+                "COLABO_SRNO": "9999062"
+              }
+            ],
+            "editedDateTime": "20261014123028"
+          }
+        }
+      }
+    },
+    {
+      "label": "comments_99999057",
+      "path": "/user/comments/99999057?replyYn=Y&size=100",
+      "status": 200,
+      "ms": 155,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "hasNext": false,
+            "lastCursor": -1,
+            "comments": []
+          }
+        }
+      }
+    },
+    {
+      "label": "all_unread_3#1",
+      "path": "/user/alarms?readYn=N&size=100",
+      "status": 200,
+      "ms": 79,
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "alarms": {
+              "hasNext": false,
+              "lastCursor": 0,
+              "alarms": [
+                {
+                  "alarmId": "9999999018",
+                  "projectId": "9999062",
+                  "postId": "99999057",
+                  "remarkId": "-1",
+                  "replyId": "-1",
+                  "receiverId": "user4@masked",
+                  "registerId": "user6@masked",
+                  "registerName": "이름1",
+                  "registeredDateTime": "20261014123028",
+                  "message": null,
+                  "content": "🍱 [가가] 00가 00가 (가) 가가 가가",
+                  "readYn": "N",
+                  "alarmType": null,
+                  "mentionYn": "N",
+                  "registrantYn": "N",
+                  "workerYn": "N"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

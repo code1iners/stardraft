@@ -26,10 +26,11 @@ Blocked by:
 ## Answer
 
 - 두 CLI 모두 비대화형 호출과 스키마 강제 출력을 지원한다. Claude Code 2.1.296은 `claude -p --output-format json --json-schema`, Codex 0.162.1은 `codex exec --output-schema <파일> -o <파일>`을 쓴다.
-- 읽기 전용은 Claude는 `--tools "Read,Glob,Grep"` + `--permission-mode dontAsk` + `--restricted`로, Codex는 기본 read-only 샌드박스(exec는 승인 `never` 고정)로 건다.
+- 읽기 전용은 Claude는 `--tools "Read,Glob,Grep"` + `--permission-mode dontAsk` + `--restricted`로, Codex는 `--sandbox read-only`를 명시해 건다. 명시하지 않으면 사용자 `config.toml`의 `sandbox_mode`가 적용될 수 있다. exec는 승인 정책을 `never`로 고정한다.
 - 비밀 파일 제외는 Claude만 안정적이다(`Read(**/.env)` deny). Codex는 베타 권한 프로필로만 되고, 이 프로필은 `--sandbox`와 함께 쓸 수 없다.
 - `claude -p`는 신뢰하지 않은 저장소의 훅·`env`·`.mcp.json`을 실행하므로, `--restricted`와 `--strict-mcp-config`를 필수로 써야 한다.
 - 디렉터리는 Claude가 프로세스 cwd + `--add-dir`, Codex가 `-C`로 지정한다. git 저장소가 아닌 작업 폴더에서 Codex를 돌리려면 `--skip-git-repo-check`가 필요하다.
 - Windows는 둘 다 네이티브로 지원한다. 다만 Codex 샌드박스는 Windows 11 24H2+의 MXC나 관리자 승인 설정이 있어야 온전하다.
 - 로그인 확인은 `claude auth status`와 `codex login status`로 하고, 둘 다 미로그인이면 코드 1이다. GUI 앱은 셸 PATH를 물려받지 못하며, 타임아웃·동시 실행 관리는 앱 몫이다.
-- Gemini CLI는 스키마 강제가 없고 headless plan 모드가 YOLO로 바뀌어 2순위 후보다. 미로그인 출력과 Windows 동작은 실측이 필요하다. 상세: [조사 결과](../research/cli-agent-headless.md)
+- Gemini CLI는 스키마 강제가 없고 headless plan 모드가 YOLO로 바뀌어 2순위 후보다.
+- 이 조사는 문서와 소스만 읽었고 CLI를 실행하지 않았다. Claude와 Codex의 미로그인 시 실제 출력, Windows 동작, 취소 시 자식 프로세스 정리는 실측이 필요하다. 상세: [조사 결과](../research/cli-agent-headless.md)

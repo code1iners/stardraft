@@ -81,6 +81,14 @@
     - `/docs/scopes`: "v1 MCP는 **read-only**로 동작합니다."
     - `/docs/mcp/faq`: 쓰기 도구가 있다고 답한다.
     - 도구 목록(`https://flow.team/ai/mcp/tools.json?lang=ko`)에는 `flow_create_comment`, `flow_update_comment` 같은 쓰기 도구가 있다.
+- **내 정보와 게시물 검색** (개인 키): 2026-10-15에 [댓글 쓰기 API 실측](../issues/15-comment-write-api-check.md)을 혼자 실행하려고 같은 방법으로 읽었다.
+  - `GET /user/employees/me`(operationId `getMyEmployee`): 키 소유자 본인의 구성원 정보를 준다. 응답 필드에 `userId`, `fullname`, `email`, `divisionName` 등이 있다. 앱이 내 ID를 알아야 할 때 알림 없이도 얻을 수 있다.
+  - `GET /user/search/posts`(operationId `searchPosts`): 접근 가능한 범위에서 게시글을 검색한다.
+    - `searchWord`가 필수다. `registerIds`, `projectIds`, `startDateTime`, `endDateTime`, `orderType`, `size` 등으로 거를 수 있다.
+    - 기본값은 최근 6개월, `orderType=SCORE`, `size=20`이다.
+    - 응답 `posts[]`에 `projectId`, `postId`, `commtTtl`(게시글 제목), `ttl`(Flow 프로젝트 이름), `registerId`, `registeredDateTime`이 있다.
+    - 새 글이 검색에 언제 반영되는지는 문서에 없다.
+  - 출처: 구성원 문서 번들(`nodes/25.8f9582c1.js`, `chunks/getEmployee.72e0d841.js`), 검색 문서 번들(`nodes/28.84c92236.js`, `chunks/searchProjects.1baffdd5.js`)
 - **멘션 표기 형식**: 문서에 없다. 실호출로 `@[표시 이름](사용자 ID)` 형식임을 확인했다(티켓 01의 답).
 - **문서 간 불일치**: 공통 문서는 페이지네이션을 `page`/`limit`으로 설명하지만, 엔드포인트 명세는 `cursor`/`size`/`lastCursor`를 쓴다.
 

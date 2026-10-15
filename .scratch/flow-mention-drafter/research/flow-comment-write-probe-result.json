@@ -1,0 +1,1191 @@
+{
+  "probe": "flow-comment-write-probe",
+  "ranAt": "2026-10-15T08:20:53+00:00",
+  "run": "1718",
+  "note": "내 이름·ID는 나·me@masked로 바꿨다. PROBE 표지가 없는 글은 글자를 가렸고, 300자를 넘는 문자열은 길이 요약으로 남겼다. 알림 목록·검색 결과·게시물 상세의 원문은 남기지 않았다. sentAt은 PC 시각이다.",
+  "target": {
+    "projectId": "9999059",
+    "postId": "99999058"
+  },
+  "summary": {
+    "q1Mention": {
+      "uiMadeMentionBaseline": "제목을 'test'에서 'PROBE-SETUP'으로 변경하였습니다.",
+      "posts": [
+        {
+          "case": "T1A",
+          "kind": "comment",
+          "parentId": null,
+          "status": 200,
+          "id": "999999040",
+          "sentAt": "17:20:08",
+          "sent": "@[나](me@masked) PROBE-T1A-1718 나를 멘션한 새 댓글입니다.",
+          "response": {
+            "response": {
+              "success": true,
+              "code": 200,
+              "message": "success",
+              "data": {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999040"
+              }
+            }
+          },
+          "stored": {
+            "found": true,
+            "equalsSent": true,
+            "stored": "@[나](me@masked) PROBE-T1A-1718 나를 멘션한 새 댓글입니다.",
+            "newlinesSentStored": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "case": "T1B",
+          "kind": "reply",
+          "parentId": "999999040",
+          "status": 200,
+          "id": "9999082",
+          "sentAt": "17:20:08",
+          "sent": "@[나](me@masked) PROBE-T1B-1718 나를 멘션한 대댓글입니다.",
+          "response": {
+            "response": {
+              "success": true,
+              "code": 200,
+              "message": "success",
+              "data": {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999040",
+                "replyId": "9999082"
+              }
+            }
+          },
+          "stored": {
+            "found": true,
+            "equalsSent": true,
+            "stored": "@[나](me@masked) PROBE-T1B-1718 나를 멘션한 대댓글입니다.",
+            "newlinesSentStored": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "selfMentionAlarmsForT1A": []
+    },
+    "q2Newlines": {
+      "posts": [
+        {
+          "case": "T2",
+          "kind": "comment",
+          "parentId": null,
+          "status": 200,
+          "id": "999999041",
+          "sentAt": "17:20:08",
+          "sent": "PROBE-T2-1718 줄바꿈 시험\n첫째 문단 첫 문장입니다. 첫째 문단 둘째 문장입니다.\n\n둘째 문단입니다. 바로 위에 빈 줄이 하나 있어야 합니다.\n이 줄은 줄바꿈 하나로 이어졌습니다.\n\n특수문자: <b>꺾쇠 태그</b> & **별표 두 개** `백틱`",
+          "response": {
+            "response": {
+              "success": true,
+              "code": 200,
+              "message": "success",
+              "data": {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999041"
+              }
+            }
+          },
+          "stored": {
+            "found": true,
+            "equalsSent": true,
+            "stored": "PROBE-T2-1718 줄바꿈 시험\n첫째 문단 첫 문장입니다. 첫째 문단 둘째 문장입니다.\n\n둘째 문단입니다. 바로 위에 빈 줄이 하나 있어야 합니다.\n이 줄은 줄바꿈 하나로 이어졌습니다.\n\n특수문자: <b>꺾쇠 태그</b> & **별표 두 개** `백틱`",
+            "newlinesSentStored": [
+              6,
+              6
+            ]
+          }
+        },
+        {
+          "case": "T2R",
+          "kind": "reply",
+          "parentId": "999999041",
+          "status": 200,
+          "id": "9999083",
+          "sentAt": "17:20:08",
+          "sent": "PROBE-T2R-1718 대댓글 줄바꿈 시험\n\n바로 위에 빈 줄이 하나 있어야 합니다.\n이 줄은 줄바꿈 하나로 이어졌습니다.",
+          "response": {
+            "response": {
+              "success": true,
+              "code": 200,
+              "message": "success",
+              "data": {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999041",
+                "replyId": "9999083"
+              }
+            }
+          },
+          "stored": {
+            "found": true,
+            "equalsSent": true,
+            "stored": "PROBE-T2R-1718 대댓글 줄바꿈 시험\n\n바로 위에 빈 줄이 하나 있어야 합니다.\n이 줄은 줄바꿈 하나로 이어졌습니다.",
+            "newlinesSentStored": [
+              3,
+              3
+            ]
+          }
+        }
+      ]
+    },
+    "q3Length": {
+      "unit": "글자",
+      "reason": "4,000자(11972바이트)는 받고 4,001자는 거절했다.",
+      "prefixChars": 14,
+      "attempts": [
+        {
+          "case": "T3-c4001",
+          "kind": "comment",
+          "parentId": null,
+          "status": 400,
+          "id": null,
+          "sentAt": "17:20:53",
+          "response": {
+            "response": {
+              "success": false,
+              "code": 400,
+              "message": "error",
+              "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "내용 최대 길이는 4000 입니다.",
+                "verbose": [
+                  {
+                    "code": "too_big",
+                    "maximum": 4000,
+                    "type": "string",
+                    "inclusive": true,
+                    "exact": false,
+                    "message": "내용 최대 길이는 4000 입니다.",
+                    "path": [
+                      "body",
+                      "contents"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "chars": 4001,
+          "utf8Bytes": 11975,
+          "storedChars": null
+        },
+        {
+          "case": "T3-c4000",
+          "kind": "comment",
+          "parentId": null,
+          "status": 200,
+          "id": "999999044",
+          "sentAt": "17:20:53",
+          "response": {
+            "response": {
+              "success": true,
+              "code": 200,
+              "message": "success",
+              "data": {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999044"
+              }
+            }
+          },
+          "chars": 4000,
+          "utf8Bytes": 11972,
+          "storedChars": 4000
+        }
+      ]
+    },
+    "q4DeletedParent": {
+      "T4A": {
+        "commentId": "999999042",
+        "inListAfterDelete": false,
+        "listedItem": null,
+        "remarksInPost": [],
+        "repliesGet": {
+          "status": 412,
+          "body": {
+            "response": {
+              "success": false,
+              "code": 412,
+              "message": "DetailedError",
+              "error": {
+                "code": "NOT_EXISTS_ERROR",
+                "message": "댓글이 존재하지 않습니다."
+              }
+            }
+          }
+        },
+        "replyPost": {
+          "case": "T4AX",
+          "kind": "reply",
+          "parentId": "999999042",
+          "status": 412,
+          "id": null,
+          "sentAt": "17:20:52",
+          "sent": "PROBE-T4AX-1718 지운 댓글에 단 대댓글입니다.",
+          "response": {
+            "response": {
+              "success": false,
+              "code": 412,
+              "message": "DetailedError",
+              "error": {
+                "code": "NOT_EXISTS_ERROR",
+                "message": "댓글이 존재하지 않습니다."
+              }
+            }
+          }
+        }
+      },
+      "T4B": {
+        "commentId": "999999043",
+        "inListAfterDelete": false,
+        "listedItem": null,
+        "remarksInPost": [],
+        "repliesGet": {
+          "status": 412,
+          "body": {
+            "response": {
+              "success": false,
+              "code": 412,
+              "message": "DetailedError",
+              "error": {
+                "code": "NOT_EXISTS_ERROR",
+                "message": "댓글이 존재하지 않습니다."
+              }
+            }
+          }
+        },
+        "replyPost": {
+          "case": "T4BX",
+          "kind": "reply",
+          "parentId": "999999043",
+          "status": 412,
+          "id": null,
+          "sentAt": "17:20:53",
+          "sent": "PROBE-T4BX-1718 지운 댓글에 단 대댓글입니다.",
+          "response": {
+            "response": {
+              "success": false,
+              "code": 412,
+              "message": "DetailedError",
+              "error": {
+                "code": "NOT_EXISTS_ERROR",
+                "message": "댓글이 존재하지 않습니다."
+              }
+            }
+          }
+        },
+        "preReplyInListAfterDelete": false
+      },
+      "preReply": {
+        "case": "T4BR",
+        "kind": "reply",
+        "parentId": "999999043",
+        "status": 200,
+        "id": "9999084",
+        "sentAt": "17:20:09",
+        "sent": "PROBE-T4BR-1718 지울 댓글에 미리 달아 둔 대댓글입니다.",
+        "response": {
+          "response": {
+            "success": true,
+            "code": 200,
+            "message": "success",
+            "data": {
+              "projectId": "9999059",
+              "postId": "99999058",
+              "commentId": "999999043",
+              "replyId": "9999084"
+            }
+          }
+        }
+      }
+    }
+  },
+  "calls": [
+    {
+      "label": "setup_me",
+      "method": "GET",
+      "path": "/user/employees/me",
+      "status": 200,
+      "ms": 87,
+      "at": "17:18:46"
+    },
+    {
+      "label": "setup_search",
+      "method": "GET",
+      "path": "/user/search/posts?searchWord=PROBE-SETUP&registerIds=me@masked",
+      "status": 200,
+      "ms": 158,
+      "at": "17:18:46"
+    },
+    {
+      "label": "setup_post",
+      "method": "GET",
+      "path": "/user/posts/99999058",
+      "status": 200,
+      "ms": 142,
+      "at": "17:18:46"
+    },
+    {
+      "label": "setup_comments",
+      "method": "GET",
+      "path": "/user/comments/99999058?replyYn=Y&size=100",
+      "status": 200,
+      "ms": 158,
+      "at": "17:18:46",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "hasNext": false,
+            "lastCursor": 3,
+            "comments": [
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999036",
+                "contents": "가가가가 '가'가가가가가가가.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261014125824",
+                "editedDateTime": "20261014125824",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S41^^'나'",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999037",
+                "contents": "가가가 '가가'가가 '가가'가가 가가가가가가가.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261014145336",
+                "editedDateTime": "20261014145336",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S45_2^^대기^^진행",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999038",
+                "contents": "@[가](aa@aaaaaa) \naaaa",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015165654",
+                "editedDateTime": "20261015165654",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "en",
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999039",
+                "contents": "제목을 'test'에서 'PROBE-SETUP'으로 변경하였습니다.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015171645",
+                "editedDateTime": "20261015171645",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S38^^test^^PROBE-SETUP@$%",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "T1A",
+      "method": "POST",
+      "path": "/user/comments/99999058",
+      "status": 200,
+      "ms": 194,
+      "at": "17:20:08",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999058",
+            "commentId": "999999040"
+          }
+        }
+      }
+    },
+    {
+      "label": "T1B",
+      "method": "POST",
+      "path": "/user/comments/99999058/replies/999999040",
+      "status": 200,
+      "ms": 166,
+      "at": "17:20:08",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999058",
+            "commentId": "999999040",
+            "replyId": "9999082"
+          }
+        }
+      }
+    },
+    {
+      "label": "T2",
+      "method": "POST",
+      "path": "/user/comments/99999058",
+      "status": 200,
+      "ms": 199,
+      "at": "17:20:08",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999058",
+            "commentId": "999999041"
+          }
+        }
+      }
+    },
+    {
+      "label": "T2R",
+      "method": "POST",
+      "path": "/user/comments/99999058/replies/999999041",
+      "status": 200,
+      "ms": 183,
+      "at": "17:20:08",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999058",
+            "commentId": "999999041",
+            "replyId": "9999083"
+          }
+        }
+      }
+    },
+    {
+      "label": "T4A",
+      "method": "POST",
+      "path": "/user/comments/99999058",
+      "status": 200,
+      "ms": 216,
+      "at": "17:20:09",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999058",
+            "commentId": "999999042"
+          }
+        }
+      }
+    },
+    {
+      "label": "T4B",
+      "method": "POST",
+      "path": "/user/comments/99999058",
+      "status": 200,
+      "ms": 188,
+      "at": "17:20:09",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999058",
+            "commentId": "999999043"
+          }
+        }
+      }
+    },
+    {
+      "label": "T4BR",
+      "method": "POST",
+      "path": "/user/comments/99999058/replies/999999043",
+      "status": 200,
+      "ms": 186,
+      "at": "17:20:09",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999058",
+            "commentId": "999999043",
+            "replyId": "9999084"
+          }
+        }
+      }
+    },
+    {
+      "label": "T4_comments",
+      "method": "GET",
+      "path": "/user/comments/99999058?replyYn=Y&size=100",
+      "status": 200,
+      "ms": 227,
+      "at": "17:20:52",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "hasNext": false,
+            "lastCursor": 5,
+            "comments": [
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999036",
+                "contents": "가가가가 '가'가가가가가가가.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261014125824",
+                "editedDateTime": "20261014125824",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S41^^'나'",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999037",
+                "contents": "가가가 '가가'가가 '가가'가가 가가가가가가가.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261014145336",
+                "editedDateTime": "20261014145336",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S45_2^^대기^^진행",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999038",
+                "contents": "@[가](aa@aaaaaa) \naaaa",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015165654",
+                "editedDateTime": "20261015165654",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "en",
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999039",
+                "contents": "제목을 'test'에서 'PROBE-SETUP'으로 변경하였습니다.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015171645",
+                "editedDateTime": "20261015171645",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S38^^test^^PROBE-SETUP@$%",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999040",
+                "contents": "@[나](me@masked) PROBE-T1A-1718 나를 멘션한 새 댓글입니다.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015172008",
+                "editedDateTime": "20261015172008",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "ko",
+                "attachments": [],
+                "replies": [
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999058",
+                    "replyId": "9999082",
+                    "parentCommentId": "999999040",
+                    "contents": "@[나](me@masked) PROBE-T1B-1718 나를 멘션한 대댓글입니다.",
+                    "registerId": "me@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "나",
+                    "registeredDateTime": "20261015172008",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  }
+                ],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999041",
+                "contents": "PROBE-T2-1718 줄바꿈 시험\n첫째 문단 첫 문장입니다. 첫째 문단 둘째 문장입니다.\n\n둘째 문단입니다. 바로 위에 빈 줄이 하나 있어야 합니다.\n이 줄은 줄바꿈 하나로 이어졌습니다.\n\n특수문자: <b>꺾쇠 태그</b> & **별표 두 개** `백틱`",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015172008",
+                "editedDateTime": "20261015172008",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "ko",
+                "attachments": [],
+                "replies": [
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999058",
+                    "replyId": "9999083",
+                    "parentCommentId": "999999041",
+                    "contents": "PROBE-T2R-1718 대댓글 줄바꿈 시험\n\n바로 위에 빈 줄이 하나 있어야 합니다.\n이 줄은 줄바꿈 하나로 이어졌습니다.",
+                    "registerId": "me@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "나",
+                    "registeredDateTime": "20261015172008",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  }
+                ],
+                "replyHasNext": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "T4_post",
+      "method": "GET",
+      "path": "/user/posts/99999058",
+      "status": 200,
+      "ms": 120,
+      "at": "17:20:52"
+    },
+    {
+      "label": "T4A_replies",
+      "method": "GET",
+      "path": "/user/comments/99999058/replies/999999042",
+      "status": 412,
+      "ms": 132,
+      "at": "17:20:52",
+      "body": {
+        "response": {
+          "success": false,
+          "code": 412,
+          "message": "DetailedError",
+          "error": {
+            "code": "NOT_EXISTS_ERROR",
+            "message": "댓글이 존재하지 않습니다."
+          }
+        }
+      }
+    },
+    {
+      "label": "T4AX",
+      "method": "POST",
+      "path": "/user/comments/99999058/replies/999999042",
+      "status": 412,
+      "ms": 138,
+      "at": "17:20:52",
+      "body": {
+        "response": {
+          "success": false,
+          "code": 412,
+          "message": "DetailedError",
+          "error": {
+            "code": "NOT_EXISTS_ERROR",
+            "message": "댓글이 존재하지 않습니다."
+          }
+        }
+      }
+    },
+    {
+      "label": "T4B_replies",
+      "method": "GET",
+      "path": "/user/comments/99999058/replies/999999043",
+      "status": 412,
+      "ms": 105,
+      "at": "17:20:53",
+      "body": {
+        "response": {
+          "success": false,
+          "code": 412,
+          "message": "DetailedError",
+          "error": {
+            "code": "NOT_EXISTS_ERROR",
+            "message": "댓글이 존재하지 않습니다."
+          }
+        }
+      }
+    },
+    {
+      "label": "T4BX",
+      "method": "POST",
+      "path": "/user/comments/99999058/replies/999999043",
+      "status": 412,
+      "ms": 140,
+      "at": "17:20:53",
+      "body": {
+        "response": {
+          "success": false,
+          "code": 412,
+          "message": "DetailedError",
+          "error": {
+            "code": "NOT_EXISTS_ERROR",
+            "message": "댓글이 존재하지 않습니다."
+          }
+        }
+      }
+    },
+    {
+      "label": "T3-c4001",
+      "method": "POST",
+      "path": "/user/comments/99999058",
+      "status": 400,
+      "ms": 70,
+      "at": "17:20:53",
+      "body": {
+        "response": {
+          "success": false,
+          "code": 400,
+          "message": "error",
+          "error": {
+            "code": "VALIDATION_ERROR",
+            "message": "내용 최대 길이는 4000 입니다.",
+            "verbose": [
+              {
+                "code": "too_big",
+                "maximum": 4000,
+                "type": "string",
+                "inclusive": true,
+                "exact": false,
+                "message": "내용 최대 길이는 4000 입니다.",
+                "path": [
+                  "body",
+                  "contents"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "T3-c4000",
+      "method": "POST",
+      "path": "/user/comments/99999058",
+      "status": 200,
+      "ms": 204,
+      "at": "17:20:53",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "projectId": "9999059",
+            "postId": "99999058",
+            "commentId": "999999044"
+          }
+        }
+      }
+    },
+    {
+      "label": "final_comments",
+      "method": "GET",
+      "path": "/user/comments/99999058?replyYn=Y&size=100",
+      "status": 200,
+      "ms": 131,
+      "at": "17:20:53",
+      "body": {
+        "response": {
+          "success": true,
+          "code": 200,
+          "message": "success",
+          "data": {
+            "hasNext": false,
+            "lastCursor": 6,
+            "comments": [
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999036",
+                "contents": "가가가가 '가'가가가가가가가.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261014125824",
+                "editedDateTime": "20261014125824",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S41^^'나'",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999037",
+                "contents": "가가가 '가가'가가 '가가'가가 가가가가가가가.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261014145336",
+                "editedDateTime": "20261014145336",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S45_2^^대기^^진행",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999038",
+                "contents": "@[가](aa@aaaaaa) \naaaa",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015165654",
+                "editedDateTime": "20261015165654",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "en",
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999039",
+                "contents": "제목을 'test'에서 'PROBE-SETUP'으로 변경하였습니다.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015171645",
+                "editedDateTime": "20261015171645",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "S38^^test^^PROBE-SETUP@$%",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": null,
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999040",
+                "contents": "@[나](me@masked) PROBE-T1A-1718 나를 멘션한 새 댓글입니다.",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015172008",
+                "editedDateTime": "20261015172008",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "ko",
+                "attachments": [],
+                "replies": [
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999058",
+                    "replyId": "9999082",
+                    "parentCommentId": "999999040",
+                    "contents": "@[나](me@masked) PROBE-T1B-1718 나를 멘션한 대댓글입니다.",
+                    "registerId": "me@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "나",
+                    "registeredDateTime": "20261015172008",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  }
+                ],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999041",
+                "contents": "PROBE-T2-1718 줄바꿈 시험\n첫째 문단 첫 문장입니다. 첫째 문단 둘째 문장입니다.\n\n둘째 문단입니다. 바로 위에 빈 줄이 하나 있어야 합니다.\n이 줄은 줄바꿈 하나로 이어졌습니다.\n\n특수문자: <b>꺾쇠 태그</b> & **별표 두 개** `백틱`",
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015172008",
+                "editedDateTime": "20261015172008",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "ko",
+                "attachments": [],
+                "replies": [
+                  {
+                    "projectId": "9999059",
+                    "postId": "99999058",
+                    "replyId": "9999083",
+                    "parentCommentId": "999999041",
+                    "contents": "PROBE-T2R-1718 대댓글 줄바꿈 시험\n\n바로 위에 빈 줄이 하나 있어야 합니다.\n이 줄은 줄바꿈 하나로 이어졌습니다.",
+                    "registerId": "me@masked",
+                    "registerInttId": "BFLOW_300033026954",
+                    "registerName": "나",
+                    "registeredDateTime": "20261015172008",
+                    "editedDateTime": null,
+                    "encrypted": "Y",
+                    "systemCode": "",
+                    "language": "ko",
+                    "attachments": []
+                  }
+                ],
+                "replyHasNext": false
+              },
+              {
+                "projectId": "9999059",
+                "postId": "99999058",
+                "commentId": "999999044",
+                "contents": {
+                  "$long": {
+                    "chars": 4000,
+                    "utf8Bytes": 11972,
+                    "head": "PROBE-T3-1718 가가가가가가가가가가가가가가가가가가가가가가가가가가"
+                  }
+                },
+                "registerId": "me@masked",
+                "registerInttId": "BFLOW_300033026954",
+                "registerName": "나",
+                "registerCorpName": "가가가",
+                "registerDivisionName": "가가가",
+                "registeredDateTime": "20261015172053",
+                "editedDateTime": "20261015172053",
+                "objectContentsName": null,
+                "encrypted": "Y",
+                "editorId": null,
+                "editorName": null,
+                "systemCode": "",
+                "repeatDateTime": null,
+                "repeatId": null,
+                "registerProfilePhoto": "",
+                "language": "ko",
+                "attachments": [],
+                "replies": [],
+                "replyHasNext": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "final_alarms",
+      "method": "GET",
+      "path": "/user/alarms?filters=MENTION&size=20",
+      "status": 200,
+      "ms": 81,
+      "at": "17:20:53"
+    }
+  ]
+}

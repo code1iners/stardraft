@@ -1,0 +1,12 @@
+{
+  "name": "unsigned-check-electron",
+  "productName": "UnsignedCheck Electron",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "description": "미서명 앱 macOS 실기 검증용 최소 Electron 앱. 구현 코드로 재사용하지 않는다.",
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "44.7.2"
+  }
+}

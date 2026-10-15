@@ -16,7 +16,7 @@ Blocked by: 02, 03, 10, 11
 아래 두 티켓의 결론도 함께 반영한다.
 
 - [서명 정책 재검토](10-signing-policy-review.md)
-- [미서명 Tauri 앱 macOS 실기 검증](11-tauri-macos-unsigned-check.md)
+- [미서명 앱 macOS 실기 검증](11-tauri-macos-unsigned-check.md)
 
 정할 것:
 
@@ -28,3 +28,5 @@ Blocked by: 02, 03, 10, 11
     - macOS는 번들 전체에 ad-hoc 서명을 하는 단계가 필수다.
     - Windows는 미서명으로 내되, 나중에 Artifact Signing을 붙일 수 있게 서명 자리를 둔다. Tauri라면 `signCommand`다. 설치 파일 안의 exe와 DLL까지 서명되도록 빌드 안에서 서명해야 한다. 공식 서명 Action이 Windows 러너 전용이므로, Windows 빌드는 Windows 러너에서 한다.
     - 자체 서명 인증서를 채택하는 경우(Electron 알림을 살릴 때만), 인증서 키를 CI 비밀값으로 보관하고 Keychain에 직접 가져오는 단계를 둔다.
+  - [미서명 앱 macOS 실기 검증](11-tauri-macos-unsigned-check.md) 결과, ad-hoc 서명만으로 Electron 알림이 동작했다. 자체 서명 인증서 단계는 필요 없다.
+- **실기 검증 결과의 영향**: macOS에서 ad-hoc 서명한 Electron 44 앱의 알림 표시, 클릭 전달, 로그인 시 자동 시작이 모두 동작했다. 알림과 자동 시작은 두 프레임워크를 가르는 기준에서 빠진다. Tauri를 고르면 그 알림 경로(`NSUserNotification`)는 다시 확인해야 한다.

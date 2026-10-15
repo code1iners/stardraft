@@ -4,6 +4,7 @@
 - 출처: https://api.flow.team/docs
 - 조사 방법: 포털 페이지는 SPA라서 엔드포인트 상세 설명이 페이지 HTML에 없다. 공개 JS 번들에 들어 있는 문서 텍스트를 읽었다. 로그인이나 키 호출은 하지 않았다.
 - 재확인: 2026-10-14에 실호출 티켓을 실행하기 전에 같은 방법으로 알림·게시글·댓글 명세를 다시 읽었다. 그때 보탠 내용에는 "(재확인)"을 붙였다.
+- 쓰기 조사: 2026-10-15에 [초안 게시 위치와 형식 결정](../issues/12-post-placement.md)을 위해 같은 방법으로 댓글 쓰기 명세, 오류 페이지, MCP 도구 목록을 읽었다. 포털 버전은 같은 v2.1.0(26.09.15)이다. 그때 보탠 내용에는 "(쓰기 조사)"를 붙였다.
 - 실제 호출로 확인한 결과는 [Flow 알림 API 실호출로 멘션 데이터 확인](../issues/01-flow-alarm-api-check.md) 티켓의 답에 있다. 이 문서는 문서 기준 사실만 담는다. 실호출 결과와 다른 부분은 그 답을 따른다(예: 실제 `alarmType`은 `null`이다).
 
 ## 인증
@@ -75,7 +76,11 @@
 - **채팅**
   - 채팅 메시지 내용을 조회하는 REST API는 없다.
   - v1(관리자 키)에서는 채팅방 정보만 조회할 수 있다.
-  - MCP의 `flow_search`만 "글·업무·댓글·채팅" 검색을 지원한다고 적혀 있다(https://api.flow.team/docs/mcp/tools). v1 MCP는 읽기 전용이다.
+  - MCP의 `flow_search`만 "글·업무·댓글·채팅" 검색을 지원한다고 적혀 있다(https://api.flow.team/docs/mcp/tools).
+  - (쓰기 조사) MCP가 읽기 전용인지는 문서끼리 다르다.
+    - `/docs/scopes`: "v1 MCP는 **read-only**로 동작합니다."
+    - `/docs/mcp/faq`: 쓰기 도구가 있다고 답한다.
+    - 도구 목록(`https://flow.team/ai/mcp/tools.json?lang=ko`)에는 `flow_create_comment`, `flow_update_comment` 같은 쓰기 도구가 있다.
 - **멘션 표기 형식**: 문서에 없다. 실호출로 `@[표시 이름](사용자 ID)` 형식임을 확인했다(티켓 01의 답).
 - **문서 간 불일치**: 공통 문서는 페이지네이션을 `page`/`limit`으로 설명하지만, 엔드포인트 명세는 `cursor`/`size`/`lastCursor`를 쓴다.
 
@@ -85,6 +90,26 @@
   - `POST /user/comments/{postId}`
   - 대댓글: `POST /user/comments/{postId}/replies/{commentId}`
   - 첨부 제한: 파일당 2MB, 일반 파일과 이미지 각 5개
+  - (쓰기 조사) 출처: 댓글 문서 번들 `https://api.flow.team/_app/immutable/nodes/22.61ddad61.js`
+  - (쓰기 조사) 요청 body: 두 API가 같은 정의를 쓴다.
+    - `contents`: string, 필수, 길이 1~4,000. 글자인지 바이트인지는 문서에 없다.
+    - `files`, `imageFiles`: 선택, 각 5개까지. 항목은 `fileName`과 Base64 `fileContents`다.
+    - "별도의 *userId* 는 입력하지 않습니다. 서버가 인증된 사용자 ID를 사용합니다."
+  - (쓰기 조사) 응답 `data`
+    - 댓글: `projectId`, `postId`, `commentId`(생성된 댓글 ID)
+    - 대댓글: `projectId`, `postId`, `commentId`(부모 댓글 ID), `replyId`(생성된 대댓글 ID)
+    - `registeredDateTime`은 쓰기 응답에 없다.
+  - (쓰기 조사) **문서에 없는 것**
+    - 멘션: mentions 필드도, `@[이름](ID)` 표기 처리나 알림 발송에 관한 설명도 없다.
+    - 본문 서식: 줄바꿈, HTML, 마크다운에 관한 설명이 없다.
+    - 지워진 부모 댓글에 대댓글을 달 때의 동작
+    - 위 셋은 [댓글 쓰기 API 실측](../issues/15-comment-write-api-check.md)에서 확인한다.
+  - (쓰기 조사) **수정·삭제 API가 REST에 없다.**
+    - 댓글 문서의 operation은 `getComments`, `createComment`, `getReplies`, `createReply` 네 개뿐이다.
+    - MCP에는 수정 도구(`flow_update_comment`)만 있고, 삭제 도구는 없다.
+  - (쓰기 조사) 오류 코드는 문서끼리 맞지 않는다.
+    - 댓글 문서의 Error 탭: 400 `VALIDATION_ERROR`, 401, 403 `FORBIDDEN_ERROR`, 404 `NOT_FOUND_ERROR`, 409, 412 `NOT_EXISTS_ERROR`("찾을 수 없어 수정, 삭제가 불가능한 경우") 등
+    - `/docs/errors`: `VALIDATION_ERROR` 422, `NOT_FOUND` 404("리소스가 없거나 접근 권한이 없음"), `RATE_LIMITED` 429 등
 - **채팅 전송** (관리자 키 전용)
   - `POST /v1/chats/{roomId}/messages`, body는 `registerId`와 `contents`(최대 10,000자)
   - 작성자를 임의로 지정하는 구조다.

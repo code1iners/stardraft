@@ -224,3 +224,16 @@ Blocked by: 02, 03, 10, 11
   - "처리한 멘션의 보관" → [처리한 멘션의 보관 결정](17-processed-retention.md)
 - [다운로드 사이트 형태 결정](09-download-site.md)에 산출물 위치와 접근 제약을 덧붙였다.
 - 안개 "여러 PC에서 동시 실행"에 공유 저장소를 쓰지 않기로 한 사실을 덧붙였다.
+
+## Comments
+
+- 2026-10-17, [다운로드 사이트 형태 결정](09-download-site.md)에서 덧붙인다.
+  - **저장소 공개**: `stardraft`는 처음부터 공개 저장소로 만든다. "비공개로 시작한다"를 대체한다.
+    - 외부인이 연 PR의 워크플로는 승인해야 돌게 한다. 비밀값은 Actions 비밀값에만 둔다.
+    - 이 기획 저장소는 그대로 비공개다. 옮기는 문서는 회사 정보가 없는지 확인한 뒤 옮긴다.
+  - **사이트**: `apps/site`에 두고, Vercel에 배포한다.
+  - **Release**: 초안 Release를 만든 뒤 공개하는 흐름은 그대로다. `stardraft`에 immutable releases를 켠다.
+  - **앱 내 업데이트**: 범위에 넣었다. 그래서 첫 버전부터 바뀌는 것이 있다.
+    - macOS zip, `latest.yml`, `latest-mac.yml`, 업데이트 서명 파일이 초안 Release에 함께 올라간다.
+    - macOS는 `afterSign`에서 최상위 번들을 명시 DR로 다시 서명한다.
+    - 정확한 목록과 방식은 [앱 내 업데이트 방식 결정](22-in-app-update-design.md)에서 정한다.

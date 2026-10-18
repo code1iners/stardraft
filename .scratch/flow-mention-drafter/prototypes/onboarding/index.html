@@ -1,0 +1,1460 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stardraft 온보딩 프로토타입</title>
+<!--
+  PROTOTYPE — 버리는 코드다. 구현에 재사용하지 않는다.
+  질문: 설정과 첫 실행 온보딩 결정 (../../issues/16-onboarding.md)
+  계획: 첫 실행 → 설정 → 감지 시작 → 최근 멘션으로 시험까지 가짜 데스크톱 위에 그린다.
+        에이전트 연결 표시만 변형 3개를 ?variant=A|B|C 로 바꿔 비교한다. 나머지 화면은 grilling에서 정한 대로 하나만 그린다.
+    A 단계 아이콘형  확인 네 단계를 아이콘 한 줄로 늘 보여 주고, 실패하면 작은 예시 화면을 붙인다.
+    B 연결선형      Stardraft와 에이전트를 선으로 잇고, 끊긴 자리에 원인, 아래에 번호 붙은 그림 카드로 고치는 법을 보여 준다.
+    C 큰 그림형     평소에는 한 줄, 문제가 있을 때만 큰 예시 화면(터미널)과 다시 확인 버튼을 펼친다.
+  데이터는 모두 가짜이고 메모리에만 있다. 새로고침하면 첫 실행으로 돌아간다. Flow 호출, 에이전트 실행, 알림은 흉내만 낸다.
+-->
+<style>
+  :root {
+    --desk: #d3d6da;
+    --surface: #ffffff;
+    --surface-2: #f5f6f7;
+    --side: #f8f9fa;
+    --border: #e1e3e6;
+    --border-strong: #c5c9ce;
+    --text: #1d2024;
+    --muted: #686e75;
+    --accent: #2160c4;
+    --accent-bg: #e7eefa;
+    --danger: #b42318;
+    --danger-bg: #fdecea;
+    --ok: #1e7438;
+    --ok-bg: #e6f3ea;
+    --warn: #845400;
+    --warn-bg: #fdf4de;
+    --warn-dot: #d08a00;
+    --sel: #e3ebf8;
+    --hatch: repeating-linear-gradient(45deg, #eef0f3 0 10px, #e8ebef 10px 20px);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--desk); color: var(--text); font: 13px/1.5 var(--font); overflow: hidden; }
+  button { font: inherit; color: inherit; }
+  textarea, input[type=text], input[type=password], select { font: inherit; color: inherit; border: 1px solid var(--border-strong); border-radius: 6px; background: #fff; }
+  textarea { width: 100%; padding: 8px 10px; resize: vertical; line-height: 1.6; display: block; }
+  input[type=text], input[type=password] { height: 30px; padding: 0 8px; }
+  select { height: 28px; padding: 0 6px; }
+  textarea:focus, input:focus, select:focus { outline: 2px solid #a9c2ec; outline-offset: 0; border-color: var(--accent); }
+  #desktop { position: fixed; inset: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .sp { flex: 1; }
+  .clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .wrap { flex-wrap: wrap; }
+  code, .mono { font-family: var(--mono); font-size: 12px; }
+
+  /* OS 껍데기 */
+  .menubar { position: absolute; top: 0; left: 0; right: 0; height: 26px; background: #f1f1f2; border-bottom: 1px solid #c8cacd; display: flex; align-items: center; gap: 16px; padding: 0 12px; z-index: 70; }
+  .menubar .app { font-weight: 600; }
+  .menubar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .dock { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); height: 54px; padding: 6px 8px; display: flex; gap: 8px; align-items: center; background: rgba(240, 241, 243, .9); border: 1px solid #c8cacd; border-radius: 14px; z-index: 50; }
+  .dock span { width: 40px; height: 40px; border-radius: 9px; background: #c9cdd3; display: block; }
+  .dock .me { position: relative; background: #fff; border: 1px solid var(--border-strong); display: flex; align-items: center; justify-content: center; }
+  .dock .me::after { content: ''; position: absolute; bottom: -6px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: #555; }
+  .taskbar { position: absolute; bottom: 0; left: 0; right: 0; height: 44px; background: #eceff2; border-top: 1px solid #cdd1d6; display: flex; align-items: center; justify-content: center; z-index: 70; }
+  .taskbar .apps { display: flex; gap: 6px; }
+  .taskbar .apps span { width: 28px; height: 28px; border-radius: 6px; background: #d2d6dc; display: block; }
+  .taskbar .apps .me { background: #fff; border: 1px solid var(--border-strong); display: flex; align-items: center; justify-content: center; box-shadow: inset 0 -2px 0 var(--accent); }
+  .taskbar .right { position: absolute; right: 10px; top: 0; bottom: 0; display: flex; align-items: center; gap: 8px; }
+  .clock-win { text-align: right; font-size: 11px; line-height: 1.35; }
+  .glyph { color: #3b3f44; display: inline-flex; }
+  .tray-wrap { position: relative; }
+  .tray { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px; border: 0; background: transparent; border-radius: 4px; cursor: default; }
+  .win .tray { height: 32px; padding: 0 8px; }
+  .tray:hover, .tray.on { background: rgba(0, 0, 0, .1); }
+  .tray-count { font-size: 12px; font-weight: 600; }
+  .tray-count.bad { color: var(--danger); }
+  .tray-icon { position: relative; display: inline-flex; }
+  .tray-dot { position: absolute; right: -3px; top: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+  .tray-dot.setup { background: var(--warn-dot); }
+  .tray-badge-win { position: absolute; right: -6px; bottom: -5px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: #fff; font-size: 9px; line-height: 13px; text-align: center; font-weight: 700; }
+  .tray-badge-win.bad { background: var(--danger); }
+
+  /* OS 기본 메뉴 흉내 */
+  .menu { position: absolute; right: 0; min-width: 260px; background: #f6f6f7; border: 1px solid #c4c6ca; border-radius: 7px; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); padding: 5px; z-index: 85; }
+  .mac .menu { top: calc(100% + 3px); }
+  .win .menu { bottom: calc(100% + 8px); border-radius: 6px; }
+  .menu-i { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 3px 8px; border-radius: 4px; white-space: nowrap; cursor: default; }
+  .menu-i:hover:not(:disabled) { background: var(--accent); color: #fff; }
+  .menu-i:disabled { color: #9a9ea4; }
+  .menu-i.bad { color: var(--danger); font-weight: 600; }
+  .menu-i.bad:hover { color: #fff; }
+  .menu-sep { height: 1px; background: #d5d7da; margin: 5px 8px; }
+
+  /* OS 알림 흉내 */
+  .notifs { position: absolute; width: 340px; display: flex; flex-direction: column; gap: 8px; z-index: 90; }
+  .mac .notifs { top: 34px; right: 12px; }
+  .win .notifs { bottom: 54px; right: 12px; flex-direction: column-reverse; }
+  .notif { background: #fafafa; border: 1px solid #c8cacd; border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .18); padding: 10px 12px; display: flex; gap: 10px; cursor: default; }
+  .win .notif { border-radius: 8px; }
+  .notif-icon { width: 28px; height: 28px; border-radius: 6px; background: #e4e7eb; display: flex; align-items: center; justify-content: center; flex: none; }
+  .notif-text { min-width: 0; flex: 1; }
+  .notif-app { font-size: 11px; color: var(--muted); }
+  .notif-acts { display: flex; gap: 6px; margin-top: 8px; }
+  .notif-x { border: 0; background: none; color: var(--muted); width: 20px; height: 20px; padding: 0; cursor: pointer; }
+
+  /* 창 */
+  .window { position: absolute; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .22); display: flex; flex-direction: column; overflow: hidden; z-index: 60; }
+  .win .window { border-radius: 8px; }
+  .titlebar { height: 30px; flex: none; display: flex; align-items: center; padding: 0 10px; background: #f2f3f4; border-bottom: 1px solid var(--border); font-size: 12px; color: #4a4f55; position: relative; }
+  .titlebar .t { position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+  .win .titlebar { padding: 0; }
+  .win .titlebar .t { text-align: left; padding-left: 12px; }
+  .tl { display: flex; gap: 7px; position: relative; z-index: 1; }
+  .tl button { width: 12px; height: 12px; border-radius: 50%; border: 0; padding: 0; }
+  .tl .c { background: #ec6a5e; cursor: pointer; } .tl .m { background: #f4bf4f; } .tl .x { background: #61c554; }
+  .winctl { margin-left: auto; display: flex; position: relative; z-index: 1; }
+  .winctl button { width: 40px; height: 30px; border: 0; background: none; }
+  .winctl button:hover { background: #e1e3e6; }
+  .winctl .close:hover { background: #c42b1c; color: #fff; }
+  .wbody { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+
+  /* 버튼과 태그 */
+  .btn { height: 28px; padding: 0 12px; border: 1px solid var(--border-strong); background: var(--surface); border-radius: 7px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { background: var(--surface-2); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover { background: #1b52aa; }
+  .btn.link { height: auto; padding: 0; border: 0; background: none; color: var(--accent); }
+  .btn.link:hover { text-decoration: underline; }
+  .btn.sm { height: 24px; padding: 0 8px; font-size: 12px; }
+  .btn.lg { height: 34px; padding: 0 16px; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 4px; white-space: nowrap; line-height: 18px; }
+  .tag.ready { background: var(--accent-bg); color: var(--accent); }
+  .tag.generating { background: #eceef1; color: #4a4f55; }
+  .tag.test { background: var(--warn-bg); color: var(--warn); }
+  .tag.done { background: #eceef1; color: var(--muted); }
+  .tag.failed { background: var(--danger-bg); color: var(--danger); }
+  .ok-t { color: var(--ok); }
+  .bad-t { color: var(--danger); }
+  .warn-t { color: var(--warn); }
+
+  /* 상태 원(✓, ✗, 진행) */
+  .st { width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; font-size: 12px; font-weight: 700; border: 1.5px solid var(--border-strong); color: var(--muted); background: #fff; }
+  .st.ok { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .st.bad { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .st.cur { border-color: var(--accent); border-right-color: transparent; animation: spin .8s linear infinite; }
+  .st.lg { width: 28px; height: 28px; font-size: 15px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 띠와 안내 */
+  .banner { flex: none; display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-bottom: 1px solid #f0c4be; background: var(--danger-bg); color: #7a1d14; }
+  .banner .d { font-size: 12px; color: #8f3a31; }
+  .notice { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+  .notice.bad { border-color: #f0c4be; background: var(--danger-bg); color: #7a1d14; }
+  .notice.warn { border-color: #ecd9a8; background: var(--warn-bg); color: #5c3c00; }
+  .err-line { margin-top: 6px; font-size: 12px; color: var(--danger); }
+  .toast { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); background: #2a2d32; color: #fff; padding: 8px 14px; border-radius: 8px; z-index: 95; box-shadow: 0 4px 12px rgba(0, 0, 0, .25); max-width: 560px; }
+
+  /* 작은 창 */
+  .sw { width: 380px; right: 12px; top: 32px; max-height: calc(var(--vh, 100vh) - 150px); }
+  .win .sw { top: auto; bottom: 52px; max-height: calc(var(--vh, 100vh) - 170px); }
+  .sw-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .sw-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 16px; }
+  .sw-lead { margin: 0 0 10px; font-weight: 600; }
+  .ck { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; text-align: left; cursor: pointer; margin-top: 8px; }
+  .ck:hover { background: var(--surface-2); }
+  .ck .t { font-weight: 600; }
+  .ck .d { font-size: 12px; color: var(--muted); }
+  .ck .go { color: var(--muted); }
+  .sw-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .hint-list { margin: 12px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
+  .hint-list li { display: flex; gap: 6px; margin-top: 4px; }
+  .empty { text-align: center; padding: 18px 8px 6px; }
+  .empty p { margin: 6px 0; }
+  .pick-row { display: block; width: 100%; text-align: left; border: 1px solid var(--border); border-radius: 8px; background: #fff; padding: 8px 10px; margin-top: 6px; cursor: pointer; }
+  .pick-row:hover { background: var(--surface-2); }
+  .pick-row.sel { border-color: var(--accent); background: #f3f7fd; box-shadow: inset 3px 0 0 var(--accent); }
+  .pick-row .top { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .pick-row .top b { color: var(--text); }
+  .foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--side); }
+  .sec-h { margin: 12px 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  blockquote { margin: 0; padding: 8px 12px; background: var(--surface-2); border-left: 3px solid var(--border-strong); border-radius: 4px; white-space: pre-wrap; }
+  .draft { line-height: 1.65; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  .cite { background: var(--accent-bg); color: var(--accent); font-size: 10px; font-weight: 700; padding: 0 4px; border-radius: 3px; margin-left: 2px; vertical-align: super; }
+  .cite.none { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+  .ev { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; }
+  .ev .loc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .progress { margin: 6px 0 0; padding-left: 20px; }
+  .progress li { color: var(--muted); }
+  .progress li:last-child { color: var(--text); }
+
+  /* 설정 창 */
+  .set { left: 50%; transform: translateX(-50%); top: 52px; width: min(820px, calc(var(--vw, 100vw) - 24px)); height: min(600px, calc(var(--vh, 100vh) - 150px)); }
+  .win .set { top: 24px; height: min(600px, calc(var(--vh, 100vh) - 120px)); }
+  .first-bar { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+  .first-bar.ready { background: var(--ok-bg); border-bottom-color: #c8e2d0; }
+  .first-bar .t { font-weight: 600; }
+  .first-bar ul { margin: 2px 0 0; padding: 0; list-style: none; font-size: 12px; color: #2f5a3b; }
+  .meter { display: flex; gap: 4px; }
+  .meter i { width: 26px; height: 4px; border-radius: 2px; background: var(--border-strong); display: block; }
+  .meter i.on { background: var(--ok); }
+  .set-layout { flex: 1; min-height: 0; display: flex; }
+  .set-nav { width: 180px; flex: none; border-right: 1px solid var(--border); background: var(--side); padding: 8px 0; }
+  .nav-i { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 14px; border: 0; background: none; text-align: left; cursor: pointer; border-left: 3px solid transparent; }
+  .nav-i:hover { background: #eff1f3; }
+  .nav-i.sel { background: var(--sel); border-left-color: var(--accent); font-weight: 600; }
+  .nav-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn-dot); margin-left: auto; }
+  .nav-dot.bad { background: var(--danger); }
+  .set-main { flex: 1; min-width: 0; overflow: auto; padding: 18px 24px 28px; }
+  .set-main h2 { margin: 0 0 2px; font-size: 16px; }
+  .lead { margin: 0 0 18px; color: var(--muted); }
+  .field { margin-bottom: 22px; }
+  .field > .l { display: block; font-weight: 600; margin-bottom: 6px; }
+  .field > .help { margin: -2px 0 8px; font-size: 12px; color: var(--muted); }
+  .saved { font-size: 12px; color: var(--ok); margin-left: 6px; }
+  .acct { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--accent-bg); color: var(--accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex: none; }
+  .list { border: 1px solid var(--border); border-radius: 8px; }
+  .list-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); }
+  .list-row:first-child { border-top: 0; }
+  .list-empty { padding: 12px; color: var(--muted); font-size: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { font: 12px var(--mono); padding: 1px 6px; border-radius: 4px; background: #eceef1; color: #3b3f44; }
+  .chip.add { background: var(--accent-bg); color: var(--accent); }
+  .repo-names { padding: 0 12px 10px 12px; }
+  .suggest { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px dashed var(--border-strong); border-radius: 8px; margin-top: 6px; }
+  .check { display: flex; align-items: flex-start; gap: 8px; }
+  .check input { margin-top: 3px; }
+  .sheet-back { position: absolute; inset: 0; background: rgba(0, 0, 0, .18); display: flex; align-items: flex-start; justify-content: center; z-index: 5; }
+  .sheet { margin-top: 0; width: 420px; background: #fff; border: 1px solid var(--border-strong); border-top: 0; border-radius: 0 0 10px 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .2); padding: 14px 16px; }
+  .sheet h3 { margin: 0 0 4px; font-size: 14px; }
+  .sheet-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  .sheet-row:last-child { border-bottom: 0; }
+
+  /* 에이전트 공통 */
+  .agent { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .agent-head { display: flex; align-items: center; gap: 10px; }
+  .mark { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border-strong); display: flex; align-items: center; justify-content: center; font-weight: 700; background: #fff; flex: none; }
+  .mark.sd { color: var(--accent); }
+  .agent-name { font-weight: 600; }
+  .agent-state { font-size: 12px; color: var(--muted); }
+  .details { margin-top: 10px; padding: 10px 12px; background: var(--surface-2); border-radius: 8px; font-size: 12px; }
+  .details dl { margin: 0; display: grid; grid-template-columns: 90px 1fr; gap: 3px 10px; }
+  .details dt { color: var(--muted); }
+  .details dd { margin: 0; overflow-wrap: anywhere; }
+  .details pre { margin: 6px 0 0; white-space: pre-wrap; font: 11px/1.5 var(--mono); color: #7a1d14; }
+  .agent-acts { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+
+  /* 예시 화면: 다운로드 사이트와 같은 빗금 틀과 띠로 실제 창과 구분한다 */
+  .ex { position: relative; padding: 24px 12px 12px; border-radius: 8px; background: var(--hatch); border: 1px dashed var(--border-strong); }
+  .ex-label { position: absolute; top: 5px; left: 10px; font-size: 11px; font-weight: 600; color: var(--muted); }
+  .term { background: #1e1f22; color: #e6e6e6; border-radius: 8px; overflow: hidden; font: 12px/1.6 var(--mono); box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+  .term-bar { height: 22px; background: #2b2d31; display: flex; align-items: center; gap: 6px; padding: 0 8px; color: #a0a4aa; font-size: 11px; }
+  .term-bar i { width: 8px; height: 8px; border-radius: 50%; background: #55585e; display: block; }
+  .term-body { padding: 8px 10px 10px; }
+  .term .pr { color: #8fbf7f; }
+  .term .cmd { background: rgba(255, 214, 102, .16); outline: 1px solid rgba(255, 214, 102, .55); border-radius: 3px; padding: 0 2px; color: #fff; }
+  .term .out { color: #a0a4aa; }
+  .caret { display: inline-block; width: 7px; height: 13px; background: #e6e6e6; vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .typed { display: inline-block; overflow: hidden; white-space: nowrap; vertical-align: bottom; animation: type 1.6s steps(48) .3s both; }
+  @keyframes type { from { max-width: 0; } to { max-width: 48ch; } }
+  .copy-tip { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; }
+
+  /* A: 단계 아이콘형 */
+  .a-steps { display: flex; align-items: flex-start; margin-top: 14px; }
+  .a-step { width: 64px; text-align: center; flex: none; font-size: 11px; color: var(--muted); }
+  .a-ico { position: relative; width: 36px; height: 36px; border-radius: 50%; margin: 0 auto 4px; border: 1.5px solid var(--border-strong); display: flex; align-items: center; justify-content: center; color: var(--muted); background: #fff; }
+  .a-ico .st { position: absolute; right: -6px; bottom: -4px; width: 16px; height: 16px; font-size: 10px; border-width: 1px; }
+  .a-step.ok .a-ico { border-color: var(--ok); color: var(--ok); }
+  .a-step.cur .a-ico { border-color: var(--accent); color: var(--accent); }
+  .a-step.bad .a-ico { border-color: var(--danger); color: var(--danger); background: var(--danger-bg); }
+  .a-step.bad { color: var(--danger); font-weight: 600; }
+  .a-line { flex: 1; height: 2px; margin-top: 18px; background: var(--border-strong); }
+  .a-line.ok { background: var(--ok); }
+  .a-fix { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .a-fix .t { font-weight: 600; }
+  .a-fix .ex { margin-top: 10px; max-width: 460px; }
+
+  /* B: 연결선형 */
+  .b-link { display: flex; align-items: flex-start; margin: 6px 0 2px; }
+  .b-node { width: 84px; flex: none; text-align: center; font-size: 12px; }
+  .b-node .mark { width: 46px; height: 46px; margin: 0 auto 4px; border-radius: 10px; font-size: 16px; }
+  .b-node.ok .mark { border-color: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
+  .b-segs { flex: 1; display: flex; gap: 3px; margin-top: 22px; }
+  .b-seg { flex: 1; text-align: center; font-size: 11px; color: var(--muted); }
+  .b-bar { height: 4px; border-radius: 2px; background: repeating-linear-gradient(90deg, var(--border-strong) 0 6px, transparent 6px 10px); position: relative; margin-bottom: 6px; }
+  .b-seg.ok .b-bar { background: var(--ok); }
+  .b-seg.cur .b-bar { background: repeating-linear-gradient(90deg, var(--accent) 0 6px, transparent 6px 10px); background-size: 20px 4px; animation: dash .6s linear infinite; }
+  .b-seg.bad .b-bar { background: linear-gradient(90deg, var(--danger) 0 40%, transparent 40% 60%, var(--danger) 60%); }
+  .b-seg.bad .b-x { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  .b-seg.bad { color: var(--danger); font-weight: 600; }
+  .b-seg.ok { color: var(--ok); }
+  @keyframes dash { to { background-position: 20px 0; } }
+  .b-status { text-align: center; margin-top: 6px; font-weight: 600; }
+  .b-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+  .b-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: #fff; display: flex; flex-direction: column; }
+  .b-card .n { font-weight: 700; color: var(--accent); font-size: 12px; }
+  .b-pic { height: 82px; border-radius: 6px; background: var(--hatch); border: 1px dashed var(--border-strong); margin: 6px 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 6px; }
+  .b-card .cap { font-size: 12px; line-height: 1.4; }
+  .mini-term { width: 100%; background: #1e1f22; color: #e6e6e6; border-radius: 5px; font: 9.5px/1.5 var(--mono); padding: 4px 6px; overflow: hidden; }
+  .mini-term .cmd { background: rgba(255, 214, 102, .2); color: #fff; }
+  .mini-app { width: 40px; height: 40px; border-radius: 9px; background: #1e1f22; color: #8fbf7f; display: flex; align-items: center; justify-content: center; font: 700 13px var(--mono); }
+  .mini-browser { width: 100%; background: #fff; border: 1px solid var(--border-strong); border-radius: 5px; font-size: 10px; overflow: hidden; }
+  .mini-browser .bar { height: 10px; background: #eceef1; }
+  .mini-browser .in { padding: 5px 6px; text-align: center; }
+  .mini-browser .go { display: inline-block; margin-top: 4px; padding: 1px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-weight: 600; }
+
+  /* C: 큰 그림형 */
+  .c-line { display: flex; align-items: center; gap: 10px; }
+  .c-big { margin-top: 12px; }
+  .c-big h3 { margin: 0 0 4px; font-size: 15px; }
+  .c-big .lead2 { margin: 0 0 10px; color: var(--muted); }
+  .c-big .term { font-size: 13px; }
+  .c-big .term-body { padding: 14px 14px 18px; min-height: 96px; }
+  .c-big .callout { position: relative; display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; padding: 6px 10px; background: #fff; border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: 0 2px 6px rgba(0, 0, 0, .12); font-size: 12px; }
+  .c-big .callout::before { content: ''; position: absolute; top: -6px; left: 22px; width: 10px; height: 10px; background: #fff; border-left: 1px solid var(--border-strong); border-top: 1px solid var(--border-strong); transform: rotate(45deg); }
+  .c-big .after { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .st.cur, .b-seg.cur .b-bar, .caret { animation: none; }
+    .typed { animation: none; width: auto; }
+  }
+
+  /* 프로토타입 조작부: 설계 대상이 아니다 */
+  .proto-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 70px; z-index: 1000; display: flex; align-items: center; gap: 4px; background: #111; color: #fff; border-radius: 999px; padding: 4px; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); font-size: 12px; }
+  .win .proto-bar { bottom: 56px; }
+  .proto-bar button { border: 0; background: #333; color: #fff; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; }
+  .proto-bar .lbl { padding: 0 10px; min-width: 200px; text-align: center; }
+  .proto-sim { position: fixed; left: 10px; bottom: 70px; z-index: 1000; background: #111; color: #e8e8e8; border-radius: 8px; padding: 8px 10px; font-size: 11px; width: 286px; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); max-height: calc(var(--vh, 100vh) - 120px); overflow: auto; }
+  .win .proto-sim { bottom: 56px; }
+  .proto-sim .h { display: flex; justify-content: space-between; align-items: center; }
+  .proto-sim .r { display: flex; align-items: center; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .proto-sim .r > span { width: 100%; color: #aaa; }
+  .proto-sim button { background: #2c2c2c; color: #e8e8e8; border: 1px solid #444; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
+  .proto-sim button.on { background: #f2f2f2; color: #111; border-color: #f2f2f2; }
+  .proto-sim .hint { margin-top: 8px; color: #bbb; line-height: 1.45; }
+  .proto-state { position: fixed; right: 10px; bottom: 70px; z-index: 1000; width: 340px; max-height: calc(var(--vh, 100vh) * .5); overflow: auto; background: #111; color: #ddd; font: 11px/1.45 var(--mono); padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; margin: 0; }
+  .win .proto-state { bottom: 56px; }
+</style>
+</head>
+<body>
+<div id="desktop"></div>
+<div id="proto"></div>
+<script>
+/** 변형 목록. 에이전트 연결 표시만 다르고 나머지 화면은 같다. */
+const VARIANTS = [
+  { key: 'A', name: '단계 아이콘형', hint: '에이전트마다 확인 네 단계(찾기·버전·로그인·작동 확인)를 아이콘 한 줄로 늘 보여 준다. 실패하면 그 아이콘이 빨갛게 바뀌고, 옆에 한 줄 안내와 작은 예시 화면이 붙는다.' },
+  { key: 'B', name: '연결선형 · 확정', hint: 'Stardraft와 에이전트를 선으로 잇는다. 선의 네 마디가 확인 네 단계다. 끊긴 자리에 원인을 적고, 고치는 방법을 번호 붙은 그림 카드 네 장으로 보여 준다.' },
+  { key: 'C', name: '큰 그림형', hint: '평소에는 "연결됨" 한 줄만 보인다. 문제가 생기면 그 자리에 큰 예시 화면(터미널)이 펼쳐지고, 입력할 명령이 타이핑되듯 나타난다. 버튼은 명령 복사와 다시 확인뿐이다.' },
+];
+
+/** 에이전트 확인 단계. ms는 흉내 낼 소요 시간이다. */
+const STEPS = [
+  { key: 'find', label: '찾기', ms: 700 },
+  { key: 'version', label: '버전', ms: 450 },
+  { key: 'login', label: '로그인', ms: 700 },
+  { key: 'trial', label: '작동 확인', ms: 2600 },
+];
+
+/** 시뮬레이션할 에이전트 확인 결과와, 멈출 단계. */
+const AGENT_OUTCOMES = {
+  ok: { label: '연결', failAt: null },
+  missing: { label: '설치 안 됨', failAt: 'find' },
+  old: { label: '버전 낮음', failAt: 'version' },
+  logout: { label: '로그인 안 됨', failAt: 'login' },
+  helper: { label: '지원 안 하는 로그인', failAt: 'login' },
+  trial: { label: '작동 확인 실패', failAt: 'trial' },
+};
+
+/** 에이전트별 고정 정보(가짜). */
+const AGENT_INFO = {
+  claude: { name: 'Claude Code', mark: 'C', path: { mac: '/opt/homebrew/bin/claude', win: 'C:\\Users\\hong\\.local\\bin\\claude.exe' }, version: '2.1.270', auth: 'Claude 구독 계정(claude.ai)' },
+  codex: { name: 'Codex', mark: 'X', path: { mac: '/opt/homebrew/bin/codex', win: '' }, version: '0.162.1', auth: 'ChatGPT 계정' },
+};
+
+/** 모델 선택지. Claude Code는 계열 별칭(그 계열의 최신 모델), Codex는 `codex debug models`에서 visibility가 list인 모델이다(이 PC의 0.163.0 기준). */
+const MODEL_OPTIONS = {
+  claude: [{ v: 'fable', l: 'Fable (최신)' }, { v: 'opus', l: 'Opus (최신)' }, { v: 'sonnet', l: 'Sonnet (최신)' }],
+  codex: [
+    { v: 'gpt-6.1-sol', l: 'GPT-6.1-Sol' }, { v: 'gpt-6-astra', l: 'GPT-6-Astra' }, { v: 'gpt-6-sol', l: 'GPT-6-Sol' }, { v: 'gpt-6-luna', l: 'GPT-6-Luna' },
+    { v: 'gpt-5.6-sol', l: 'GPT-5.6-Sol' }, { v: 'gpt-5.6-terra', l: 'GPT-5.6-Terra' }, { v: 'gpt-5.6-luna', l: 'GPT-5.6-Luna' },
+  ],
+};
+
+/** 모델 칸 아래 안내. */
+const MODEL_HELP = {
+  claude: '계열을 고르면 그 계열의 최신 모델을 씁니다. CLI 설정에 둔 모델은 적용되지 않습니다.',
+  codex: 'Codex가 알려 준 모델 목록입니다. 다시 확인할 때 새로 읽습니다.',
+};
+
+/** 키 확인으로 돌아오는 내 계정과, 다른 계정. */
+const ME = { userId: 'u-1001', name: '홍길동', division: '개발팀', email: 'hong@example.com' };
+/** 다른 계정의 키를 넣었을 때 돌아오는 계정. */
+const OTHER = { userId: 'u-2042', name: '김서연', division: '디자인팀', email: 'kim@example.com' };
+
+/** 폴더 선택 창에 보일 가짜 폴더. OS별로 다르다. */
+const FOLDERS = {
+  mac: [
+    { path: '~/workspace', repos: ['settlement-batch', 'payment-api', 'mobile-auth-gateway', 'mobile-app', 'admin-console', 'data-pipeline', 'notification-service', 'design-system', 'infra-terraform', 'partner-portal', 'search-indexer', 'coupon-engine'] },
+    { path: '~/IdeaProjects', repos: ['settlement-batch-legacy', 'batch-common', 'report-generator'] },
+    { path: '~/Documents', repos: [] },
+    { path: '/Volumes/dev-share', reject: '네트워크 경로' },
+  ],
+  win: [
+    { path: 'C:\\Users\\hong\\workspace', repos: ['settlement-batch', 'payment-api', 'mobile-auth-gateway', 'mobile-app', 'admin-console', 'data-pipeline', 'notification-service', 'design-system', 'infra-terraform', 'partner-portal', 'search-indexer', 'coupon-engine'] },
+    { path: 'C:\\Users\\hong\\IdeaProjects', repos: ['settlement-batch-legacy', 'batch-common', 'report-generator'] },
+    { path: 'C:\\Users\\hong\\Documents', repos: [] },
+    { path: '\\\\wsl.localhost\\Ubuntu\\home\\hong', reject: 'WSL 경로' },
+    { path: '\\\\fileserver\\dev', reject: '네트워크 경로' },
+  ],
+};
+
+/** 참여 Flow 프로젝트(가짜). 매핑 추가에서 고른다. */
+const PROJECTS = ['정산 시스템', '사내 어드민', '모바일 앱 개편', '데이터 플랫폼', '디자인 시스템'];
+
+/** 비밀 파일 기본 패턴. 뺄 수 없다. */
+const DEFAULT_PATTERNS = ['.env', '.env.*', '*.pem', '*.key', '*.p12', '*.pfx', '*.jks', '*.keystore', 'id_rsa*', 'id_ed25519*', '.npmrc', '.pypirc', '.netrc', 'secrets/**', '.git/**'];
+
+/** 설치를 찾은 에디터(가짜). */
+const EDITORS = [
+  { key: 'ask', label: '처음 열 때 고르기' },
+  { key: 'vscode', label: 'VS Code' },
+  { key: 'cursor', label: 'Cursor' },
+  { key: 'idea', label: 'IntelliJ IDEA' },
+  { key: 'custom', label: '직접 지정…' },
+];
+
+/** 전역 문제별 안내. 감지나 생성이 통째로 멈추는 경우다. */
+const PROBLEMS = {
+  key401: { title: 'Flow가 키를 거부했습니다', body: '키가 삭제됐거나 바뀌었을 수 있습니다.', action: '키 다시 입력', section: 'account', menu: '키 확인 필요 — 키 다시 입력…' },
+  decrypt: { title: '저장된 키를 읽을 수 없습니다', body: { mac: '키체인 접근을 거부했거나 항목이 지워졌을 수 있습니다.', win: '이 PC에 저장한 키를 풀 수 없습니다. 다른 PC에서 복사한 데이터일 수 있습니다.' }, action: '키 다시 입력', section: 'account', menu: '키 확인 필요 — 키 다시 입력…' },
+  cli: { title: 'Claude Code 로그인이 풀렸습니다', body: '초안을 만들 수 없어 대기열을 멈췄습니다.', action: '에이전트 확인', section: 'agent', menu: '에이전트 확인 필요…' },
+};
+
+/** 최근 멘션 10건(가짜). result가 없으면 코드와 무관하다고 판정되는 멘션이다. */
+const RECENT = [
+  { id: 'r1', sender: '최도윤', project: '사내 어드민', text: '@홍길동 지금 어드민 권한 검사가 메뉴 단위인지 API 단위인지 확인 부탁드립니다. 개편안에서 API 단위로 바꾸려고 해서요.', at: '어제 16:20',
+    result: { repo: 'admin-console', reason: '권한 검사를 묻고 있고, 사내 어드민 화면과 서버 코드가 이 저장소에 있다.', need: '관리자 화면에서 권한을 메뉴별로 확인하는지, 기능(API)별로 확인하는지 알려 달라.',
+      sentences: [{ t: '질문하신 두 가지를 모두 하고 있습니다.', ev: [1, 2] }, { t: '권한이 없는 사람에게는 메뉴가 아예 보이지 않고, 메뉴 뒤의 기능이 실제로 실행될 때도 권한을 한 번 더 확인합니다.', ev: [1, 2] }],
+      evidence: [{ id: 1, why: '권한이 없는 사람에게는 화면에서 해당 메뉴를 아예 보여 주지 않는다.', loc: 'MenuGuard.tsx · 21번째 줄' }, { id: 2, why: '기능이 실제로 실행될 때마다, 그 기능에 필요한 권한이 있는지 다시 확인한다.', loc: 'PermissionInterceptor.kt · 42–44번째 줄' }] } },
+  { id: 'r2', sender: '박지민', project: '정산 시스템', text: '@홍길동 정산 배치 재시도 횟수가 3번인데 로그엔 5번 찍혀요. 혹시 설정이 따로 있나요?', at: '어제 11:02', answered: true,
+    result: { repo: 'settlement-batch', reason: '정산 배치의 재시도를 묻고 있고, 이 저장소에 정산 배치 코드가 있다.', need: '재시도 횟수가 3번으로 알고 있는데 기록에 5번 남은 이유를 알려 달라.',
+      sentences: [{ t: '프로그램에 기본으로 정해진 횟수는 3번이지만, 실제 서비스용 설정에서 이 값을 5번으로 바꿔 두었습니다.', ev: [1, 2] }, { t: '그래서 기록에 5번 남은 것은 오류가 아니라 설정대로 동작한 것입니다.', ev: [2] }],
+      evidence: [{ id: 1, why: '프로그램에 기본으로 정해진 재시도 횟수는 3번이고, 따로 설정한 값이 있으면 그 값을 쓴다.', loc: 'RetryPolicy.java · 26–28번째 줄' }, { id: 2, why: '실제 서비스용 설정에서 재시도 횟수를 5번으로 정해 두었다.', loc: 'application-prod.yml · 88번째 줄' }] } },
+  { id: 'r3', sender: '이서준', project: '모바일 앱 개편', text: '@홍길동 iOS 푸시 눌렀을 때 홈으로만 가는 건 의도된 건가요?', at: '10월 16일 18:40',
+    result: { repo: 'mobile-app', reason: '앱의 푸시 이동을 묻고 있고, 이 저장소가 모바일 앱이다.', need: '푸시를 누르면 홈 화면으로만 가는 것이 의도한 동작인지 알려 달라.',
+      sentences: [{ t: '의도한 동작은 아닌 것으로 보입니다.', ev: [] }, { t: '푸시를 누르면 정해진 한 자리에서만 이동할 화면을 찾고, 찾지 못하면 홈 화면으로 보내도록 되어 있습니다.', ev: [1] }],
+      evidence: [{ id: 1, why: '푸시를 누르면 정해진 한 자리에서만 이동할 화면 주소를 찾고, 없으면 홈 화면으로 보낸다.', loc: 'deeplink.ts · 31–40번째 줄' }] } },
+  { id: 'r4', sender: '정하은', project: '데이터 플랫폼', text: '@홍길동 주간 리포트 기준이 한국 시간인지 확인 부탁드려요', at: '10월 16일 10:15', answered: true,
+    result: { repo: 'data-pipeline', reason: '주간 리포트 집계를 묻고 있고, 이 저장소에 리포트 작업이 있다.', need: '주간 리포트가 한국 시간 기준으로 날짜를 나누는지 알려 달라.',
+      sentences: [{ t: '한국 시간이 아니라 국제 표준시 기준으로 날짜를 나눕니다.', ev: [1] }, { t: '그래서 한국 시간 월요일 0시부터 9시까지는 앞 주에 들어갑니다.', ev: [1] }],
+      evidence: [{ id: 1, why: '주간 리포트는 날짜를 한국 시간이 아니라 국제 표준시 기준으로 나눈다.', loc: 'aggregate.sql · 12–19번째 줄' }] } },
+  { id: 'r5', sender: '최도윤', project: '사내 어드민', text: '@홍길동 내일 회의 2시 괜찮으세요?', at: '10월 15일 17:30', unrelated: '회의 일정을 묻는 멘션이라 저장소를 읽을 필요가 없습니다.' },
+  { id: 'r6', sender: '김민수', project: '정산 시스템', text: '@홍길동 환불 API에서 409는 어떤 경우에 나오나요?', at: '10월 15일 09:48',
+    result: { repo: 'payment-api', reason: '환불 기능의 응답을 묻고 있고, 이 저장소에 환불 기능이 있다.', need: '환불할 때 409(요청이 지금 상태와 맞지 않는다는 응답)가 언제 나오는지 알려 달라.',
+      sentences: [{ t: '남은 환불 가능 금액보다 많이 환불하려고 할 때 409가 나옵니다.', ev: [1] }, { t: '요청 내용 자체가 잘못된 경우는 그 전에 400으로 걸러집니다.', ev: [1] }],
+      evidence: [{ id: 1, why: '남은 환불 가능 금액보다 많이 환불하려고 하면 409를 돌려준다.', loc: 'RefundController.kt · 54–61번째 줄' }] } },
+  { id: 'r7', sender: '오유나', project: '모바일 앱 개편', text: '@홍길동 로그인 실패 문구가 영어로 나오는 경우가 있대요', at: '10월 14일 15:12', answered: true,
+    result: { repo: 'mobile-auth-gateway', reason: '로그인 실패 문구를 묻고 있고, 이 저장소가 로그인 중계 서버다.', need: '로그인에 실패했을 때 영어 문구가 나오는 이유를 알려 달라.',
+      sentences: [{ t: '목록에 없는 오류가 오면 로그인 서비스가 보낸 영어 문장을 그대로 보여 주기 때문입니다.', ev: [1] }],
+      evidence: [{ id: 1, why: '로그인 서비스의 오류를 한국어 문구로 바꾸는 목록이 있고, 목록에 없는 오류는 영어 문장을 그대로 쓴다.', loc: 'error-map.ts · 8–30번째 줄' }] } },
+  { id: 'r8', sender: '박지민', project: '정산 시스템', text: '@홍길동 수수료 계산할 때 부가세 빼고 계산하는 거 맞죠?', at: '10월 13일 13:05',
+    result: { repo: 'settlement-batch', reason: '수수료 계산을 묻고 있고, 이 저장소에 정산 계산 코드가 있다.', need: '수수료를 부가세를 뺀 금액으로 계산하는지 확인해 달라.',
+      sentences: [{ t: '네, 주문 금액에서 부가세를 뺀 금액에 수수료율을 곱해 계산합니다.', ev: [1] }],
+      evidence: [{ id: 1, why: '수수료는 주문 금액에서 부가세를 뺀 금액에 수수료율을 곱해 계산한다.', loc: 'FeeCalculator.kt · 17–22번째 줄' }] } },
+  { id: 'r9', sender: '한지우', project: '디자인 시스템', text: '@홍길동 버튼 컴포넌트 새 버전 언제 배포되나요?', at: '10월 10일 11:40',
+    result: { repo: 'design-system', reason: '버튼 컴포넌트 배포를 묻고 있고, 이 저장소가 디자인 시스템이다.', need: '버튼 컴포넌트의 새 버전이 언제 배포되는지 알려 달라.',
+      sentences: [{ t: '저장소에서는 배포 일정을 찾지 못했습니다.', ev: [] }, { t: '새 버전 작업은 아직 진행 중인 것으로 보입니다.', ev: [] }],
+      evidence: [] } },
+  { id: 'r10', sender: '이서준', project: '모바일 앱 개편', text: '@홍길동 딥링크 테스트 빌드 공유 부탁드립니다', at: '10월 8일 19:22', unrelated: '테스트 빌드 파일을 공유해 달라는 요청이라 저장소를 읽을 필요가 없습니다.' },
+];
+
+/** 앱과 프로토타입의 상태. settings.json·state.db·safeStorage에 들어갈 값과 화면 상태가 섞여 있다. */
+const S = {
+  variant: 'B',
+  os: 'mac',
+  /** 프로토타입 조작부에서 고르는 시뮬레이션 결과. */
+  sim: { key: 'ok', agent: 'ok', codex: false },
+  /** 키 입력 칸 상태. */
+  key: { input: '', checking: false, error: null, editing: true },
+  /** 연결된 Flow 계정. 키를 확인했을 때만 생긴다. */
+  account: null,
+  /** state.db에 저장한 계정 ID. 다른 계정의 키인지 판단할 때 쓴다. */
+  storedUserId: null,
+  agents: { claude: newAgent(), codex: newAgent() },
+  defaultAgent: 'claude',
+  model: { claude: '', codex: '' },
+  folders: [],
+  folderErrors: [],
+  picker: null,
+  mappings: [],
+  mapForm: null,
+  instr: '',
+  patterns: [],
+  patternInput: '',
+  autoStart: true,
+  editor: 'ask',
+  editorCmd: '',
+  started: false,
+  baselineAt: null,
+  lastCheck: null,
+  /** macOS 알림 권한. unknown이면 첫 알림 때 묻는다. */
+  notifPerm: 'unknown',
+  problem: null,
+  problemNotified: {},
+  settingsOpen: false,
+  section: 'account',
+  smallOpen: true,
+  menuOpen: false,
+  pick: null,
+  test: null,
+  notifs: [],
+  toast: null,
+  confirm: null,
+  showState: false,
+  simOpen: true,
+};
+
+/** 에이전트 확인 상태를 새로 만든다. */
+function newAgent() {
+  return { status: 'idle', step: 0, failAt: null, outcome: null, details: false, run: 0 };
+}
+
+/* ---------- 작은 도우미 ---------- */
+
+/** HTML 이스케이프. */
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** 동그라미 숫자. */
+const circled = (n) => String.fromCharCode(0x2460 + n - 1);
+/** 지금 시각 표시. */
+const nowLabel = () => new Date().toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
+/** 지금 보이는 에이전트 목록. Codex는 macOS에서 설치했을 때만 후보다. */
+const visibleAgents = () => (S.sim.codex && S.os === 'mac' ? ['claude', 'codex'] : ['claude']);
+/** 연결된 에이전트 목록. */
+const connectedAgents = () => visibleAgents().filter((k) => S.agents[k].status === 'ok');
+
+/** 실제로 쓰일 기본 에이전트. 연결된 것이 하나면 그것이고, 둘 이상이면 사용자가 고른 것이다. */
+function effectiveAgent() {
+  const list = connectedAgents();
+  if (list.length === 0) return null;
+  if (list.length === 1) return list[0];
+  return list.includes(S.defaultAgent) ? S.defaultAgent : list[0];
+}
+
+/** 감지를 시작하는 데 필요한 세 가지와 그 상태. */
+function required() {
+  const agent = effectiveAgent();
+  const total = S.folders.reduce((n, f) => n + f.repos.length, 0);
+  return [
+    { key: 'account', label: 'Flow 개인 API 키', done: !!S.account, detail: S.account ? `${S.account.name} · ${S.account.division}` : '내 키를 붙여 넣으면 계정을 확인합니다' },
+    { key: 'agent', label: '에이전트', done: !!agent, detail: agent ? `${AGENT_INFO[agent].name} 연결됨` : agentRowDetail() },
+    { key: 'repos', label: '작업 폴더', done: S.folders.length > 0, detail: S.folders.length ? `${S.folders.length}개 · 저장소 ${total}개` : '저장소가 모여 있는 폴더를 고릅니다' },
+  ];
+}
+
+/** 작은 창의 에이전트 줄에 쓸 설명. */
+function agentRowDetail() {
+  const a = S.agents.claude;
+  if (a.status === 'checking') return `${STEPS[a.step].label} 확인 중…`;
+  if (a.status === 'failed') return fixOf(a).cause;
+  return 'Claude Code를 찾아 연결합니다';
+}
+
+/** 알림. macOS는 권한을 정하기 전이면 먼저 권한 배너를 띄우고, 거부했으면 띄우지 않는다. */
+function notifyApp(title, body) {
+  const n = { id: Math.random().toString(36).slice(2), app: 'Stardraft', title, body };
+  if (S.os === 'mac' && S.notifPerm === 'denied') return;
+  if (S.os === 'mac' && S.notifPerm === 'unknown') {
+    // 권한 배너는 하나만 띄우고, 허용하면 미뤄 둔 알림을 보여 준다.
+    const perm = S.notifs.find((x) => x.kind === 'perm');
+    if (perm) perm.pending.push(n);
+    else S.notifs.push({ id: 'perm', kind: 'perm', pending: [n] });
+    return;
+  }
+  pushNotif(n);
+}
+
+/** 알림을 화면에 올리고 8초 뒤 내린다. */
+function pushNotif(n) {
+  S.notifs.push(n);
+  setTimeout(() => { S.notifs = S.notifs.filter((x) => x.id !== n.id); render(); }, 8000);
+}
+
+/** 화면 아래 토스트. */
+function toast(text) {
+  S.toast = text;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { S.toast = null; render(); }, 3200);
+}
+
+/* ---------- 키 ---------- */
+
+/** 키 확인. GET /user/employees/me를 흉내 낸다. */
+function checkKey() {
+  if (!S.key.input.trim()) { S.key.error = { text: '키를 붙여 넣어 주세요.' }; return; }
+  S.key.checking = true;
+  S.key.error = null;
+  setTimeout(() => {
+    S.key.checking = false;
+    const o = S.sim.key;
+    if (o === '401') S.key.error = { text: '키가 맞지 않습니다. Flow에서 다시 복사해 붙여 넣어 주세요.' };
+    else if (o === 'network') S.key.error = { text: 'Flow에 연결할 수 없습니다. 인터넷 연결을 확인해 주세요.', retry: true };
+    else {
+      const acc = o === 'other' ? OTHER : ME;
+      // 이미 다른 계정으로 쓰던 PC면 상태를 비우기 전에 묻는다.
+      if (S.storedUserId && S.storedUserId !== acc.userId) S.confirm = { kind: 'switch', acc };
+      else applyAccount(acc, false);
+    }
+    render();
+  }, 900);
+}
+
+/** 확인된 계정을 연결한다. reset이면 state.db를 비운 뒤다. */
+function applyAccount(acc, reset) {
+  const wasProblem = S.problem === 'key401' || S.problem === 'decrypt';
+  S.account = acc;
+  S.storedUserId = acc.userId;
+  S.key = { input: '', checking: false, error: null, editing: false };
+  if (reset) {
+    S.test = null;
+    S.pick = null;
+    if (S.started) S.baselineAt = nowLabel();
+    toast(`${acc.name} 계정으로 처음부터 시작합니다. 설정은 그대로 둡니다.`);
+  } else if (wasProblem) {
+    toast('키를 다시 연결했습니다. 멈춘 지점부터 이어서 감지합니다.');
+  }
+  if (wasProblem) clearProblem();
+}
+
+/* ---------- 에이전트 확인 ---------- */
+
+/** 확인 네 단계를 차례로 돌린다. 시뮬레이션 결과의 단계에서 멈춘다. */
+function runCheck(key) {
+  const a = S.agents[key];
+  const outcome = key === 'claude' ? S.sim.agent : 'ok';
+  const failAt = AGENT_OUTCOMES[outcome].failAt;
+  a.run += 1;
+  const run = a.run;
+  Object.assign(a, { status: 'checking', step: 0, failAt: null, outcome });
+  /** 한 단계를 끝내고 다음 단계로 넘어간다. */
+  const advance = () => {
+    // 그사이 다시 확인을 눌렀으면 옛 진행은 버린다.
+    if (a.run !== run) return;
+    if (STEPS[a.step].key === failAt) {
+      a.status = 'failed';
+      a.failAt = failAt;
+      onAgentChange(key);
+      render();
+      return;
+    }
+    a.step += 1;
+    if (a.step >= STEPS.length) {
+      a.status = 'ok';
+      onAgentChange(key);
+      render();
+      return;
+    }
+    render();
+    setTimeout(advance, STEPS[a.step].ms);
+  };
+  setTimeout(advance, STEPS[0].ms);
+}
+
+/** 확인 결과가 나온 뒤: 감지 중이면 전역 문제를 걸거나 푼다. */
+function onAgentChange(key) {
+  if (key !== 'claude' || !S.started) return;
+  if (S.agents.claude.status === 'ok' && S.problem === 'cli') { clearProblem(); toast('Claude Code를 다시 연결했습니다. 대기열을 다시 시작합니다.'); }
+}
+
+/** 에이전트 섹션을 처음 열 때 자동으로 확인을 돌린다. */
+function autoCheck() {
+  visibleAgents().forEach((k) => { if (S.agents[k].status === 'idle') runCheck(k); });
+}
+
+/** 실패 원인별 안내. 명령은 앱이 실제로 쓰는 환경 그대로 보여 준다. */
+function fixOf(a) {
+  const win = S.os === 'win';
+  switch (a.outcome) {
+    case 'missing': return { cause: '설치 필요', title: 'Claude Code를 찾지 못했습니다', line: '아래 명령으로 설치한 뒤 다시 확인을 누르세요. 이미 설치했다면 위치를 직접 지정할 수 있습니다.', cmd: win ? 'irm https://claude.ai/install.ps1 | iex' : 'curl -fsSL https://claude.ai/install.sh | bash', third: { label: '설치가 끝났다는 줄이 나올 때까지 기다리기', pic: 'done' }, pick: true };
+    case 'old': return { cause: '업데이트 필요', title: 'Claude Code를 업데이트해야 합니다', line: '2.1.248 이상이 필요합니다. 지금은 2.1.201입니다.', cmd: 'claude update', third: { label: '업데이트가 끝났다는 줄이 나올 때까지 기다리기', pic: 'done' } };
+    case 'logout': return { cause: '로그인 필요', title: 'Claude Code에 로그인해야 합니다', line: '아래 명령을 실행하고, 브라우저에서 로그인을 마친 뒤 다시 확인을 누르세요.', cmd: 'claude auth login', third: { label: '열린 브라우저에서 로그인', pic: 'browser' } };
+    case 'helper': return { cause: '로그인 방식 바꾸기', title: '이 로그인 방식은 쓸 수 없습니다', line: 'apiKeyHelper로 로그인되어 있습니다. Claude 계정으로 다시 로그인해 주세요.', cmd: 'claude auth login', third: { label: '열린 브라우저에서 로그인', pic: 'browser' } };
+    case 'trial': return { cause: '작동 확인 실패', title: '작동 확인이 실패했습니다', line: '사용량 한도에 도달했습니다. 오후 3:00 이후 다시 확인을 눌러 주세요.', cmd: null, raw: 'API Error: 429 rate_limit_error\nClaude usage limit reached. Your limit will reset at 3pm (Asia/Seoul).' };
+    default: return { cause: '', title: '', line: '', cmd: null };
+  }
+}
+
+/* ---------- 전역 문제 ---------- */
+
+/** 전역 문제를 건다. 같은 원인의 OS 알림은 해결되기 전까지 한 번만 띄운다. */
+function setProblem(kind) {
+  S.problem = kind;
+  if (kind === 'key401' || kind === 'decrypt') S.key.editing = true;
+  if (kind === 'cli') {
+    S.sim.agent = 'logout';
+    Object.assign(S.agents.claude, { status: 'failed', step: 2, failAt: 'login', outcome: 'logout' });
+  }
+  if (!S.problemNotified[kind]) {
+    S.problemNotified[kind] = true;
+    notifyApp('Stardraft가 멘션 감지를 멈췄습니다', PROBLEMS[kind].title);
+  }
+}
+
+/** 전역 문제를 푼다. 다시 생기면 알림을 다시 띄운다. */
+function clearProblem() {
+  if (S.problem) S.problemNotified[S.problem] = false;
+  S.problem = null;
+}
+
+/** 문제 안내 본문(OS별 문구가 있는 경우를 처리한다). */
+const problemBody = (p) => (typeof p.body === 'string' ? p.body : p.body[S.os]);
+
+/* ---------- 감지 시작과 시험 ---------- */
+
+/** 감지 시작: 기준점을 잡고, 시작 알림으로 권한을 묻고, 작은 창을 띄운다. */
+function startDetection() {
+  S.started = true;
+  S.baselineAt = nowLabel();
+  S.lastCheck = nowLabel();
+  S.settingsOpen = false;
+  S.smallOpen = true;
+  // 로그인 항목을 켜면 macOS가 직접 알린다. 앱 알림 권한과 상관없다.
+  if (S.os === 'mac' && S.autoStart) pushNotif({ id: 'login-item', app: '시스템 설정', title: '로그인 항목 추가됨', body: '"Stardraft"이(가) 로그인할 때 열리도록 추가되었습니다.' });
+  notifyApp('멘션 감지를 시작했습니다', '새 멘션이 오면 초안을 만들어 알려 드립니다.');
+}
+
+/** 시험 실행: 고른 멘션으로 선택 실행과 초안 실행을 흉내 낸다. */
+function startTest(id) {
+  const m = RECENT.find((x) => x.id === id);
+  const mapped = S.mappings.find((x) => x.project === m.project);
+  const steps = [];
+  if (!mapped) steps.push(`저장소 고르는 중 · 후보 ${S.folders.reduce((n, f) => n + f.repos.length, 0)}개`);
+  if (!m.unrelated) steps.push('파일 읽는 중: 관련 파일 3개', '초안 쓰는 중');
+  S.pick = null;
+  S.smallOpen = true;
+  S.test = { m, status: 'generating', steps, shown: 1, mapped: mapped ? mapped.repo : null, run: (S.test ? S.test.run : 0) + 1 };
+  const run = S.test.run;
+  /** 진행 단계를 하나씩 넘긴다. */
+  const tick = () => {
+    if (!S.test || S.test.run !== run) return;
+    if (S.test.shown < steps.length) { S.test.shown += 1; render(); setTimeout(tick, 1100); return; }
+    S.test.status = m.unrelated && !mapped ? 'need-repo' : 'ready';
+    notifyApp(S.test.status === 'ready' ? `[시험] ${m.sender}님 멘션의 초안이 준비됐습니다` : `[시험] ${m.sender}님 멘션 · 저장소 확인 필요`, m.text.replace(/^@\S+\s*/, ''));
+    render();
+  };
+  setTimeout(tick, 1100);
+}
+
+/* ---------- 그리기: OS 껍데기 ---------- */
+
+/** 말풍선 트레이 아이콘. */
+function bubbleSvg(filled, dots, size = 16) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.75h11a.75.75 0 0 1 .75.75v7a.75.75 0 0 1-.75.75H8.2L4.75 14v-2.75H2.5a.75.75 0 0 1-.75-.75v-7a.75.75 0 0 1 .75-.75z" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>${dots ? '<circle cx="5.3" cy="7" r="1" fill="currentColor"/><circle cx="8" cy="7" r="1" fill="currentColor"/><circle cx="10.7" cy="7" r="1" fill="currentColor"/>' : ''}</svg>`;
+}
+
+/** 트레이 아이콘. 전역 문제 "!"가 숫자보다 앞서고, 설정 전에는 노란 점을 단다. */
+function trayHtml() {
+  const ready = S.test && (S.test.status === 'ready' || S.test.status === 'need-repo') ? 1 : 0;
+  const gen = S.test && S.test.status === 'generating';
+  let mark = '';
+  if (S.problem) mark = S.os === 'mac' ? '<span class="tray-count bad">!</span>' : '';
+  else if (ready && S.os === 'mac') mark = `<span class="tray-count">${ready}</span>`;
+  let badge = '';
+  if (S.os === 'win' && S.problem) badge = '<span class="tray-badge-win bad">!</span>';
+  else if (S.os === 'win' && ready) badge = `<span class="tray-badge-win">${ready}</span>`;
+  const dot = !S.started ? '<span class="tray-dot setup"></span>' : '';
+  const tip = S.problem ? `Stardraft — ${PROBLEMS[S.problem].title}` : !S.started ? 'Stardraft — 설정 필요' : `Stardraft — 검토 대기 ${ready}`;
+  return `<div class="tray-wrap"><button class="tray${S.menuOpen ? ' on' : ''}" data-action="tray" data-tray="1" title="${esc(tip)}"><span class="tray-icon">${bubbleSvg(ready > 0, gen)}${dot}${badge}</span>${mark}</button>${S.menuOpen ? menuHtml() : ''}</div>`;
+}
+
+/** 트레이 오른쪽 클릭 메뉴. 전역 문제가 있으면 맨 위에 둔다. */
+function menuHtml() {
+  let h = '';
+  if (S.problem) h += `<button class="menu-i bad" data-action="fix-problem">⚠ ${esc(PROBLEMS[S.problem].menu)}</button><div class="menu-sep"></div>`;
+  h += '<button class="menu-i" data-action="open-small">창 열기</button>';
+  h += `<button class="menu-i" data-action="check-now" ${S.started ? '' : 'disabled'}>지금 확인</button>`;
+  h += '<button class="menu-i" data-action="open-settings">설정…</button><div class="menu-sep"></div><button class="menu-i" data-action="nyi" data-what="종료">종료</button>';
+  return `<div class="menu">${h}</div>`;
+}
+
+/** 메뉴 막대·Dock(mac) 또는 작업 표시줄(Windows). 설정 창이 열려 있으면 Dock과 작업 표시줄에 앱이 보인다. */
+function osChromeHtml() {
+  const wifi = '<span class="glyph"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 6.5a9 9 0 0 1 12 0M4.2 8.8a6 6 0 0 1 7.6 0M6.4 11a3 3 0 0 1 3.2 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>';
+  const me = `<span class="me" title="Stardraft">${bubbleSvg(false, false, 20)}</span>`;
+  if (S.os === 'mac') {
+    const dock = `<div class="dock"><span></span><span></span><span></span><span></span><span></span>${S.settingsOpen ? me : ''}</div>`;
+    return `<div class="menubar"><span class="app">${S.settingsOpen ? 'Stardraft' : 'Finder'}</span><span>파일</span><span>편집</span><span>보기</span><div class="right">${wifi}${trayHtml()}<span>10월 18일 (일) 오후 2:31</span></div></div>${dock}`;
+  }
+  return `<div class="taskbar"><div class="apps"><span></span><span></span><span></span><span></span>${S.settingsOpen ? me : ''}</div><div class="right"><span class="glyph" title="숨겨진 아이콘 표시">⌃</span>${trayHtml()}${wifi}<div class="clock-win">오후 2:31<br>2026-10-18</div></div></div>`;
+}
+
+/** OS 알림 더미. macOS 권한 배너는 허용/허용 안 함 버튼이 있다. */
+function notifsHtml() {
+  if (!S.notifs.length) return '';
+  const items = S.notifs.map((n) => {
+    if (n.kind === 'perm') {
+      return `<div class="notif"><span class="notif-icon">${bubbleSvg(false, false)}</span><div class="notif-text"><div class="notif-app">알림</div><strong>"Stardraft" 알림</strong><div class="small">경고, 사운드, 아이콘 배지가 알림에 포함될 수 있습니다.</div><div class="notif-acts"><button class="btn sm" data-action="perm" data-v="denied">허용 안 함</button><button class="btn sm primary" data-action="perm" data-v="granted">허용</button></div></div></div>`;
+    }
+    return `<div class="notif" data-action="notif-click" data-id="${n.id}"><span class="notif-icon">${n.app === 'Stardraft' ? bubbleSvg(true, false) : '⚙'}</span><div class="notif-text"><div class="notif-app">${esc(n.app)} · 지금</div><strong>${esc(n.title)}</strong><div class="clip small">${esc(n.body)}</div></div><button class="notif-x" data-action="notif-close" data-id="${n.id}" title="닫기">×</button></div>`;
+  }).join('');
+  return `<div class="notifs">${items}</div>`;
+}
+
+/** 창 틀. */
+function windowFrame(cls, title, body, closeAction) {
+  const bar = S.os === 'mac'
+    ? `<div class="titlebar"><div class="tl"><button class="c" data-action="${closeAction}" title="닫기"></button><button class="m"></button><button class="x"></button></div><div class="t">${title}</div></div>`
+    : `<div class="titlebar"><div class="t">${title}</div><div class="winctl"><button>―</button><button>□</button><button class="close" data-action="${closeAction}">✕</button></div></div>`;
+  return `<div class="window ${cls}">${bar}<div class="wbody">${body}</div></div>`;
+}
+
+/* ---------- 그리기: 작은 창 ---------- */
+
+/** 트레이 옆 작은 창. 설정 전에는 필수 세 가지, 감지 중에는 멘션(여기서는 시험)을 보여 준다. */
+function smallHtml() {
+  if (!S.smallOpen) return '';
+  const banner = S.problem ? `<div class="banner"><span>⚠</span><div class="sp"><strong>${esc(PROBLEMS[S.problem].title)}</strong><div class="d">${esc(problemBody(PROBLEMS[S.problem]))} 멘션 감지를 멈췄습니다.</div></div><button class="btn sm" data-action="fix-problem">${PROBLEMS[S.problem].action}</button></div>` : '';
+  let body;
+  if (!S.started) body = smallSetup();
+  else if (S.pick) body = smallPick();
+  else if (S.test) body = smallTest();
+  else body = smallEmpty();
+  return windowFrame('sw', 'Stardraft', banner + body, 'close-small');
+}
+
+/** 설정 전: 필수 세 가지와 설정 열기/감지 시작. */
+function smallSetup() {
+  const req = required();
+  const all = req.every((r) => r.done);
+  const rows = req.map((r) => `<button class="ck" data-action="open-settings" data-section="${r.key}"><span class="st ${r.done ? 'ok' : ''}">${r.done ? '✓' : ''}</span><span class="sp"><div class="t">${r.label}</div><div class="d">${esc(r.detail)}</div></span><span class="go">›</span></button>`).join('');
+  const lead = all ? '필수 설정을 마쳤습니다.' : '멘션 감지를 시작하려면 세 가지를 설정해야 합니다.';
+  const acts = all
+    ? `<button class="btn" data-action="open-settings">설정 열기</button><button class="btn primary" data-action="start">감지 시작</button>`
+    : '<button class="btn primary" data-action="open-settings">설정 열기</button>';
+  return `<div class="sw-body" data-scroll="sw"><p class="sw-lead">${lead}</p>${rows}<div class="sw-actions">${acts}</div>${all ? startHints() : ''}${winTrayHint()}</div>`;
+}
+
+/** 감지 시작 버튼 곁의 안내 두 줄. */
+function startHints() {
+  const auto = S.autoStart ? '<li><span>•</span><span>로그인할 때 Stardraft가 자동으로 켜집니다. 설정의 일반에서 끌 수 있습니다.</span></li>' : '';
+  const notif = S.os === 'mac'
+    ? '<li><span>•</span><span>곧 macOS가 알림 허용을 묻습니다. 허용하면 초안이 준비될 때 알려 드립니다. 허용하지 않아도 메뉴 막대 아이콘의 숫자로 확인할 수 있습니다.</span></li>'
+    : '<li><span>•</span><span>초안이 준비되면 알림으로 알려 드립니다. 작업 표시줄 아이콘의 숫자로도 확인할 수 있습니다.</span></li>';
+  return `<ul class="hint-list">${auto}${notif}</ul>`;
+}
+
+/** Windows 숨김 영역 안내. */
+function winTrayHint() {
+  if (S.os !== 'win') return '';
+  return '<p class="small muted" style="margin:12px 0 0">Stardraft 아이콘은 작업 표시줄 오른쪽 <b>^</b> 안에 있습니다. 끌어서 꺼내 두면 검토할 초안 수가 보입니다.</p>';
+}
+
+/** 감지 중, 멘션이 없을 때. */
+function smallEmpty() {
+  const head = `<div class="sw-head"><span class="muted">마지막 확인 ${esc(S.lastCheck)} · 60초마다 확인</span></div>`;
+  return `${head}<div class="sw-body" data-scroll="sw"><div class="empty"><span class="muted">${bubbleSvg(false, false, 36)}</span><p><b>아직 멘션이 없습니다.</b></p><p class="muted small">새 멘션이 오면 초안을 만들어 여기에 보여 드립니다.</p><p style="margin-top:14px"><button class="btn" data-action="pick-open">최근 멘션으로 시험</button></p><p class="muted small">지난 멘션 하나로 앱이 동작하는지 확인합니다. Flow에는 아무것도 올리지 않습니다.</p></div>${winTrayHint()}</div>`;
+}
+
+/** 시험할 멘션 고르기. */
+function smallPick() {
+  const rows = RECENT.map((m) => `<button class="pick-row ${S.pick.sel === m.id ? 'sel' : ''}" data-action="pick-sel" data-id="${m.id}"><div class="top"><b>${esc(m.sender)}</b><span>${esc(m.project)}</span><span class="sp"></span>${m.answered ? '<span class="tag done">답함</span>' : ''}<span>${esc(m.at)}</span></div><div class="clip">${esc(m.text)}</div></button>`).join('');
+  const body = `<div class="sw-body" data-scroll="pick"><p class="sw-lead" style="margin-bottom:2px">시험할 멘션 고르기</p><p class="muted small" style="margin:0 0 6px">실제 에이전트와 저장소로 초안을 만듭니다. Flow에는 올리지 않고, 에이전트 사용량은 씁니다.</p>${rows}</div>`;
+  const foot = `<div class="foot"><button class="btn" data-action="pick-cancel">취소</button><span class="sp"></span><button class="btn primary" data-action="pick-go" ${S.pick.sel ? '' : 'disabled'}>이 멘션으로 시험</button></div>`;
+  return body + foot;
+}
+
+/** 시험 묶음: 생성 중, 준비됨, 저장소 확인 필요. 게시 대신 시험 끝내기가 있다. */
+function smallTest() {
+  const t = S.test;
+  const m = t.m;
+  const tag = { generating: '<span class="tag generating">생성 중</span>', ready: '<span class="tag ready">준비됨</span>', 'need-repo': '<span class="tag failed">저장소 확인 필요</span>' }[t.status];
+  const head = `<div class="sw-head"><span class="muted">1 / 1</span><span class="sp"></span><span class="tag test">시험</span>${tag}</div>`;
+  let body = `<div class="notice warn small" style="margin-bottom:10px">시험 결과입니다. 게시 버튼 대신 시험 끝내기가 있고, Flow에는 아무것도 올라가지 않습니다.</div>`;
+  body += `<div class="muted small" style="margin-bottom:6px"><b style="color:var(--text)">${esc(m.sender)}</b> · ${esc(m.project)} · ${esc(m.at)}</div><blockquote>${esc(m.text)}</blockquote>`;
+  let foot;
+  if (t.status === 'generating') {
+    body += `<div class="sec-h">진행</div><ol class="progress">${t.steps.slice(0, t.shown).map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`;
+    foot = '<span class="muted small">초안을 만드는 중입니다.</span><span class="sp"></span><button class="btn" data-action="test-end">시험 끝내기</button>';
+  } else if (t.status === 'need-repo') {
+    body += `<div class="sec-h">에이전트가 저장소를 고르지 않았습니다</div><div class="notice small">${esc(m.unrelated)}</div>`;
+    foot = '<button class="btn" data-action="test-end">무시</button><span class="sp"></span><button class="btn" data-action="nyi" data-what="저장소를 골라 만들기">저장소를 골라 만들기</button><button class="btn primary" data-action="test-end">시험 끝내기</button>';
+  } else {
+    const r = m.result;
+    const repo = t.mapped || r.repo;
+    const linked = S.mappings.some((x) => x.project === m.project);
+    body += `<div class="sec-h">에이전트가 이해한 요구</div><div>${esc(r.need)}</div>`;
+    body += `<div class="sec-h">초안</div><div class="draft">${r.sentences.map((s) => `${esc(s.t)}${s.ev.length ? s.ev.map((n) => `<span class="cite">${n}</span>`).join('') : '<span class="cite none">근거 없음</span>'}`).join(' ')}</div>`;
+    body += `<div class="sec-h">근거 ${r.evidence.length}개</div>${r.evidence.length ? r.evidence.map((e) => `<div class="ev"><b style="color:var(--accent)">${circled(e.id)}</b> ${esc(e.why)}<div class="loc">${esc(e.loc)} · <button class="btn link small" data-action="open-editor" data-loc="${esc(e.loc)}">에디터에서 열기</button></div></div>`).join('') : '<div class="muted small">근거로 든 파일이 없습니다.</div>'}`;
+    body += `<div class="sec-h">저장소</div><div class="row wrap"><code>${esc(repo)}</code><span class="muted small">${t.mapped ? '저장소 매핑' : '자동 선택'}</span>${!t.mapped ? (linked ? '<span class="ok-t small">✓ 연결함</span>' : `<button class="btn sm" data-action="test-link" data-repo="${esc(repo)}">이 Flow 프로젝트에 연결</button>`) : ''}</div>${!t.mapped ? `<div class="muted small" style="margin-top:4px">${esc(r.reason)}</div>` : ''}`;
+    foot = '<button class="btn" data-action="test-end">무시</button><span class="sp"></span><button class="btn" data-action="test-regen">다시 만들기</button><button class="btn primary" data-action="test-end">시험 끝내기</button>';
+  }
+  return `${head}<div class="sw-body" data-scroll="test">${body}</div><div class="foot">${foot}</div>`;
+}
+
+/* ---------- 그리기: 설정 창 ---------- */
+
+/** 설정 창 칸 목록. */
+const SECTIONS = [
+  { key: 'account', label: 'Flow 계정' },
+  { key: 'agent', label: '에이전트' },
+  { key: 'repos', label: '저장소' },
+  { key: 'drafts', label: '초안' },
+  { key: 'general', label: '일반' },
+];
+
+/** 설정 창. 첫 설정이 끝나기 전에는 맨 위에 진행 띠가 있다. */
+function settingsHtml() {
+  if (!S.settingsOpen) return '';
+  const req = required();
+  const nav = SECTIONS.map((s) => {
+    const r = req.find((x) => x.key === s.key);
+    const problemHere = S.problem && PROBLEMS[S.problem].section === s.key;
+    const dot = problemHere ? '<span class="nav-dot bad"></span>' : (!S.started && r && !r.done ? '<span class="nav-dot" title="필요"></span>' : '');
+    return `<button class="nav-i ${S.section === s.key ? 'sel' : ''}" data-action="section" data-section="${s.key}">${s.label}${dot}</button>`;
+  }).join('');
+  const main = { account: secAccount, agent: secAgent, repos: secRepos, drafts: secDrafts, general: secGeneral }[S.section]();
+  const sheet = S.picker ? pickerSheet() : (S.confirm ? confirmSheet() : '');
+  return windowFrame('set', 'Stardraft 설정', `${firstBar()}<div class="set-layout"><nav class="set-nav">${nav}</nav><div class="set-main" data-scroll="set-${S.section}">${main}</div></div>${sheet}`, 'close-settings');
+}
+
+/** 첫 설정 진행 띠. 감지를 시작하면 다시 나오지 않는다. */
+function firstBar() {
+  if (S.started) return '';
+  const req = required();
+  const n = req.filter((r) => r.done).length;
+  const meter = `<span class="meter">${req.map((r) => `<i class="${r.done ? 'on' : ''}"></i>`).join('')}</span>`;
+  if (n < 3) {
+    const left = req.filter((r) => !r.done);
+    const next = left.find((r) => r.key !== S.section);
+    return `<div class="first-bar">${meter}<span class="t">필수 설정 ${n}/3</span><span class="muted small">남은 항목: ${left.map((r) => r.label).join(', ')}</span><span class="sp"></span>${next ? `<button class="btn sm" data-action="section" data-section="${next.key}">${next.label} 설정</button>` : ''}</div>`;
+  }
+  return `<div class="first-bar ready">${meter}<div class="sp"><div class="t">필수 설정을 마쳤습니다.</div>${startHints().replace('hint-list', 'hint-list" style="margin:2px 0 0;color:#2f5a3b')}</div><button class="btn primary lg" data-action="start">감지 시작</button></div>`;
+}
+
+/** Flow 계정 칸. */
+function secAccount() {
+  let h = '<h2>Flow 계정</h2><p class="lead">멘션을 감지하고 내 이름으로 댓글을 올리는 데 쓰는 개인 API 키입니다.</p>';
+  if (S.problem === 'key401' || S.problem === 'decrypt') {
+    const p = PROBLEMS[S.problem];
+    h += `<div class="notice bad" style="margin-bottom:16px"><strong>${esc(p.title)}</strong><div class="small">${esc(problemBody(p))} 같은 계정의 키를 다시 넣으면 멈춘 지점부터 이어서 감지합니다.</div></div>`;
+  }
+  if (S.account && !S.key.editing) {
+    h += `<div class="field"><span class="l">연결된 계정</span><div class="acct"><span class="avatar">${esc(S.account.name[0])}</span><div class="sp"><div><b>${esc(S.account.name)}</b> · ${esc(S.account.division)}</div><div class="muted small">${esc(S.account.email)}</div></div><span class="ok-t small">✓ 연결됨</span><button class="btn sm" data-action="key-edit">키 바꾸기</button></div><p class="muted small" style="margin:6px 0 0">키는 이 PC에만 암호화해 보관합니다.</p></div>`;
+    return h;
+  }
+  const err = S.key.error ? `<div class="err-line">${esc(S.key.error.text)}${S.key.error.retry ? ' <button class="btn link small" data-action="key-check">다시 시도</button>' : ''}</div>` : '';
+  const cancel = S.account && !S.problem ? '<button class="btn" data-action="key-cancel">취소</button>' : '';
+  h += `<div class="field"><label class="l" for="key">개인 API 키</label><p class="help">Flow 웹의 <b>내 API 키</b>에서 발급합니다. 메뉴가 보이지 않으면 회사 관리자가 개인 키 발급을 허용해야 합니다.</p><div class="row"><input id="key" type="password" data-input="key" value="${esc(S.key.input)}" placeholder="키를 붙여 넣으세요" style="flex:1;max-width:380px" ${S.key.checking ? 'disabled' : ''}>${cancel}<button class="btn primary" data-action="key-check" ${S.key.checking ? 'disabled' : ''}>${S.key.checking ? '확인 중…' : '확인'}</button></div>${err}</div>`;
+  return h;
+}
+
+/** 에이전트 칸. 연결 표시는 변형마다 다르다. */
+function secAgent() {
+  let h = '<h2>에이전트</h2><p class="lead">이 PC에 설치하고 로그인해 둔 에이전트로 초안을 만듭니다. Stardraft는 그 로그인을 빌려 씁니다.</p>';
+  if (S.problem === 'cli') h += `<div class="notice bad" style="margin-bottom:12px"><strong>${esc(PROBLEMS.cli.title)}</strong><div class="small">${esc(PROBLEMS.cli.body)}</div></div>`;
+  h += visibleAgents().map((k) => ({ A: agentA, B: agentB, C: agentC }[S.variant](k))).join('');
+  const conn = connectedAgents();
+  if (conn.length > 1) {
+    h += `<div class="field" style="margin-top:18px"><span class="l">기본 에이전트</span>${conn.map((k) => `<label class="check" style="margin-top:4px"><input type="radio" id="def-${k}" name="def" data-change="default-agent" value="${k}" ${effectiveAgent() === k ? 'checked' : ''}><span>${AGENT_INFO[k].name}</span></label>`).join('')}</div>`;
+  }
+  // 모델은 에이전트마다 따로 고른다. 연결되기 전에는 목록을 읽을 수 없어 기본 모델만 둔다.
+  h += visibleAgents().map((k) => {
+    const opts = S.agents[k].status === 'ok' ? MODEL_OPTIONS[k] : [];
+    const options = [`<option value="">기본 모델 (${AGENT_INFO[k].name}가 정함)</option>`, ...opts.map((o) => `<option value="${o.v}" ${S.model[k] === o.v ? 'selected' : ''}>${esc(o.l)}</option>`)].join('');
+    return `<div class="field" style="margin-top:18px"><label class="l" for="model-${k}">${AGENT_INFO[k].name} 모델</label><p class="help">${MODEL_HELP[k]}</p><select id="model-${k}" data-change="model" data-agent="${k}" style="min-width:280px">${options}</select></div>`;
+  }).join('');
+  return h;
+}
+
+/** 자세히: 경로, 버전, 로그인 방식, 오류 원문. */
+function detailsHtml(k) {
+  const a = S.agents[k];
+  if (!a.details) return '';
+  const info = AGENT_INFO[k];
+  const fix = a.status === 'failed' ? fixOf(a) : null;
+  const where = S.os === 'mac' ? '로그인 셸의 PATH, ~/.local/bin, /opt/homebrew/bin, /usr/local/bin' : 'PATH, %USERPROFILE%\\.local\\bin';
+  const rows = a.outcome === 'missing' && a.status === 'failed'
+    ? `<dt>찾아본 곳</dt><dd>${esc(where)}</dd>`
+    : `<dt>경로</dt><dd class="mono">${esc(info.path[S.os])}</dd><dt>버전</dt><dd>${a.outcome === 'old' ? '2.1.201' : info.version}</dd><dt>로그인</dt><dd>${a.outcome === 'logout' ? '로그인 안 됨' : a.outcome === 'helper' ? 'apiKeyHelper' : info.auth}</dd>`;
+  const raw = fix && fix.raw ? `<pre>${esc(fix.raw)}</pre>` : '';
+  return `<div class="details"><dl>${rows}<dt>마지막 확인</dt><dd>${esc(nowLabel())}</dd></dl>${raw}</div>`;
+}
+
+/** 공통 행동 줄: 다시 확인, 직접 지정, 자세히. noCheck면 다시 확인을 다른 곳에 둔 경우다. */
+function agentActs(k, noCheck = false) {
+  const a = S.agents[k];
+  const fix = a.status === 'failed' ? fixOf(a) : null;
+  const check = noCheck ? '' : `<button class="btn sm" data-action="agent-check" data-agent="${k}" ${a.status === 'checking' ? 'disabled' : ''}>다시 확인</button>`;
+  return `<div class="agent-acts">${check}${fix && fix.pick ? '<button class="btn sm" data-action="nyi" data-what="직접 지정(파일 선택 창)">직접 지정…</button>' : ''}<span class="sp"></span><button class="btn link small" data-action="agent-details" data-agent="${k}">${a.details ? '자세히 닫기' : '자세히'}</button></div>`;
+}
+
+/** 터미널 예시 화면. typed면 명령이 타이핑되듯 나타난다. */
+function termHtml(cmd, typed) {
+  const prompt = S.os === 'mac' ? 'hong@MacBook ~ %' : 'PS C:\\Users\\hong>';
+  const title = S.os === 'mac' ? '터미널' : 'Windows PowerShell';
+  const c = typed ? `<span class="cmd"><span class="typed">${esc(cmd)}</span></span>` : `<span class="cmd">${esc(cmd)}</span>`;
+  return `<div class="term"><div class="term-bar"><i></i><i></i><i></i><span style="margin-left:6px">${title}</span></div><div class="term-body"><span class="pr">${esc(prompt)}</span> ${c}<span class="caret"></span></div></div>`;
+}
+
+/** 단계 아이콘(SVG). */
+const STEP_ICONS = {
+  find: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14" stroke-linecap="round"/></svg>',
+  version: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 8.5V3a1 1 0 0 1 1-1h5.5L14 7.5 8.5 13z"/><circle cx="5.5" cy="5.5" r="1" fill="currentColor"/></svg>',
+  login: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5.5" r="3"/><path d="M2.5 14c.8-2.6 3-4 5.5-4s4.7 1.4 5.5 4" stroke-linecap="round"/></svg>',
+  trial: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M5 3.2v9.6L12.5 8z" fill="currentColor"/></svg>',
+};
+
+/** 단계 i의 상태: ok, cur, bad, 또는 빈 문자열(아직). */
+function stepState(a, i) {
+  if (a.status === 'ok') return 'ok';
+  if (a.status === 'idle') return '';
+  if (i < a.step) return 'ok';
+  if (i === a.step) return a.status === 'failed' ? 'bad' : 'cur';
+  return '';
+}
+
+/** 에이전트 머리 줄의 상태 문장. */
+function agentStateText(a) {
+  if (a.status === 'ok') return '<span class="ok-t">연결됨</span>';
+  if (a.status === 'checking') return `${STEPS[a.step].label} 확인 중…${STEPS[a.step].key === 'trial' ? ' 10초쯤 걸리고 사용량을 조금 씁니다.' : ''}`;
+  if (a.status === 'failed') return `<span class="bad-t">${esc(fixOf(a).cause)}</span>`;
+  return '확인 전';
+}
+
+/* A: 단계 아이콘형 */
+
+/** A: 네 단계를 아이콘 한 줄로 늘 보여 주고, 실패하면 안내와 작은 예시 화면을 붙인다. */
+function agentA(k) {
+  const a = S.agents[k];
+  const info = AGENT_INFO[k];
+  const big = a.status === 'ok' ? '<span class="st lg ok">✓</span>' : a.status === 'failed' ? '<span class="st lg bad">!</span>' : a.status === 'checking' ? '<span class="st lg cur"></span>' : '';
+  const steps = STEPS.map((s, i) => {
+    const st = stepState(a, i);
+    const mini = st === 'ok' ? '<span class="st ok">✓</span>' : st === 'bad' ? '<span class="st bad">✕</span>' : st === 'cur' ? '<span class="st cur"></span>' : '';
+    const line = i < STEPS.length - 1 ? `<span class="a-line ${stepState(a, i) === 'ok' && stepState(a, i + 1) !== '' ? 'ok' : ''}"></span>` : '';
+    return `<div class="a-step ${st}"><div class="a-ico">${STEP_ICONS[s.key]}${mini}</div>${s.label}</div>${line}`;
+  }).join('');
+  let fix = '';
+  if (a.status === 'failed') {
+    const f = fixOf(a);
+    fix = `<div class="a-fix"><div class="t">${esc(f.title)}</div><div class="muted small" style="margin-top:2px">${esc(f.line)}</div>${f.cmd ? `<div class="ex"><span class="ex-label">예시 화면</span>${termHtml(f.cmd, false)}</div><div class="copy-tip"><button class="btn sm" data-action="copy" data-cmd="${esc(f.cmd)}">명령 복사</button><span class="muted">붙여 넣고 Enter</span></div>` : ''}</div>`;
+  }
+  return `<div class="agent"><div class="agent-head"><span class="mark">${info.mark}</span><div class="sp"><div class="agent-name">${info.name}</div><div class="agent-state">${agentStateText(a)}</div></div>${big}</div><div class="a-steps">${steps}</div>${fix}${agentActs(k)}${detailsHtml(k)}</div>`;
+}
+
+/* B: 연결선형 */
+
+/** B 그림 카드의 그림. */
+function bPic(kind, cmd) {
+  if (kind === 'app') return `<span class="mini-app">&gt;_</span>`;
+  if (kind === 'cmd') return `<div class="mini-term"><span style="color:#8fbf7f">${S.os === 'mac' ? '%' : 'PS&gt;'}</span> <span class="cmd">${esc(cmd)}</span></div>`;
+  if (kind === 'browser') return '<div class="mini-browser"><div class="bar"></div><div class="in">Claude에 로그인<br><span class="go">승인</span></div></div>';
+  return '<div class="mini-term"><span class="cmd" style="background:none;color:#8fbf7f">✓ 완료</span><br><span style="color:#a0a4aa">…</span></div>';
+}
+
+/** B: 두 앱을 잇는 선으로 상태를 보여 주고, 끊기면 고치는 법을 그림 카드로 보여 준다. */
+function agentB(k) {
+  const a = S.agents[k];
+  const info = AGENT_INFO[k];
+  const segs = STEPS.map((s, i) => {
+    const st = stepState(a, i);
+    const label = st === 'bad' ? esc(fixOf(a).cause) : s.label;
+    return `<div class="b-seg ${st}"><div class="b-bar">${st === 'bad' ? '<span class="st bad b-x" style="width:18px;height:18px;font-size:10px">✕</span>' : ''}</div>${label}</div>`;
+  }).join('');
+  const status = a.status === 'ok' ? `<div class="b-status ok-t">✓ ${info.name} 연결됨</div>` : a.status === 'checking' ? `<div class="b-status muted">${agentStateText(a)}</div>` : a.status === 'failed' ? `<div class="b-status bad-t">${esc(fixOf(a).title)}</div>` : '<div class="b-status muted">확인 전</div>';
+  let cards = '';
+  // 명령으로 고치는 실패는 넷째 카드에 다시 확인이 있다.
+  const checkInCard = a.status === 'failed' && !!fixOf(a).cmd;
+  if (a.status === 'failed') {
+    const f = fixOf(a);
+    if (f.cmd) {
+      const open = S.os === 'mac' ? 'Spotlight에서 "터미널" 열기' : '시작 메뉴에서 "PowerShell" 열기';
+      cards = `<div class="b-cards">
+        <div class="b-card"><span class="n">1</span><div class="b-pic">${bPic('app')}</div><div class="cap">${open}</div></div>
+        <div class="b-card"><span class="n">2</span><div class="b-pic">${bPic('cmd', f.cmd)}</div><div class="cap">명령을 붙여 넣고 Enter</div><button class="btn sm" style="margin-top:6px" data-action="copy" data-cmd="${esc(f.cmd)}">명령 복사</button></div>
+        <div class="b-card"><span class="n">3</span><div class="b-pic">${bPic(f.third.pic)}</div><div class="cap">${esc(f.third.label)}</div></div>
+        <div class="b-card"><span class="n">4</span><div class="b-pic"><button class="btn primary" data-action="agent-check" data-agent="${k}">다시 확인</button></div><div class="cap">돌아와서 다시 확인</div></div>
+      </div>`;
+    } else {
+      cards = `<div class="notice" style="margin-top:12px;text-align:center">${esc(f.line)}</div>`;
+    }
+  }
+  return `<div class="agent"><div class="b-link"><div class="b-node ${a.status === 'ok' ? 'ok' : ''}"><span class="mark sd">${bubbleSvg(true, false, 20)}</span>Stardraft</div><div class="b-segs">${segs}</div><div class="b-node ${a.status === 'ok' ? 'ok' : ''}"><span class="mark">${info.mark}</span>${info.name}</div></div>${status}${cards}${agentActs(k, checkInCard)}${detailsHtml(k)}</div>`;
+}
+
+/* C: 큰 그림형 */
+
+/** C: 평소에는 한 줄, 문제가 있으면 큰 예시 화면과 다시 확인 버튼만 둔다. */
+function agentC(k) {
+  const a = S.agents[k];
+  const info = AGENT_INFO[k];
+  if (a.status !== 'failed') {
+    const st = a.status === 'ok' ? '<span class="st lg ok">✓</span>' : a.status === 'checking' ? '<span class="st lg cur"></span>' : '<span class="st lg"></span>';
+    const text = a.status === 'ok' ? `<b>${info.name}</b> <span class="ok-t">연결됨</span>` : a.status === 'checking' ? `<b>${info.name}</b> <span class="muted">${STEPS[a.step].label} 확인 중… (${a.step + 1}/4)</span>` : `<b>${info.name}</b> <span class="muted">확인 전</span>`;
+    return `<div class="agent"><div class="c-line">${st}<span class="mark">${info.mark}</span><span class="sp">${text}</span><button class="btn sm" data-action="agent-check" data-agent="${k}" ${a.status === 'checking' ? 'disabled' : ''}>다시 확인</button><button class="btn link small" data-action="agent-details" data-agent="${k}">${a.details ? '자세히 닫기' : '자세히'}</button></div>${a.status === 'checking' && STEPS[a.step].key === 'trial' ? '<div class="muted small" style="margin:6px 0 0 76px">10초쯤 걸리고 사용량을 조금 씁니다.</div>' : ''}${detailsHtml(k)}</div>`;
+  }
+  const f = fixOf(a);
+  const picture = f.cmd
+    ? `<div class="ex"><span class="ex-label">예시 화면 · ${S.os === 'mac' ? '터미널' : 'PowerShell'}에 이렇게 입력합니다</span>${termHtml(f.cmd, true)}<div class="callout"><button class="btn sm primary" data-action="copy" data-cmd="${esc(f.cmd)}">명령 복사</button><span>붙여 넣고 Enter를 누르세요</span></div></div>`
+    : `<div class="ex"><span class="ex-label">에이전트가 보낸 답</span><div class="term"><div class="term-body" style="min-height:60px"><span class="out">${esc(f.raw)}</span></div></div></div>`;
+  return `<div class="agent"><div class="c-line"><span class="st lg bad">!</span><span class="mark">${info.mark}</span><span class="sp"><b>${info.name}</b> <span class="bad-t">${esc(f.cause)}</span></span></div><div class="c-big"><h3>${esc(f.title)}</h3><p class="lead2">${esc(f.line)}</p>${picture}<div class="after"><button class="btn primary lg" data-action="agent-check" data-agent="${k}">다시 확인</button>${f.pick ? '<button class="btn" data-action="nyi" data-what="직접 지정(파일 선택 창)">직접 지정…</button>' : ''}<span class="sp"></span><button class="btn link small" data-action="agent-details" data-agent="${k}">${a.details ? '자세히 닫기' : '자세히'}</button></div></div>${detailsHtml(k)}</div>`;
+}
+
+/** 저장소 칸: 작업 폴더와 저장소 매핑. */
+function secRepos() {
+  let h = '<h2>저장소</h2><p class="lead">에이전트가 초안을 쓸 때 읽을 코드를 정합니다.</p>';
+  // 작업 폴더
+  const rows = S.folders.map((f, i) => {
+    const warn = f.repos.length === 0 ? '<div class="small warn-t" style="padding:0 12px 8px">git 저장소를 찾지 못했습니다. 저장소가 들어 있는 상위 폴더를 골라 주세요.</div>' : '';
+    const names = f.open && f.repos.length ? `<div class="repo-names chips">${f.repos.map((r) => `<span class="chip">${esc(r)}</span>`).join('')}</div>` : '';
+    const count = f.repos.length ? `<button class="btn link small" data-action="folder-toggle" data-i="${i}">저장소 ${f.repos.length}개 ${f.open ? '▴' : '▾'}</button>` : '<span class="small warn-t">저장소 0개</span>';
+    return `<div><div class="list-row"><code class="sp clip">${esc(f.path)}</code>${count}<button class="btn sm" data-action="folder-remove" data-i="${i}">삭제</button></div>${names}${warn}</div>`;
+  }).join('');
+  const errs = S.folderErrors.map((e) => `<div class="err-line">${esc(e)}</div>`).join('');
+  const sugg = FOLDERS[S.os].filter((f) => f.repos && f.repos.length && !S.folders.some((x) => x.path === f.path));
+  const suggest = sugg.length ? `<div style="margin-top:10px"><div class="small muted">이 PC에서 찾은 폴더</div>${sugg.map((f) => `<div class="suggest"><code class="sp">${esc(f.path)}</code><span class="small muted">저장소 ${f.repos.length}개</span><button class="btn sm" data-action="folder-add-path" data-path="${esc(f.path)}">추가</button></div>`).join('')}</div>` : '';
+  h += `<div class="field"><span class="l">작업 폴더</span><p class="help">저장소가 모여 있는 상위 폴더입니다. 저장소 매핑이 없는 멘션이 오면 에이전트가 이 안에서 저장소를 고릅니다. 네트워크·WSL 경로는 쓸 수 없습니다.</p><div class="list">${rows || '<div class="list-empty">아직 작업 폴더가 없습니다.</div>'}</div>${errs}<div class="row" style="margin-top:8px"><button class="btn" data-action="picker-open">폴더 추가…</button></div>${suggest}</div>`;
+  // 저장소 매핑
+  const maps = S.mappings.map((m, i) => `<div class="list-row"><span class="sp"><b>${esc(m.project)}</b> <span class="muted">→</span> <code>${esc(m.repo)}</code></span><button class="btn sm" data-action="map-remove" data-i="${i}">삭제</button></div>`).join('');
+  const allRepos = S.folders.flatMap((f) => f.repos);
+  const form = S.mapForm
+    ? `<div class="row wrap" style="margin-top:8px"><select id="map-project" data-change="map-project">${PROJECTS.map((p) => `<option ${S.mapForm.project === p ? 'selected' : ''}>${p}</option>`).join('')}</select><span class="muted">→</span><select id="map-repo" data-change="map-repo">${allRepos.map((r) => `<option ${S.mapForm.repo === r ? 'selected' : ''}>${r}</option>`).join('')}<option value="">폴더 직접 고르기…</option></select><button class="btn sm primary" data-action="map-save">추가</button><button class="btn sm" data-action="map-cancel">취소</button></div>`
+    : `<div class="row" style="margin-top:8px"><button class="btn" data-action="map-add" ${S.account && allRepos.length ? '' : 'disabled'}>매핑 추가</button>${!S.account ? '<span class="small muted">Flow 키를 먼저 연결하면 Flow 프로젝트를 고를 수 있습니다.</span>' : ''}</div>`;
+  h += `<div class="field"><span class="l">저장소 매핑 <span class="muted small" style="font-weight:400">(선택)</span></span><p class="help">Flow 프로젝트마다 읽을 저장소를 정해 둡니다. 초안 검토 화면의 "이 Flow 프로젝트에 연결"로도 만들어집니다.</p><div class="list">${maps || '<div class="list-empty">매핑이 없습니다. 없어도 작업 폴더에서 자동으로 고릅니다.</div>'}</div>${form}</div>`;
+  return h;
+}
+
+/** 폴더 선택 창 흉내(여러 개 선택). */
+function pickerSheet() {
+  const rows = FOLDERS[S.os].map((f, i) => `<label class="sheet-row"><input type="checkbox" id="pick-folder-${i}" data-change="picker" value="${esc(f.path)}" ${S.picker.sel.includes(f.path) ? 'checked' : ''}><code class="sp">${esc(f.path)}</code></label>`).join('');
+  return `<div class="sheet-back"><div class="sheet"><h3>폴더 선택</h3><p class="muted small" style="margin:0 0 8px">OS 폴더 선택 창 흉내입니다. 여러 개를 고를 수 있습니다.</p>${rows}<div class="sw-actions"><button class="btn" data-action="picker-cancel">취소</button><button class="btn primary" data-action="picker-ok" ${S.picker.sel.length ? '' : 'disabled'}>열기</button></div></div></div>`;
+}
+
+/** 다른 계정 확인 시트. */
+function confirmSheet() {
+  const acc = S.confirm.acc;
+  return `<div class="sheet-back"><div class="sheet"><h3>${esc(acc.name)} 계정의 키입니다</h3><p style="margin:6px 0">지금까지의 멘션·초안·기록을 지우고 이 계정으로 처음부터 시작합니다.</p><p class="muted small" style="margin:0">작업 폴더, 저장소 매핑, 에이전트, 지침 같은 설정은 그대로 둡니다. 이 계정의 과거 멘션은 가져오지 않습니다.</p><div class="sw-actions"><button class="btn" data-action="switch-cancel">취소</button><button class="btn primary" data-action="switch-ok">지우고 바꾸기</button></div></div></div>`;
+}
+
+/** 초안 칸: 추가 지침, 비밀 파일 패턴, 시험. */
+function secDrafts() {
+  let h = '<h2>초안</h2><p class="lead">모든 초안에 적용되는 규칙입니다.</p>';
+  h += `<div class="field"><label class="l" for="instr">추가 지침 <span class="muted small" style="font-weight:400">(선택)</span></label><p class="help">어조, 길이, 호칭, 맺음말을 바꿀 수 있습니다. 결과 형식과 쉬운 말 기준은 바뀌지 않습니다.</p><textarea id="instr" rows="4" data-input="instr" placeholder="예: 답 끝에 '확인 부탁드립니다'를 붙이지 마세요.">${esc(S.instr)}</textarea><span class="saved" data-saved="instr"></span></div>`;
+  h += `<div class="field"><span class="l">비밀 파일 패턴</span><p class="help">이 패턴에 맞는 파일은 에이전트가 읽지 못합니다. 기본 패턴은 뺄 수 없고, 패턴을 더할 수만 있습니다.</p><div class="small muted" style="margin-bottom:4px">기본 패턴</div><div class="chips">${DEFAULT_PATTERNS.map((p) => `<span class="chip">${esc(p)}</span>`).join('')}</div><div class="small muted" style="margin:10px 0 4px">추가한 패턴</div><div class="chips">${S.patterns.length ? S.patterns.map((p, i) => `<span class="chip add">${esc(p)} <button class="btn link small" data-action="pattern-remove" data-i="${i}">×</button></span>`).join('') : '<span class="small muted">없음</span>'}</div><div class="row" style="margin-top:8px"><input id="pattern" type="text" data-input="pattern" value="${esc(S.patternInput)}" placeholder="예: config/credentials/**" style="width:260px"><button class="btn" data-action="pattern-add">추가</button></div></div>`;
+  // 시험은 대기열이 도는 감지 중에만 할 수 있다.
+  h += `<div class="field"><span class="l">시험</span><p class="help">지난 멘션 하나로 초안을 만들어 봅니다. 추가 지침을 바꾼 뒤 결과를 볼 때도 씁니다. Flow에는 올리지 않고, 에이전트 사용량은 씁니다.</p><button class="btn" data-action="pick-open" ${S.started ? '' : 'disabled'}>최근 멘션으로 시험</button>${S.started ? '' : '<span class="small muted" style="margin-left:8px">감지를 시작하면 쓸 수 있습니다.</span>'}</div>`;
+  return h;
+}
+
+/** 일반 칸. */
+function secGeneral() {
+  let h = '<h2>일반</h2><p class="lead">앱이 켜지는 방식과 알림, 에디터, 데이터 위치입니다.</p>';
+  h += `<div class="field"><label class="check"><input type="checkbox" id="autostart" data-change="autostart" ${S.autoStart ? 'checked' : ''}><span><b>로그인할 때 Stardraft 켜기</b><div class="muted small">앱이 켜져 있어야 멘션을 감지합니다.</div></span></label></div>`;
+  h += `<div class="field"><span class="l">알림</span><div class="row"><button class="btn" data-action="notif-test">알림 시험</button><span class="muted small">${S.os === 'mac' ? (S.notifPerm === 'denied' ? '알림을 허용하지 않았습니다. 시스템 설정 › 알림 › Stardraft에서 켤 수 있습니다.' : '알림이 오지 않으면 시스템 설정 › 알림 › Stardraft를 확인하세요.') : '알림이 오지 않으면 설정 › 시스템 › 알림 › Stardraft를 확인하세요.'}</span></div></div>`;
+  const custom = S.editor === 'custom' ? `<div class="row" style="margin-top:6px"><input type="text" id="editor-cmd" data-input="editor-cmd" value="${esc(S.editorCmd)}" placeholder="예: subl {file}:{line}" style="width:280px"></div>` : '';
+  h += `<div class="field"><label class="l" for="editor">에디터에서 열기</label><p class="help">근거의 파일·줄 위치 옆 "에디터에서 열기"를 누를 때 쓸 에디터입니다. 이 PC에서 VS Code, Cursor, IntelliJ IDEA를 찾았습니다.</p><select id="editor" data-change="editor">${EDITORS.map((e) => `<option value="${e.key}" ${S.editor === e.key ? 'selected' : ''}>${e.label}</option>`).join('')}</select>${custom}</div>`;
+  h += '<div class="field"><span class="l">업데이트</span><p class="help">앱 내 업데이트 방식 결정에서 정합니다.</p></div>';
+  h += '<div class="field"><span class="l">데이터</span><div class="row"><button class="btn" data-action="nyi" data-what="데이터 폴더 열기">데이터 폴더 열기</button><button class="btn" data-action="nyi" data-what="로그 폴더 열기">로그 폴더 열기</button></div><p class="muted small" style="margin:8px 0 0">Stardraft 0.1.0</p></div>';
+  return h;
+}
+
+/* ---------- 프로토타입 조작부 ---------- */
+
+/** 상태 보기: settings.json, state.db, safeStorage에 들어갈 값. */
+function stateDump() {
+  const dump = {
+    'settings.json': {
+      workFolders: S.folders.map((f) => f.path),
+      mappings: S.mappings,
+      agent: effectiveAgent(),
+      models: S.model,
+      extraInstructions: S.instr,
+      extraSecretPatterns: S.patterns,
+      editor: S.editor,
+      autoStart: S.autoStart,
+    },
+    'state.db': {
+      userId: S.storedUserId,
+      baseline: S.started ? `가장 최근 alarmId (${S.baselineAt}에 잡음)` : null,
+      testBundle: S.test ? { mention: S.test.m.id, status: S.test.status, note: '처리됨·기준점에 남기지 않음' } : null,
+    },
+    safeStorage: S.account ? '암호문 (macOS: Stardraft Safe Storage)' : null,
+    app: {
+      started: S.started,
+      problem: S.problem,
+      notifPerm: S.os === 'mac' ? S.notifPerm : '(Windows는 묻지 않음)',
+      agents: Object.fromEntries(visibleAgents().map((k) => [k, `${S.agents[k].status}${S.agents[k].failAt ? `@${S.agents[k].failAt}` : ''}`])),
+    },
+  };
+  return JSON.stringify(dump, null, 2);
+}
+
+/** 변형 전환 막대와 시뮬레이션 패널. */
+function protoHtml() {
+  const v = VARIANTS.find((x) => x.key === S.variant);
+  const bar = `<div class="proto-bar"><button data-action="variant" data-d="-1" title="이전 변형 (←)">‹</button><span class="lbl">${v.key} · ${v.name}</span><button data-action="variant" data-d="1" title="다음 변형 (→)">›</button></div>`;
+  const b = (on, attrs, label) => `<button class="${on ? 'on' : ''}" ${attrs}>${label}</button>`;
+  const sim = `<div class="proto-sim"><div class="h"><strong>프로토타입 조작</strong><button data-action="sim-collapse">${S.simOpen ? '접기' : '펴기'}</button></div>${S.simOpen ? `
+    <div class="r"><span>OS</span>${b(S.os === 'mac', 'data-action="sim-os" data-os="mac"', 'macOS')}${b(S.os === 'win', 'data-action="sim-os" data-os="win"', 'Windows')}</div>
+    <div class="r"><span>다음 키 확인 결과</span>${b(S.sim.key === 'ok', 'data-action="sim-key" data-v="ok"', '내 계정')}${b(S.sim.key === '401', 'data-action="sim-key" data-v="401"', '401')}${b(S.sim.key === 'network', 'data-action="sim-key" data-v="network"', '네트워크 오류')}${b(S.sim.key === 'other', 'data-action="sim-key" data-v="other"', '다른 계정')}</div>
+    <div class="r"><span>Claude Code 확인 결과 (바꾼 뒤 다시 확인)</span>${Object.entries(AGENT_OUTCOMES).map(([k, o]) => b(S.sim.agent === k, `data-action="sim-agent" data-v="${k}"`, o.label)).join('')}</div>
+    <div class="r"><span>Codex (macOS만)</span>${b(!S.sim.codex, 'data-action="sim-codex" data-v="0"', '없음')}${b(S.sim.codex, 'data-action="sim-codex" data-v="1"', '설치·로그인됨')}</div>
+    <div class="r"><span>감지 중 전역 문제</span>${b(S.problem === 'key401', 'data-action="sim-problem" data-v="key401" ' + (S.started ? '' : 'disabled'), '폴링 401')}${b(S.problem === 'decrypt', 'data-action="sim-problem" data-v="decrypt" ' + (S.started ? '' : 'disabled'), '키 복호화 실패')}${b(S.problem === 'cli', 'data-action="sim-problem" data-v="cli" ' + (S.started ? '' : 'disabled'), 'CLI 로그인 풀림')}</div>
+    <div class="r">${b(false, 'data-action="sim-fill"', '필수 설정 바로 채우기')}${b(false, 'data-action="sim-reset"', '첫 실행으로')}${b(S.showState, 'data-action="sim-state"', '상태 보기')}</div>
+    <div class="hint">${esc(v.hint)}<br><br>트레이 아이콘: 클릭하면 작은 창, 오른쪽 클릭하면 메뉴.</div>` : ''}</div>`;
+  const state = S.showState ? `<pre class="proto-state">${esc(stateDump())}</pre>` : '';
+  return bar + sim + state;
+}
+
+/* ---------- 그리기와 이벤트 ---------- */
+
+/** 다시 그리기 전에 입력 포커스와 스크롤 위치를 기억한다. */
+function captureView() {
+  const a = document.activeElement;
+  const scroll = {};
+  document.querySelectorAll('[data-scroll]').forEach((el) => { scroll[el.dataset.scroll] = el.scrollTop; });
+  return { id: a && a.id, s: a && a.selectionStart, e: a && a.selectionEnd, scroll };
+}
+
+/** 다시 그린 뒤 포커스와 스크롤 위치를 되살린다. */
+function restoreView(k) {
+  document.querySelectorAll('[data-scroll]').forEach((el) => {
+    if (k.scroll[el.dataset.scroll] != null) el.scrollTop = k.scroll[el.dataset.scroll];
+  });
+  if (!k.id) return;
+  const el = document.getElementById(k.id);
+  if (!el || el.disabled) return;
+  el.focus();
+  if (k.s != null && el.setSelectionRange) {
+    try { el.setSelectionRange(k.s, k.e); } catch (err) { /* 선택 범위를 못 쓰는 입력은 넘어간다 */ }
+  }
+}
+
+/** 전체를 다시 그린다. */
+function render() {
+  const view = captureView();
+  document.body.className = S.os;
+  const toastHtml = S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '';
+  document.getElementById('desktop').innerHTML = osChromeHtml() + settingsHtml() + smallHtml() + notifsHtml() + toastHtml;
+  document.getElementById('proto').innerHTML = protoHtml();
+  restoreView(view);
+}
+
+/** 변형을 앞뒤로 바꾼다. 변형은 에이전트 칸만 다르므로 그 칸을 바로 연다. 주소의 #A 도 함께 바꾼다. */
+function cycleVariant(d) {
+  const i = VARIANTS.findIndex((v) => v.key === S.variant);
+  S.variant = VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].key;
+  openSettings('agent');
+  // data: 주소처럼 주소를 바꿀 수 없는 곳에서 열면 그냥 넘어간다.
+  // 공유 페이지에는 쿼리가 전달되지 않아서 #A 같은 앵커도 함께 쓴다.
+  try { history.replaceState(null, '', `#${S.variant}`); } catch (err) { /* 무시 */ }
+}
+
+/** 설정 창을 연다. 작은 창은 트레이 팝오버라 다른 창을 열면 닫힌다. 에이전트 칸이면 확인을 자동으로 돌린다. */
+function openSettings(section) {
+  S.settingsOpen = true;
+  S.smallOpen = false;
+  if (section) S.section = section;
+  if (S.section === 'agent') autoCheck();
+}
+
+/** 폴더를 작업 폴더에 더한다. 네트워크·WSL 경로는 거부한다. */
+function addFolder(path) {
+  const f = FOLDERS[S.os].find((x) => x.path === path);
+  if (f.reject) { S.folderErrors.push(`${f.path}: ${f.reject}는 쓸 수 없습니다. 이 PC의 폴더를 골라 주세요.`); return; }
+  if (S.folders.some((x) => x.path === f.path)) return;
+  S.folders.push({ path: f.path, repos: f.repos, open: false });
+}
+
+/** data-action 이름별 처리. */
+const ACTIONS = {
+  variant: (d) => cycleVariant(Number(d.d)),
+  tray: () => { S.menuOpen = false; S.smallOpen = !S.smallOpen; },
+  'close-small': () => { S.smallOpen = false; },
+  'close-settings': () => { S.settingsOpen = false; S.picker = null; S.confirm = null; },
+  'open-small': () => { S.menuOpen = false; S.smallOpen = true; },
+  'open-settings': (d) => { S.menuOpen = false; openSettings(d.section); },
+  section: (d) => openSettings(d.section),
+  'fix-problem': () => { S.menuOpen = false; openSettings(PROBLEMS[S.problem].section); },
+  'check-now': () => { S.menuOpen = false; S.lastCheck = nowLabel(); toast('Flow를 확인했습니다. 새 멘션이 없습니다.'); },
+  nyi: (d) => { S.menuOpen = false; toast(`${d.what}: 프로토타입이라 흉내만 냅니다.`); },
+  start: () => startDetection(),
+  perm(d) {
+    const perm = S.notifs.find((x) => x.kind === 'perm');
+    S.notifs = S.notifs.filter((x) => x.kind !== 'perm');
+    S.notifPerm = d.v;
+    if (d.v === 'granted' && perm) perm.pending.forEach(pushNotif);
+  },
+  'notif-click': (d, e) => {
+    if (e.target.closest('[data-action="notif-close"]')) return;
+    S.notifs = S.notifs.filter((x) => x.id !== d.id);
+    S.smallOpen = true;
+  },
+  'notif-close': (d) => { S.notifs = S.notifs.filter((x) => x.id !== d.id); },
+  'notif-test': () => notifyApp('알림 시험', 'Stardraft 알림이 이렇게 뜹니다.'),
+  'key-check': () => checkKey(),
+  'key-edit': () => { S.key.editing = true; S.key.error = null; },
+  'key-cancel': () => { S.key = { input: '', checking: false, error: null, editing: false }; },
+  'switch-ok': () => { const acc = S.confirm.acc; S.confirm = null; applyAccount(acc, true); },
+  'switch-cancel': () => { S.confirm = null; },
+  'agent-check': (d) => runCheck(d.agent),
+  'agent-details': (d) => { S.agents[d.agent].details = !S.agents[d.agent].details; },
+  copy(d) {
+    // 클립보드를 막는 환경에서는 토스트만 띄운다.
+    try { navigator.clipboard.writeText(d.cmd).catch(() => {}); } catch (err) { /* 무시 */ }
+    toast(`명령을 복사했습니다: ${d.cmd}`);
+  },
+  'picker-open': () => { S.picker = { sel: [] }; S.folderErrors = []; },
+  'picker-cancel': () => { S.picker = null; },
+  'picker-ok': () => { S.folderErrors = []; S.picker.sel.forEach(addFolder); S.picker = null; },
+  'folder-add-path': (d) => { S.folderErrors = []; addFolder(d.path); },
+  'folder-remove': (d) => { S.folders.splice(Number(d.i), 1); },
+  'folder-toggle': (d) => { const f = S.folders[Number(d.i)]; f.open = !f.open; },
+  'map-add': () => { S.mapForm = { project: PROJECTS[0], repo: S.folders.flatMap((f) => f.repos)[0] }; },
+  'map-save': () => { if (S.mapForm.repo) S.mappings.push({ ...S.mapForm }); S.mapForm = null; },
+  'map-cancel': () => { S.mapForm = null; },
+  'map-remove': (d) => { S.mappings.splice(Number(d.i), 1); },
+  'pattern-add'() {
+    const p = S.patternInput.trim();
+    if (!p) return;
+    S.patterns.push(p);
+    S.patternInput = '';
+    // 생성 중인 실행은 새 패턴으로 다시 돌린다.
+    if (S.test && S.test.status === 'generating') { startTest(S.test.m.id); toast('비밀 파일 패턴이 바뀌어, 만들던 초안을 새 패턴으로 다시 만듭니다.'); } else toast('다음 실행부터 새 패턴을 적용합니다.');
+  },
+  'pattern-remove': (d) => { S.patterns.splice(Number(d.i), 1); },
+  'pick-open': () => { S.pick = { sel: null }; S.smallOpen = true; },
+  'pick-sel': (d) => { S.pick.sel = d.id; },
+  'pick-cancel': () => { S.pick = null; },
+  'pick-go': () => startTest(S.pick.sel),
+  'test-end': () => { S.test = null; toast('시험을 끝냈습니다. 처리됨 목록에는 남기지 않습니다.'); },
+  'test-regen': () => startTest(S.test.m.id),
+  'test-link': (d) => { S.mappings.push({ project: S.test.m.project, repo: d.repo }); toast(`${S.test.m.project} → ${d.repo} 매핑을 저장했습니다.`); },
+  'open-editor': (d) => toast(S.editor === 'ask' ? '처음이라 에디터를 고르는 창을 띄웁니다(찾은 에디터: VS Code, Cursor, IntelliJ IDEA). 프로토타입이라 흉내만 냅니다.' : `에디터에서 엽니다: ${d.loc}`),
+  'sim-os': (d) => { S.os = d.os; S.menuOpen = false; S.folderErrors = []; },
+  'sim-key': (d) => { S.sim.key = d.v; },
+  'sim-agent'(d) {
+    // 결과를 고르면 에이전트 칸을 열고 바로 다시 확인해서 그 화면을 보여 준다.
+    S.sim.agent = d.v;
+    openSettings('agent');
+    runCheck('claude');
+  },
+  'sim-codex': (d) => { S.sim.codex = d.v === '1'; if (S.sim.codex && S.os === 'mac' && S.agents.codex.status === 'idle' && S.settingsOpen && S.section === 'agent') runCheck('codex'); if (!S.sim.codex) S.agents.codex = newAgent(); },
+  'sim-problem': (d) => setProblem(d.v),
+  'sim-fill'() {
+    if (!S.account) applyAccount(ME, false);
+    if (S.agents.claude.status !== 'ok') Object.assign(S.agents.claude, { status: 'ok', step: 4, failAt: null, outcome: 'ok' });
+    if (!S.folders.length) addFolder(FOLDERS[S.os][0].path);
+  },
+  'sim-reset'() {
+    const keep = { variant: S.variant, os: S.os, showState: S.showState, simOpen: S.simOpen };
+    Object.assign(S, JSON.parse(JSON.stringify(INITIAL)), keep);
+    S.agents = { claude: newAgent(), codex: newAgent() };
+  },
+  'sim-state': () => { S.showState = !S.showState; },
+  'sim-collapse': () => { S.simOpen = !S.simOpen; },
+};
+
+/** 처음 상태(첫 실행으로 되돌릴 때 쓴다). */
+const INITIAL = JSON.parse(JSON.stringify(S));
+
+/** 클릭 위임. 메뉴 바깥을 누르면 닫는다. */
+document.addEventListener('click', function handleClick(e) {
+  let changed = false;
+  if (S.menuOpen && !e.target.closest('.menu')) { S.menuOpen = false; changed = true; }
+  const el = e.target.closest('[data-action]');
+  if (el && !el.disabled && ACTIONS[el.dataset.action]) {
+    ACTIONS[el.dataset.action](el.dataset, e);
+    changed = true;
+  }
+  if (changed) render();
+});
+
+/** 트레이 오른쪽 클릭: 메뉴. */
+document.addEventListener('contextmenu', function handleContextMenu(e) {
+  if (!e.target.closest('[data-tray]')) return;
+  e.preventDefault();
+  S.menuOpen = !S.menuOpen;
+  render();
+});
+
+/** 입력 위임. 다시 그리지 않고 값만 저장해 커서가 튀지 않게 한다. */
+document.addEventListener('input', function handleInput(e) {
+  const t = e.target;
+  if (t.dataset.input === 'key') S.key.input = t.value;
+  if (t.dataset.input === 'instr') S.instr = t.value;
+  if (t.dataset.input === 'pattern') S.patternInput = t.value;
+  if (t.dataset.input === 'editor-cmd') S.editorCmd = t.value;
+});
+
+/** 여러 줄 입력은 칸을 벗어날 때 저장한다. 다시 그리지 않고 "저장됨"만 붙인다. */
+document.addEventListener('focusout', function handleFocusOut(e) {
+  const k = e.target.dataset && e.target.dataset.input;
+  if (k !== 'instr') return;
+  const label = document.querySelector(`[data-saved="${e.target.id}"]`);
+  if (label) label.textContent = '저장됨';
+});
+
+/** 선택 상자와 체크 상자 위임. */
+document.addEventListener('change', function handleChange(e) {
+  const t = e.target;
+  const c = t.dataset.change;
+  if (!c) return;
+  if (c === 'picker') S.picker.sel = t.checked ? [...S.picker.sel, t.value] : S.picker.sel.filter((p) => p !== t.value);
+  if (c === 'autostart') { S.autoStart = t.checked; toast(t.checked ? '로그인할 때 Stardraft를 켭니다.' : '로그인할 때 켜지 않습니다.'); }
+  if (c === 'editor') S.editor = t.value;
+  if (c === 'default-agent') S.defaultAgent = t.value;
+  if (c === 'model') { S.model[t.dataset.agent] = t.value; toast(`${AGENT_INFO[t.dataset.agent].name} 모델: 다음 실행부터 ${t.value ? t.selectedOptions[0].text : '기본 모델'}을 씁니다.`); }
+  if (c === 'map-project') S.mapForm.project = t.value;
+  if (c === 'map-repo') S.mapForm.repo = t.value;
+  render();
+});
+
+/** 키보드: ←/→ 변형 전환, Enter로 키 확인·패턴 추가, Esc 메뉴 닫기. */
+document.addEventListener('keydown', function handleKey(e) {
+  const typing = e.target.closest && e.target.closest('input, textarea, select, [contenteditable]');
+  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.input === 'key') { checkKey(); render(); return; }
+  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.input === 'pattern') { ACTIONS['pattern-add'](); render(); return; }
+  if (e.key === 'Escape') { S.menuOpen = false; render(); return; }
+  if (typing) return;
+  if (e.key === 'ArrowLeft') { cycleVariant(-1); render(); }
+  if (e.key === 'ArrowRight') { cycleVariant(1); render(); }
+});
+
+/** 가짜 데스크톱이 온전히 보이는 최소 너비. 이보다 좁은 화면에서는 전체를 줄여서 보여 준다. */
+const MIN_DESKTOP_WIDTH = 960;
+
+/** 화면 너비에 맞춰 배율을 정하고, 줄인 좌표계의 화면 크기를 --vw·--vh로 알린다. vw·vh 단위는 배율을 따르지 않기 때문이다. */
+function fitDesktop() {
+  const z = Math.min(1, window.innerWidth / MIN_DESKTOP_WIDTH);
+  const root = document.documentElement;
+  root.style.zoom = z === 1 ? '' : String(z);
+  root.style.setProperty('--vw', `${window.innerWidth / z}px`);
+  root.style.setProperty('--vh', `${window.innerHeight / z}px`);
+}
+
+/** 처음 상태: 주소의 변형(?variant=B 또는 #B)을 읽고, 첫 실행처럼 작은 창을 띄운다. */
+(function boot() {
+  const v = new URLSearchParams(location.search).get('variant') || location.hash.slice(1);
+  // 변형을 지정해 열면 비교할 에이전트 칸부터 보여 준다.
+  if (VARIANTS.some((x) => x.key === v)) { S.variant = v; openSettings('agent'); }
+  fitDesktop();
+  window.addEventListener('resize', function handleResize() { fitDesktop(); render(); });
+  // 주소의 #A·#B·#C를 직접 바꿔도 변형이 바뀌게 한다.
+  window.addEventListener('hashchange', function handleHashChange() {
+    const k = location.hash.slice(1);
+    if (!VARIANTS.some((x) => x.key === k) || k === S.variant) return;
+    S.variant = k;
+    openSettings('agent');
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

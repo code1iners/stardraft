@@ -271,3 +271,13 @@ Blocked by: 02, 04
 - `--restricted`가 `apiKeyHelper` 인증에 주는 영향(8)
 - `stream-json`을 쓸 때 `--verbose`가 필요한지, 그리고 스트림 마지막 `result`에 `structured_output`이 담기는지
 - 여러 저장소를 넘길 때, `--restricted`가 `--add-dir`로 추가한 디렉터리도 작업 디렉터리로 보는지
+
+## Comments
+
+- 2026-10-18, [설정과 첫 실행 온보딩 결정](16-onboarding.md)에서 덧붙인다.
+  - **모델**: "에이전트별 모델 칸"을 자유 입력 대신 선택 상자로 바꾼다.
+    - Claude Code는 계열 별칭(Fable, Opus, Sonnet)을 앱에 넣어 두고, Codex는 `codex debug models`에서 `visibility`가 `list`인 모델을 읽는다.
+    - "기본 모델"을 고르면 `--model`이나 `-m`을 넘기지 않는다. 직접 입력은 없다.
+  - **전역 실패 알림**: "트레이에서 한 번만 알린다"를 트레이 "!", 작은 창 맨 위 띠, OS 알림 한 번으로 구체화했다. 같은 원인으로는 해결되기 전까지 다시 알리지 않는다.
+  - **CLI 실행 경로**: 앱은 찾은 CLI의 절대 경로를 `settings.json`에 저장해 쓴다. 자식 프로세스의 PATH는 로그인 셸에서 읽은 PATH다. API 키 변수를 넘기지 않는 규칙은 그대로다.
+  - **점검 실행의 화면 이름**: 설정 화면에서는 "작동 확인"이라고 부른다.

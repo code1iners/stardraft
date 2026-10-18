@@ -46,3 +46,10 @@ Stardraft가 앱 안에서 새 버전을 **어떻게 받고, 언제 설치하고
 - `stardraft`는 공개 저장소이고, Release에 immutable releases를 켠다.
 - 우리 도메인을 거친다면 앱에 넣는 주소는 `stardraft.squadify.app`이다.
 - 앱은 자기보다 새 데이터를 만나면 실행하지 않고, 데이터를 자동으로 지우지 않는다.
+
+## Comments
+
+- 2026-10-17, [다운로드 사이트 화면 프로토타입](19-download-site-prototype.md)에서 덧붙인다.
+  - 다운로드 사이트의 "업데이트" 섹션 문구는 이 티켓의 결과에 맞춘다. 지금은 "새 버전이 나오면 Stardraft가 받아서 설치하고 다시 켭니다"라는 자리 표시만 있다.
+  - "관리자가 아닌 macOS 계정"에서 `~/Applications` 설치 안내를 고르면, 사이트의 macOS 설치 1단계(응용 프로그램 폴더로 옮기기)와 그 예시 화면도 바꿔야 한다.
+  - 업데이트 파일을 `generic` provider로 우리 도메인을 거쳐 받기로 하면, 그 함수도 사이트의 Astro 서버 엔드포인트로 만든다. `/download/<os>`, `/api/releases`와 같은 방식이다.

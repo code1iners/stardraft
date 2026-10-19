@@ -4,7 +4,7 @@ Map: [Flow 멘션 답변 초안 앱](map.md)
 Status: ready-for-agent
 Created: 2026-10-19
 
-이 문서는 지도의 티켓 22개와 ADR 2개의 결론을 구현 착수용으로 합친 것이다. 티켓끼리 서로 덮어쓴 규칙은 최종 규칙만 적었다. 용어는 루트의 [GLOSSARY.md](../../GLOSSARY.md)를 따른다. 이 스펙, `GLOSSARY.md`, `docs/adr/`는 새 앱 저장소 `stardraft`로 옮긴다. 티켓과 조사 결과는 옮기지 않으므로, 구현에 필요한 규칙은 모두 이 문서 안에 있어야 한다.
+이 문서는 지도의 티켓 22개와 ADR 2개의 결론을 구현 착수용으로 합친 것이다. 티켓끼리 서로 덮어쓴 규칙은 최종 규칙만 적었다. 용어는 루트의 [GLOSSARY.md](../../GLOSSARY.md)를 따른다. 이 기획 저장소를 이름만 바꿔 앱 저장소 `stardraft`로 쓴다. 스펙·티켓·조사 결과는 이 저장소에 그대로 남지만, 구현에 필요한 규칙은 모두 이 문서 안에 있어야 한다.
 
 ## 문제 정의 (Problem Statement)
 
@@ -706,7 +706,7 @@ macOS에서만 쓴다. 아래는 필수 항목이다(0.162.1·0.163.0에서 실�
 
 ### 15. 빌드, 릴리스, CI
 
-- **앱 저장소**: 개인 계정의 새 공개 저장소 `stardraft`(MIT)에서 새 이력으로 시작한다. 이 기획 저장소는 회사 데이터가 이력째 들어 있어 앱 저장소로 쓰지 않고 비공개로 남긴다. 옮기는 문서(이 스펙, `GLOSSARY.md`, ADR)는 회사 정보가 없는지 확인한 뒤 옮긴다. 테스트 픽스처는 가짜 데이터로만 만들고 점검 결과 JSON은 가져가지 않는다. 첫 커밋부터 비밀값과 회사 데이터를 넣지 않는다. 루트 `.gitignore`에 `node_modules`, 빌드 산출물, `.env*`(예외 `.env.example`)를 넣는다.
+- **앱 저장소**: 이 기획 저장소를 이름만 바꿔 개인 계정의 공개 저장소 `stardraft`(MIT)로 쓴다(2026-10-19 결정). 이력에 있던 회사 정보(하위 도메인, 실제 Flow ID)는 구현 전에 이력 전체에서 가짜 값으로 바꿨다. 테스트 픽스처는 가짜 데이터로만 만든다. 이후 커밋에 비밀값과 회사 데이터를 넣지 않는다. 루트 `.gitignore`에 `node_modules`, 빌드 산출물, `.env*`(예외 `.env.example`)를 넣는다.
 - **빌드 도구**: electron-builder 26.17.0으로 정확히 고정한다(npm `latest`에는 pnpm 워크스페이스 수정이 없음. v27은 서명 설정 문법이 바뀌므로 올릴 때 다시 본다). Electron Forge는 쓰지 않는다(ad-hoc 서명 앱이 hardened runtime 때문에 실행되지 않았고, 공식 NSIS 메이커가 없으며, hoisted를 강제함).
 - **macOS**: arm64 DMG와 zip(`mac.target: ["dmg", "zip"]`). `mac.identity: "-"`를 명시해 Helper와 Framework까지 번들 전체를 ad-hoc 서명한다. `afterSign`에서 **최상위 번들만** `designated => identifier "app.squadify.stardraft"`로 다시 서명한다. `mac.requirements`는 쓰지 않는다(중첩 코드까지 깨짐). `LSUIElement`로 Dock 아이콘을 숨긴다.
 - **Windows**: x64 NSIS 원클릭 설치 파일. 관리자 권한 없이 사용자별로 설치하고 설치 위치는 묻지 않는다. 바로가기에 AppUserModelID가 들어간다. `nsis.artifactName`은 `${productName}-Setup-${version}.${ext}`(파일 이름에서 공백 제거). 서명 자리는 `win.azureSignOptions`와 `signExts: [".dll", ".node"]`이고 `AZURE_*` 비밀값이 있을 때만 켜진다. 지금은 미서명이다.
@@ -784,7 +784,7 @@ macOS에서만 쓴다. 아래는 필수 항목이다(0.162.1·0.163.0에서 실�
 
 ### 선례(prior art)
 
-- 이 저장소에는 자동 테스트가 없다. 새 저장소에서 Vitest로 시작한다.
+- 이 저장소에는 자동 테스트가 없다. Vitest로 시작한다.
 - 응답 모양의 참고는 Flow 문서 사실 정리와 실호출 티켓의 가린 예시다. 점검 결과 JSON 파일 자체는 회사 정보가 있어 픽스처로 쓰지 않는다.
 
 ### 실기 점검 목록
@@ -846,7 +846,7 @@ macOS에서만 쓴다. 아래는 필수 항목이다(0.162.1·0.163.0에서 실�
 
 ### 문서 이전
 
-- 이 스펙, `GLOSSARY.md`, `docs/adr/0001`, `docs/adr/0002`를 새 저장소 `stardraft`로 옮긴다. 옮기기 전에 회사 정보(하위 도메인, 실제 ID, 업무 시나리오)가 없는지 확인한다.
+- 이 저장소를 `stardraft`로 쓴다. 공개 전에 회사 정보(하위 도메인, 실제 ID, 업무 시나리오)가 이력에 없는지 다시 확인한다.
 - 티켓 답에 실린 ID 예시(`alarmId`, `postId` 등)는 이 스펙에 넣지 않았다.
 
 ### 근거 티켓

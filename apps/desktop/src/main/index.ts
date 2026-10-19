@@ -36,6 +36,7 @@ function start(): void {
     windows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 });
     registerIpc(windows);
 
+    /** 트레이 동작이 부를 창 관리자. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appWindows = windows;
     tray = createTray({
       togglePopover: () => appWindows.togglePopover(),

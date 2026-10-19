@@ -36,14 +36,17 @@ const EDGE_MARGIN = 8;
  * 아이콘이 작업 영역 위쪽 절반에 있으면(macOS 메뉴 막대) 아래에, 아래쪽 절반에 있으면(Windows 작업 표시줄) 위에 놓는다.
  */
 export function popoverPosition({ trayBounds, workArea, windowSize, cursor }: PopoverPositionInput): Point {
-  // 트레이 위치를 모르면 마우스 포인터를 크기 0인 아이콘으로 보고 같은 규칙을 쓴다.
-  const hasTrayBounds = trayBounds.width > 0 && trayBounds.height > 0;
-  const anchor: Rect = hasTrayBounds || !cursor ? trayBounds : { ...cursor, width: 0, height: 0 };
+  /** 창을 붙일 기준 사각형. */
+  const anchor = popoverAnchor(trayBounds, cursor);
 
   // 아이콘의 가로 가운데에 맞추고, 세로는 아이콘이 있는 쪽 반대 방향으로 편다.
+  /** 기준 사각형의 세로 가운데. */
   const anchorCenterY = anchor.y + anchor.height / 2;
+  /** 작업 영역의 세로 가운데. */
   const workAreaCenterY = workArea.y + workArea.height / 2;
+  /** 작업 영역 안으로 당기기 전의 가로 좌표. */
   const preferredX = anchor.x + anchor.width / 2 - windowSize.width / 2;
+  /** 작업 영역 안으로 당기기 전의 세로 좌표. */
   const preferredY =
     anchorCenterY < workAreaCenterY
       ? anchor.y + anchor.height + TRAY_GAP
@@ -58,6 +61,16 @@ export function popoverPosition({ trayBounds, workArea, windowSize, cursor }: Po
       clamp(preferredY, workArea.y + TRAY_GAP, workArea.y + workArea.height - windowSize.height - TRAY_GAP),
     ),
   };
+}
+
+/**
+ * 작은 창을 붙일 기준 사각형. 보통은 트레이 아이콘이다.
+ * OS가 트레이 위치를 알려 주지 않으면(크기 0) 마우스 포인터를 크기 0인 아이콘으로 본다.
+ */
+export function popoverAnchor(trayBounds: Rect, cursor?: Point): Rect {
+  /** OS가 트레이 위치를 알려 줬는지 여부. */
+  const hasTrayBounds = trayBounds.width > 0 && trayBounds.height > 0;
+  return hasTrayBounds || !cursor ? trayBounds : { ...cursor, width: 0, height: 0 };
 }
 
 /** `value`를 `min`과 `max` 사이로 자른다. 범위가 뒤집히면 `min`을 쓴다. */

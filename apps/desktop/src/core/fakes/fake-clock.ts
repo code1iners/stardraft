@@ -28,6 +28,7 @@ export class FakeClock implements Clock {
   }
 
   after(delayMs: number, callback: () => void): CancelScheduled {
+    /** 새 예약. */
     const task: ScheduledTask = { dueAt: this.current + delayMs, order: this.nextOrder++, callback };
     this.tasks.push(task);
     return () => {
@@ -37,10 +38,12 @@ export class FakeClock implements Clock {
 
   /** 시간을 `ms`만큼 돌리며, 그 사이에 닿는 예약을 예약 시각 순서대로 실행한다. */
   advance(ms: number): void {
+    /** 돌린 뒤의 시각. */
     const target = this.current + ms;
 
     // 실행 도중 새로 예약된 일도 목표 시각 안이면 실행하도록 매번 가장 이른 예약을 다시 찾는다.
     for (;;) {
+      /** 다음에 실행할 예약. */
       const next = this.earliestTaskUntil(target);
       if (!next) break;
       this.tasks = this.tasks.filter((scheduled) => scheduled !== next);

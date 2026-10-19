@@ -48,4 +48,15 @@ describe('import 경계', () => {
 
     expect(rules).toContain('no-restricted-imports');
   });
+
+  it('IPC 계약(shared)이 Electron이나 Node 모듈을 import하면 lint가 실패한다', async () => {
+    const electronRules = await lintAs(
+      'src/shared/probe.ts',
+      "import { ipcMain } from 'electron';\nexport const ipc = ipcMain;\n",
+    );
+    const nodeRules = await lintAs('src/shared/probe.ts', "import { readFileSync } from 'node:fs';\nexport const read = readFileSync;\n");
+
+    expect(electronRules).toContain('no-restricted-imports');
+    expect(nodeRules).toContain('no-restricted-imports');
+  });
 });

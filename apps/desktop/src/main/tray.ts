@@ -19,11 +19,12 @@ export interface TrayActions {
  * 왼쪽 클릭은 작은 창, 오른쪽 클릭은 메뉴다. 메뉴를 `setContextMenu`로 달면 macOS에서 왼쪽 클릭도 메뉴가 되므로 직접 띄운다.
  */
 export function createTray(actions: TrayActions): Tray {
-  // macOS는 메뉴 막대 색에 맞춰 칠해지는 템플릿 이미지, Windows는 색이 있는 이미지를 쓴다.
+  /** 트레이 아이콘. macOS는 메뉴 막대 색에 맞춰 칠해지는 템플릿 이미지, Windows는 색이 있는 이미지를 쓴다. */
   const tray = new Tray(process.platform === 'darwin' ? trayTemplateIcon : trayIcon);
   tray.setToolTip(app.name);
   tray.setIgnoreDoubleClickEvents(true);
 
+  /** 오른쪽 클릭 메뉴. */
   const menu = Menu.buildFromTemplate([
     { label: '창 열기', click: actions.openPopover },
     { label: '설정…', click: actions.openSettings },

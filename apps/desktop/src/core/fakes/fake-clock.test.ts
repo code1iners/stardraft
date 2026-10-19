@@ -30,6 +30,7 @@ describe('가짜 시계', () => {
   it('실행 중에 다시 예약한 일도 돌린 시간 안이면 실행한다', () => {
     const clock = new FakeClock();
     const pollTimes: number[] = [];
+    /** 60초마다 자신을 다시 예약하는 폴링 흉내. */
     const poll = () => {
       pollTimes.push(clock.now());
       clock.after(60_000, poll);

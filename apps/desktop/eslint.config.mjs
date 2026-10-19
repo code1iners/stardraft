@@ -40,6 +40,22 @@ const rendererRestrictedImports = {
   ],
 };
 
+/** IPC 계약(shared)이 main·preload·renderer 어디서 import해도 안전하게, 런타임 의존을 막는 import 규칙. */
+const sharedRestrictedImports = {
+  paths: [
+    {
+      name: 'electron',
+      message: 'IPC 계약은 렌더러도 import하므로 Electron을 import하지 않는다.',
+    },
+  ],
+  patterns: [
+    {
+      group: ['node:*', '**/main', '**/main/**', '**/preload', '**/preload/**', '**/renderer', '**/renderer/**', '**/core', '**/core/**'],
+      message: 'IPC 계약은 Node 모듈과 앱의 다른 부분을 import하지 않는다.',
+    },
+  ],
+};
+
 export default defineConfig(
   { ignores: ['out/**', 'dist/**', 'release/**'] },
   js.configs.recommended,
@@ -52,6 +68,10 @@ export default defineConfig(
   {
     files: ['src/core/**/*.ts'],
     rules: { 'no-restricted-imports': ['error', coreRestrictedImports] },
+  },
+  {
+    files: ['src/shared/**/*.ts'],
+    rules: { 'no-restricted-imports': ['error', sharedRestrictedImports] },
   },
   {
     files: ['src/renderer/**/*.{ts,tsx}'],

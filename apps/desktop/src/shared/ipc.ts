@@ -61,6 +61,7 @@ export function isSettingsSection(value: unknown): value is SettingsSection {
  */
 export function parseAppCommand(value: unknown): AppCommand | null {
   if (typeof value !== 'object' || value === null) return null;
+  /** 필드를 읽기 위해 객체로 본 값. */
   const candidate = value as Record<string, unknown>;
 
   switch (candidate.type) {

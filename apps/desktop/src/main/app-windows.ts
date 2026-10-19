@@ -1,7 +1,7 @@
 import { app, BrowserWindow, screen, type Rectangle } from 'electron';
 import type { AppEvent, SettingsSection } from '../shared/ipc';
 import { IPC_CHANNELS } from '../shared/ipc';
-import { popoverPosition } from './popover-position';
+import { popoverAnchor, popoverPosition } from './popover-position';
 import { loadRendererView, secureWebPreferences, type RendererView } from './renderer-page';
 
 /** 작은 창 크기. */
@@ -46,14 +46,21 @@ export class AppWindows {
       return;
     }
 
+    /** 트레이 아이콘의 화면 위치. */
     const trayBounds = this.getTrayBounds();
+    /** 마우스 포인터 위치. 트레이 위치를 모를 때 대신 쓴다. */
     const cursor = screen.getCursorScreenPoint();
-    const hasTrayBounds = trayBounds.width > 0 && trayBounds.height > 0;
-    const display = screen.getDisplayNearestPoint(
-      hasTrayBounds ? { x: trayBounds.x + trayBounds.width / 2, y: trayBounds.y + trayBounds.height / 2 } : cursor,
-    );
+    /** 작은 창을 붙일 기준 사각형. */
+    const anchor = popoverAnchor(trayBounds, cursor);
+    /** 기준 사각형이 있는 모니터. */
+    const display = screen.getDisplayNearestPoint({
+      x: anchor.x + anchor.width / 2,
+      y: anchor.y + anchor.height / 2,
+    });
+    /** 작은 창의 왼쪽 위 좌표. */
     const position = popoverPosition({ trayBounds, workArea: display.workArea, windowSize: POPOVER_SIZE, cursor });
 
+    /** 새로 만든 작은 창. */
     const window = new BrowserWindow({
       ...position,
       ...POPOVER_SIZE,
@@ -96,6 +103,7 @@ export class AppWindows {
       return;
     }
 
+    /** 새로 만든 설정 창. */
     const window = new BrowserWindow({
       ...SETTINGS_SIZE,
       minWidth: 640,

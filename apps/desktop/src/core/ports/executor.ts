@@ -17,7 +17,7 @@ export interface ExecutorRunRequest {
   /** 실행의 종류. */
   kind: RunKind;
   /** 지침과 맥락을 합친 입력. */
-  prompt: string;
+  input: string;
   /** 구조화 출력이 따라야 하는 JSON 스키마. */
   outputSchema: Record<string, unknown>;
   /** 에이전트가 읽을 수 있는 디렉터리의 절대 경로 목록. 이 밖은 읽지 못하게 한다. */

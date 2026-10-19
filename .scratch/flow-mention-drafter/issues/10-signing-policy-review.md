@@ -63,3 +63,11 @@ Blocked by:
     - 앱이 직접 받은 업데이트 파일에는 Mark of the Web과 quarantine이 붙지 않는다. 그래서 앱 내 업데이트가 동작하는 한, 업데이트마다 뜨던 SmartScreen 경고와 "그래도 열기"는 사라질 것으로 본다. Windows는 추론이다.
     - Keychain 재허용은 남는다.
     - 확정은 [앱 내 업데이트 macOS 실기 검증](21-in-app-update-macos-check.md)과 [앱 내 업데이트 방식 결정](22-in-app-update-design.md)에서 한다.
+
+- 2026-10-19, [앱 내 업데이트 방식 결정](22-in-app-update-design.md)에서 덧붙인다.
+  - **반복 확인**
+    - 앱 내 업데이트는 두 OS 모두 채택했다. macOS는 [앱 내 업데이트 macOS 실기 검증](21-in-app-update-macos-check.md)에서 확인했다.
+    - 그래서 앱 안에서 업데이트하는 한 "그래도 열기"는 다시 거치지 않는다. macOS는 실측했고, Windows SmartScreen은 팀 배포 전 점검 목록으로 확인한다.
+    - Keychain 재허용은 남는다. macOS는 다시 시작하기 직전 확인 화면에서 안내한다.
+  - **업데이트 진위**: 앱이 Ed25519 서명을 직접 확인한다. 키만 있으면 되므로 돈이나 신원 확인이 들지 않고, 이 티켓의 원칙 안이다.
+  - **macOS 서명**: `afterSign`에서 최상위 번들만 명시 DR로 다시 서명한다. CI가 DR을 검사한다. 이유는 [ADR 0002](../../../docs/adr/0002-in-app-update-trust.md)에 남겼다.

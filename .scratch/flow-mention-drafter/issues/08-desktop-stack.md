@@ -237,3 +237,28 @@ Blocked by: 02, 03, 10, 11
     - macOS zip, `latest.yml`, `latest-mac.yml`, 업데이트 서명 파일이 초안 Release에 함께 올라간다.
     - macOS는 `afterSign`에서 최상위 번들을 명시 DR로 다시 서명한다.
     - 정확한 목록과 방식은 [앱 내 업데이트 방식 결정](22-in-app-update-design.md)에서 정한다.
+
+- 2026-10-19, [앱 내 업데이트 방식 결정](22-in-app-update-design.md)에서 덧붙인다.
+  - **Release 산출물**: 초안 Release에는 다섯 개만 올린다.
+    - DMG, `Stardraft-<v>-arm64-mac.zip`, `latest-mac.yml`, `Stardraft-Setup-<v>.exe`, `latest.yml`
+    - `SHA256SUMS.txt`는 뺀다. GitHub가 Release 파일마다 sha256 `digest`를 보여 주기 때문이다.
+    - blockmap과 `.sig` 파일은 올리지 않는다. 업데이트 서명은 yml 안의 필드에 둔다.
+  - **빌드 설정**
+    - `mac.target: ["dmg", "zip"]`
+    - `publish`는 `github` provider(`repo: "stardraft"`)로 둔다. 빌드는 `--publish never` 그대로다.
+    - `nsis.artifactName`은 `${productName}-Setup-${version}.${ext}`로 둔다. 파일 이름에서 공백을 빼려는 것이다.
+  - **태그 워크플로**
+    - 업데이트 서명은 Release 작업에서 `release` 환경 비밀값으로 한다. 이 비밀값은 `v*` 태그에서만 읽힌다.
+    - 아래 중 하나라도 틀리면 초안 Release를 만들지 않는다.
+      - 최상위 DR: `.app`과, zip을 `ditto -x -k`로 푼 결과 양쪽에서 본다.
+      - zip을 푼 결과의 `codesign --verify --deep --strict`
+      - yml과 실제 파일의 일치
+      - 공개 키로 서명 재검증
+  - **팀 배포 전 Windows 점검 목록**에 다섯 가지를 더한다.
+    - 조용한 설치와 재실행
+    - MOTW와 SmartScreen
+    - 설치 도중 강제 종료
+    - 업데이트 뒤 유지 항목
+    - 설치 실패 띠
+    - 자세한 내용은 22의 Answer에 있다.
+  - **마이그레이션 전 사본**: 새 버전이 정상으로 뜬 지 7일이 지나면 지운다.

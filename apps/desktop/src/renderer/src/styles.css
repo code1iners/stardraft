@@ -1,0 +1,145 @@
+/* 색과 글꼴은 확정된 검토 화면·온보딩 프로토타입의 값을 따른다. */
+:root {
+  --surface: #ffffff;
+  --surface-2: #f5f6f7;
+  --side: #f8f9fa;
+  --border: #e1e3e6;
+  --border-strong: #c5c9ce;
+  --text: #1d2024;
+  --muted: #686e75;
+  --accent: #2160c4;
+  --sel: #e3ebf8;
+  --font: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', sans-serif;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--surface);
+  color: var(--text);
+  font: 13px/1.5 var(--font);
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+button:focus-visible {
+  outline: 2px solid #a9c2ec;
+  outline-offset: 1px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--surface-2);
+}
+
+/* 작은 창. macOS는 OS가 테두리와 그림자를 그리고, Windows 테두리 없는 창은 직접 테두리를 그린다. */
+.popover {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+html[data-platform='win32'] .popover {
+  border: 1px solid var(--border-strong);
+}
+
+.popover-head {
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.popover-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+}
+
+.popover-body p {
+  margin: 0;
+}
+
+.popover-foot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--side);
+}
+
+/* 설정 창: 왼쪽 칸 목록(180px)과 오른쪽 내용. */
+.settings {
+  display: flex;
+  height: 100%;
+}
+
+.settings-nav {
+  width: 180px;
+  flex: none;
+  padding: 8px 0;
+  border-right: 1px solid var(--border);
+  background: var(--side);
+}
+
+.settings-nav-item {
+  display: block;
+  width: 100%;
+  padding: 7px 14px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: #eff1f3;
+}
+
+.settings-nav-item[aria-current='page'] {
+  border-left-color: var(--accent);
+  background: var(--sel);
+  font-weight: 600;
+}
+
+.settings-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 18px 24px 28px;
+}
+
+.settings-main h2 {
+  margin: 0;
+  font-size: 16px;
+}

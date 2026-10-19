@@ -1,0 +1,19 @@
+{
+  "name": "stardraft",
+  "private": true,
+  "description": "Flow 멘션에 답할 초안을 내 PC의 CLI 에이전트로 만드는 트레이 앱",
+  "license": "MIT",
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @stardraft/desktop dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "2.11.9"
+  }
+}

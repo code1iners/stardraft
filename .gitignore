@@ -1,0 +1,18 @@
+# 의존성
+node_modules/
+
+# 빌드 산출물
+out/
+dist/
+release/
+*.tsbuildinfo
+.turbo/
+
+# 비밀값과 로컬 환경 변수. 예시 파일만 커밋한다.
+.env*
+!.env.example
+
+# OS와 편집기
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,24 @@
+# 패키징 설정. 설치 파일 형식, 서명, 배포 설정은 이 파일에 이어서 더한다.
+appId: app.squadify.stardraft
+productName: Stardraft
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - resources/**
+  - package.json
+# 트레이 아이콘은 OS가 실제 파일 경로로 읽을 수 있게 asar 밖에 둔다.
+asarUnpack:
+  - resources/**
+# 서명 전에 적용한다. Node로 실행·NODE_OPTIONS·inspect 인수를 막고, asar 무결성 검증과 asar에서만 앱 불러오기를 켠다.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+mac:
+  extendInfo:
+    # 메뉴 막대 앱이라 Dock 아이콘을 숨긴다. 설정 창이 열려 있는 동안만 앱이 Dock 아이콘을 보인다.
+    LSUIElement: true

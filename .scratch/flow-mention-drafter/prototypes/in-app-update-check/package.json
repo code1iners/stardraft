@@ -1,0 +1,51 @@
+{
+  "name": "updateprobe",
+  "productName": "UpdateProbe",
+  "version": "0.0.1",
+  "private": true,
+  "main": "main.js",
+  "description": "앱 내 업데이트 macOS 실기 검증용 최소 Electron 앱. 구현 코드로 재사용하지 않는다.",
+  "dependencies": {
+    "electron-updater": "6.8.10"
+  },
+  "devDependencies": {
+    "electron": "44.7.2",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "app.example.updateprobe",
+    "productName": "UpdateProbe",
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "afterSign": "./after-sign.js",
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": "-",
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "http://localhost:8001/feed",
+        "useMultipleRangeRequest": false
+      }
+    ]
+  }
+}

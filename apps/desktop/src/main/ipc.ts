@@ -7,6 +7,8 @@ import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
 import type { RepoMappings, RepoMappingsState } from '../core/repos/repo-mappings';
 import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
+import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
+import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import { agentFixCommand } from '../shared/agent-fix-command';
 import {
@@ -20,6 +22,7 @@ import {
   type FlowAccountProfile,
   type FlowAccountSnapshot,
   type GlobalProblemSnapshot,
+  type OnboardingSnapshot,
   type RepoMappingsSnapshot,
   type WorkFoldersSnapshot,
 } from '../shared/ipc';
@@ -45,6 +48,10 @@ export interface IpcServices {
   workFolders: WorkFolders;
   /** "저장소" 칸의 저장소 매핑. */
   repoMappings: RepoMappings;
+  /** 필수 세 가지와 [감지 시작]. */
+  onboarding: Onboarding;
+  /** "일반" 칸의 로그인 시 자동 시작. */
+  launchAtLogin: LaunchAtLogin;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -85,6 +92,8 @@ export function registerIpc(services: IpcServices): void {
   services.repoMappings.onChange(() =>
     services.windows.broadcast({ type: 'repo-mappings-changed', repoMappings: repoMappingsSnapshot(services.repoMappings.state()) }),
   );
+  services.onboarding.onChange((state) => services.windows.broadcast({ type: 'onboarding-changed', onboarding: onboardingSnapshot(state) }));
+  services.launchAtLogin.onChange((enabled) => services.windows.broadcast({ type: 'launch-at-login-changed', launchAtLogin: enabled }));
 }
 
 /** 지금 앱 상태의 스냅숏. */
@@ -95,6 +104,8 @@ function currentSnapshot({
   agentPreferences,
   workFolders,
   repoMappings,
+  onboarding,
+  launchAtLogin,
 }: IpcServices): AppSnapshot {
   return {
     appName: app.name,
@@ -106,12 +117,14 @@ function currentSnapshot({
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
     workFolders: workFoldersSnapshot(workFolders.state()),
     repoMappings: repoMappingsSnapshot(repoMappings.state()),
+    onboarding: onboardingSnapshot(onboarding.state()),
+    launchAtLogin: launchAtLogin.enabled(),
   };
 }
 
 /** 검사를 통과한 명령을 실행한다. */
 async function runCommand(
-  { windows, logger, flowAccount, agentConnection, agentPreferences, workFolders, repoMappings }: IpcServices,
+  { windows, logger, flowAccount, agentConnection, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin }: IpcServices,
   command: AppCommand,
 ): Promise<void> {
   switch (command.type) {
@@ -172,7 +185,18 @@ async function runCommand(
     case 'remove-repo-mapping':
       await repoMappings.removeMapping(command.projectId);
       return;
+    case 'start-detection':
+      await onboarding.startDetection();
+      return;
+    case 'set-launch-at-login':
+      await launchAtLogin.set(command.enabled);
+      return;
   }
+}
+
+/** core의 온보딩 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function onboardingSnapshot(state: OnboardingState): OnboardingSnapshot {
+  return { ...state, requirements: { ...state.requirements } };
 }
 
 /** 폴더 선택 창으로 저장소 폴더를 여러 개 받아 Flow 프로젝트에 연결한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */

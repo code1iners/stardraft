@@ -16,6 +16,7 @@
   --ok: #1e7438;
   --ok-bg: #e6f3ea;
   --warn: #8a5300;
+  --warn-dot: #d08a00;
   --hatch: repeating-linear-gradient(45deg, #eef0f3 0 10px, #e8ebef 10px 20px);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', sans-serif;
@@ -203,10 +204,150 @@ html[data-platform='win32'] .popover {
   background: var(--side);
 }
 
+/* 작은 창: 감지를 시작하기 전의 필수 세 줄과 [감지 시작]. */
+/* 작은 창 본문의 문단 여백(0)보다 뒤에 두어 덮는다. */
+p.setup-lead {
+  margin: 0 0 10px;
+  font-weight: 600;
+}
+
+.setup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.setup-row:hover {
+  background: var(--surface-2);
+}
+
+.setup-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.setup-row-title {
+  font-weight: 600;
+}
+
+.setup-row-detail {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-row-status {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+p.setup-error {
+  margin: 8px 0 0;
+}
+
+.setup-hints {
+  margin: 10px 0 0;
+  padding-left: 16px;
+  color: var(--muted);
+}
+
+.setup-hints li + li {
+  margin-top: 4px;
+}
+
+p.setup-tray-hint {
+  margin-top: 12px;
+}
+
+/* 작은 창: 감지 중 보여 줄 멘션 묶음이 없을 때. */
+.popover-empty {
+  text-align: center;
+}
+
+.popover-empty p + p {
+  margin-top: 6px;
+}
+
+.popover-empty .btn {
+  margin: 18px 0 6px;
+}
+
+/* 설정 창 전체: 맨 위 첫 설정 띠와 그 아래 칸 목록·내용. */
+.settings-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 설정 창 맨 위 첫 설정 띠. 감지를 시작하기 전에만 보인다. */
+.setup-band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.setup-band.ready {
+  border-bottom-color: #c8e2d0;
+  background: var(--ok-bg);
+}
+
+.setup-band.ready .setup-hints {
+  margin-top: 2px;
+  color: #2f5a3b;
+}
+
+.setup-band-space {
+  flex: 1;
+  min-width: 0;
+}
+
+.setup-meter {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+
+.setup-meter i {
+  display: block;
+  width: 26px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.setup-meter i.on {
+  background: var(--ok);
+}
+
 /* 설정 창: 왼쪽 칸 목록(180px)과 오른쪽 내용. */
 .settings {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  height: 100%;
 }
 
 .settings-nav {
@@ -218,7 +359,9 @@ html[data-platform='win32'] .popover {
 }
 
 .settings-nav-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 7px 14px;
   border: 0;
@@ -226,6 +369,15 @@ html[data-platform='win32'] .popover {
   background: none;
   text-align: left;
   cursor: pointer;
+}
+
+/* 끝나지 않은 필수 칸의 점. */
+.settings-nav-dot {
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--warn-dot);
 }
 
 .settings-nav-item:hover {

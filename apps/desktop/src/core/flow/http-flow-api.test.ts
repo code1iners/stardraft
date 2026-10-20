@@ -253,3 +253,85 @@ describe('Flow 어댑터: 참여 Flow 프로젝트 목록 조회', () => {
     });
   });
 });
+
+describe('Flow 어댑터: 멘션 알림 목록 조회', () => {
+  it('readYn 없이 GET /user/alarms?filters=MENTION&size=20을 부르고, 알림의 멘션 위치와 송신자·수신자·시각을 문자열로 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({
+        alarms: {
+          hasNext: false,
+          lastCursor: '',
+          alarms: [
+            {
+              alarmId: '9000000002',
+              alarmType: null,
+              mentionYn: 'Y',
+              readYn: 'Y',
+              projectId: 900001,
+              postId: '90000011',
+              remarkId: '900000021',
+              replyId: '-1',
+              receiverId: 'me@example.test',
+              registerId: 'sender@example.test',
+              registeredDateTime: '20261019093000',
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await connect(server).listMentionAlarms(null);
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        alarms: [
+          {
+            alarmId: '9000000002',
+            projectId: '900001',
+            postId: '90000011',
+            remarkId: '900000021',
+            replyId: '-1',
+            receiverId: 'me@example.test',
+            registerId: 'sender@example.test',
+            registeredDateTime: '20261019093000',
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    expect(server.requests.map((request) => [request.method, request.url])).toEqual([
+      ['GET', 'https://api.flow.team/user/alarms?filters=MENTION&size=20'],
+    ]);
+  });
+
+  it('cursor를 주면 그 쪽을 받고, hasNext가 참이면 lastCursor를 다음 커서로 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ alarms: { hasNext: true, lastCursor: 40, alarms: [] } }) });
+
+    const result = await connect(server).listMentionAlarms('20');
+
+    expect(result).toEqual({ ok: true, value: { alarms: [], nextCursor: '40' } });
+    expect(server.requests[0]?.url).toBe('https://api.flow.team/user/alarms?filters=MENTION&size=20&cursor=20');
+  });
+
+  it('alarmId가 없는 항목은 건너뛰고, 알림 배열을 찾을 수 없는 응답은 응답 모양이 다르다고 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext(
+      { status: 200, body: flowEnvelope({ alarms: { hasNext: false, alarms: [{ postId: '1' }, { alarmId: 7 }] } }) },
+      { status: 200, body: flowEnvelope({ hasNext: false }) },
+    );
+    const api = connect(server);
+
+    await expect(api.listMentionAlarms(null)).resolves.toMatchObject({ ok: true, value: { alarms: [{ alarmId: '7' }] } });
+    await expect(api.listMentionAlarms(null)).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+  });
+
+  it('401이면 키가 거부됐다고 돌려준다', async () => {
+    const server = new FakeFlowServer();
+
+    await expect(connect(server).listMentionAlarms(null)).resolves.toEqual({ ok: false, failure: { kind: 'unauthorized' } });
+  });
+});

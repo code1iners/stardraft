@@ -21,7 +21,7 @@ const STEPS: readonly { step: AgentCheckStep; label: string }[] = [
 ];
 
 /** 에이전트 이름. */
-const AGENT_NAMES: Record<AgentId, string> = {
+export const AGENT_NAMES: Record<AgentId, string> = {
   'claude-code': 'Claude Code',
   codex: 'Codex',
 };

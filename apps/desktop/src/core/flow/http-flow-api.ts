@@ -1,5 +1,5 @@
 import type { Clock } from '../ports/clock';
-import type { FlowApi, FlowApiFailure, FlowApiResult, FlowEmployee, FlowProject } from '../ports/flow-api';
+import type { FlowAlarm, FlowAlarmPage, FlowApi, FlowApiFailure, FlowApiResult, FlowEmployee, FlowProject } from '../ports/flow-api';
 
 /** Flow 공개 API 주소. 모든 회사가 같은 주소를 쓰므로 설정으로 받지 않는다. 코드에서 이 주소는 여기에만 둔다. */
 const FLOW_API_BASE_URL = 'https://api.flow.team';
@@ -9,6 +9,8 @@ const RESPONSE_TIMEOUT_MS = 20_000;
 const HEADER_SAFE_KEY = /^[\x21-\x7e]+$/;
 /** 참여 Flow 프로젝트 목록을 이어 받는 최대 쪽 수. 서버가 `hasNext`를 계속 참으로 줘도 여기서 멈춘다. */
 const MAX_PROJECT_PAGES = 50;
+/** 멘션 알림 목록 한 쪽의 크기. */
+const ALARM_PAGE_SIZE = 20;
 
 /** Flow 어댑터가 요청을 보낼 때 쓰는 fetch. Electron `net.fetch`와 Node `fetch` 모두 이 모양이다. */
 export type FlowFetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -65,6 +67,22 @@ export class HttpFlowApi implements FlowApi {
       cursor = read.nextCursor;
     }
     return { ok: true, value: [...projects.values()] };
+  }
+
+  /**
+   * `GET /user/alarms?filters=MENTION&size=20`으로 멘션 알림 한 쪽을 받는다.
+   * 모바일에서 먼저 읽은 멘션도 놓치지 않게 `readYn`은 보내지 않는다. 응답은 `data.alarms` 아래의 `hasNext`·`lastCursor`·`alarms[]`다.
+   */
+  async listMentionAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>> {
+    /** 이번 쪽의 경로. */
+    const path = `/user/alarms?filters=MENTION&size=${ALARM_PAGE_SIZE}${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
+    /** 응답 봉투의 data를 읽은 결과. */
+    const result = await this.get(path);
+    if (!result.ok) return result;
+
+    /** data에서 읽은 한 쪽. */
+    const page = readAlarmPage(result.value);
+    return page ? { ok: true, value: page } : UNEXPECTED_RESPONSE;
   }
 
   /**
@@ -162,6 +180,37 @@ function readEmployee(data: unknown): FlowEmployee | null {
     name: trimmedString(record.fullname) || userId,
     division: trimmedString(record.divisionName),
     email: trimmedString(record.email) || userId,
+  };
+}
+
+/** 멘션 알림 목록 한 쪽을 읽는다. `data.alarms.alarms` 배열이 없으면 `null`. */
+function readAlarmPage(data: unknown): FlowAlarmPage | null {
+  /** `hasNext`·`lastCursor`·`alarms[]`를 담은 객체. */
+  const list = isRecord(data) ? data.alarms : null;
+  if (!isRecord(list) || !Array.isArray(list.alarms)) return null;
+
+  /** 다음 쪽 커서. `hasNext`가 참이고 `lastCursor`가 있을 때만 있다. */
+  const lastCursor = list.hasNext === true ? idString(list.lastCursor) : '';
+  return {
+    alarms: list.alarms.flatMap((item): FlowAlarm[] => {
+      if (!isRecord(item)) return [];
+      /** 알림 ID. 없으면 기준점으로 쓸 수 없으므로 건너뛴다. */
+      const alarmId = idString(item.alarmId);
+      if (!alarmId) return [];
+      return [
+        {
+          alarmId,
+          projectId: idString(item.projectId),
+          postId: idString(item.postId),
+          remarkId: idString(item.remarkId),
+          replyId: idString(item.replyId),
+          receiverId: trimmedString(item.receiverId),
+          registerId: trimmedString(item.registerId),
+          registeredDateTime: idString(item.registeredDateTime),
+        },
+      ];
+    }),
+    nextCursor: lastCursor || null,
   };
 }
 

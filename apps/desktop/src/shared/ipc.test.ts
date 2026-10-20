@@ -128,6 +128,16 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'remove-mapping-repo', projectId: '101', path: '' })).toBeNull();
   });
 
+  it('감지 시작 명령을 받는다', () => {
+    expect(parseAppCommand({ type: 'start-detection' })).toEqual({ type: 'start-detection' });
+  });
+
+  it('로그인 시 자동 시작 명령은 참·거짓만 받는다', () => {
+    expect(parseAppCommand({ type: 'set-launch-at-login', enabled: false })).toEqual({ type: 'set-launch-at-login', enabled: false });
+    expect(parseAppCommand({ type: 'set-launch-at-login', enabled: 'yes' })).toBeNull();
+    expect(parseAppCommand({ type: 'set-launch-at-login' })).toBeNull();
+  });
+
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {
     expect(parseAppCommand({ type: 'open-settings', section: '../../etc' })).toBeNull();
     expect(parseAppCommand({ type: 'run-shell', command: 'rm -rf /' })).toBeNull();

@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { errorFields, type Logger } from '../logging/logger';
-import type { FlowApi, FlowApiFailure, FlowProject } from '../ports/flow-api';
+import type { FlowApiFailure, FlowConnection, FlowProject } from '../ports/flow-api';
 import type { SettingsStore } from '../ports/settings-store';
 import { SerialQueue } from '../serial-queue';
 
@@ -48,14 +48,6 @@ export interface RepoMappingsState {
   mappings: RepoMappingState[];
   /** 매핑에서 고를 참여 Flow 프로젝트 목록. */
   projects: ParticipantProjectsState;
-}
-
-/** 지금 키로 부르는 Flow. */
-export interface FlowConnection {
-  /** 지금 키로 부르는 Flow API. */
-  api: FlowApi;
-  /** Flow가 이 키를 거부했다(`401`)고 알린다. */
-  reportKeyRejected(): void;
 }
 
 /** 저장소 매핑에 필요한 것. */

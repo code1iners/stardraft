@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drawAlertBadge } from './tray-badge';
+import { drawAlertBadge, drawSetupDot } from './tray-badge';
 
 /** 칠한 아이콘의 회색(BGRA). */
 const GRAY = [0x80, 0x80, 0x80, 0xff];
@@ -7,6 +7,8 @@ const GRAY = [0x80, 0x80, 0x80, 0xff];
 const RED = [0x18, 0x23, 0xb4, 0xff];
 /** "!"의 흰색(BGRA). */
 const WHITE = [0xff, 0xff, 0xff, 0xff];
+/** "설정 필요" 점의 노랑(BGRA). */
+const YELLOW = [0x00, 0x8a, 0xd0, 0xff];
 /** 투명. */
 const CLEAR = [0, 0, 0, 0];
 
@@ -50,5 +52,17 @@ describe('Windows 트레이 "!" 배지', () => {
     drawAlertBadge(icon, 16);
 
     expect(icon).toEqual(grayIcon(16));
+  });
+});
+
+describe('Windows 트레이 노란 점("설정 필요")', () => {
+  it('16px 아이콘의 오른쪽 아래에 "!" 없는 노란 점을 그리고, 둘레를 비워 아이콘과 떼어 놓는다', () => {
+    const dotted = drawSetupDot(grayIcon(16), 16);
+
+    expect(pixelAt(dotted, 16, 11, 11)).toEqual(YELLOW);
+    expect(pixelAt(dotted, 16, 10, 9)).toEqual(YELLOW);
+    expect(pixelAt(dotted, 16, 14, 11)).toEqual(YELLOW);
+    expect(pixelAt(dotted, 16, 5, 11)).toEqual(CLEAR);
+    expect(pixelAt(dotted, 16, 0, 0)).toEqual(GRAY);
   });
 });

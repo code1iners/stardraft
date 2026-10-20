@@ -3,10 +3,10 @@ import { join } from 'node:path';
 import { FlowAccount } from '../core/account/flow-account';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { errorFields } from '../core/logging/logger';
-import { GlobalProblems, type ActiveGlobalProblem } from '../core/problems/global-problems';
+import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { openAppData, type AppData } from '../core/storage/app-data';
 import { trayIndicator } from '../core/tray-indicator';
-import { globalProblemText } from '../shared/global-problem-text';
+import { globalProblemText, type GlobalProblemText } from '../shared/global-problem-text';
 import { APP_ID, appPlatform, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
 import { createAppLogger } from './app-logger';
 import { AppWindows } from './app-windows';
@@ -65,7 +65,7 @@ function start(): void {
       logger,
       notificationFor: (problem) => {
         /** 띠와 같은 문구. */
-        const text = globalProblemText(globalProblemSnapshot(problem), appPlatform());
+        const text = problemText(problem);
         return { title: text.title, body: text.message };
       },
     });
@@ -107,14 +107,15 @@ function start(): void {
 
 /** 전역 문제에 맞춘 트레이 표시. 검토 대기 수는 멘션 묶음을 더하는 티켓이 넘긴다. */
 function trayView(current: ActiveGlobalProblem | null): TrayView {
-  if (!current) return { indicator: trayIndicator({ hasGlobalProblem: false, reviewCount: 0 }), problem: null };
-
-  /** 띠와 같은 문구. */
-  const text = globalProblemText(globalProblemSnapshot(current.problem), appPlatform());
   return {
-    indicator: trayIndicator({ hasGlobalProblem: true, reviewCount: 0 }),
-    problem: { title: text.title, actionLabel: text.actionLabel, section: text.actionSection },
+    indicator: trayIndicator({ hasGlobalProblem: current !== null, reviewCount: 0 }),
+    problem: current && problemText(current.problem),
   };
+}
+
+/** 작은 창 띠와 같은 전역 문제 문구. 트레이 메뉴와 OS 알림에 쓴다. */
+function problemText(problem: GlobalProblem): GlobalProblemText {
+  return globalProblemText(globalProblemSnapshot(problem), appPlatform());
 }
 
 /** 시작할 때 버전과 폴더 위치를 로그에 남긴다. macOS는 업데이트 설치 기록(ShipIt 로그) 위치도 남긴다. */

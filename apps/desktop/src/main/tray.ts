@@ -2,6 +2,7 @@ import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions, type Nat
 import trayIcon from '../../resources/tray.png?asset';
 import trayTemplateIcon from '../../resources/trayTemplate.png?asset';
 import type { TrayIndicator } from '../core/tray-indicator';
+import type { GlobalProblemText } from '../shared/global-problem-text';
 import type { SettingsSection } from '../shared/ipc';
 import { drawAlertBadge } from './tray-badge';
 
@@ -17,22 +18,12 @@ export interface TrayActions {
   quit: () => void;
 }
 
-/** 오른쪽 클릭 메뉴 맨 위에 두는 전역 문제 항목. */
-export interface TrayProblemItem {
-  /** 문제의 짧은 이름. */
-  title: string;
-  /** 행동 버튼 이름. */
-  actionLabel: string;
-  /** 누르면 여는 설정 창의 칸. */
-  section: SettingsSection;
-}
-
 /** 트레이에 보일 앱 상태. */
 export interface TrayView {
   /** 아이콘에 덧붙이는 표시. */
   indicator: TrayIndicator;
-  /** 전역 문제 항목. 없으면 `null`. */
-  problem: TrayProblemItem | null;
+  /** 오른쪽 클릭 메뉴 맨 위에 둘 전역 문제의 문구. 없으면 `null`. */
+  problem: GlobalProblemText | null;
 }
 
 /**
@@ -101,14 +92,15 @@ export class AppTray {
 
   /** 오른쪽 클릭 메뉴. 전역 문제가 있으면 맨 위에 그 항목을 둔다. */
   private buildMenu(): Menu {
+    /** 메뉴 항목이 부를 동작. */
     const { actions } = this;
-    /** 맨 위의 전역 문제 항목. */
+    /** 맨 위에 둘 전역 문제. */
     const problem = this.view.problem;
     /** 메뉴 항목. */
     const items: MenuItemConstructorOptions[] = [
       ...(problem
         ? ([
-            { label: `${problem.title}: ${problem.actionLabel}…`, click: () => actions.openSettings(problem.section) },
+            { label: `${problem.title}: ${problem.actionLabel}…`, click: () => actions.openSettings(problem.actionSection) },
             { type: 'separator' },
           ] satisfies MenuItemConstructorOptions[])
         : []),

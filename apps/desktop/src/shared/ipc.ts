@@ -66,8 +66,11 @@ export interface FlowAccountSnapshot {
  * 에이전트 전역 실패는 뒤 티켓이 원인(`cause`)으로 더한다.
  */
 export type GlobalProblemSnapshot =
-  /** 키 확인 필요. `rejected`는 Flow가 키를 거부한 것(`401`), `unreadable`은 저장된 키를 읽을 수 없는 것이다. */
-  { cause: 'flow-key'; reason: 'rejected' | 'unreadable' };
+  /** 키 확인 필요. */
+  { cause: 'flow-key'; reason: FlowKeyProblemReason };
+
+/** "키 확인 필요"가 생긴 이유. `rejected`는 Flow가 키를 거부한 것(`401`), `unreadable`은 저장된 키를 읽을 수 없는 것이다. */
+export type FlowKeyProblemReason = 'rejected' | 'unreadable';
 
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {

@@ -5,10 +5,8 @@ const MARK_WHITE = [0xff, 0xff, 0xff, 0xff] as const;
 /** 투명. */
 const CLEAR = [0, 0, 0, 0] as const;
 
-/*
- * 16px 아이콘 기준의 배지 모양. 큰 아이콘은 같은 비율로 키운다.
- * 오른쪽 아래 지름 10px 원 안에 폭 2px의 "!"(막대 4px, 1px 띄우고 점 2px)를 두고, 원 둘레 1px을 비운다.
- */
+// 배지 모양은 16px 아이콘 기준이고, 큰 아이콘은 같은 비율로 키운다.
+// 오른쪽 아래 지름 10px 원 안에 폭 2px의 "!"(막대 4px, 1px 띄우고 점 2px)를 두고, 원 둘레 1px을 비운다.
 /** 배지 원의 중심(x, y 같음). */
 const CENTER = 11;
 /** 배지 원의 반지름. */
@@ -35,8 +33,9 @@ export function drawAlertBadge(bitmap: Uint8Array, size: number): Uint8Array {
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       // 픽셀 중심으로 모양 안팎을 가른다.
-      /** 픽셀 중심의 16px 기준 좌표. */
+      /** 픽셀 중심의 16px 기준 x 좌표. */
       const px = (x + 0.5) / unit;
+      /** 픽셀 중심의 16px 기준 y 좌표. */
       const py = (y + 0.5) / unit;
       /** 배지 중심까지의 거리. */
       const distance = Math.hypot(px - CENTER, py - CENTER);

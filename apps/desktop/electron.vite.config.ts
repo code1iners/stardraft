@@ -17,7 +17,12 @@ function relaxCspForDevServer(): Plugin {
 }
 
 export default defineConfig({
-  main: {},
+  main: {
+    build: {
+      // better-sqlite3는 .node 파일을 불러오므로 번들에 넣지 않고 node_modules에서 그대로 읽는다.
+      externalizeDeps: { include: ['better-sqlite3'] },
+    },
+  },
   preload: {
     build: {
       // sandbox가 켜진 preload는 CommonJS 파일 하나여야 한다.

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { isSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from '../../shared/ipc';
+import { GeneralSection } from './GeneralSection';
+import { useSnapshot } from './useSnapshot';
 
 /** 칸 목록에 보이는 칸 이름. */
 const SECTION_LABELS: Record<SettingsSection, string> = {
@@ -16,8 +18,10 @@ interface SettingsViewProps {
   initialSection: string | null;
 }
 
-/** 설정 창. 왼쪽 칸 목록과 오른쪽 내용으로 이뤄진다. 각 칸의 내용은 아직 비어 있다. */
+/** 설정 창. 왼쪽 칸 목록과 오른쪽 내용으로 이뤄진다. 아직 내용이 없는 칸은 제목만 보인다. */
 export function SettingsView({ initialSection }: SettingsViewProps) {
+  /** 앱 상태 스냅숏. */
+  const snapshot = useSnapshot();
   /** 지금 보이는 칸. */
   const [section, setSection] = useState<SettingsSection>(
     isSettingsSection(initialSection) ? initialSection : SETTINGS_SECTIONS[0],
@@ -46,6 +50,7 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
       </nav>
       <main className="settings-main">
         <h2>{SECTION_LABELS[section]}</h2>
+        {section === 'general' && <GeneralSection snapshot={snapshot} />}
       </main>
     </div>
   );

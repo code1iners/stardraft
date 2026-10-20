@@ -140,6 +140,28 @@ html[data-platform='win32'] .popover {
 }
 
 .settings-main h2 {
-  margin: 0;
+  margin: 0 0 18px;
   font-size: 16px;
+}
+
+/* 설정 항목 하나: 굵은 제목 아래에 입력이나 버튼을 둔다. */
+.field {
+  margin-bottom: 22px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.field-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

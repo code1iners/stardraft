@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FakeClock } from '../fakes/fake-clock';
 import { createLogger } from '../logging/logger';
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../ports/settings-store';
 import { openAppData, type AppData, type OpenAppDataOptions } from './app-data';
@@ -25,7 +26,7 @@ afterEach(() => {
 });
 
 /** 아무 데도 남기지 않는 로거. */
-const silentLogger = createLogger([], () => 0);
+const silentLogger = createLogger([], new FakeClock());
 
 /** 임시 데이터 폴더를 열고, 준비됐으면 테스트가 끝날 때 닫게 기록한다. */
 async function open(options: Partial<OpenAppDataOptions> = {}) {
@@ -91,13 +92,13 @@ describe('데이터 폴더 열기', () => {
 
   it('상태 저장소에 저장한 계정과 기준점이 다시 켠 뒤에도 남는다', async () => {
     const first = await openReady();
-    await first.stateStore.setAccountUserId('fake-user@example.invalid');
+    await first.stateStore.setAccountUserId('fake-user-1');
     await first.stateStore.setBaselineAlarmId('1001');
     closeOpened();
 
     const second = await openReady();
 
-    await expect(second.stateStore.getAccountUserId()).resolves.toBe('fake-user@example.invalid');
+    await expect(second.stateStore.getAccountUserId()).resolves.toBe('fake-user-1');
     await expect(second.stateStore.getBaselineAlarmId()).resolves.toBe('1001');
   });
 
@@ -140,6 +141,39 @@ describe('다운그레이드 차단', () => {
     expect(readdirSync(dataDir).sort()).toEqual(['settings.json', 'state.db']);
   });
 
+  it('새 버전이 WAL에만 남긴 내용도 건드리지 않는다', async () => {
+    // 새 버전 앱이 체크포인트 전에 꺼진 상태를 흉내 낸다. 연결을 연 채로 본 파일과 WAL 파일을 복사한다.
+    /** 새 버전 앱이 쓰던 DB 경로. */
+    const livePath = join(dataDir, 'live.db');
+    const live = new Database(livePath);
+    live.pragma('journal_mode = WAL');
+    live.pragma('wal_autocheckpoint = 0');
+    live.exec("CREATE TABLE app_meta (id INTEGER PRIMARY KEY, app_version TEXT NOT NULL); INSERT INTO app_meta VALUES (1, '0.9.0');");
+    live.pragma(`user_version = ${STATE_MIGRATIONS.length + 1}`);
+    writeFileSync(statePath(), readFileSync(livePath));
+    writeFileSync(`${statePath()}-wal`, readFileSync(`${livePath}-wal`));
+    live.close();
+    rmSync(livePath);
+    /** 열기 전 두 파일 내용. */
+    const stateBefore = readFileSync(statePath());
+    const walBefore = readFileSync(`${statePath()}-wal`);
+
+    const result = await open();
+
+    expect(result).toMatchObject({ kind: 'newer-data', createdByVersion: '0.9.0' });
+    expect(readFileSync(statePath()).equals(stateBefore)).toBe(true);
+    expect(readFileSync(`${statePath()}-wal`).equals(walBefore)).toBe(true);
+  });
+
+  it('settings.json만 새 버전이고 state.db가 없으면 state.db를 만들지 않는다', async () => {
+    writeFileSync(settingsPath(), JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION + 1, appVersion: '0.7.2' }));
+
+    const result = await open();
+
+    expect(result).toMatchObject({ kind: 'newer-data', createdByVersion: '0.7.2' });
+    expect(readdirSync(dataDir)).toEqual(['settings.json']);
+  });
+
   it('새 state.db에서 만든 버전을 읽지 못하면 버전 없이 안내한다', async () => {
     writeStateDb(STATE_MIGRATIONS.length + 1, 'CREATE TABLE renamed_meta (v TEXT);', null);
 
@@ -172,7 +206,7 @@ describe('다운그레이드 차단', () => {
 describe('마이그레이션', () => {
   it('state.db를 올리기 직전에 state.db와 settings.json의 사본을 앱 버전 이름으로 남긴다', async () => {
     const first = await openReady({ appVersion: '0.1.0' });
-    await first.stateStore.setAccountUserId('fake-user@example.invalid');
+    await first.stateStore.setAccountUserId('fake-user-1');
     await first.settingsStore.save({ ...DEFAULT_SETTINGS, workFolders: ['/fake/code'] });
     closeOpened();
     /** 마이그레이션 전 settings.json 내용. */
@@ -184,7 +218,7 @@ describe('마이그레이션', () => {
     });
 
     // 올린 뒤에도 원래 기록은 남는다.
-    await expect(second.stateStore.getAccountUserId()).resolves.toBe('fake-user@example.invalid');
+    await expect(second.stateStore.getAccountUserId()).resolves.toBe('fake-user-1');
     closeOpened();
     expect(readUserVersion()).toBe(STATE_MIGRATIONS.length + 1);
 
@@ -196,7 +230,7 @@ describe('마이그레이션', () => {
     expect(readFileSync(join(backupDir, 'settings.json'), 'utf8')).toBe(settingsBefore);
     /** 사본 DB. */
     const backup = new Database(join(backupDir, 'state.db'), { readonly: true });
-    expect(backup.prepare('SELECT user_id FROM account').get()).toEqual({ user_id: 'fake-user@example.invalid' });
+    expect(backup.prepare('SELECT user_id FROM account').get()).toEqual({ user_id: 'fake-user-1' });
     backup.close();
   });
 
@@ -217,6 +251,25 @@ describe('마이그레이션', () => {
       workFolders: ['/fake/migrated'],
     });
     expect(readFileSync(join(dataDir, 'backups', 'before-v0.2.0', 'settings.json'), 'utf8')).toBe(settingsBefore);
+  });
+
+  it('같은 버전으로 다시 올릴 때 먼저 남긴 사본을 덮어쓰지 않는다', async () => {
+    const first = await openReady({ appVersion: '0.1.0' });
+    await first.stateStore.setBaselineAlarmId('1001');
+    closeOpened();
+    /** 마이그레이션을 하나 더 둔 0.2.0. */
+    const stateMigrations = [...STATE_MIGRATIONS, 'CREATE TABLE added_later (id INTEGER);'];
+    /** 0.2.0이 settings.json도 올리게 한 변환. */
+    const settingsMigrations = [(raw: Record<string, unknown>) => raw];
+    await openReady({ appVersion: '0.2.0', stateMigrations, settingsMigrations });
+    closeOpened();
+    // state.db는 올라갔는데 settings.json 쓰기가 실패해 옛 형식으로 남은 상황을 흉내 낸다.
+    writeFileSync(settingsPath(), JSON.stringify({ ...DEFAULT_SETTINGS, appVersion: '0.1.0' }));
+
+    await openReady({ appVersion: '0.2.0', stateMigrations, settingsMigrations });
+    closeOpened();
+
+    expect(readUserVersion(join(dataDir, 'backups', 'before-v0.2.0', 'state.db'))).toBe(STATE_MIGRATIONS.length);
   });
 
   it('형식이 그대로면 사본을 만들지 않는다', async () => {

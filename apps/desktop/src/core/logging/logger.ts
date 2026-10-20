@@ -1,3 +1,5 @@
+import type { Clock } from '../ports/clock';
+
 /**
  * 진단 로그 규약.
  *
@@ -5,6 +7,7 @@
  * - 필드 값은 문자열·숫자·참거짓·`null`만 받는다. Flow 응답이나 초안 같은 객체를 통째로 남길 수 없다.
  * - 남기는 것은 ID, 개수, 길이, 상태, 응답 코드, 경로다. API 키와 Flow 글 본문(제목, 본문, 댓글, 초안, 지침)은 남기지 않는다.
  * - 이름이 본문·비밀값을 뜻하는 필드는 값을 가리고, 긴 문자열은 자른다. 실수로 넘긴 값이 그대로 남지 않게 하는 마지막 방어선이다.
+ * - 오류 메시지(`errorFields`)는 그대로 남는다. 그래서 Flow 응답이나 에이전트 출력을 다루는 코드는 본문을 오류 메시지에 넣지 않는다.
  */
 
 /** 로그 수준. */
@@ -62,12 +65,12 @@ const SENSITIVE_WORDS = new Set([
 /** 필드 이름이 이 낱말로 끝나면 본문이 아니라 식별자·수치로 보고 남긴다. */
 const SAFE_LAST_WORDS = new Set(['id', 'ids', 'count', 'length', 'chars', 'bytes']);
 
-/** 출력 목록에 로그를 쓰는 로거를 만든다. `now`는 Unix epoch 밀리초를 돌려준다. */
-export function createLogger(sinks: readonly LogSink[], now: () => number): Logger {
+/** 출력 목록에 로그를 쓰는 로거를 만든다. 시각은 시계 포트에서 읽는다. */
+export function createLogger(sinks: readonly LogSink[], clock: Pick<Clock, 'now'>): Logger {
   /** 사건 하나를 한 줄로 만들어 모든 출력에 쓴다. */
   const write = (level: LogLevel, event: string, fields: LogFields = {}) => {
     /** 남길 한 줄. 필드가 시각·수준·사건 이름을 덮어쓰지 못하게 필드를 먼저 펼친다. */
-    const line = `${JSON.stringify({ ...sanitizeFields(fields), time: new Date(now()).toISOString(), level, event })}\n`;
+    const line = `${JSON.stringify({ ...sanitizeFields(fields), time: new Date(clock.now()).toISOString(), level, event })}\n`;
     for (const sink of sinks) {
       // 로그를 못 남겨도 앱은 계속 돈다.
       try {

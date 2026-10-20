@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FakeClock } from '../fakes/fake-clock';
 import { createLogger, errorFields, type LogSink } from './logger';
 
 /** 쓴 줄을 모아 두는 진단 로그 출력. */
@@ -19,7 +20,7 @@ class LineCollector implements LogSink {
 describe('진단 로그 규약', () => {
   it('한 줄에 시각, 수준, 사건 이름, 필드를 JSON으로 남긴다', () => {
     const sink = new LineCollector();
-    const logger = createLogger([sink], () => Date.UTC(2026, 9, 20, 1, 2, 3));
+    const logger = createLogger([sink], new FakeClock(Date.UTC(2026, 9, 20, 1, 2, 3)));
 
     logger.info('poll.finished', { postId: '1001', newMentions: 2, retried: false });
 
@@ -39,7 +40,7 @@ describe('진단 로그 규약', () => {
 
   it('API 키와 글 본문을 담을 만한 필드는 값을 가린다', () => {
     const sink = new LineCollector();
-    const logger = createLogger([sink], () => 0);
+    const logger = createLogger([sink], new FakeClock());
 
     logger.warn('flow.request-failed', {
       apiKey: 'fake-api-key-0000',
@@ -69,7 +70,7 @@ describe('진단 로그 규약', () => {
 
   it('ID·개수·길이 필드는 이름에 본문 관련 낱말이 들어 있어도 남긴다', () => {
     const sink = new LineCollector();
-    const logger = createLogger([sink], () => 0);
+    const logger = createLogger([sink], new FakeClock());
 
     logger.info('draft.saved', { commentId: '2002', replyId: '-1', draftLength: 120, contentChars: 3000 });
 
@@ -78,7 +79,7 @@ describe('진단 로그 규약', () => {
 
   it('긴 문자열 값은 잘라서 남긴다', () => {
     const sink = new LineCollector();
-    const logger = createLogger([sink], () => 0);
+    const logger = createLogger([sink], new FakeClock());
 
     logger.error('agent.failed', { detail: 'x'.repeat(1_000) });
 
@@ -90,7 +91,7 @@ describe('진단 로그 규약', () => {
 
   it('필드가 시각·수준·사건 이름을 덮어쓰지 못한다', () => {
     const sink = new LineCollector();
-    const logger = createLogger([sink], () => 0);
+    const logger = createLogger([sink], new FakeClock());
 
     logger.info('app.started', { event: 'other', level: 'error' });
 
@@ -104,7 +105,7 @@ describe('진단 로그 규약', () => {
       },
     };
     const sink = new LineCollector();
-    const logger = createLogger([broken, sink], () => 0);
+    const logger = createLogger([broken, sink], new FakeClock());
 
     expect(() => logger.info('app.started')).not.toThrow();
     expect(sink.records()).toHaveLength(1);

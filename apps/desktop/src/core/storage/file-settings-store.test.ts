@@ -22,7 +22,7 @@ afterEach(() => {
 
 /** 테스트 대상 설정 저장소. */
 function createStore(appVersion = '0.1.0'): FileSettingsStore {
-  return new FileSettingsStore({ filePath: settingsPath, appVersion });
+  return new FileSettingsStore(settingsPath, appVersion);
 }
 
 describe('설정 파일 저장소', () => {
@@ -74,11 +74,5 @@ describe('설정 파일 저장소', () => {
     writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 1, workFolders: ['/fake/code'] }));
 
     await expect(createStore().load()).resolves.toEqual({ ...DEFAULT_SETTINGS, workFolders: ['/fake/code'] });
-  });
-
-  it('앱이 아는 것보다 새 형식이면 읽지 않는다', async () => {
-    writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 2, appVersion: '0.9.0' }));
-
-    await expect(createStore().load()).rejects.toThrow('더 새 버전');
   });
 });

@@ -21,5 +21,5 @@ export function createAppLogger(): Logger {
     maxBytes: LOG_FILE_MAX_BYTES,
     maxArchives: LOG_ARCHIVES,
   });
-  return createLogger(app.isPackaged ? [fileSink] : [fileSink, consoleSink], Date.now);
+  return createLogger(app.isPackaged ? [fileSink] : [fileSink, consoleSink], { now: Date.now });
 }

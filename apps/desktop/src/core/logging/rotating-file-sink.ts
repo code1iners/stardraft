@@ -10,12 +10,10 @@ export interface RotatingFileSinkOptions {
   maxBytes: number;
   /** 남겨 둘 옛 파일 수. 더 오래된 파일은 지운다. */
   maxArchives: number;
-  /** 파일 이름 앞부분. 지금 파일은 `main.log`, 옛 파일은 `main.1.log`, `main.2.log`다. */
-  baseName?: string;
 }
 
 /**
- * 크기 상한으로 회전하는 로그 파일 출력.
+ * 크기 상한으로 회전하는 로그 파일 출력. 지금 파일은 `main.log`, 옛 파일은 `main.1.log`, `main.2.log`다.
  * 로그는 짧고 드물어서 동기로 쓴다. 앱이 갑자기 끝나도 직전 줄까지 남고 줄 순서가 섞이지 않는다.
  */
 export class RotatingFileSink implements LogSink {
@@ -25,16 +23,13 @@ export class RotatingFileSink implements LogSink {
   private readonly maxBytes: number;
   /** 남겨 둘 옛 파일 수. */
   private readonly maxArchives: number;
-  /** 파일 이름 앞부분. */
-  private readonly baseName: string;
   /** 지금 파일의 크기. 처음 쓸 때 파일에서 읽는다. */
   private currentBytes: number | null = null;
 
-  constructor({ directory, maxBytes, maxArchives, baseName = 'main' }: RotatingFileSinkOptions) {
+  constructor({ directory, maxBytes, maxArchives }: RotatingFileSinkOptions) {
     this.directory = directory;
     this.maxBytes = maxBytes;
     this.maxArchives = maxArchives;
-    this.baseName = baseName;
   }
 
   write(line: string): void {
@@ -69,7 +64,7 @@ export class RotatingFileSink implements LogSink {
 
   /** 번호에 맞는 로그 파일 경로. 0은 지금 쓰는 파일이다. */
   private filePath(index: number): string {
-    return join(this.directory, index === 0 ? `${this.baseName}.log` : `${this.baseName}.${index}.log`);
+    return join(this.directory, index === 0 ? 'main.log' : `main.${index}.log`);
   }
 }
 

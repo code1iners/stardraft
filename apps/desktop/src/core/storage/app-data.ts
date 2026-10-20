@@ -1,4 +1,5 @@
-import { copyFile, mkdir, rm } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { errorFields, type Logger } from '../logging/logger';
 import { DEFAULT_SETTINGS, type SettingsStore } from '../ports/settings-store';
@@ -6,32 +7,27 @@ import type { StateStore } from '../ports/state-store';
 import { writeFileAtomic } from './atomic-file';
 import {
   FileSettingsStore,
+  migrateSettings,
   readSettingsFile,
   serializeSettingsFile,
   SETTINGS_MIGRATIONS,
   type SettingsFile,
   type SettingsMigration,
 } from './file-settings-store';
-import { newerDataMessage } from './newer-data';
 import {
-  configureStateDatabase,
   copyStateDatabase,
-  migrateStateDatabase,
+  inspectStateDatabase,
   openStateDatabase,
-  readStateAppVersion,
-  readStateSchemaVersion,
-  recordStateAppVersion,
   SqliteStateStore,
   STATE_MIGRATIONS,
-  type StateDatabase,
 } from './state-database';
 
 /** 설정 파일 이름. */
-export const SETTINGS_FILE_NAME = 'settings.json';
+const SETTINGS_FILE_NAME = 'settings.json';
 /** 상태 DB 파일 이름. */
-export const STATE_FILE_NAME = 'state.db';
+const STATE_FILE_NAME = 'state.db';
 /** 마이그레이션 전 사본을 두는 폴더 이름. */
-export const BACKUPS_DIR_NAME = 'backups';
+const BACKUPS_DIR_NAME = 'backups';
 
 /** 데이터 폴더를 여는 데 필요한 값. */
 export interface OpenAppDataOptions {
@@ -41,14 +37,15 @@ export interface OpenAppDataOptions {
   appVersion: string;
   /** 진단 로그. */
   logger: Logger;
-  /** `state.db` 마이그레이션. 테스트가 바꿔 넣는다. */
+  /** `state.db` 마이그레이션. 테스트가 더 새 앱을 흉내 낼 때 바꿔 넣는다. */
   stateMigrations?: readonly string[];
-  /** `settings.json` 마이그레이션. 테스트가 바꿔 넣는다. */
+  /** `settings.json` 마이그레이션. 테스트가 더 새 앱을 흉내 낼 때 바꿔 넣는다. */
   settingsMigrations?: readonly SettingsMigration[];
 }
 
 /** 형식 검사와 마이그레이션을 마친 데이터. */
 export interface AppData {
+  /** 결과 종류. */
   kind: 'ready';
   /** 설정 저장소. */
   settingsStore: SettingsStore;
@@ -60,6 +57,7 @@ export interface AppData {
 
 /** 앱이 아는 것보다 새 형식의 데이터라 열지 않았다. 데이터는 건드리지 않았다. */
 export interface NewerData {
+  /** 결과 종류. */
   kind: 'newer-data';
   /** 데이터를 쓴 앱 버전. 모르면 `null`. */
   createdByVersion: string | null;
@@ -70,7 +68,7 @@ export interface NewerData {
 /**
  * 데이터 폴더의 `settings.json`과 `state.db`를 연다.
  *
- * 1. 두 파일의 형식 버전을 읽는다. 하나라도 앱이 아는 것보다 새로우면 아무것도 바꾸지 않고 `newer-data`를 돌려준다.
+ * 1. 두 파일의 형식 버전을 바꾸지 않고 읽는다. 하나라도 앱이 아는 것보다 새로우면 아무것도 쓰지 않고 `newer-data`를 돌려준다.
  * 2. 올려야 할 기존 데이터가 있으면, 올리기 직전에 두 파일의 사본을 `backups/before-v<앱 버전>/`에 남긴다.
  * 3. `state.db`와 `settings.json`을 마지막 형식으로 올린다. 첫 실행이면 두 파일을 만든다.
  */
@@ -87,144 +85,127 @@ export async function openAppData({
   const latestStateVersion = stateMigrations.length;
   /** 설정 파일 경로. */
   const settingsPath = join(dataDir, SETTINGS_FILE_NAME);
-
-  await mkdir(dataDir, { recursive: true });
-  /** 디스크의 설정 파일. */
-  const settingsFile = await readSettingsFile(settingsPath);
-  /** 열린 `state.db`. */
-  const db = openStateDatabase(join(dataDir, STATE_FILE_NAME));
+  /** 상태 DB 경로. */
+  const statePath = join(dataDir, STATE_FILE_NAME);
 
   try {
-    /** 디스크의 `state.db` 형식 버전. */
-    const stateVersion = readStateSchemaVersion(db);
+    await mkdir(dataDir, { recursive: true });
+    /** 디스크의 설정 파일. */
+    const settingsFile = await readSettingsFile(settingsPath);
+    /** 디스크의 `state.db` 형식. */
+    const state = inspectStateDatabase(statePath);
 
     // 새 버전이 만든 데이터면 아무것도 바꾸지 않고 멈춘다.
-    if (stateVersion > latestStateVersion) {
-      return newerData(db, logger, readStateAppVersion(db), { stateVersion, latestStateVersion });
+    if (state.schemaVersion > latestStateVersion) {
+      logger.warn('app-data.newer-state', { stateVersion: state.schemaVersion, latestStateVersion });
+      return newerData(state.appVersion);
     }
     if (settingsFile.kind === 'found' && settingsFile.schemaVersion > latestSettingsVersion) {
-      return newerData(db, logger, settingsFile.appVersion, {
-        settingsVersion: settingsFile.schemaVersion,
-        latestSettingsVersion,
-      });
+      logger.warn('app-data.newer-settings', { settingsVersion: settingsFile.schemaVersion, latestSettingsVersion });
+      return newerData(settingsFile.appVersion);
     }
 
-    // 기존 데이터를 올려야 하면 올리기 직전에 사본을 남긴다. 첫 실행으로 만든 빈 DB는 남길 것이 없다.
+    // 기존 데이터를 올려야 하면 올리기 직전에 사본을 남긴다. 파일이 없던 첫 실행은 남길 것이 없다.
     /** 기존 `state.db`를 올려야 하는지 여부. */
-    const migratesState = stateVersion > 0 && stateVersion < latestStateVersion;
+    const migratesState = state.schemaVersion > 0 && state.schemaVersion < latestStateVersion;
     /** 기존 `settings.json`을 올려야 하는지 여부. */
     const migratesSettings = settingsFile.kind === 'found' && settingsFile.schemaVersion < latestSettingsVersion;
     if (migratesState || migratesSettings) {
-      await backUpBeforeMigration({ dataDir, appVersion, db, stateVersion, settingsPath, settingsFile, logger });
-    }
-
-    // state.db를 마지막 형식으로 올린다.
-    configureStateDatabase(db);
-    migrateStateDatabase(db, stateMigrations);
-    recordStateAppVersion(db, appVersion);
-    if (stateVersion !== latestStateVersion) {
-      logger.info('app-data.state-migrated', { fromVersion: stateVersion, toVersion: latestStateVersion });
-    }
-
-    // settings.json을 마지막 형식으로 올리거나, 첫 실행이면 기본 설정으로 만든다.
-    if (settingsFile.kind === 'missing') {
-      await writeFileAtomic(
-        settingsPath,
-        serializeSettingsFile({ ...DEFAULT_SETTINGS, schemaVersion: latestSettingsVersion }, appVersion),
-      );
-    } else if (migratesSettings) {
-      await writeFileAtomic(
-        settingsPath,
-        serializeSettingsFile(migrateSettings(settingsFile.raw, settingsFile.schemaVersion, settingsMigrations), appVersion),
-      );
-      logger.info('app-data.settings-migrated', {
-        fromVersion: settingsFile.schemaVersion,
-        toVersion: latestSettingsVersion,
+      await backUpBeforeMigration({
+        backupDir: join(dataDir, BACKUPS_DIR_NAME, `before-v${appVersion}`),
+        statePath: state.schemaVersion > 0 ? statePath : null,
+        settingsPath: settingsFile.kind === 'found' ? settingsPath : null,
       });
+      logger.info('app-data.backup-created', {
+        appVersion,
+        stateVersion: state.schemaVersion,
+        settingsVersion: settingsFile.kind === 'found' ? settingsFile.schemaVersion : null,
+      });
+    }
+
+    /** 마지막 형식으로 올린 `state.db` 연결. */
+    const db = openStateDatabase(statePath, stateMigrations, appVersion);
+    if (state.schemaVersion !== latestStateVersion) {
+      logger.info('app-data.state-migrated', { fromVersion: state.schemaVersion, toVersion: latestStateVersion });
+    }
+
+    try {
+      await writeLatestSettings(settingsPath, settingsFile, latestSettingsVersion, settingsMigrations, appVersion);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
+    if (migratesSettings) {
+      logger.info('app-data.settings-migrated', { fromVersion: settingsFile.schemaVersion, toVersion: latestSettingsVersion });
     }
 
     return {
       kind: 'ready',
-      settingsStore: new FileSettingsStore({ filePath: settingsPath, appVersion, schemaVersion: latestSettingsVersion }),
+      settingsStore: new FileSettingsStore(settingsPath, appVersion),
       stateStore: new SqliteStateStore(db),
       close: () => db.close(),
     };
   } catch (error) {
-    db.close();
     logger.error('app-data.open-failed', errorFields(error));
     throw error;
   }
 }
 
-/** DB를 닫고 새 버전 데이터라고 알린다. */
-function newerData(
-  db: StateDatabase,
-  logger: Logger,
-  createdByVersion: string | null,
-  versions: Record<string, number>,
-): NewerData {
-  db.close();
-  logger.warn('app-data.newer-data', { ...versions, createdByVersion });
-  return { kind: 'newer-data', createdByVersion, message: newerDataMessage(createdByVersion) };
+/** 앱이 아는 것보다 새 형식의 데이터라는 결과. 안내 문구는 스펙의 원문이다. */
+function newerData(createdByVersion: string | null): NewerData {
+  /** 안내에 넣을 버전 표기. 버전을 모르면 쓰지 않는다. */
+  const version = createdByVersion ? `(v${createdByVersion})` : '';
+  return {
+    kind: 'newer-data',
+    createdByVersion,
+    message: `이 데이터는 더 새 버전${version}에서 만들어졌습니다. 새 버전을 다시 설치하세요.`,
+  };
 }
 
 /** 마이그레이션 전 사본에 필요한 값. */
-interface BackupInput {
-  dataDir: string;
-  appVersion: string;
-  db: StateDatabase;
-  stateVersion: number;
-  settingsPath: string;
-  settingsFile: SettingsFile;
-  logger: Logger;
+interface BackupTargets {
+  /** 사본을 둘 폴더. */
+  backupDir: string;
+  /** 복사할 `state.db`. 올릴 기존 DB가 없으면 `null`. */
+  statePath: string | null;
+  /** 복사할 `settings.json`. 파일이 없으면 `null`. */
+  settingsPath: string | null;
 }
 
 /**
- * 올리기 전의 `state.db`와 `settings.json`을 `backups/before-v<앱 버전>/`에 복사한다.
- * 같은 버전으로 다시 올리는 경우(앞선 마이그레이션이 실패해 되돌아간 경우)에는 덮어쓴다. 지우는 일은 업데이트 쪽이 맡는다.
+ * 올리기 전의 `state.db`와 `settings.json`을 사본 폴더에 복사한다.
+ * 이미 있는 사본은 덮어쓰지 않는다. 같은 버전으로 다시 올리는 경우(예: `state.db`만 올라가고 `settings.json` 쓰기가 실패한 뒤)
+ * 먼저 남긴 사본만이 올리기 전 원본이기 때문이다. 지우는 일은 업데이트 쪽이 맡는다.
  */
-async function backUpBeforeMigration({
-  dataDir,
-  appVersion,
-  db,
-  stateVersion,
-  settingsPath,
-  settingsFile,
-  logger,
-}: BackupInput): Promise<void> {
-  /** 사본 폴더. */
-  const backupDir = join(dataDir, BACKUPS_DIR_NAME, `before-v${appVersion}`);
+async function backUpBeforeMigration({ backupDir, statePath, settingsPath }: BackupTargets): Promise<void> {
   await mkdir(backupDir, { recursive: true });
 
-  if (stateVersion > 0) {
-    /** `state.db` 사본 경로. */
-    const stateCopy = join(backupDir, STATE_FILE_NAME);
-    await rm(stateCopy, { force: true });
-    copyStateDatabase(db, stateCopy);
+  /** `state.db` 사본 경로. */
+  const stateCopy = join(backupDir, STATE_FILE_NAME);
+  if (statePath && !existsSync(stateCopy)) copyStateDatabase(statePath, stateCopy);
+
+  if (settingsPath) {
+    try {
+      await copyFile(settingsPath, join(backupDir, SETTINGS_FILE_NAME), constants.COPYFILE_EXCL);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
   }
-  if (settingsFile.kind === 'found') {
-    await copyFile(settingsPath, join(backupDir, SETTINGS_FILE_NAME));
-  }
-  logger.info('app-data.backup-created', {
-    backupDir,
-    stateVersion,
-    settingsVersion: settingsFile.kind === 'found' ? settingsFile.schemaVersion : null,
-  });
 }
 
-/** `settings.json` 내용을 `from` 버전에서 마지막 버전까지 올린다. */
-function migrateSettings(
-  raw: Record<string, unknown>,
-  from: number,
+/** `settings.json`을 마지막 형식으로 쓴다. 첫 실행이면 기본 설정을, 옛 형식이면 올린 내용을 쓰고, 이미 마지막 형식이면 두고 본다. */
+async function writeLatestSettings(
+  settingsPath: string,
+  settingsFile: SettingsFile,
+  latestVersion: number,
   migrations: readonly SettingsMigration[],
-): Record<string, unknown> {
-  /** 올리는 중인 내용. */
-  let current = raw;
-  for (let version = from; version <= migrations.length; version += 1) {
-    /** 이 버전을 다음 버전으로 올리는 변환. */
-    const migrate = migrations[version - 1];
-    if (!migrate) throw new Error(`settings.json 형식 버전 ${version}을 올릴 수 없습니다.`);
-    current = { ...migrate(current), schemaVersion: version + 1 };
+  appVersion: string,
+): Promise<void> {
+  if (settingsFile.kind === 'missing') {
+    await writeFileAtomic(settingsPath, serializeSettingsFile({ ...DEFAULT_SETTINGS, schemaVersion: latestVersion }, appVersion));
+  } else if (settingsFile.schemaVersion < latestVersion) {
+    /** 마지막 형식으로 올린 내용. */
+    const migrated = migrateSettings(settingsFile.raw, settingsFile.schemaVersion, migrations);
+    await writeFileAtomic(settingsPath, serializeSettingsFile(migrated, appVersion));
   }
-  return current;
 }

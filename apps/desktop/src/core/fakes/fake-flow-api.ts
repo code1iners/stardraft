@@ -1,4 +1,4 @@
-import type { FlowApi, FlowApiResult, FlowEmployee } from '../ports/flow-api';
+import type { FlowApi, FlowApiResult, FlowEmployee, FlowProject } from '../ports/flow-api';
 
 /** 가짜 Flow API가 기본으로 쓰는 키 소유자. 실제 사람이나 회사가 아니다. */
 export const FAKE_ME: FlowEmployee = {
@@ -17,14 +17,26 @@ export class FakeFlowApi implements FlowApi {
   readonly requests: string[] = [];
   /** `getMe`가 돌려줄 응답. */
   private meResult: FlowApiResult<FlowEmployee> = { ok: true, value: FAKE_ME };
+  /** `listParticipantProjects`가 돌려줄 응답. */
+  private projectsResult: FlowApiResult<FlowProject[]> = { ok: true, value: [] };
 
   /** `getMe`가 앞으로 돌려줄 응답을 바꾼다. */
   respondToGetMe(result: FlowApiResult<FlowEmployee>): void {
     this.meResult = result;
   }
 
+  /** `listParticipantProjects`가 앞으로 돌려줄 응답을 바꾼다. */
+  respondToListParticipantProjects(result: FlowApiResult<FlowProject[]>): void {
+    this.projectsResult = result;
+  }
+
   async getMe(): Promise<FlowApiResult<FlowEmployee>> {
     this.requests.push('GET /user/employees/me');
     return this.meResult;
+  }
+
+  async listParticipantProjects(): Promise<FlowApiResult<FlowProject[]>> {
+    this.requests.push('GET /user/projects/participants');
+    return this.projectsResult;
   }
 }

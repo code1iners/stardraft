@@ -5,6 +5,7 @@ import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agen
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
+import type { RepoMappings, RepoMappingsState } from '../core/repos/repo-mappings';
 import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import { agentFixCommand } from '../shared/agent-fix-command';
@@ -19,6 +20,7 @@ import {
   type FlowAccountProfile,
   type FlowAccountSnapshot,
   type GlobalProblemSnapshot,
+  type RepoMappingsSnapshot,
   type WorkFoldersSnapshot,
 } from '../shared/ipc';
 import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
@@ -41,6 +43,8 @@ export interface IpcServices {
   agentPreferences: AgentPreferences;
   /** "저장소" 칸의 작업 폴더. */
   workFolders: WorkFolders;
+  /** "저장소" 칸의 저장소 매핑. */
+  repoMappings: RepoMappings;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -78,10 +82,20 @@ export function registerIpc(services: IpcServices): void {
   services.workFolders.onChange(() =>
     services.windows.broadcast({ type: 'work-folders-changed', workFolders: workFoldersSnapshot(services.workFolders.state()) }),
   );
+  services.repoMappings.onChange(() =>
+    services.windows.broadcast({ type: 'repo-mappings-changed', repoMappings: repoMappingsSnapshot(services.repoMappings.state()) }),
+  );
 }
 
 /** 지금 앱 상태의 스냅숏. */
-function currentSnapshot({ flowAccount, globalProblems, agentConnection, agentPreferences, workFolders }: IpcServices): AppSnapshot {
+function currentSnapshot({
+  flowAccount,
+  globalProblems,
+  agentConnection,
+  agentPreferences,
+  workFolders,
+  repoMappings,
+}: IpcServices): AppSnapshot {
   return {
     appName: app.name,
     version: app.getVersion(),
@@ -91,12 +105,13 @@ function currentSnapshot({ flowAccount, globalProblems, agentConnection, agentPr
     agentConnection: agentConnectionSnapshot(agentConnection.state()),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
     workFolders: workFoldersSnapshot(workFolders.state()),
+    repoMappings: repoMappingsSnapshot(repoMappings.state()),
   };
 }
 
 /** 검사를 통과한 명령을 실행한다. */
 async function runCommand(
-  { windows, logger, flowAccount, agentConnection, agentPreferences, workFolders }: IpcServices,
+  { windows, logger, flowAccount, agentConnection, agentPreferences, workFolders, repoMappings }: IpcServices,
   command: AppCommand,
 ): Promise<void> {
   switch (command.type) {
@@ -145,7 +160,51 @@ async function runCommand(
     case 'refresh-work-folders':
       await workFolders.refresh();
       return;
+    case 'refresh-repo-mappings':
+      await repoMappings.refresh();
+      return;
+    case 'pick-mapping-repos':
+      await pickMappingRepos(windows, repoMappings, command.projectId);
+      return;
+    case 'remove-mapping-repo':
+      await repoMappings.removeRepo(command.projectId, command.path);
+      return;
+    case 'remove-repo-mapping':
+      await repoMappings.removeMapping(command.projectId);
+      return;
   }
+}
+
+/** 폴더 선택 창으로 저장소 폴더를 여러 개 받아 Flow 프로젝트에 연결한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
+async function pickMappingRepos(windows: AppWindows, repoMappings: RepoMappings, projectId: string): Promise<void> {
+  /** 폴더 선택 창 설정. git 저장소가 아닌 코드 폴더도 고를 수 있다. */
+  const options: OpenDialogOptions = {
+    title: '연결할 저장소 폴더 고르기',
+    buttonLabel: '연결',
+    properties: ['openDirectory', 'multiSelections'],
+  };
+  /** 설정 창. 있으면 그 위에 시트로 띄운다. */
+  const parent = windows.settingsWindow();
+  /** 고른 결과. */
+  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  if (result.canceled || result.filePaths.length === 0) return;
+  await repoMappings.addRepos(projectId, result.filePaths);
+}
+
+/** core의 저장소 매핑 상태를 렌더러에 넘길 모양으로 바꾼다. 주소는 화면에 쓰지 않으므로 넘기지 않는다. */
+function repoMappingsSnapshot(state: RepoMappingsState): RepoMappingsSnapshot {
+  return {
+    mappings: state.mappings.map(({ projectId, title, repos, missing }) => ({
+      projectId,
+      title,
+      repos: repos.map((repo) => ({ ...repo })),
+      missing,
+    })),
+    projects:
+      state.projects.status === 'loaded'
+        ? { status: 'loaded', projects: state.projects.projects.map(({ projectId, title }) => ({ projectId, title })) }
+        : state.projects,
+  };
 }
 
 /** 폴더 선택 창으로 작업 폴더를 여러 개 받아 더한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */

@@ -30,6 +30,8 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, agentPreferences: event.agentPreferences });
       } else if (event.type === 'work-folders-changed') {
         setSnapshot((current) => current && { ...current, workFolders: event.workFolders });
+      } else if (event.type === 'repo-mappings-changed') {
+        setSnapshot((current) => current && { ...current, repoMappings: event.repoMappings });
       }
     });
   }, []);

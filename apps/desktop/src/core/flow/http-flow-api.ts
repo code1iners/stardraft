@@ -1,5 +1,5 @@
 import type { Clock } from '../ports/clock';
-import type { FlowApi, FlowApiFailure, FlowApiResult, FlowEmployee } from '../ports/flow-api';
+import type { FlowApi, FlowApiFailure, FlowApiResult, FlowEmployee, FlowProject } from '../ports/flow-api';
 
 /** Flow 공개 API 주소. 모든 회사가 같은 주소를 쓰므로 설정으로 받지 않는다. 코드에서 이 주소는 여기에만 둔다. */
 const FLOW_API_BASE_URL = 'https://api.flow.team';
@@ -7,6 +7,8 @@ const FLOW_API_BASE_URL = 'https://api.flow.team';
 const RESPONSE_TIMEOUT_MS = 20_000;
 /** 헤더 값으로 보낼 수 있는 키. 공백 없는 ASCII 글자만이다. */
 const HEADER_SAFE_KEY = /^[\x21-\x7e]+$/;
+/** 참여 Flow 프로젝트 목록을 이어 받는 최대 쪽 수. 서버가 `hasNext`를 계속 참으로 줘도 여기서 멈춘다. */
+const MAX_PROJECT_PAGES = 50;
 
 /** Flow 어댑터가 요청을 보낼 때 쓰는 fetch. Electron `net.fetch`와 Node `fetch` 모두 이 모양이다. */
 export type FlowFetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -36,6 +38,33 @@ export class HttpFlowApi implements FlowApi {
     /** data에서 읽은 구성원 정보. */
     const employee = readEmployee(result.value);
     return employee ? { ok: true, value: employee } : UNEXPECTED_RESPONSE;
+  }
+
+  /**
+   * `GET /user/projects/participants`로 참여 Flow 프로젝트를 모두 받는다.
+   * 문서는 항목 필드(`projectId`, `title`, `projectUrl`)만 밝히고 data 안의 위치와 쪽 나눔은 밝히지 않는다(실호출은 안 함).
+   * 그래서 data 자체나 data 바로 아래에서 `projectId`가 든 배열을 읽고, 알림 목록처럼 `hasNext`·`lastCursor`가 오면 다음 쪽을 이어 받는다.
+   */
+  async listParticipantProjects(): Promise<FlowApiResult<FlowProject[]>> {
+    /** 받은 프로젝트. 같은 ID는 처음 것만 둔다. */
+    const projects = new Map<string, FlowProject>();
+    /** 다음 쪽을 받을 커서. 첫 쪽은 `null`. */
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PROJECT_PAGES; page += 1) {
+      /** 이번 쪽의 경로. */
+      const path = cursor === null ? '/user/projects/participants' : `/user/projects/participants?cursor=${encodeURIComponent(cursor)}`;
+      /** 응답 봉투의 data를 읽은 결과. */
+      const result = await this.get(path);
+      if (!result.ok) return result;
+
+      /** data에서 읽은 한 쪽. */
+      const read = readProjectPage(result.value);
+      if (!read) return UNEXPECTED_RESPONSE;
+      for (const project of read.projects) if (!projects.has(project.projectId)) projects.set(project.projectId, project);
+      if (read.nextCursor === null || read.nextCursor === cursor) break;
+      cursor = read.nextCursor;
+    }
+    return { ok: true, value: [...projects.values()] };
   }
 
   /**
@@ -134,6 +163,49 @@ function readEmployee(data: unknown): FlowEmployee | null {
     division: trimmedString(record.divisionName),
     email: trimmedString(record.email) || userId,
   };
+}
+
+/** 참여 Flow 프로젝트 목록 한 쪽. */
+interface ProjectPage {
+  /** 이 쪽의 프로젝트. */
+  projects: FlowProject[];
+  /** 다음 쪽을 받을 커서. 마지막 쪽이면 `null`. */
+  nextCursor: string | null;
+}
+
+/** 참여 Flow 프로젝트 목록 한 쪽을 읽는다. 프로젝트 배열을 찾지 못하면 `null`. */
+function readProjectPage(data: unknown): ProjectPage | null {
+  /** 프로젝트 항목 배열. data 자체가 배열이거나 data 바로 아래의 배열이다. */
+  const items = Array.isArray(data)
+    ? data
+    : isRecord(data)
+      ? Object.values(data).find((value): value is unknown[] => Array.isArray(value) && (value.length === 0 || value.some(hasProjectId)))
+      : undefined;
+  if (!items) return null;
+
+  /** 다음 쪽 커서. `hasNext`가 참이고 `lastCursor`가 있을 때만 있다. */
+  const lastCursor = isRecord(data) && data.hasNext === true ? idString(data.lastCursor) : '';
+  return {
+    projects: items.flatMap((item) => {
+      if (!isRecord(item)) return [];
+      /** 프로젝트 ID. 숫자로 와도 문자열로 맞춘다. */
+      const projectId = idString(item.projectId);
+      if (!projectId) return [];
+      return [{ projectId, title: trimmedString(item.title), projectUrl: trimmedString(item.projectUrl) || null }];
+    }),
+    nextCursor: lastCursor || null,
+  };
+}
+
+/** 프로젝트 ID가 든 항목인지 본다. */
+function hasProjectId(item: unknown): boolean {
+  return isRecord(item) && idString(item.projectId) !== '';
+}
+
+/** 문자열이나 숫자로 온 ID를 문자열로 바꾼다. 없으면 빈 문자열. */
+function idString(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return trimmedString(value);
 }
 
 /** 문자열이면 앞뒤 공백을 뺀 값, 아니면 빈 문자열. */

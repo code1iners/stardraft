@@ -745,3 +745,19 @@ html[data-platform='win32'] .popover {
   font: 12px/1.6 var(--mono);
   user-select: text;
 }
+
+/* 저장소 칸: 저장소 매핑. Flow 프로젝트 줄 아래에 연결한 저장소 줄을 들여 보인다. */
+.mapping-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.mapping-repos {
+  margin: 0 0 6px;
+  padding: 0 0 0 12px;
+  list-style: none;
+}

@@ -1,4 +1,4 @@
-import type { FlowEmployee } from '../ports/flow-api';
+import type { FlowEmployee, FlowProject } from '../ports/flow-api';
 
 /** 가짜 Flow 서버가 요청 하나에 줄 응답. */
 export type FakeFlowReply =
@@ -27,7 +27,7 @@ export interface FakeFlowRequest {
 
 /**
  * Flow 공개 API를 흉내 내는 fetch. Flow 어댑터를 바깥 경계(HTTP)에서 검사할 때 쓴다.
- * 키(`x-flow-api-key`)마다 계정을 두고 `GET /user/employees/me`에 Flow 응답 봉투로 답하며, 모르는 키에는 `401`을 준다.
+ * 키(`x-flow-api-key`)마다 계정을 두고 `GET /user/employees/me`와 `GET /user/projects/participants`에 Flow 응답 봉투로 답하며, 모르는 키에는 `401`을 준다.
  * `replyNext`로 다음 응답을 원하는 상태 코드나 연결 실패로 바꿀 수 있고, 받은 요청은 `requests`에 남는다.
  */
 export class FakeFlowServer {
@@ -35,12 +35,19 @@ export class FakeFlowServer {
   readonly requests: FakeFlowRequest[] = [];
   /** 키마다 그 키 소유자의 구성원 정보. */
   private readonly accounts = new Map<string, FlowEmployee>();
+  /** 키마다 그 키 소유자가 참여한 Flow 프로젝트. */
+  private readonly projects = new Map<string, FlowProject[]>();
   /** 계정 대신 먼저 줄 응답. 요청마다 앞에서 하나씩 꺼낸다. */
   private readonly queued: FakeFlowReply[] = [];
 
   /** 이 키를 가진 계정을 둔다. */
   addAccount(apiKey: string, employee: FlowEmployee): void {
     this.accounts.set(apiKey, employee);
+  }
+
+  /** 이 키 소유자가 참여한 Flow 프로젝트를 둔다. */
+  setProjects(apiKey: string, projects: FlowProject[]): void {
+    this.projects.set(apiKey, projects);
   }
 
   /** 다음 요청들에 차례로 줄 응답을 뒤에 더한다. */
@@ -78,7 +85,12 @@ export class FakeFlowServer {
     /** 키 소유자. */
     const employee = apiKey === null ? undefined : this.accounts.get(apiKey);
     if (!employee) return flowError(401, 'UNAUTHORIZED');
-    if (new URL(url).pathname !== '/user/employees/me') return flowError(404, 'NOT_FOUND');
+    /** 요청 경로. */
+    const path = new URL(url).pathname;
+    if (path === '/user/projects/participants') {
+      return { status: 200, body: flowEnvelope({ hasNext: false, projects: this.projects.get(apiKey ?? '') ?? [] }) };
+    }
+    if (path !== '/user/employees/me') return flowError(404, 'NOT_FOUND');
     return {
       status: 200,
       body: flowEnvelope({

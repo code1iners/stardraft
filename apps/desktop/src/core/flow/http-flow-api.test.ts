@@ -139,3 +139,97 @@ describe('Flow 어댑터: 키 소유자의 구성원 정보 조회', () => {
     expect(server.requests).toEqual([]);
   });
 });
+
+describe('Flow 어댑터: 참여 Flow 프로젝트 목록 조회', () => {
+  it('GET /user/projects/participants를 부르고 projectId·title·projectUrl을 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({
+        projects: [
+          { projectId: '101', title: '가짜 프로젝트 A', projectUrl: 'https://flow.example.test/p/101' },
+          { projectId: 102, title: ' 가짜 프로젝트 B ', projectUrl: null },
+        ],
+      }),
+    });
+
+    const result = await connect(server).listParticipantProjects();
+
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { projectId: '101', title: '가짜 프로젝트 A', projectUrl: 'https://flow.example.test/p/101' },
+        { projectId: '102', title: '가짜 프로젝트 B', projectUrl: null },
+      ],
+    });
+    expect(server.requests.map(({ method, url, apiKey }) => ({ method, url, apiKey }))).toEqual([
+      { method: 'GET', url: 'https://api.flow.team/user/projects/participants', apiKey: 'fake-key-1' },
+    ]);
+  });
+
+  it('data가 배열 자체여도 읽고, projectId가 없는 항목은 건너뛴다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope([{ projectId: '7', title: '' }, { title: 'ID 없음' }]),
+    });
+
+    await expect(connect(server).listParticipantProjects()).resolves.toEqual({
+      ok: true,
+      value: [{ projectId: '7', title: '', projectUrl: null }],
+    });
+  });
+
+  it('hasNext가 참이면 lastCursor를 cursor로 넘겨 다음 쪽을 이어 받는다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext(
+      {
+        status: 200,
+        body: flowEnvelope({ hasNext: true, lastCursor: 55, projects: [{ projectId: '1', title: '하나', projectUrl: '' }] }),
+      },
+      { status: 200, body: flowEnvelope({ hasNext: false, lastCursor: 56, projects: [{ projectId: '2', title: '둘' }] }) },
+    );
+
+    const result = await connect(server).listParticipantProjects();
+
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { projectId: '1', title: '하나', projectUrl: null },
+        { projectId: '2', title: '둘', projectUrl: null },
+      ],
+    });
+    expect(server.requests.map((request) => request.url)).toEqual([
+      'https://api.flow.team/user/projects/participants',
+      'https://api.flow.team/user/projects/participants?cursor=55',
+    ]);
+  });
+
+  it('다음 쪽에서 실패하면 그 실패를 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ hasNext: true, lastCursor: 1, projects: [] }) }, { status: 401 });
+
+    await expect(connect(server).listParticipantProjects()).resolves.toEqual({ ok: false, failure: { kind: 'unauthorized' } });
+  });
+
+  it('프로젝트 목록을 찾을 수 없는 응답은 응답 모양이 다르다고 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ message: '목록 없음' }) });
+
+    await expect(connect(server).listParticipantProjects()).resolves.toEqual({
+      ok: false,
+      failure: { kind: 'unexpected-response' },
+    });
+  });
+
+  it('가짜 서버는 키 소유자의 참여 프로젝트로 답한다', async () => {
+    const server = new FakeFlowServer();
+    server.addAccount('fake-key-1', { userId: 'me@example.test', name: '나', division: '', email: 'me@example.test' });
+    server.setProjects('fake-key-1', [{ projectId: '9', title: '가짜', projectUrl: 'https://flow.example.test/p/9' }]);
+
+    await expect(connect(server).listParticipantProjects()).resolves.toEqual({
+      ok: true,
+      value: [{ projectId: '9', title: '가짜', projectUrl: 'https://flow.example.test/p/9' }],
+    });
+  });
+});

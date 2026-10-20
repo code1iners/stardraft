@@ -1,5 +1,6 @@
 import { errorFields, type Logger } from '../logging/logger';
-import type { FlowAlarm, FlowApi, FlowApiFailure } from '../ports/flow-api';
+import { latestAlarmId } from '../flow/alarm-id';
+import type { FlowApiFailure, FlowConnection } from '../ports/flow-api';
 import type { Notifier } from '../ports/notifier';
 import type { SettingsStore } from '../ports/settings-store';
 import type { StateStore } from '../ports/state-store';
@@ -66,14 +67,6 @@ export type DetectionStartOutcome =
   /** 시작하지 못했다. 감지 시작 전 그대로다. */
   | { kind: 'failed'; reason: DetectionStartFailure };
 
-/** 지금 키로 만든 Flow 연결. */
-export interface OnboardingFlowConnection {
-  /** 지금 키로 부르는 Flow API. */
-  api: FlowApi;
-  /** Flow가 이 키를 거부했다고 알린다. "키 확인 필요"를 올린다. */
-  reportKeyRejected: () => void;
-}
-
 /** 온보딩에 필요한 포트. */
 export interface OnboardingOptions {
   /** 감지 시작 여부를 두는 설정 저장소. */
@@ -89,7 +82,9 @@ export interface OnboardingOptions {
   /** 필수 세 가지를 판단할 지금 앱 상태. */
   setupInputs: () => SetupInputs;
   /** 지금 키로 Flow 연결을 만든다. 쓸 키가 없으면 `null`. */
-  connectFlow: () => OnboardingFlowConnection | null;
+  connectFlow: () => FlowConnection | null;
+  /** 감지를 시작한 뒤 설정 창을 닫고 빈 작은 창을 띄운다. 시작 알림은 이 일이 끝난 뒤에 띄운다. */
+  showDetectionStarted: () => Promise<void>;
 }
 
 /** 진행 중인 시작이 없는 상태. */
@@ -137,8 +132,12 @@ export class Onboarding {
     };
   }
 
-  /** 필수 세 가지의 입력(계정, 전역 문제, 에이전트 연결, 작업 폴더)이 바뀌었을 수 있다. 상태가 달라졌으면 알린다. */
+  /**
+   * 필수 세 가지의 입력(계정, 전역 문제, 에이전트 연결, 작업 폴더)이 바뀌었을 수 있다. 상태가 달라졌으면 알린다.
+   * 필수 항목이 바뀌면 지난 [감지 시작] 실패 문구는 더 맞지 않으므로 지운다(예: 거부된 키를 다시 확인함).
+   */
   refresh(): void {
+    if (this.start.status === 'failed' && this.lastState && !sameRequirements(this.lastState, this.state())) this.start = IDLE;
     this.emitIfChanged();
   }
 
@@ -180,7 +179,8 @@ export class Onboarding {
     this.emitIfChanged();
     // 자동 시작을 켜지 못해도 감지는 시작한 것으로 둔다. 설정 "일반"에서 다시 켤 수 있다.
     await this.options.launchAtLogin.set(true);
-    // macOS는 첫 알림 때 권한을 물으므로, 사용자가 화면을 보고 있는 지금 띄운다.
+    await this.options.showDetectionStarted();
+    // macOS는 첫 알림 때 권한을 물으므로, 사용자가 빈 작은 창을 보고 있는 지금 띄운다.
     this.options.notifier.notify({
       title: '멘션 감지를 시작했습니다',
       body: '나를 지목한 새 멘션이 오면 답변 초안을 만들어 알려 드립니다.',
@@ -232,24 +232,16 @@ function startFailureOf(failure: FlowApiFailure): DetectionStartFailure {
   }
 }
 
-/**
- * 알림 가운데 가장 큰 `alarmId`. 없으면 `null`.
- * ID는 숫자 문자열이라 길이가 긴 쪽이 크고, 길이가 같으면 글자 순서로 비교한다.
- */
-export function latestAlarmId(alarms: readonly FlowAlarm[]): string | null {
-  /** 지금까지 본 가장 큰 ID. */
-  let latest: string | null = null;
-  for (const { alarmId } of alarms) {
-    if (latest === null || alarmId.length > latest.length || (alarmId.length === latest.length && alarmId > latest)) latest = alarmId;
-  }
-  return latest;
+/** 두 상태의 필수 세 가지가 같은지 본다. */
+function sameRequirements(a: OnboardingState, b: OnboardingState): boolean {
+  return SETUP_REQUIREMENTS.every((requirement) => a.requirements[requirement] === b.requirements[requirement]);
 }
 
 /** 두 상태가 화면에 같게 보이는지 본다. */
 function sameState(a: OnboardingState, b: OnboardingState): boolean {
   return (
     a.detectionStarted === b.detectionStarted &&
-    SETUP_REQUIREMENTS.every((requirement) => a.requirements[requirement] === b.requirements[requirement]) &&
+    sameRequirements(a, b) &&
     a.start.status === b.start.status &&
     (a.start.status !== 'failed' || b.start.status !== 'failed' || a.start.reason === b.start.reason)
   );

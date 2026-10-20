@@ -8,7 +8,8 @@ import { FlowAccount } from '../core/account/flow-account';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { errorFields } from '../core/logging/logger';
 import { LaunchAtLogin } from '../core/onboarding/launch-at-login';
-import { Onboarding, type OnboardingFlowConnection } from '../core/onboarding/onboarding';
+import { Onboarding } from '../core/onboarding/onboarding';
+import type { FlowConnection } from '../core/ports/flow-api';
 import { RepoMappings } from '../core/repos/repo-mappings';
 import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
@@ -91,10 +92,12 @@ function start(): void {
     });
     await flowAccount.load();
 
-    windows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
+    /** 작은 창과 설정 창. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로도 잡는다. */
+    const appWindows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
       // 설정 창을 닫으면 그 창에서 시작한 키 확인과 확인을 기다리던 계정 바꾸기를 그만둔다.
       onSettingsClosed: () => flowAccount.cancelKeyCheck(),
     });
+    windows = appWindows;
     /** 에이전트 연결 확인. 앱을 시작할 때와 설정 "에이전트" 칸을 열 때 돈다. 실행기도 이 확인이 찾은 CLI와 환경을 쓴다. */
     const agentConnection = new AgentConnection({
       platform: process.platform,
@@ -119,7 +122,7 @@ function start(): void {
     await workFolders.load();
     /** 설정 "저장소" 칸의 저장소 매핑. 참여 Flow 프로젝트 목록은 지금 쓰는 키로 받는다. */
     /** 지금 쓰는 키로 Flow 연결을 만든다. 쓸 키가 없으면 `null`. */
-    const connectCurrentFlow = (): OnboardingFlowConnection | null => {
+    const connectCurrentFlow = (): FlowConnection | null => {
       /** 지금 쓰는 키. */
       const apiKey = flowAccount.apiKey();
       if (apiKey === null) return null;
@@ -149,6 +152,11 @@ function start(): void {
       logger,
       launchAtLogin,
       connectFlow: connectCurrentFlow,
+      // 설정 창을 닫을 때 Dock 아이콘을 숨기므로, 작은 창은 설정 창이 다 닫힌 뒤에 띄운다.
+      showDetectionStarted: async () => {
+        await appWindows.closeSettings();
+        appWindows.openPopover();
+      },
       setupInputs: () => {
         /** 에이전트 연결 확인의 진행 상태. */
         const agentProgress = agentConnection.state().progress.status;
@@ -169,7 +177,7 @@ function start(): void {
     agentConnection.onChange(refreshOnboarding);
     workFolders.onChange(refreshOnboarding);
     registerIpc({
-      windows,
+      windows: appWindows,
       logger,
       flowAccount,
       globalProblems,
@@ -184,8 +192,6 @@ function start(): void {
     // 참여 Flow 프로젝트 목록은 "저장소" 칸을 열 때 받는다.
     void workFolders.refresh();
 
-    /** 트레이 동작이 부를 창 관리자. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
-    const appWindows = windows;
     /** 만든 트레이. 전역 문제를 따라 표시를 바꿀 때 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appTray = new AppTray({
       togglePopover: () => appWindows.togglePopover(),
@@ -200,7 +206,11 @@ function start(): void {
     globalProblems.onChange(refreshTray);
     onboarding.onChange(refreshTray);
     // 감지를 시작하기 전이면 첫 실행처럼 필수 설정 전 작은 창을 트레이 옆에 띄운다. 메뉴 막대 앱이라 창이 없으면 앱을 놓친다.
-    if (!onboarding.state().detectionStarted) appWindows.openPopover();
+    // 앱이 앞에 오지 않은 채 열면 작은 창이 포커스를 잃어 바로 닫히므로, 사용자가 직접 켠 이 경우에는 앞으로 가져온다.
+    if (!onboarding.state().detectionStarted) {
+      if (process.platform === 'darwin') app.focus({ steal: true });
+      appWindows.openPopover();
+    }
 
     // 저장된 키는 트레이를 띄운 뒤에 읽는다. 업데이트 뒤에는 키체인 재허용을 묻고 답할 때까지 끝나지 않기 때문이다.
     flowAccount.checkStoredKey().catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)));

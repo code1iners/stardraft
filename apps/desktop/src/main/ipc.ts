@@ -186,12 +186,7 @@ async function runCommand(
       await repoMappings.removeMapping(command.projectId);
       return;
     case 'start-detection':
-      // 시작하면 설정 창을 닫고 빈 작은 창을 띄운다. 시작 알림은 core가 띄운다.
-      // 설정 창을 닫을 때 Dock 아이콘을 숨기므로, 작은 창은 다 닫힌 뒤에 띄운다.
-      if ((await onboarding.startDetection()).kind === 'started') {
-        await windows.closeSettings();
-        windows.openPopover();
-      }
+      await onboarding.startDetection();
       return;
     case 'set-launch-at-login':
       await launchAtLogin.set(command.enabled);

@@ -82,3 +82,11 @@ export interface FlowApi {
    */
   listMentionAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>>;
 }
+
+/** 지금 키로 부르는 Flow. 키를 바꾸면 새로 만든다. */
+export interface FlowConnection {
+  /** 지금 키로 부르는 Flow API. */
+  api: FlowApi;
+  /** Flow가 이 키를 거부했다(`401`)고 알린다. "키 확인 필요"를 올린다. */
+  reportKeyRejected(): void;
+}

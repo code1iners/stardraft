@@ -13,6 +13,7 @@ import {
   SETUP_REQUIREMENT_SECTIONS,
   windowsTrayHint,
 } from '../../shared/onboarding-text';
+import { AGENT_NAMES } from './AgentSection';
 
 /** 필수 설정 줄 오른쪽에 보일 상태 글자와 색. */
 const STATUS_TEXT: Record<SetupRequirementStatus, { label: string; className: string }> = {
@@ -76,9 +77,15 @@ export function SetupChecklist({ snapshot }: OnboardingProps) {
         {ready && <StartDetectionButton start={start} />}
       </div>
       {ready && <DetectionStartNotes snapshot={snapshot} />}
-      {snapshot.platform === 'win32' && <p className="setup-tray-hint small muted">{windowsTrayHint(snapshot.appName)}</p>}
+      <WindowsTrayHint snapshot={snapshot} />
     </main>
   );
+}
+
+/** Windows 작은 창의 숨김 영역 안내. 새 트레이 아이콘은 숨김 영역에 들어가므로 필수 설정 전과 감지 시작 직후의 빈 화면에 둔다. */
+export function WindowsTrayHint({ snapshot }: OnboardingProps) {
+  if (snapshot.platform !== 'win32') return null;
+  return <p className="setup-tray-hint small muted">{windowsTrayHint(snapshot.appName)}</p>;
 }
 
 /** 설정 창 첫 설정 띠에 넘기는 값. */
@@ -115,7 +122,9 @@ export function SetupBand({ snapshot, section, onSelectSection }: SetupBandProps
     return (
       <div className="setup-band">
         {meter}
-        <strong>필수 설정 {SETUP_REQUIREMENTS.length - remaining.length}/3</strong>
+        <strong>
+          필수 설정 {SETUP_REQUIREMENTS.length - remaining.length}/{SETUP_REQUIREMENTS.length}
+        </strong>
         <span className="small muted">남은 항목: {remaining.map((requirement) => SETUP_REQUIREMENT_LABELS[requirement]).join(', ')}</span>
         <span className="setup-band-space" />
         {next && (
@@ -195,7 +204,7 @@ function requirementDetail(requirement: SetupRequirement, snapshot: AppSnapshot)
       return '내 키를 붙여 넣으면 계정을 확인합니다';
     }
     case 'agent':
-      if (status === 'done') return 'Claude Code 연결됨';
+      if (status === 'done') return `${AGENT_NAMES[snapshot.agentPreferences.defaultAgent ?? 'claude-code']} 연결됨`;
       if (status === 'checking') return '연결을 확인하는 중입니다';
       return '연결하지 못했습니다. 눌러서 원인을 확인합니다';
     case 'work-folders': {

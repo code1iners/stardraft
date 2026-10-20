@@ -1,6 +1,6 @@
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
-import { SetupChecklist } from './Onboarding';
+import { SetupChecklist, WindowsTrayHint } from './Onboarding';
 import { useSnapshot } from './useSnapshot';
 
 /** 트레이 아이콘을 누르면 뜨는 작은 창. */
@@ -28,13 +28,13 @@ export function PopoverContent({ snapshot }: PopoverContentProps) {
       <header className="popover-head">
         <strong>{snapshot.appName}</strong>
       </header>
-      {snapshot.onboarding.detectionStarted ? <EmptyDetection /> : <SetupChecklist snapshot={snapshot} />}
+      {snapshot.onboarding.detectionStarted ? <EmptyDetection snapshot={snapshot} /> : <SetupChecklist snapshot={snapshot} />}
     </div>
   );
 }
 
 /** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션으로 시험]은 시험 기능을 더하는 티켓이 연결한다. */
-function EmptyDetection() {
+function EmptyDetection({ snapshot }: PopoverContentProps) {
   /** 설정 창을 연다. 작은 창은 main이 닫는다. */
   const handleOpenSettings = () => {
     void window.stardraft.send({ type: 'open-settings' });
@@ -51,6 +51,7 @@ function EmptyDetection() {
           최근 멘션으로 시험
         </button>
         <p className="small muted">지난 멘션 하나로 앱이 동작하는지 확인합니다. Flow에는 아무것도 올리지 않습니다.</p>
+        <WindowsTrayHint snapshot={snapshot} />
       </main>
       <footer className="popover-foot">
         <button type="button" className="btn" onClick={handleOpenSettings}>

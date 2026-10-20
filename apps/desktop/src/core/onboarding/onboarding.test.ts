@@ -44,6 +44,8 @@ async function setup(inputs: SetupInputs, settings: Partial<Settings> = {}) {
   const loginItem: boolean[] = [];
   /** Flow가 키를 거부했다고 알린 횟수. */
   const rejected = { count: 0 };
+  /** 일어난 일. 감지 시작 뒤 창 전환과 시작 알림의 순서를 본다. */
+  const events: string[] = [];
   const launchAtLogin = new LaunchAtLogin({ settingsStore, logger, applyToSystem: (enabled) => loginItem.push(enabled) });
   await launchAtLogin.load();
   const onboarding = new Onboarding({
@@ -53,9 +55,18 @@ async function setup(inputs: SetupInputs, settings: Partial<Settings> = {}) {
     logger,
     launchAtLogin,
     setupInputs: () => current,
+    showDetectionStarted: async () => {
+      events.push('창 전환');
+    },
     connectFlow: () => (hasKey ? { api: flow, reportKeyRejected: () => (rejected.count += 1) } : null),
   });
   await onboarding.load();
+  // 시작 알림이 창 전환 뒤에 뜨는지 보려고 알림도 일어난 일에 남긴다.
+  const notify = notifier.notify.bind(notifier);
+  notifier.notify = (notification) => {
+    events.push('알림');
+    notify(notification);
+  };
   /** 상태가 바뀐 횟수. */
   const changes = { count: 0 };
   onboarding.onChange(() => (changes.count += 1));
@@ -68,6 +79,7 @@ async function setup(inputs: SetupInputs, settings: Partial<Settings> = {}) {
     loginItem,
     rejected,
     changes,
+    events,
     setInputs: (next: SetupInputs) => {
       current = next;
       onboarding.refresh();
@@ -147,6 +159,14 @@ describe('온보딩: 감지 시작', () => {
     expect(onboarding.state()).toMatchObject({ detectionStarted: true, start: { status: 'idle' } });
   });
 
+  it('설정 창을 닫고 빈 작은 창을 띄운 뒤에 시작 알림을 띄운다', async () => {
+    const { onboarding, events } = await setup(ALL_DONE);
+
+    await onboarding.startDetection();
+
+    expect(events).toEqual(['창 전환', '알림']);
+  });
+
   it('알림이 하나도 없으면 기준점을 0으로 잡아 그 뒤의 멘션을 모두 처리한다', async () => {
     const { onboarding, stateStore } = await setup(ALL_DONE);
 
@@ -187,6 +207,17 @@ describe('온보딩: 감지 시작', () => {
     await expect(onboarding.startDetection()).resolves.toEqual({ kind: 'started' });
     expect(stateStore.baselineAlarmId).toBe('42');
     expect(onboarding.state().start).toEqual({ status: 'idle' });
+  });
+
+  it('Flow가 키를 거부한 뒤 키를 다시 확인하면 지난 실패를 지운다', async () => {
+    const { onboarding, flow, setInputs } = await setup(ALL_DONE);
+    flow.respondToListMentionAlarms({ ok: false, failure: { kind: 'unauthorized' } });
+    await onboarding.startDetection();
+
+    setInputs({ ...ALL_DONE, keyVerified: false });
+    setInputs(ALL_DONE);
+
+    expect(onboarding.state()).toMatchObject({ ready: true, start: { status: 'idle' } });
   });
 
   it('요청 한도와 모르는 응답은 각각의 실패로 보인다', async () => {

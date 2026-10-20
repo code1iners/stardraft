@@ -18,11 +18,19 @@ export interface TrayActions {
   quit: () => void;
 }
 
+/** Windows 아이콘에 그려 넣는 표시와 그 표시를 비트맵에 그리는 함수. */
+const WINDOWS_BADGES = { alert: drawAlertBadge, 'setup-needed': drawSetupDot } as const;
+
 /** Windows 아이콘에 그려 넣는 표시. */
-type WindowsBadge = 'alert' | 'setup-needed';
+type WindowsBadge = keyof typeof WINDOWS_BADGES;
 
 /** macOS 메뉴 막대 제목에 쓰는 노란 점. 제목 글자는 ANSI 색을 받는다. */
 const MAC_SETUP_DOT = '\x1b[33m●\x1b[0m';
+
+/** 아이콘에 그려 넣어 보이는 표시인지 본다. 숫자 배지는 아직 그리지 않는다. */
+function isWindowsBadge(kind: TrayIndicator['kind']): kind is WindowsBadge {
+  return Object.hasOwn(WINDOWS_BADGES, kind);
+}
 
 /** 트레이에 보일 앱 상태. */
 export interface TrayView {
@@ -83,7 +91,7 @@ export class AppTray {
       this.tray.setTitle(macTitle(indicator));
       return;
     }
-    this.tray.setImage(indicator.kind === 'alert' || indicator.kind === 'setup-needed' ? this.windowsBadgedIcon(indicator.kind) : trayIcon);
+    this.tray.setImage(isWindowsBadge(indicator.kind) ? this.windowsBadgedIcon(indicator.kind) : trayIcon);
   }
 
   /** 색 아이콘의 오른쪽 아래에 빨간 "!" 배지나 노란 점을 그린 아이콘. 고해상도 화면용 2배 이미지에도 그린다. */
@@ -92,7 +100,7 @@ export class AppTray {
     const cached = this.badgedIcons.get(badge);
     if (cached) return cached;
     /** 비트맵에 표시를 그리는 함수. */
-    const draw = badge === 'alert' ? drawAlertBadge : drawSetupDot;
+    const draw = WINDOWS_BADGES[badge];
 
     /** 배지를 그릴 원래 아이콘. `@2x` 파일도 함께 읽힌다. */
     const base = nativeImage.createFromPath(trayIcon);

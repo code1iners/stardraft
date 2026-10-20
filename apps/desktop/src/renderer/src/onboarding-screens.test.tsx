@@ -114,6 +114,12 @@ describe('작은 창: 감지를 시작한 뒤', () => {
     expect(text).not.toContain('Flow 개인 API 키');
     expect(text).not.toContain('감지 시작');
   });
+
+  it('Windows는 감지를 시작한 직후의 빈 화면에도 숨김 영역 안내를 보인다', () => {
+    const text = textOf(<PopoverContent snapshot={snapshot({ ...READY, detectionStarted: true }, { platform: 'win32' })} />);
+
+    expect(text).toContain('Stardraft 아이콘은 작업 표시줄 오른쪽 ^ 안에 있습니다.');
+  });
 });
 
 describe('설정 창 첫 설정 띠', () => {

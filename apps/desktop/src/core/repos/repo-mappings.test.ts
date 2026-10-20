@@ -6,9 +6,9 @@ import { FakeClock } from '../fakes/fake-clock';
 import { FakeFlowApi } from '../fakes/fake-flow-api';
 import { MemorySettingsStore } from '../fakes/memory-settings-store';
 import { createLogger } from '../logging/logger';
-import type { FlowProject } from '../ports/flow-api';
+import type { FlowConnection, FlowProject } from '../ports/flow-api';
 import type { Settings } from '../ports/settings-store';
-import { RepoMappings, type FlowConnection } from './repo-mappings';
+import { RepoMappings } from './repo-mappings';
 import { WorkFolders } from './work-folders';
 
 /** 테스트마다 만드는 가짜 홈 폴더. */

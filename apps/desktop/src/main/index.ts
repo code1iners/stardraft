@@ -7,6 +7,7 @@ import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { errorFields } from '../core/logging/logger';
+import { RepoMappings } from '../core/repos/repo-mappings';
 import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { openAppData, type AppData } from '../core/storage/app-data';
@@ -112,8 +113,32 @@ function start(): void {
     /** 설정 "저장소" 칸의 작업 폴더와 "이 PC에서 찾은 폴더". */
     const workFolders = new WorkFolders({ settingsStore: appData.settingsStore, logger, homeDir: app.getPath('home') });
     await workFolders.load();
-    registerIpc({ windows, logger, flowAccount, globalProblems, agentConnection, agentPreferences, workFolders });
+    /** 설정 "저장소" 칸의 저장소 매핑. 참여 Flow 프로젝트 목록은 지금 쓰는 키로 받는다. */
+    const repoMappings = new RepoMappings({
+      settingsStore: appData.settingsStore,
+      logger,
+      connectFlow: () => {
+        /** 지금 쓰는 키. */
+        const apiKey = flowAccount.apiKey();
+        if (apiKey === null) return null;
+        return {
+          api: new HttpFlowApi({ apiKey, fetch: net.fetch, clock: systemClock }),
+          reportKeyRejected: () => flowAccount.reportKeyRejected(apiKey),
+        };
+      },
+    });
+    await repoMappings.load();
+    // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
+    /** 목록을 받은 계정의 사용자 ID. */
+    let projectsAccountId = flowAccount.state().account?.userId ?? null;
+    flowAccount.onChange(({ account }) => {
+      if ((account?.userId ?? null) === projectsAccountId) return;
+      projectsAccountId = account?.userId ?? null;
+      void repoMappings.refresh();
+    });
+    registerIpc({ windows, logger, flowAccount, globalProblems, agentConnection, agentPreferences, workFolders, repoMappings });
     // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
+    // 참여 Flow 프로젝트 목록은 "저장소" 칸을 열 때 받는다.
     void workFolders.refresh();
 
     /** 트레이 동작이 부를 창 관리자. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */

@@ -38,8 +38,11 @@ export type AgentId = (typeof AGENT_IDS)[number];
 /** 모델 고르기 명령이 받는 모델 이름의 최대 길이. */
 export const AGENT_MODEL_MAX_LENGTH = 200;
 
-/** 작업 폴더 명령이 받는 경로의 최대 길이. */
+/** 작업 폴더·저장소 매핑 명령이 받는 경로의 최대 길이. */
 export const WORK_FOLDER_PATH_MAX_LENGTH = 4096;
+
+/** 저장소 매핑 명령이 받는 Flow 프로젝트 ID의 최대 길이. */
+export const FLOW_PROJECT_ID_MAX_LENGTH = 64;
 
 /** "Flow 계정" 칸의 계정 카드에 보일 계정. */
 export interface FlowAccountProfile {
@@ -234,6 +237,55 @@ export interface WorkFoldersSnapshot {
   rejected: RejectedFolderSnapshot[];
 }
 
+/** 매핑된 저장소 폴더를 확인한 상태. `missing`은 폴더를 찾을 수 없는 것이다. */
+export type MappedRepoStatus = 'checking' | 'found' | 'missing';
+
+/** 매핑에 연결된 저장소 하나. */
+export interface MappedRepoSnapshot {
+  /** 저장소 폴더의 절대 경로. */
+  path: string;
+  /** 폴더가 있는지 확인한 상태. */
+  status: MappedRepoStatus;
+}
+
+/** 저장소 매핑 하나. */
+export interface RepoMappingSnapshot {
+  /** Flow 프로젝트 ID. 매핑의 키다. */
+  projectId: string;
+  /** 참여 목록에서 찾은 Flow 프로젝트 이름. 모르면 `null`. */
+  title: string | null;
+  /** 연결된 저장소. */
+  repos: MappedRepoSnapshot[];
+  /** 연결된 폴더 중 하나라도 없는지 여부. */
+  missing: boolean;
+}
+
+/** 매핑에서 고를 참여 Flow 프로젝트 하나. */
+export interface ParticipantProjectSnapshot {
+  /** Flow 프로젝트 ID. */
+  projectId: string;
+  /** Flow 프로젝트 이름. 비어 있을 수 있다. */
+  title: string;
+}
+
+/** 참여 Flow 프로젝트 목록을 받지 못한 이유. `no-key`는 쓸 키가 아직 없는 것이다. */
+export type ParticipantProjectsFailure = 'no-key' | 'unauthorized' | 'network' | 'rate-limited' | 'unexpected';
+
+/** 참여 Flow 프로젝트 목록의 상태. */
+export type ParticipantProjectsSnapshot =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'loaded'; projects: ParticipantProjectSnapshot[] }
+  | { status: 'failed'; reason: ParticipantProjectsFailure };
+
+/** 설정 "저장소" 칸의 저장소 매핑. */
+export interface RepoMappingsSnapshot {
+  /** 저장된 매핑. */
+  mappings: RepoMappingSnapshot[];
+  /** 매핑에서 고를 참여 Flow 프로젝트 목록. */
+  projects: ParticipantProjectsSnapshot;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -252,6 +304,8 @@ export interface AppSnapshot {
   agentPreferences: AgentPreferencesSnapshot;
   /** 작업 폴더와 "이 PC에서 찾은 폴더". */
   workFolders: WorkFoldersSnapshot;
+  /** 저장소 매핑과 고를 참여 Flow 프로젝트 목록. */
+  repoMappings: RepoMappingsSnapshot;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -269,7 +323,9 @@ export type AppEvent =
   /** 기본 에이전트나 모델 선택이 바뀌었다. 연결된 에이전트가 바뀔 때도 온다. */
   | { type: 'agent-preferences-changed'; agentPreferences: AgentPreferencesSnapshot }
   /** 작업 폴더나 그 훑은 결과, "이 PC에서 찾은 폴더"가 바뀌었다. */
-  | { type: 'work-folders-changed'; workFolders: WorkFoldersSnapshot };
+  | { type: 'work-folders-changed'; workFolders: WorkFoldersSnapshot }
+  /** 저장소 매핑이나 그 폴더 확인 결과, 참여 Flow 프로젝트 목록이 바뀌었다. */
+  | { type: 'repo-mappings-changed'; repoMappings: RepoMappingsSnapshot };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =
@@ -302,7 +358,15 @@ export type AppCommand =
   /** 작업 폴더를 지운다. 그 안을 가리키는 저장소 매핑은 그대로 둔다. */
   | { type: 'remove-work-folder'; path: string }
   /** 작업 폴더와 "이 PC에서 찾은 폴더"를 다시 훑는다. "저장소" 칸을 열 때 보낸다. */
-  | { type: 'refresh-work-folders' };
+  | { type: 'refresh-work-folders' }
+  /** 연결된 폴더를 다시 확인하고 참여 Flow 프로젝트 목록을 다시 받는다. "저장소" 칸을 열 때와 [다시 불러오기]에 보낸다. */
+  | { type: 'refresh-repo-mappings' }
+  /** 폴더 선택 창으로 고른 폴더를 Flow 프로젝트에 연결한다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
+  | { type: 'pick-mapping-repos'; projectId: string }
+  /** 매핑에서 저장소 하나를 뺀다. 마지막 저장소를 빼면 매핑도 없어진다. */
+  | { type: 'remove-mapping-repo'; projectId: string; path: string }
+  /** 매핑을 통째로 지운다. */
+  | { type: 'remove-repo-mapping'; projectId: string };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -334,9 +398,14 @@ function isAgentModelInput(value: unknown): value is string | null {
   return value === null || (typeof value === 'string' && value !== '' && value.length <= AGENT_MODEL_MAX_LENGTH);
 }
 
-/** 작업 폴더 명령에 실을 수 있는 경로인지 확인한다. 목록이나 제안에 있는 경로인지는 main이 본다. */
+/** 작업 폴더·저장소 매핑 명령에 실을 수 있는 경로인지 확인한다. 목록이나 제안에 있는 경로인지는 main이 본다. */
 function isWorkFolderPathInput(value: unknown): value is string {
   return typeof value === 'string' && value !== '' && value.length <= WORK_FOLDER_PATH_MAX_LENGTH;
+}
+
+/** 저장소 매핑 명령에 실을 수 있는 Flow 프로젝트 ID인지 확인한다. 참여 목록이나 매핑에 있는 ID인지는 main이 본다. */
+function isFlowProjectIdInput(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= FLOW_PROJECT_ID_MAX_LENGTH;
 }
 
 /** 키 확인 명령에 실을 수 있는 키인지 확인한다. 앞뒤 공백 정리와 키 형식 판단은 main이 한다. */
@@ -371,6 +440,13 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'add-suggested-work-folder':
     case 'remove-work-folder':
       return isWorkFolderPathInput(candidate.path) ? { type: candidate.type, path: candidate.path } : null;
+    case 'pick-mapping-repos':
+    case 'remove-repo-mapping':
+      return isFlowProjectIdInput(candidate.projectId) ? { type: candidate.type, projectId: candidate.projectId } : null;
+    case 'remove-mapping-repo':
+      return isFlowProjectIdInput(candidate.projectId) && isWorkFolderPathInput(candidate.path)
+        ? { type: 'remove-mapping-repo', projectId: candidate.projectId, path: candidate.path }
+        : null;
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
     case 'check-agent':
@@ -379,6 +455,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'copy-agent-fix-command':
     case 'pick-work-folders':
     case 'refresh-work-folders':
+    case 'refresh-repo-mappings':
       return { type: candidate.type };
     default:
       return null;

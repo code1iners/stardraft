@@ -66,7 +66,7 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
           {section === 'agent' && snapshot && (
             <AgentSection agentConnection={snapshot.agentConnection} agentPreferences={snapshot.agentPreferences} platform={snapshot.platform} />
           )}
-          {section === 'repositories' && snapshot && <RepositoriesSection workFolders={snapshot.workFolders} />}
+          {section === 'repositories' && snapshot && <RepositoriesSection workFolders={snapshot.workFolders} repoMappings={snapshot.repoMappings} />}
           {section === 'general' && <GeneralSection snapshot={snapshot} />}
         </main>
       </div>

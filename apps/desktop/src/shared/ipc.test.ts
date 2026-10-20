@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { AGENT_MODEL_MAX_LENGTH, FLOW_API_KEY_MAX_LENGTH, parseAppCommand, WORK_FOLDER_PATH_MAX_LENGTH } from './ipc';
+import {
+  AGENT_MODEL_MAX_LENGTH,
+  FLOW_API_KEY_MAX_LENGTH,
+  FLOW_PROJECT_ID_MAX_LENGTH,
+  parseAppCommand,
+  WORK_FOLDER_PATH_MAX_LENGTH,
+} from './ipc';
 
 describe('렌더러가 보낸 명령 검사', () => {
   it('설정 열기 명령을 칸과 함께 받는다', () => {
@@ -98,6 +104,28 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'remove-work-folder', path: 1 })).toBeNull();
     expect(parseAppCommand({ type: 'remove-work-folder' })).toBeNull();
     expect(parseAppCommand({ type: 'remove-work-folder', path: '/'.repeat(WORK_FOLDER_PATH_MAX_LENGTH + 1) })).toBeNull();
+  });
+
+  it('저장소 매핑 명령은 Flow 프로젝트 ID를 받고, 폴더 고르기에서 렌더러가 실은 경로는 버린다', () => {
+    expect(parseAppCommand({ type: 'refresh-repo-mappings' })).toEqual({ type: 'refresh-repo-mappings' });
+    expect(parseAppCommand({ type: 'pick-mapping-repos', projectId: '101', paths: ['/tmp/evil'] })).toEqual({
+      type: 'pick-mapping-repos',
+      projectId: '101',
+    });
+    expect(parseAppCommand({ type: 'remove-repo-mapping', projectId: '101' })).toEqual({ type: 'remove-repo-mapping', projectId: '101' });
+    expect(parseAppCommand({ type: 'remove-mapping-repo', projectId: '101', path: '/Users/me/api' })).toEqual({
+      type: 'remove-mapping-repo',
+      projectId: '101',
+      path: '/Users/me/api',
+    });
+  });
+
+  it('Flow 프로젝트 ID나 경로가 비었거나 문자열이 아니거나 너무 길면 저장소 매핑 명령을 거부한다', () => {
+    expect(parseAppCommand({ type: 'pick-mapping-repos', projectId: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'pick-mapping-repos', projectId: 101 })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-repo-mapping', projectId: '1'.repeat(FLOW_PROJECT_ID_MAX_LENGTH + 1) })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-mapping-repo', projectId: '101' })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-mapping-repo', projectId: '101', path: '' })).toBeNull();
   });
 
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {

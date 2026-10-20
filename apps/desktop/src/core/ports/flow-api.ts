@@ -10,6 +10,16 @@ export interface FlowEmployee {
   email: string;
 }
 
+/** 내가 참여한 Flow 프로젝트. `GET /user/projects/participants` 응답에서 앱이 쓰는 값이다. */
+export interface FlowProject {
+  /** Flow 프로젝트 ID. 알림의 `projectId`와 같은 값이고 저장소 매핑의 키다. */
+  projectId: string;
+  /** Flow 프로젝트 이름. 비어 있을 수 있다. */
+  title: string;
+  /** Flow에서 열기 주소. 없으면 `null`. */
+  projectUrl: string | null;
+}
+
 /** Flow API 호출이 실패한 이유. */
 export type FlowApiFailure =
   /** `401`. 키가 맞지 않거나 삭제·변경됐다. */
@@ -33,4 +43,6 @@ export type FlowApiResult<T> = { ok: true; value: T } | { ok: false; failure: Fl
 export interface FlowApi {
   /** 키 소유자 본인의 구성원 정보를 조회한다. 키 확인에 쓴다. */
   getMe(): Promise<FlowApiResult<FlowEmployee>>;
+  /** 키 소유자가 참여한 Flow 프로젝트 목록을 조회한다. 저장소 매핑에서 Flow 프로젝트를 고를 때 쓴다. */
+  listParticipantProjects(): Promise<FlowApiResult<FlowProject[]>>;
 }

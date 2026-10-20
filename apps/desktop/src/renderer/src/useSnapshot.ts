@@ -28,6 +28,8 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, agentConnection: event.agentConnection });
       } else if (event.type === 'agent-preferences-changed') {
         setSnapshot((current) => current && { ...current, agentPreferences: event.agentPreferences });
+      } else if (event.type === 'work-folders-changed') {
+        setSnapshot((current) => current && { ...current, workFolders: event.workFolders });
       }
     });
   }, []);

@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
+import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import {
   IPC_CHANNELS,
   parseAppCommand,
@@ -11,8 +12,9 @@ import {
   type AppSnapshot,
   type FlowAccountProfile,
   type FlowAccountSnapshot,
+  type GlobalProblemSnapshot,
 } from '../shared/ipc';
-import { dataFolderPath, logsFolderPath } from './app-identity';
+import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
 import type { AppWindows } from './app-windows';
 import { isAppRendererUrl } from './renderer-page';
 
@@ -24,6 +26,8 @@ export interface IpcServices {
   logger: Logger;
   /** "Flow 계정" 칸의 키 확인과 계정. */
   flowAccount: FlowAccount;
+  /** 작은 창 띠에 보일 전역 문제. */
+  globalProblems: GlobalProblems;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -43,15 +47,19 @@ export function registerIpc(services: IpcServices): void {
   services.flowAccount.onChange((state) =>
     services.windows.broadcast({ type: 'flow-account-changed', flowAccount: flowAccountSnapshot(state) }),
   );
+  services.globalProblems.onChange((current) =>
+    services.windows.broadcast({ type: 'global-problem-changed', globalProblem: activeProblemSnapshot(current) }),
+  );
 }
 
 /** 지금 앱 상태의 스냅숏. */
-function currentSnapshot({ flowAccount }: IpcServices): AppSnapshot {
+function currentSnapshot({ flowAccount, globalProblems }: IpcServices): AppSnapshot {
   return {
     appName: app.name,
     version: app.getVersion(),
-    platform: process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'other',
+    platform: appPlatform(),
     flowAccount: flowAccountSnapshot(flowAccount.state()),
+    globalProblem: activeProblemSnapshot(globalProblems.current()),
   };
 }
 
@@ -91,6 +99,16 @@ function flowAccountSnapshot(state: FlowAccountState): FlowAccountSnapshot {
         ? { status: 'awaiting-confirmation', account: accountProfile(state.keyCheck.account) }
         : { status: state.keyCheck.status },
   };
+}
+
+/** core의 전역 문제를 렌더러·트레이·알림 문구가 쓰는 모양으로 바꾼다. */
+export function globalProblemSnapshot(problem: GlobalProblem): GlobalProblemSnapshot {
+  return { cause: problem.cause, reason: problem.reason };
+}
+
+/** 지금 보일 전역 문제를 렌더러에 넘길 모양으로 바꾼다. 없으면 `null`. */
+function activeProblemSnapshot(current: ActiveGlobalProblem | null): GlobalProblemSnapshot | null {
+  return current && globalProblemSnapshot(current.problem);
 }
 
 /** 계정 카드에 보일 값. 사용자 ID는 화면에 쓰지 않으므로 렌더러에 넘기지 않는다. */

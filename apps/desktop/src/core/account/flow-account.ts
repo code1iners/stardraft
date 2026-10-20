@@ -4,6 +4,7 @@ import type { Clock } from '../ports/clock';
 import type { FlowApi, FlowApiFailure, FlowEmployee } from '../ports/flow-api';
 import type { SecretReadResult, SecretStore } from '../ports/secret-store';
 import type { StateStore } from '../ports/state-store';
+import type { GlobalProblems } from '../problems/global-problems';
 import { SerialQueue } from '../serial-queue';
 
 /** 요청 한도(`429`)에 걸렸을 때 자동으로 다시 시도하는 횟수. */
@@ -70,6 +71,8 @@ export interface FlowAccountOptions {
   clock: Clock;
   /** 진단 로그. 키와 사용자 ID는 남기지 않는다. */
   logger: Logger;
+  /** "키 확인 필요"를 올리고 내리는 전역 문제 상태. */
+  problems: GlobalProblems;
 }
 
 /** Flow가 확인해 준 키. 그 키를 확인한 확인 하나에 묶인다. */
@@ -94,6 +97,8 @@ export class FlowAccount {
   private pendingSwitch: VerifiedKey | null = null;
   /** 진행 중인 키 확인. */
   private attempt: KeyCheckAttempt | null = null;
+  /** 지금 쓰는 키. 저장된 키를 읽었거나 확인한 키를 저장했을 때 정해진다. */
+  private currentKey: string | null = null;
   /** 상태가 바뀔 때 부를 함수. */
   private readonly listeners = new Set<(state: FlowAccountState) => void>();
   /**
@@ -107,6 +112,43 @@ export class FlowAccount {
   /** `state.db`에 둔 계정을 읽어 둔다. 앱이 시작할 때 한 번 부른다. */
   async load(): Promise<void> {
     this.setState({ account: await this.options.stateStore.getAccount() });
+  }
+
+  /**
+   * 저장된 키를 읽어 지금 쓰는 키로 둔다. 앱이 시작할 때 `load` 뒤에 한 번 부른다.
+   * 키를 풀 수 없거나(키체인 거부, 항목 삭제, 다른 PC로 복사) 계정은 있는데 키가 없으면 "키 확인 필요"를 올린다.
+   * macOS는 업데이트 뒤 이 읽기에서 키체인 재허용을 묻고 사용자가 답할 때까지 끝나지 않으므로, 앱 시작을 이 읽기로 막지 않는다.
+   */
+  async checkStoredKey(): Promise<void> {
+    // 읽는 사이에 확인한 새 키를 저장하면, 늦게 끝난 읽기가 옛 결과로 문제를 올리지 않게 저장과 한 차례씩 한다.
+    await this.saving.run(async () => {
+      /** 저장된 키를 읽은 결과. */
+      const stored = await this.options.secretStore.readFlowApiKey();
+      if (stored.kind === 'found') {
+        this.currentKey = stored.value;
+        return;
+      }
+      // 처음 실행이라 계정도 키도 없으면 문제가 아니다. 키는 온보딩에서 받는다.
+      if (stored.kind === 'missing' && !this.account) return;
+
+      this.options.logger.warn('flow-account.stored-key-unreadable', { result: stored.kind });
+      this.options.problems.raise({ cause: 'flow-key', reason: 'unreadable' });
+    });
+  }
+
+  /** 지금 쓰는 키. 아직 없거나 저장된 키를 읽을 수 없으면 `null`. */
+  apiKey(): string | null {
+    return this.currentKey;
+  }
+
+  /**
+   * Flow가 `apiKey`를 거부했다(폴링·게시의 `401`). 지금 쓰는 키면 "키 확인 필요"를 올린다.
+   * 키를 바꾸기 전에 보낸 요청의 `401`이 늦게 와도 새 키를 문제로 보지 않게, 지금 키가 아니면 무시한다.
+   */
+  reportKeyRejected(apiKey: string): void {
+    if (apiKey !== this.currentKey) return;
+    this.options.logger.warn('flow-account.key-rejected');
+    this.options.problems.raise({ cause: 'flow-key', reason: 'rejected' });
   }
 
   /** 지금 상태. */
@@ -230,6 +272,7 @@ export class FlowAccount {
       this.options.logger.error('flow-account.account-save-failed', errorFields(error));
       // 같은 사람의 새 키는 그대로 쓰고 연결을 이어 간다. 바뀐 이름·소속은 다음 확인 때 다시 남긴다.
       if (sameUser) {
+        this.useKey(apiKey);
         if (!attempt.cancelled) this.setState({ keyCheck: IDLE });
         return CONNECTED;
       }
@@ -238,10 +281,17 @@ export class FlowAccount {
       return this.fail(attempt, 'save-failed');
     }
 
+    this.useKey(apiKey);
     // 저장하는 사이에 취소됐으면 진행 상태는 그 뒤의 확인 몫이라 계정만 바꾼다.
     this.setState(attempt.cancelled ? { account } : { account, keyCheck: IDLE });
     this.options.logger.info('flow-account.connected', { resetState: mode === 'reset-state' });
     return CONNECTED;
+  }
+
+  /** 확인하고 저장한 키를 지금 쓰는 키로 둔다. Flow가 받아 준 키이므로 "키 확인 필요"는 해결됐다. */
+  private useKey(apiKey: string): void {
+    this.currentKey = apiKey;
+    this.options.problems.resolve('flow-key');
   }
 
   /** 지금 연결된 계정이 `account`와 같은 사람인지 본다. 연결된 계정이 없으면 `false`. */

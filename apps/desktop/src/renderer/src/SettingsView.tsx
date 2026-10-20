@@ -58,7 +58,9 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
         </nav>
         <main className="settings-main">
           <h2>{SECTION_LABELS[section]}</h2>
-          {section === 'flow-account' && snapshot && <FlowAccountSection flowAccount={snapshot.flowAccount} />}
+          {section === 'flow-account' && snapshot && (
+            <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
+          )}
           {section === 'general' && <GeneralSection snapshot={snapshot} />}
         </main>
       </div>

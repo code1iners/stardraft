@@ -6,9 +6,11 @@ import { FakeClock } from '../fakes/fake-clock';
 import { FakeEncryption } from '../fakes/fake-encryption';
 import { FAKE_ME } from '../fakes/fake-flow-api';
 import { FakeFlowServer } from '../fakes/fake-flow-server';
+import { RecordingNotifier } from '../fakes/recording-notifier';
 import { HttpFlowApi } from '../flow/http-flow-api';
 import { createLogger } from '../logging/logger';
 import type { FlowEmployee } from '../ports/flow-api';
+import { GlobalProblems } from '../problems/global-problems';
 import { DEFAULT_SETTINGS, type Settings } from '../ports/settings-store';
 import { openAppData, type AppData } from '../storage/app-data';
 import { FlowAccount } from './flow-account';
@@ -34,11 +36,22 @@ const silentLogger = createLogger([], new FakeClock());
 /** 다른 사람의 가짜 계정. */
 const OTHER: FlowEmployee = { userId: 'other@example.test', name: '다른 사용자', division: '다른 팀', email: 'other@example.test' };
 
-/** 임시 데이터 폴더, 가짜 Flow 서버, 가짜 시계로 Flow 계정을 연다. 같은 데이터 폴더로 다시 부르면 앱을 다시 켠 것과 같다. */
-async function setup() {
+/**
+ * 임시 데이터 폴더, 가짜 Flow 서버, 가짜 시계, 기록만 하는 알림 포트로 Flow 계정을 연다.
+ * 같은 데이터 폴더로 다시 부르면 앱을 다시 켠 것과 같다. `failDecrypt`를 켜면 키체인 거부처럼 저장된 키를 풀 수 없다.
+ */
+async function setup({ failDecrypt = false }: { failDecrypt?: boolean } = {}) {
   const clock = new FakeClock(Date.UTC(2026, 9, 20, 9, 0, 0));
   const server = new FakeFlowServer();
   const encryption = new FakeEncryption();
+  encryption.failDecrypt = failDecrypt;
+  const notifier = new RecordingNotifier();
+  const problems = new GlobalProblems({
+    notifier,
+    clock,
+    logger: silentLogger,
+    notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }),
+  });
   opened?.close();
   /** 형식 검사를 마친 데이터 폴더. */
   const result = await openAppData({ dataDir, appVersion: '0.1.0', logger: silentLogger, encryption });
@@ -51,9 +64,10 @@ async function setup() {
     stateStore: result.stateStore,
     clock,
     logger: silentLogger,
+    problems,
   });
   await flowAccount.load();
-  return { clock, server, encryption, data: result, flowAccount };
+  return { clock, server, encryption, notifier, problems, data: result, flowAccount };
 }
 
 describe('Flow 계정 연결', () => {
@@ -361,5 +375,132 @@ describe('계정 비교', () => {
 
     expect(flowAccount.state()).toEqual({ account: FAKE_ME, keyCheck: { status: 'idle' } });
     await expect(data.secretStore.readFlowApiKey()).resolves.toEqual({ kind: 'found', value: 'fake-key-2' });
+  });
+});
+
+describe('키 확인 필요', () => {
+  it('앱을 시작할 때 저장된 키를 풀 수 없으면(키체인 거부·항목 삭제) 키 확인 필요가 되고 알림이 한 번 뜬다. 계정은 그대로다', async () => {
+    const first = await setup();
+    first.server.addAccount('fake-key-1', FAKE_ME);
+    await first.flowAccount.checkKey('fake-key-1');
+
+    const { flowAccount, problems, notifier } = await setup({ failDecrypt: true });
+    await flowAccount.checkStoredKey();
+
+    expect(problems.current()?.problem).toEqual({ cause: 'flow-key', reason: 'unreadable' });
+    expect(notifier.sent).toEqual([{ title: 'flow-key', body: 'unreadable' }]);
+    expect(flowAccount.state().account).toEqual(FAKE_ME);
+    expect(flowAccount.apiKey()).toBeNull();
+  });
+
+  it('계정은 있는데 저장된 키 파일이 없어도 키 확인 필요가 된다', async () => {
+    const first = await setup();
+    first.server.addAccount('fake-key-1', FAKE_ME);
+    await first.flowAccount.checkKey('fake-key-1');
+    await first.data.secretStore.deleteFlowApiKey();
+
+    const { flowAccount, problems } = await setup();
+    await flowAccount.checkStoredKey();
+
+    expect(problems.current()?.problem).toEqual({ cause: 'flow-key', reason: 'unreadable' });
+  });
+
+  it('처음 실행이라 계정도 키도 없으면 전역 문제가 없다', async () => {
+    const { flowAccount, problems, notifier } = await setup();
+
+    await flowAccount.checkStoredKey();
+
+    expect(problems.current()).toBeNull();
+    expect(notifier.sent).toEqual([]);
+  });
+
+  it('저장된 키를 풀 수 있으면 전역 문제가 없고 그 키로 Flow를 부를 수 있다', async () => {
+    const first = await setup();
+    first.server.addAccount('fake-key-1', FAKE_ME);
+    await first.flowAccount.checkKey('fake-key-1');
+
+    const { flowAccount, problems } = await setup();
+    await flowAccount.checkStoredKey();
+
+    expect(problems.current()).toBeNull();
+    expect(flowAccount.apiKey()).toBe('fake-key-1');
+  });
+
+  it('복호화 실패 뒤 같은 계정의 키를 다시 넣으면 키 확인 필요가 사라지고, 기준점 같은 상태는 이어진다', async () => {
+    const first = await setup();
+    first.server.addAccount('fake-key-1', FAKE_ME);
+    await first.flowAccount.checkKey('fake-key-1');
+    await first.data.stateStore.setBaselineAlarmId('1001');
+
+    const { server, data, flowAccount, problems } = await setup({ failDecrypt: true });
+    await flowAccount.checkStoredKey();
+    server.addAccount('fake-key-2', FAKE_ME);
+
+    await expect(flowAccount.checkKey('fake-key-2')).resolves.toEqual({ kind: 'connected' });
+
+    expect(problems.current()).toBeNull();
+    expect(flowAccount.apiKey()).toBe('fake-key-2');
+    await expect(data.stateStore.getBaselineAlarmId()).resolves.toBe('1001');
+    await expect(data.stateStore.getAccount()).resolves.toEqual(FAKE_ME);
+  });
+
+  it('다시 넣은 키를 Flow가 거부하면 키 확인 필요가 그대로 남는다', async () => {
+    const first = await setup();
+    first.server.addAccount('fake-key-1', FAKE_ME);
+    await first.flowAccount.checkKey('fake-key-1');
+
+    const { flowAccount, problems } = await setup({ failDecrypt: true });
+    await flowAccount.checkStoredKey();
+
+    await expect(flowAccount.checkKey('wrong-key')).resolves.toEqual({ kind: 'failed', reason: 'unauthorized' });
+
+    expect(problems.current()?.problem).toEqual({ cause: 'flow-key', reason: 'unreadable' });
+  });
+
+  it('Flow가 지금 키를 거부하면(401) 키 확인 필요가 되고, 반복돼도 알림은 한 번이며, 키를 다시 넣어 해결된 뒤 다시 거부되면 다시 알린다', async () => {
+    const { server, flowAccount, problems, notifier } = await setup();
+    server.addAccount('fake-key-1', FAKE_ME);
+    server.addAccount('fake-key-2', FAKE_ME);
+    await flowAccount.checkKey('fake-key-1');
+
+    flowAccount.reportKeyRejected('fake-key-1');
+    flowAccount.reportKeyRejected('fake-key-1');
+    expect(problems.current()?.problem).toEqual({ cause: 'flow-key', reason: 'rejected' });
+    expect(notifier.sent).toHaveLength(1);
+
+    await flowAccount.checkKey('fake-key-2');
+    expect(problems.current()).toBeNull();
+
+    flowAccount.reportKeyRejected('fake-key-2');
+    expect(problems.current()?.problem).toEqual({ cause: 'flow-key', reason: 'rejected' });
+    expect(notifier.sent).toHaveLength(2);
+  });
+
+  it('키를 바꾼 뒤에 도착한 옛 키의 401은 키 확인 필요로 만들지 않는다', async () => {
+    const { server, flowAccount, problems } = await setup();
+    server.addAccount('fake-key-1', FAKE_ME);
+    server.addAccount('fake-key-2', FAKE_ME);
+    await flowAccount.checkKey('fake-key-1');
+    await flowAccount.checkKey('fake-key-2');
+
+    flowAccount.reportKeyRejected('fake-key-1');
+
+    expect(problems.current()).toBeNull();
+  });
+
+  it('다른 계정의 키로 바꾸는 것을 확인하면 키 확인 필요가 사라지고, 취소하면 남는다', async () => {
+    const { server, flowAccount, problems } = await setup();
+    server.addAccount('fake-key-1', FAKE_ME);
+    server.addAccount('fake-key-2', OTHER);
+    await flowAccount.checkKey('fake-key-1');
+    flowAccount.reportKeyRejected('fake-key-1');
+
+    await flowAccount.checkKey('fake-key-2');
+    flowAccount.cancelKeyCheck();
+    expect(problems.current()?.problem).toEqual({ cause: 'flow-key', reason: 'rejected' });
+
+    await flowAccount.checkKey('fake-key-2');
+    await expect(flowAccount.confirmSwitch()).resolves.toEqual({ kind: 'connected' });
+    expect(problems.current()).toBeNull();
   });
 });

@@ -1,19 +1,23 @@
-import { app, dialog, Menu, net, safeStorage, type Tray } from 'electron';
+import { app, dialog, Menu, net, safeStorage } from 'electron';
 import { join } from 'node:path';
 import { FlowAccount } from '../core/account/flow-account';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { errorFields } from '../core/logging/logger';
+import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { openAppData, type AppData } from '../core/storage/app-data';
-import { APP_ID, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
+import { trayIndicator } from '../core/tray-indicator';
+import { globalProblemText, type GlobalProblemText } from '../shared/global-problem-text';
+import { APP_ID, appPlatform, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
 import { createAppLogger } from './app-logger';
 import { AppWindows } from './app-windows';
-import { registerIpc } from './ipc';
+import { globalProblemSnapshot, registerIpc } from './ipc';
+import { OsNotifier } from './os-notifier';
 import { hardenRenderers } from './security';
 import { systemClock } from './system-clock';
-import { createTray } from './tray';
+import { AppTray, type TrayView } from './tray';
 
 /** 트레이 아이콘. 변수로 붙잡아 두지 않으면 가비지 컬렉션으로 사라진다. */
-let tray: Tray | null = null;
+let tray: AppTray | null = null;
 /** 작은 창과 설정 창. */
 let windows: AppWindows | null = null;
 /** 형식 검사를 마친 설정과 상태 저장소. */
@@ -54,6 +58,18 @@ function start(): void {
     appData = await openDataOrQuit();
     if (!appData) return;
 
+    /** 감지를 멈추게 하는 전역 문제. 알림을 누르면 띠가 보이는 작은 창을 띄운다. */
+    const globalProblems = new GlobalProblems({
+      notifier: new OsNotifier(() => windows?.openPopover(), logger),
+      clock: systemClock,
+      logger,
+      notificationFor: (problem) => {
+        /** 띠와 같은 문구. */
+        const text = problemText(problem);
+        return { title: text.title, body: text.message };
+      },
+    });
+
     /** 설정 창 "Flow 계정" 칸의 키 확인과 계정. Flow 요청은 OS 프록시와 인증서 설정을 따르는 Chromium 네트워크로 보낸다. */
     const flowAccount = new FlowAccount({
       connectFlow: (apiKey) => new HttpFlowApi({ apiKey, fetch: net.fetch, clock: systemClock }),
@@ -61,6 +77,7 @@ function start(): void {
       stateStore: appData.stateStore,
       clock: systemClock,
       logger,
+      problems: globalProblems,
     });
     await flowAccount.load();
 
@@ -68,17 +85,37 @@ function start(): void {
       // 설정 창을 닫으면 그 창에서 시작한 키 확인과 확인을 기다리던 계정 바꾸기를 그만둔다.
       onSettingsClosed: () => flowAccount.cancelKeyCheck(),
     });
-    registerIpc({ windows, logger, flowAccount });
+    registerIpc({ windows, logger, flowAccount, globalProblems });
 
     /** 트레이 동작이 부를 창 관리자. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appWindows = windows;
-    tray = createTray({
+    /** 만든 트레이. 전역 문제를 따라 표시를 바꿀 때 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
+    const appTray = new AppTray({
       togglePopover: () => appWindows.togglePopover(),
       openPopover: () => appWindows.openPopover(),
-      openSettings: () => appWindows.openSettings(),
+      openSettings: (section) => appWindows.openSettings(section),
       quit: () => app.quit(),
     });
+    tray = appTray;
+    appTray.show(trayView(globalProblems.current()));
+    globalProblems.onChange((current) => appTray.show(trayView(current)));
+
+    // 저장된 키는 트레이를 띄운 뒤에 읽는다. 업데이트 뒤에는 키체인 재허용을 묻고 답할 때까지 끝나지 않기 때문이다.
+    flowAccount.checkStoredKey().catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)));
   });
+}
+
+/** 전역 문제에 맞춘 트레이 표시. 검토 대기 수는 멘션 묶음을 더하는 티켓이 넘긴다. */
+function trayView(current: ActiveGlobalProblem | null): TrayView {
+  return {
+    indicator: trayIndicator({ hasGlobalProblem: current !== null, reviewCount: 0 }),
+    problem: current && problemText(current.problem),
+  };
+}
+
+/** 작은 창 띠와 같은 전역 문제 문구. 트레이 메뉴와 OS 알림에 쓴다. */
+function problemText(problem: GlobalProblem): GlobalProblemText {
+  return globalProblemText(globalProblemSnapshot(problem), appPlatform());
 }
 
 /** 시작할 때 버전과 폴더 위치를 로그에 남긴다. macOS는 업데이트 설치 기록(ShipIt 로그) 위치도 남긴다. */

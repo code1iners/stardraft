@@ -65,7 +65,6 @@ describe('참여 Flow 프로젝트 목록', () => {
       {
         projectId: '101',
         title: '가짜 프로젝트 A',
-        projectUrl: 'https://flow.example.test/p/101',
         repos: [{ path: api, status: 'found' }],
         missing: false,
       },
@@ -101,7 +100,7 @@ describe('참여 Flow 프로젝트 목록', () => {
 
     expect(mappings.state().projects).toEqual({ status: 'failed', reason: 'network' });
     expect(mappings.state().mappings).toEqual([
-      { projectId: '101', title: null, projectUrl: null, repos: [{ path: api, status: 'found' }], missing: false },
+      { projectId: '101', title: null, repos: [{ path: api, status: 'found' }], missing: false },
     ]);
   });
 });
@@ -243,7 +242,7 @@ describe('저장된 매핑 읽기', () => {
     const { mappings } = await setup({ repoMappings: broken }, null);
 
     expect(mappings.state().mappings).toEqual([
-      { projectId: '101', title: null, projectUrl: null, repos: [{ path: api, status: 'checking' }], missing: false },
+      { projectId: '101', title: null, repos: [{ path: api, status: 'checking' }], missing: false },
     ]);
   });
 });

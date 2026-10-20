@@ -161,7 +161,7 @@ function RepoMappingsField({ repoMappings }: RepoMappingsFieldProps) {
           {repoMappings.mappings.map((mapping) => (
             <li key={mapping.projectId} className="folder-item">
               <div className="folder-row">
-                <span className="mapping-title">{mapping.title || `Flow 프로젝트 ${mapping.projectId}`}</span>
+                <span className="mapping-title">{projectLabel(mapping.projectId, mapping.title)}</span>
                 {mapping.missing && <span className="danger-text">폴더를 찾을 수 없음</span>}
                 <button
                   type="button"
@@ -210,7 +210,7 @@ function RepoMappingsField({ repoMappings }: RepoMappingsFieldProps) {
           <option value="">{projectsPlaceholder(projects, choices.length)}</option>
           {choices.map((project) => (
             <option key={project.projectId} value={project.projectId}>
-              {project.title || `Flow 프로젝트 ${project.projectId}`}
+              {projectLabel(project.projectId, project.title)}
             </option>
           ))}
         </select>
@@ -226,15 +226,18 @@ function RepoMappingsField({ repoMappings }: RepoMappingsFieldProps) {
       {projects.status === 'failed' && (
         <p className="field-error" role="alert">
           {PROJECTS_FAILURE_TEXT[projects.reason]}{' '}
-          {projects.reason !== 'no-key' && (
-            <button type="button" className="btn link" onClick={() => void window.stardraft.send({ type: 'refresh-repo-mappings' })}>
-              다시 불러오기
-            </button>
-          )}
+          <button type="button" className="btn link" onClick={() => void window.stardraft.send({ type: 'refresh-repo-mappings' })}>
+            다시 불러오기
+          </button>
         </p>
       )}
     </div>
   );
+}
+
+/** 화면에 보일 Flow 프로젝트 이름. 이름을 모르거나 비었으면 ID로 대신한다. */
+function projectLabel(projectId: string, title: string | null): string {
+  return title || `Flow 프로젝트 ${projectId}`;
 }
 
 /** Flow 프로젝트 선택 상자의 첫 줄 문구. */

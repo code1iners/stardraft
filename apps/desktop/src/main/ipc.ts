@@ -191,15 +191,10 @@ async function pickMappingRepos(windows: AppWindows, repoMappings: RepoMappings,
   await repoMappings.addRepos(projectId, result.filePaths);
 }
 
-/** core의 저장소 매핑 상태를 렌더러에 넘길 모양으로 바꾼다. 주소는 화면에 쓰지 않으므로 넘기지 않는다. */
+/** core의 저장소 매핑 상태를 렌더러에 넘길 모양으로 바꾼다. 프로젝트 주소는 화면에 쓰지 않으므로 넘기지 않는다. */
 function repoMappingsSnapshot(state: RepoMappingsState): RepoMappingsSnapshot {
   return {
-    mappings: state.mappings.map(({ projectId, title, repos, missing }) => ({
-      projectId,
-      title,
-      repos: repos.map((repo) => ({ ...repo })),
-      missing,
-    })),
+    mappings: state.mappings.map((mapping) => ({ ...mapping, repos: mapping.repos.map((repo) => ({ ...repo })) })),
     projects:
       state.projects.status === 'loaded'
         ? { status: 'loaded', projects: state.projects.projects.map(({ projectId, title }) => ({ projectId, title })) }

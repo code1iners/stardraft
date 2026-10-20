@@ -176,11 +176,7 @@ interface ProjectPage {
 /** 참여 Flow 프로젝트 목록 한 쪽을 읽는다. 프로젝트 배열을 찾지 못하면 `null`. */
 function readProjectPage(data: unknown): ProjectPage | null {
   /** 프로젝트 항목 배열. data 자체가 배열이거나 data 바로 아래의 배열이다. */
-  const items = Array.isArray(data)
-    ? data
-    : isRecord(data)
-      ? Object.values(data).find((value): value is unknown[] => Array.isArray(value) && (value.length === 0 || value.some(hasProjectId)))
-      : undefined;
+  const items = Array.isArray(data) ? data : isRecord(data) ? projectArrayIn(Object.values(data)) : null;
   if (!items) return null;
 
   /** 다음 쪽 커서. `hasNext`가 참이고 `lastCursor`가 있을 때만 있다. */
@@ -195,6 +191,16 @@ function readProjectPage(data: unknown): ProjectPage | null {
     }),
     nextCursor: lastCursor || null,
   };
+}
+
+/**
+ * data 바로 아래 값 가운데 프로젝트 배열을 고른다. `projectId`가 든 배열을 먼저 고르고,
+ * 없으면 배열이 하나뿐일 때만 그 배열을 빈 목록으로 본다. 관련 없는 빈 배열을 목록으로 잘못 읽지 않기 위해서다.
+ */
+function projectArrayIn(values: unknown[]): unknown[] | null {
+  /** data 바로 아래의 배열. */
+  const arrays = values.filter((value): value is unknown[] => Array.isArray(value));
+  return arrays.find((array) => array.some(hasProjectId)) ?? (arrays.length === 1 ? (arrays[0] ?? null) : null);
 }
 
 /** 프로젝트 ID가 든 항목인지 본다. */

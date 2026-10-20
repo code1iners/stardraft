@@ -22,8 +22,6 @@ export interface RepoMappingState {
   projectId: string;
   /** 참여 목록에서 찾은 Flow 프로젝트 이름. 목록을 아직 받지 못했거나 목록에 없으면 `null`. */
   title: string | null;
-  /** 참여 목록에서 찾은 Flow에서 열기 주소. 없으면 `null`. */
-  projectUrl: string | null;
   /** 연결된 저장소. 저장한 순서다. */
   repos: MappedRepoState[];
   /** 연결된 폴더 중 하나라도 없는지 여부. */
@@ -106,16 +104,17 @@ export class RepoMappings {
 
   /** 지금 상태. */
   state(): RepoMappingsState {
-    /** 참여 목록에서 ID로 찾는 프로젝트. */
-    const known = new Map(this.projects.status === 'loaded' ? this.projects.projects.map((project) => [project.projectId, project]) : []);
+    /** 참여 목록에서 ID로 찾는 프로젝트 이름. */
+    const titles = new Map(
+      this.projects.status === 'loaded' ? this.projects.projects.map((project) => [project.projectId, project.title]) : [],
+    );
     return {
       mappings: Object.entries(this.mappings).map(([projectId, paths]) => {
         /** 연결된 저장소의 확인 상태. */
         const repos = paths.map((path) => ({ path, status: this.statuses.get(path) ?? 'checking' }));
         return {
           projectId,
-          title: known.get(projectId)?.title ?? null,
-          projectUrl: known.get(projectId)?.projectUrl ?? null,
+          title: titles.get(projectId) ?? null,
           repos,
           missing: repos.some((repo) => repo.status === 'missing'),
         };
@@ -234,6 +233,11 @@ export class RepoMappings {
       return false;
     }
     this.mappings = mappings;
+    // 어느 매핑도 가리키지 않는 폴더의 확인 결과는 버린다.
+    /** 남은 매핑이 가리키는 폴더. */
+    const paths = this.allPaths();
+    for (const path of [...this.statuses.keys()]) if (!paths.has(path)) this.statuses.delete(path);
+    for (const path of [...this.checkIds.keys()]) if (!paths.has(path)) this.checkIds.delete(path);
     return true;
   }
 

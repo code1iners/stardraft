@@ -212,6 +212,26 @@ describe('Flow 어댑터: 참여 Flow 프로젝트 목록 조회', () => {
     await expect(connect(server).listParticipantProjects()).resolves.toEqual({ ok: false, failure: { kind: 'unauthorized' } });
   });
 
+  it('관련 없는 빈 배열이 앞에 있어도 projectId가 든 배열을 읽는다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ tags: [], projects: [{ projectId: '5', title: '다섯' }] }) });
+
+    await expect(connect(server).listParticipantProjects()).resolves.toEqual({
+      ok: true,
+      value: [{ projectId: '5', title: '다섯', projectUrl: null }],
+    });
+  });
+
+  it('빈 배열이 여럿이라 어느 것이 목록인지 알 수 없으면 응답 모양이 다르다고 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ tags: [], projects: [] }) });
+
+    await expect(connect(server).listParticipantProjects()).resolves.toEqual({
+      ok: false,
+      failure: { kind: 'unexpected-response' },
+    });
+  });
+
   it('프로젝트 목록을 찾을 수 없는 응답은 응답 모양이 다르다고 돌려준다', async () => {
     const server = new FakeFlowServer();
     server.replyNext({ status: 200, body: flowEnvelope({ message: '목록 없음' }) });

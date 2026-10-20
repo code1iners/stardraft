@@ -128,6 +128,14 @@ function start(): void {
       },
     });
     await repoMappings.load();
+    // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
+    /** 목록을 받은 계정의 사용자 ID. */
+    let projectsAccountId = flowAccount.state().account?.userId ?? null;
+    flowAccount.onChange(({ account }) => {
+      if ((account?.userId ?? null) === projectsAccountId) return;
+      projectsAccountId = account?.userId ?? null;
+      void repoMappings.refresh();
+    });
     registerIpc({ windows, logger, flowAccount, globalProblems, agentConnection, agentPreferences, workFolders, repoMappings });
     // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
     // 참여 Flow 프로젝트 목록은 "저장소" 칸을 열 때 받는다.

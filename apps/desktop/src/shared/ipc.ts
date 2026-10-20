@@ -61,6 +61,14 @@ export interface FlowAccountSnapshot {
   keyCheck: FlowKeyCheckState;
 }
 
+/**
+ * 감지를 멈추게 하는 전역 문제. 작은 창 띠, 트레이 메뉴, OS 알림에 하나만 보인다.
+ * 에이전트 전역 실패는 뒤 티켓이 원인(`cause`)으로 더한다.
+ */
+export type GlobalProblemSnapshot =
+  /** 키 확인 필요. `rejected`는 Flow가 키를 거부한 것(`401`), `unreadable`은 저장된 키를 읽을 수 없는 것이다. */
+  { cause: 'flow-key'; reason: 'rejected' | 'unreadable' };
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -71,6 +79,8 @@ export interface AppSnapshot {
   platform: 'darwin' | 'win32' | 'other';
   /** "Flow 계정" 칸의 상태. */
   flowAccount: FlowAccountSnapshot;
+  /** 지금 보일 전역 문제. 없으면 `null`. */
+  globalProblem: GlobalProblemSnapshot | null;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -80,7 +90,9 @@ export type AppEvent =
   /** "Flow 계정" 칸의 상태가 바뀌었다. */
   | { type: 'flow-account-changed'; flowAccount: FlowAccountSnapshot }
   /** 키 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인과 확인을 기다리는 경우는 알리지 않는다. */
-  | { type: 'flow-key-check-finished'; result: 'connected' | FlowKeyCheckFailure };
+  | { type: 'flow-key-check-finished'; result: 'connected' | FlowKeyCheckFailure }
+  /** 보일 전역 문제가 바뀌었다. */
+  | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =

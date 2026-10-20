@@ -22,13 +22,15 @@ const RETRYABLE_FAILURES: ReadonlySet<FlowKeyCheckFailure> = new Set(['network',
 interface FlowAccountSectionProps {
   /** "Flow 계정" 칸의 상태. */
   flowAccount: FlowAccountSnapshot;
+  /** "키 확인 필요" 전역 문제가 있는지 여부. 연결된 계정이 있어도 키를 다시 넣어야 한다. */
+  keyNeedsCheck: boolean;
 }
 
 /**
  * 설정 "Flow 계정" 칸. 연결된 계정 카드와 개인 API 키 입력을 보인다.
  * 키는 [확인]으로 Flow에 확인되었을 때만 main이 저장하므로 저장 버튼은 없다.
  */
-export function FlowAccountSection({ flowAccount }: FlowAccountSectionProps) {
+export function FlowAccountSection({ flowAccount, keyNeedsCheck }: FlowAccountSectionProps) {
   /** 연결된 계정과 키 확인의 진행 상태. */
   const { account, keyCheck } = flowAccount;
   /** 연결된 계정이 있을 때 [키 바꾸기]로 입력 칸을 연 상태. */
@@ -93,7 +95,7 @@ export function FlowAccountSection({ flowAccount }: FlowAccountSectionProps) {
     <>
       <p className="section-lead muted">멘션을 감지하고 내 이름으로 댓글을 올리는 데 쓰는 개인 API 키입니다.</p>
       {account && !editing ? (
-        <AccountCard account={account} onEdit={handleEdit} />
+        <AccountCard account={account} keyNeedsCheck={keyNeedsCheck} onEdit={handleEdit} />
       ) : (
         <form className="field" onSubmit={handleSubmit}>
           <label className="field-label" htmlFor="flow-api-key">
@@ -154,12 +156,14 @@ export function FlowAccountSection({ flowAccount }: FlowAccountSectionProps) {
 interface AccountCardProps {
   /** 연결된 계정. */
   account: FlowAccountProfile;
-  /** [키 바꾸기]를 눌렀을 때. */
+  /** "키 확인 필요"인지 여부. 이때는 "연결됨" 대신 키를 다시 넣으라고 보인다. */
+  keyNeedsCheck: boolean;
+  /** [키 바꾸기]나 [키 다시 입력]을 눌렀을 때. */
   onEdit: () => void;
 }
 
-/** 연결된 계정의 이름, 소속, 이메일과 "연결됨"을 보이는 카드. */
-function AccountCard({ account, onEdit }: AccountCardProps) {
+/** 연결된 계정의 이름, 소속, 이메일과 "연결됨"(키 확인이 필요하면 "키 확인 필요")을 보이는 카드. */
+function AccountCard({ account, keyNeedsCheck, onEdit }: AccountCardProps) {
   return (
     <div className="field">
       <span className="field-label">연결된 계정</span>
@@ -174,9 +178,13 @@ function AccountCard({ account, onEdit }: AccountCardProps) {
           </div>
           <div className="muted small">{account.email}</div>
         </div>
-        <span className="ok-text small">✓ 연결됨</span>
+        {keyNeedsCheck ? (
+          <span className="danger-text small">키 확인 필요</span>
+        ) : (
+          <span className="ok-text small">✓ 연결됨</span>
+        )}
         <button type="button" className="btn sm" onClick={onEdit}>
-          키 바꾸기
+          {keyNeedsCheck ? '키 다시 입력' : '키 바꾸기'}
         </button>
       </div>
       <p className="field-note muted">키는 이 PC에만 암호화해 보관합니다.</p>

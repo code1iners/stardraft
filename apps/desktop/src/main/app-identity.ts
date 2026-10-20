@@ -1,5 +1,6 @@
 import { app } from 'electron';
 import { join } from 'node:path';
+import type { AppSnapshot } from '../shared/ipc';
 
 /** 번들 ID이자 Windows AppUserModelID. 키체인 항목, 알림 권한, 로그인 항목이 이 값에 묶이므로 바꾸지 않는다. */
 export const APP_ID = 'app.squadify.stardraft';
@@ -31,6 +32,11 @@ export function applyAppIdentity(): void {
   if (process.platform === 'win32') {
     app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`);
   }
+}
+
+/** 실행 중인 OS. 화면 문구와 배치를 OS에 맞출 때 쓴다. */
+export function appPlatform(): AppSnapshot['platform'] {
+  return process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'other';
 }
 
 /** 데이터 폴더(`settings.json`, `state.db`가 있는 곳). */

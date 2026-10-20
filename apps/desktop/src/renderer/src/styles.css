@@ -11,6 +11,8 @@
   --accent-bg: #e7eefa;
   --sel: #e3ebf8;
   --danger: #b42318;
+  --danger-bg: #fdf1f0;
+  --danger-border: #f2c9c5;
   --ok: #1e7438;
   --font: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', sans-serif;
   color-scheme: light;
@@ -55,6 +57,10 @@ button:focus-visible {
 
 .ok-text {
   color: var(--ok);
+}
+
+.danger-text {
+  color: var(--danger);
 }
 
 .btn {
@@ -137,6 +143,30 @@ button:focus-visible {
 
 html[data-platform='win32'] .popover {
   border: 1px solid var(--border-strong);
+}
+
+/* 작은 창 맨 위 띠. 감지를 멈추게 하는 전역 문제의 원인과 행동 버튼 하나를 보인다. */
+.problem-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.problem-banner p {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+}
+
+.problem-banner .btn {
+  flex: none;
+  border-color: var(--danger-border);
+  color: var(--text);
 }
 
 .popover-head {

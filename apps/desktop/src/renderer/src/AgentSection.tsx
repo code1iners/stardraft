@@ -6,7 +6,10 @@ import type {
   AgentCheckProgress,
   AgentCheckStep,
   AgentConnectionSnapshot,
+  AgentId,
+  AgentPreferencesSnapshot,
   AppSnapshot,
+  ModelChoiceSnapshot,
 } from '../../shared/ipc';
 
 /** 연결선의 네 마디. 화면에 이 순서로 보인다. */
@@ -16,6 +19,21 @@ const STEPS: readonly { step: AgentCheckStep; label: string }[] = [
   { step: 'login', label: '로그인' },
   { step: 'run-check', label: '작동 확인' },
 ];
+
+/** 에이전트 이름. */
+const AGENT_NAMES: Record<AgentId, string> = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
+};
+
+/** 모델 칸의 안내. Claude Code는 앱에 넣어 둔 계열 별칭, Codex는 연결 확인 때 읽은 목록이다. */
+const MODEL_HELP: Record<AgentId, string> = {
+  'claude-code': '계열을 고르면 그 계열의 최신 모델을 씁니다. CLI 설정에 둔 모델은 적용되지 않습니다.',
+  codex: 'Codex가 알려 준 모델 목록입니다. 다시 확인할 때 새로 읽습니다.',
+};
+
+/** 작동 확인 중에 함께 보이는 안내. 점검 실행은 실제 모델을 부른다. */
+const RUN_CHECK_NOTE = '10초쯤 걸리고 사용량을 조금 씁니다.';
 
 /** 실패 카드 셋째 장의 그림. */
 type ThirdPicture = 'done' | 'browser';
@@ -68,27 +86,31 @@ const FAILURE_TEXT: Record<AgentCheckFailure['reason'], FailureText> = {
     line: 'Claude 계정으로 로그인한 뒤 다시 확인을 누르세요.',
     third: { label: '열린 브라우저에서 Claude 계정으로 로그인', picture: 'browser' },
   },
+  'run-failed': {
+    cause: '작동 확인 실패',
+    title: '작동 확인이 실패했습니다',
+    line: '다시 확인을 눌러 주세요. 계속 실패하면 자세히에서 Claude Code가 알려 준 내용을 확인해 주세요.',
+  },
 };
 
 /** 마디 하나의 상태. `ok`는 끝남, `cur`는 진행 중, `bad`는 끊김, 빈 문자열은 남은 단계다. */
 type SegmentState = 'ok' | 'cur' | 'bad' | '';
 
-/** 지금 확인하거나 멈춘 단계. 아직 확인하지 않았으면 `null`. 셋째 단계까지 통과했으면 작동 확인이 남은 단계다. */
+/** 지금 확인하거나 멈춘 단계. 아직 확인하지 않았거나 모두 통과했으면 `null`. */
 function currentStep(progress: AgentCheckProgress): AgentCheckStep | null {
   switch (progress.status) {
-    case 'idle':
-      return null;
     case 'checking':
       return progress.step;
     case 'failed':
       return progress.failure.step;
-    case 'awaiting-run-check':
-      return 'run-check';
+    default:
+      return null;
   }
 }
 
 /** `index`번째 마디의 상태. */
 function segmentState(progress: AgentCheckProgress, index: number): SegmentState {
+  if (progress.status === 'connected') return 'ok';
   /** 지금 확인하거나 멈춘 마디의 위치. */
   const at = STEPS.findIndex((item) => item.step === currentStep(progress));
   if (at < 0 || index > at) return '';
@@ -101,15 +123,17 @@ function segmentState(progress: AgentCheckProgress, index: number): SegmentState
 interface AgentSectionProps {
   /** Claude Code 연결 확인 상태. */
   agentConnection: AgentConnectionSnapshot;
+  /** 기본 에이전트와 모델 선택. */
+  agentPreferences: AgentPreferencesSnapshot;
   /** 실행 중인 OS. 터미널 이름과 명령을 고른다. */
   platform: AppSnapshot['platform'];
 }
 
 /**
- * 설정 "에이전트" 칸. 칸을 열면 Claude Code를 찾고 버전과 로그인을 차례로 확인해, Stardraft와 Claude Code를 잇는 연결선으로 보인다.
- * 실패하면 그 마디가 끊기고, 명령으로 고칠 수 있으면 그림 카드 네 장을 보인다.
+ * 설정 "에이전트" 칸. 칸을 열면 Claude Code를 찾고 버전, 로그인, 작동 확인을 차례로 확인해, Stardraft와 Claude Code를 잇는 연결선으로 보인다.
+ * 실패하면 그 마디가 끊기고, 명령으로 고칠 수 있으면 그림 카드 네 장을 보인다. 연결되면 그 아래에서 기본 에이전트와 모델을 고른다.
  */
-export function AgentSection({ agentConnection, platform }: AgentSectionProps) {
+export function AgentSection({ agentConnection, agentPreferences, platform }: AgentSectionProps) {
   /** 진행 상태와 "자세히" 내용. */
   const { progress, details } = agentConnection;
   /** "자세히"를 펼쳤는지 여부. */
@@ -197,7 +221,81 @@ export function AgentSection({ agentConnection, platform }: AgentSectionProps) {
 
         {showDetails && <AgentDetails details={details} failure={failure} platform={platform} />}
       </div>
+
+      {agentPreferences.connectedAgents.length > 1 && (
+        <DefaultAgentField connectedAgents={agentPreferences.connectedAgents} defaultAgent={agentPreferences.defaultAgent} />
+      )}
+      {agentPreferences.connectedAgents.map((agent) => {
+        /** 이 에이전트의 모델 선택 상자. */
+        const choice = agentPreferences.models[agent];
+        return choice && <ModelField key={agent} agent={agent} choice={choice} />;
+      })}
     </>
+  );
+}
+
+/** 기본 에이전트 칸에 넘기는 값. */
+interface DefaultAgentFieldProps {
+  /** 연결된 에이전트. */
+  connectedAgents: AgentId[];
+  /** 지금 기본 에이전트. */
+  defaultAgent: AgentId | null;
+}
+
+/** 기본 에이전트 칸. 연결된 에이전트가 둘 이상일 때만 보인다. 하나면 그 에이전트가 자동으로 기본이다. */
+function DefaultAgentField({ connectedAgents, defaultAgent }: DefaultAgentFieldProps) {
+  return (
+    <fieldset className="field plain-fieldset">
+      <legend className="field-label">기본 에이전트</legend>
+      {connectedAgents.map((agent) => (
+        <label key={agent} className="choice-row">
+          <input
+            type="radio"
+            name="default-agent"
+            value={agent}
+            checked={defaultAgent === agent}
+            onChange={() => void window.stardraft.send({ type: 'set-default-agent', agent })}
+          />
+          {AGENT_NAMES[agent]}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+/** 모델 칸에 넘기는 값. */
+interface ModelFieldProps {
+  /** 모델을 고를 에이전트. */
+  agent: AgentId;
+  /** 모델 선택 상자. */
+  choice: ModelChoiceSnapshot;
+}
+
+/** 에이전트의 모델 선택 상자. 첫 항목 "기본 모델(에이전트가 정함)"이면 모델을 넘기지 않는다. 바꾸는 즉시 저장하고 다음 실행부터 쓴다. */
+function ModelField({ agent, choice }: ModelFieldProps) {
+  /** 선택 상자의 id. */
+  const selectId = `model-${agent}`;
+
+  /** 고른 모델을 저장한다. 빈 값은 기본 모델이다. */
+  const handleChange = (value: string) => {
+    void window.stardraft.send({ type: 'set-agent-model', agent, model: value === '' ? null : value });
+  };
+
+  return (
+    <div className="field">
+      <label className="field-label" htmlFor={selectId}>
+        {AGENT_NAMES[agent]} 모델
+      </label>
+      <p className="field-help muted">{MODEL_HELP[agent]}</p>
+      <select id={selectId} className="text-input model-select" value={choice.selected ?? ''} onChange={(event) => handleChange(event.target.value)}>
+        <option value="">기본 모델(에이전트가 정함)</option>
+        {choice.options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.unlisted ? `${option.label} (목록에 없음)` : option.label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
@@ -229,6 +327,14 @@ function StatusLine({ progress }: { progress: AgentCheckProgress }) {
     case 'idle':
       return <p className="agent-status muted">확인 전</p>;
     case 'checking':
+      if (progress.step === 'run-check') {
+        return (
+          <div role="status">
+            <p className="agent-status muted">작동 확인 중…</p>
+            <p className="agent-status-note muted small">{RUN_CHECK_NOTE}</p>
+          </div>
+        );
+      }
       return (
         <p className="agent-status muted" role="status">
           {STEPS.find((item) => item.step === progress.step)?.label} 확인 중…
@@ -240,8 +346,8 @@ function StatusLine({ progress }: { progress: AgentCheckProgress }) {
           {FAILURE_TEXT[progress.failure.reason].title}
         </p>
       );
-    case 'awaiting-run-check':
-      return <p className="agent-status muted">찾기·버전·로그인을 확인했습니다. 작동 확인은 다음 단계입니다.</p>;
+    case 'connected':
+      return <p className="agent-status ok-text">✓ Claude Code 연결됨</p>;
   }
 }
 

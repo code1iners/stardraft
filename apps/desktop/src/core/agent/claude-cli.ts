@@ -1,3 +1,5 @@
+import type { RunKind } from '../ports/executor';
+
 /** Claude Code CLI의 명령 이름. */
 export const CLAUDE_COMMAND_NAME = 'claude';
 
@@ -61,3 +63,31 @@ export function claudeUpdateCommand(realPath: string, cliCommand: string): strin
   const cask = /\/Caskroom\/([^/]+)\/[^/]+\/claude$/.exec(realPath)?.[1];
   return cask ? `brew upgrade --cask ${cask}` : `${cliCommand} update`;
 }
+
+/**
+ * 실행 종류별 `--max-turns`. 넘으면 실행이 턴 상한 오류로 끝난다.
+ * 선택·초안 실행 값은 비밀 파일 제외 실측에서 쓴 40이고, 초안 실행 티켓에서 조정한다.
+ */
+export const CLAUDE_MAX_TURNS: Readonly<Record<RunKind, number>> = {
+  selection: 40,
+  draft: 40,
+  check: 3,
+};
+
+/** 모델 선택 상자에 넣어 두는 모델 하나. */
+export interface ListedModel {
+  /** CLI에 `--model`로 넘길 값. */
+  id: string;
+  /** 화면에 보일 이름. */
+  label: string;
+}
+
+/**
+ * Claude Code 모델 선택 상자의 계열 별칭. 고르면 그 계열의 최신 모델을 쓴다.
+ * `claude --help`(2.1.303)는 `--model`의 예로 fable, opus, sonnet을 든다. CLI 안의 별칭 목록에는 haiku, best, opusplan과 `[1m]` 변형도 있지만, 스펙이 정한 셋만 둔다.
+ */
+export const CLAUDE_MODEL_ALIASES: readonly ListedModel[] = [
+  { id: 'fable', label: 'Fable' },
+  { id: 'opus', label: 'Opus' },
+  { id: 'sonnet', label: 'Sonnet' },
+];

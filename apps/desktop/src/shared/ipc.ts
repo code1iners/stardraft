@@ -29,6 +29,15 @@ export type AppFolder = (typeof APP_FOLDERS)[number];
 /** 키 확인 명령이 받는 키의 최대 길이. 이보다 긴 값은 키가 아니므로 main에 보내지 않는다. */
 export const FLOW_API_KEY_MAX_LENGTH = 512;
 
+/** 앱이 실행할 수 있는 에이전트. */
+export const AGENT_IDS = ['claude-code', 'codex'] as const;
+
+/** 에이전트 하나. */
+export type AgentId = (typeof AGENT_IDS)[number];
+
+/** 모델 고르기 명령이 받는 모델 이름의 최대 길이. */
+export const AGENT_MODEL_MAX_LENGTH = 200;
+
 /** "Flow 계정" 칸의 계정 카드에 보일 계정. */
 export interface FlowAccountProfile {
   /** 이름. */
@@ -61,16 +70,18 @@ export interface FlowAccountSnapshot {
   keyCheck: FlowKeyCheckState;
 }
 
-/**
- * 감지를 멈추게 하는 전역 문제. 작은 창 띠, 트레이 메뉴, OS 알림에 하나만 보인다.
- * 에이전트 전역 실패는 뒤 티켓이 원인(`cause`)으로 더한다.
- */
+/** 감지를 멈추게 하는 전역 문제. 작은 창 띠, 트레이 메뉴, OS 알림에 하나만 보인다. */
 export type GlobalProblemSnapshot =
   /** 키 확인 필요. */
-  { cause: 'flow-key'; reason: FlowKeyProblemReason };
+  | { cause: 'flow-key'; reason: FlowKeyProblemReason }
+  /** 에이전트 확인 필요. */
+  | { cause: 'agent'; reason: AgentProblemReason };
 
 /** "키 확인 필요"가 생긴 이유. `rejected`는 Flow가 키를 거부한 것(`401`), `unreadable`은 저장된 키를 읽을 수 없는 것이다. */
 export type FlowKeyProblemReason = 'rejected' | 'unreadable';
+
+/** 에이전트 전역 실패의 이유. CLI 없음, 미로그인, CLI 업데이트 필요, 점검 실행(작동 확인) 실패다. */
+export type AgentProblemReason = 'cli-missing' | 'not-logged-in' | 'update-required' | 'check-failed';
 
 /** 에이전트 연결 확인의 네 단계. 화면의 연결선 네 마디다. */
 export type AgentCheckStep = 'find' | 'version' | 'login' | 'run-check';
@@ -90,7 +101,9 @@ export type AgentCheckFailure =
   /** `apiKeyHelper`로만 인증한다. 앱은 이 방식을 지원하지 않는다. */
   | { step: 'login'; reason: 'api-key-helper' }
   /** 로그인 상태를 읽지 못했다. */
-  | { step: 'login'; reason: 'unreadable' };
+  | { step: 'login'; reason: 'unreadable' }
+  /** 점검 실행(작동 확인)이 실패했다. */
+  | { step: 'run-check'; reason: 'run-failed' };
 
 /** 에이전트 연결 확인의 진행 상태. */
 export type AgentCheckProgress =
@@ -100,8 +113,8 @@ export type AgentCheckProgress =
   | { status: 'checking'; step: AgentCheckStep }
   /** 이 단계에서 멈췄다. */
   | { status: 'failed'; failure: AgentCheckFailure }
-  /** 찾기·버전·로그인을 통과했고 작동 확인이 남았다. */
-  | { status: 'awaiting-run-check' };
+  /** 네 단계를 모두 통과했다. 에이전트 연결이다. */
+  | { status: 'connected' };
 
 /** 자식 프로세스 PATH의 출처. `login-shell`은 로그인 셸에서 읽은 PATH, `app`은 앱이 받은 PATH다. */
 export type PathSource = 'login-shell' | 'app';
@@ -136,6 +149,34 @@ export interface AgentConnectionSnapshot {
   details: AgentCheckDetails;
 }
 
+/** 모델 선택 상자의 항목 하나. */
+export interface ModelOptionSnapshot {
+  /** CLI에 넘길 모델 값. */
+  id: string;
+  /** 화면에 보일 이름. */
+  label: string;
+  /** 저장한 모델이 목록에서 사라져 "(목록에 없음)"을 붙여 보일 항목인지 여부. */
+  unlisted: boolean;
+}
+
+/** 에이전트 하나의 모델 선택 상자. 첫 항목 "기본 모델(에이전트가 정함)"은 화면이 붙인다. */
+export interface ModelChoiceSnapshot {
+  /** 고를 수 있는 모델. */
+  options: ModelOptionSnapshot[];
+  /** 고른 모델. 기본 모델이면 `null`. */
+  selected: string | null;
+}
+
+/** 설정 "에이전트" 칸의 기본 에이전트와 모델 선택. */
+export interface AgentPreferencesSnapshot {
+  /** 연결된 에이전트. 둘 이상이면 기본 에이전트를 고르는 칸이 보인다. */
+  connectedAgents: AgentId[];
+  /** 실행에 쓸 기본 에이전트. 연결된 에이전트가 없으면 `null`. */
+  defaultAgent: AgentId | null;
+  /** 연결된 에이전트별 모델 선택 상자. */
+  models: Partial<Record<AgentId, ModelChoiceSnapshot>>;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -150,6 +191,8 @@ export interface AppSnapshot {
   globalProblem: GlobalProblemSnapshot | null;
   /** Claude Code 연결 확인 상태. */
   agentConnection: AgentConnectionSnapshot;
+  /** 기본 에이전트와 모델 선택. */
+  agentPreferences: AgentPreferencesSnapshot;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -163,7 +206,9 @@ export type AppEvent =
   /** 보일 전역 문제가 바뀌었다. */
   | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null }
   /** 에이전트 연결 확인 상태가 바뀌었다. */
-  | { type: 'agent-connection-changed'; agentConnection: AgentConnectionSnapshot };
+  | { type: 'agent-connection-changed'; agentConnection: AgentConnectionSnapshot }
+  /** 기본 에이전트나 모델 선택이 바뀌었다. 연결된 에이전트가 바뀔 때도 온다. */
+  | { type: 'agent-preferences-changed'; agentPreferences: AgentPreferencesSnapshot };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =
@@ -184,7 +229,11 @@ export type AppCommand =
   /** 파일 선택 창으로 CLI를 직접 지정한다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
   | { type: 'pick-agent-cli' }
   /** 실패 카드의 명령을 클립보드에 복사한다. 명령은 main이 지금 상태에서 정한다. */
-  | { type: 'copy-agent-fix-command' };
+  | { type: 'copy-agent-fix-command' }
+  /** 기본 에이전트를 고른다. 연결되지 않은 에이전트는 main이 받지 않는다. */
+  | { type: 'set-default-agent'; agent: AgentId }
+  /** 에이전트의 모델을 고른다. `null`은 기본 모델(에이전트가 정함)이다. 목록에 없는 모델은 main이 받지 않는다. */
+  | { type: 'set-agent-model'; agent: AgentId; model: string | null };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -204,6 +253,16 @@ export function isSettingsSection(value: unknown): value is SettingsSection {
 /** 여는 폴더 이름인지 확인한다. */
 function isAppFolder(value: unknown): value is AppFolder {
   return typeof value === 'string' && (APP_FOLDERS as readonly string[]).includes(value);
+}
+
+/** 앱이 아는 에이전트인지 확인한다. */
+function isAgentId(value: unknown): value is AgentId {
+  return typeof value === 'string' && (AGENT_IDS as readonly string[]).includes(value);
+}
+
+/** 모델 고르기 명령에 실을 수 있는 값인지 확인한다. 목록에 있는 모델인지는 main이 본다. */
+function isAgentModelInput(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && value !== '' && value.length <= AGENT_MODEL_MAX_LENGTH);
 }
 
 /** 키 확인 명령에 실을 수 있는 키인지 확인한다. 앞뒤 공백 정리와 키 형식 판단은 main이 한다. */
@@ -229,6 +288,12 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isAppFolder(candidate.folder) ? { type: 'open-folder', folder: candidate.folder } : null;
     case 'check-flow-key':
       return isFlowApiKeyInput(candidate.apiKey) ? { type: 'check-flow-key', apiKey: candidate.apiKey } : null;
+    case 'set-default-agent':
+      return isAgentId(candidate.agent) ? { type: 'set-default-agent', agent: candidate.agent } : null;
+    case 'set-agent-model':
+      return isAgentId(candidate.agent) && isAgentModelInput(candidate.model)
+        ? { type: 'set-agent-model', agent: candidate.agent, model: candidate.model }
+        : null;
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
     case 'check-agent':

@@ -2,6 +2,7 @@ import { app, dialog, Menu, net, safeStorage } from 'electron';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { AgentConnection } from '../core/agent/agent-connection';
+import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
@@ -88,7 +89,7 @@ function start(): void {
       // 설정 창을 닫으면 그 창에서 시작한 키 확인과 확인을 기다리던 계정 바꾸기를 그만둔다.
       onSettingsClosed: () => flowAccount.cancelKeyCheck(),
     });
-    /** 설정 "에이전트" 칸의 연결 확인. 칸을 열 때 렌더러가 확인을 시작한다. */
+    /** 에이전트 연결 확인. 앱을 시작할 때와 설정 "에이전트" 칸을 열 때 돈다. 실행기도 이 확인이 찾은 CLI와 환경을 쓴다. */
     const agentConnection = new AgentConnection({
       platform: process.platform,
       env: process.env,
@@ -97,8 +98,17 @@ function start(): void {
       runner: new NodeProcessRunner(),
       settingsStore: appData.settingsStore,
       logger,
+      problems: globalProblems,
+      checkDir: join(dataFolderPath(), 'agent-check'),
     });
-    registerIpc({ windows, logger, flowAccount, globalProblems, agentConnection });
+    /** 설정 "에이전트" 칸의 기본 에이전트와 모델 선택. 연결된 에이전트는 연결 확인에서 읽는다. */
+    const agentPreferences = new AgentPreferences({
+      settingsStore: appData.settingsStore,
+      logger,
+      connectedAgents: () => (agentConnection.isConnected() ? [agentConnection.state().agent] : []),
+    });
+    await agentPreferences.load();
+    registerIpc({ windows, logger, flowAccount, globalProblems, agentConnection, agentPreferences });
 
     /** 트레이 동작이 부를 창 관리자. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appWindows = windows;
@@ -115,6 +125,8 @@ function start(): void {
 
     // 저장된 키는 트레이를 띄운 뒤에 읽는다. 업데이트 뒤에는 키체인 재허용을 묻고 답할 때까지 끝나지 않기 때문이다.
     flowAccount.checkStoredKey().catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)));
+    // 앱을 시작할 때 에이전트 연결을 확인한다(작동 확인 포함). 끊겨 있으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
+    void agentConnection.check();
   });
 }
 

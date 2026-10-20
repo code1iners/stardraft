@@ -2,10 +2,14 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { claudeNotLoggedInStream, claudeStream, claudeSuccessStream, fakeClaudeEvent } from '../fakes/fake-claude-stream';
 import { FakeClock } from '../fakes/fake-clock';
-import { exited, FakeProcessRunner } from '../fakes/fake-process-runner';
+import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
 import { MemorySettingsStore } from '../fakes/memory-settings-store';
+import { RecordingNotifier } from '../fakes/recording-notifier';
 import { createLogger } from '../logging/logger';
+import type { Settings } from '../ports/settings-store';
+import { GlobalProblems } from '../problems/global-problems';
 import { AgentConnection, type AgentCheckProgress, type AgentConnectionOptions } from './agent-connection';
 import { isExecutableFileOnDisk, LOGIN_SHELL_MARKERS } from './cli-discovery';
 import type { ProcessRequest } from './process-runner';
@@ -73,9 +77,17 @@ function isShellRequest(request: ProcessRequest): boolean {
  * 가짜 실행기와 메모리 설정 저장소로 연결 확인을 만든다.
  * 실행 파일 검사는 실제 파일 시스템을 쓰되, 이 PC에 실제로 설치된 CLI를 찾지 않게 임시 홈 폴더 안으로 한정한다.
  */
-function setup(overrides: Partial<AgentConnectionOptions> = {}) {
+function setup(overrides: Partial<AgentConnectionOptions> = {}, settings: Partial<Settings> = {}) {
   const runner = new FakeProcessRunner();
-  const settingsStore = new MemorySettingsStore();
+  const settingsStore = new MemorySettingsStore(settings);
+  const clock = new FakeClock();
+  const notifier = new RecordingNotifier();
+  const problems = new GlobalProblems({
+    notifier,
+    clock,
+    logger: silentLogger,
+    notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }),
+  });
   const connection = new AgentConnection({
     platform: 'darwin',
     env: { PATH: '/usr/bin:/bin', HOME: home, ANTHROPIC_API_KEY: 'sk-fake-key', CODEX_API_KEY: 'fake-codex-key', LANG: 'ko_KR.UTF-8' },
@@ -84,19 +96,33 @@ function setup(overrides: Partial<AgentConnectionOptions> = {}) {
     runner,
     settingsStore,
     logger: silentLogger,
+    problems,
+    checkDir: join(home, 'agent-check'),
+    tempRoot: home,
     isExecutableFile: async (filePath) => filePath.startsWith(home) && isExecutableFileOnDisk(filePath),
     ...overrides,
   });
   /** 상태가 바뀔 때마다 기록한 진행 상태. */
   const progress: AgentCheckProgress[] = [];
   connection.onChange((state) => progress.push(state.progress));
-  return { runner, settingsStore, connection, progress };
+  return { runner, settingsStore, connection, progress, problems, notifier };
 }
 
-/** 버전과 로그인이 통과하도록 가짜 CLI의 대답을 정한다. */
+/** `cliPath`를 `-p`로 띄운 실행(작동 확인, 선택·초안 실행) 요청인지 본다. */
+function isRunRequest(cliPath: string) {
+  return (request: ProcessRequest) => request.command === cliPath && request.args[0] === '-p';
+}
+
+/** 작동 확인 실행에 `reply`로 대답한다. */
+function answerCheckRun(runner: FakeProcessRunner, cliPath: string, reply: FakeProcessReply): void {
+  runner.respondWhen(isRunRequest(cliPath), reply);
+}
+
+/** 버전, 로그인, 작동 확인이 통과하도록 가짜 CLI의 대답을 정한다. */
 function answerHealthyCli(runner: FakeProcessRunner, cliPath: string, version = '2.1.303 (Claude Code)'): void {
   runner.respond(cliPath, ['--version'], exited(0, `${version}\n`));
   runner.respond(cliPath, ['--restricted', 'auth', 'status'], exited(0, LOGGED_IN));
+  answerCheckRun(runner, cliPath, exited(0, claudeSuccessStream({ ok: true }, version.split(' ')[0])));
 }
 
 describe('에이전트 연결 확인: 찾기', () => {
@@ -112,7 +138,8 @@ describe('에이전트 연결 확인: 찾기', () => {
       'find',
       'version',
       'login',
-      'awaiting-run-check',
+      'run-check',
+      'connected',
     ]);
     expect(connection.state().details).toMatchObject({ cliPath, cliCommand: 'claude', pathSource: 'login-shell' });
     expect(settingsStore.settings.agentCliPaths['claude-code']).toBe(cliPath);
@@ -131,7 +158,7 @@ describe('에이전트 연결 확인: 찾기', () => {
     await connection.check();
 
     expect(connection.state().details.cliPath).toBe(cliPath);
-    expect(connection.state().progress).toEqual({ status: 'awaiting-run-check' });
+    expect(connection.state().progress).toEqual({ status: 'connected' });
   });
 
   it('로그인 셸이 5초 안에 끝나지 않으면 알려진 설치 위치에서 찾고, 앱 PATH 앞에 CLI 폴더를 붙여 쓴다', async () => {
@@ -227,7 +254,7 @@ describe('에이전트 연결 확인: 찾기', () => {
     await first;
 
     expect(connection.state().details.cliPath).toBe(newPath);
-    expect(connection.state().progress).toEqual({ status: 'awaiting-run-check' });
+    expect(connection.state().progress).toEqual({ status: 'connected' });
     expect(settingsStore.settings.agentCliPaths['claude-code']).toBe(newPath);
   });
 
@@ -240,7 +267,7 @@ describe('에이전트 연결 확인: 찾기', () => {
     await connection.useCliPath(cliPath);
 
     expect(settingsStore.settings.agentCliPaths['claude-code']).toBe(cliPath);
-    expect(connection.state().progress).toEqual({ status: 'awaiting-run-check' });
+    expect(connection.state().progress).toEqual({ status: 'connected' });
     expect(connection.state().details.cliCommand).toBe(`'${cliPath}'`);
   });
 
@@ -317,7 +344,7 @@ describe('에이전트 연결 확인: 버전', () => {
 
     await connection.check();
 
-    expect(connection.state().progress).toEqual({ status: 'awaiting-run-check' });
+    expect(connection.state().progress).toEqual({ status: 'connected' });
   });
 
   it('Homebrew cask 설치본은 업데이트 명령으로 brew 명령을 보인다', async () => {
@@ -359,10 +386,11 @@ describe('에이전트 연결 확인: 로그인', () => {
   it('로그인 상태를 실제 실행과 같은 환경(API 키 변수 제외, 로그인 셸 PATH, --restricted)으로 확인한다', async () => {
     const { runner, connection, cliPath } = setupVersioned();
     runner.respond(cliPath, ['--restricted', 'auth', 'status'], exited(0, LOGGED_IN));
+    answerCheckRun(runner, cliPath, exited(0, claudeSuccessStream({ ok: true })));
 
     await connection.check();
 
-    expect(connection.state().progress).toEqual({ status: 'awaiting-run-check' });
+    expect(connection.state().progress).toEqual({ status: 'connected' });
     expect(connection.state().details.authMethod).toBe('claude.ai');
     const authRequest = runner.requests.find((request) => request.args.includes('auth'));
     expect(authRequest?.env).toEqual({ PATH: SHELL_PATH, HOME: home, LANG: 'ko_KR.UTF-8' });
@@ -400,5 +428,297 @@ describe('에이전트 연결 확인: 로그인', () => {
 
     expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'login', reason: 'unreadable' } });
     expect(connection.state().details.errorOutput).toBe("error: unknown command 'auth'");
+  });
+});
+
+/** 찾기·버전·로그인을 통과하는 연결 확인. 작동 확인의 대답은 테스트가 정한다. */
+function setupLoggedIn(overrides: Partial<AgentConnectionOptions> = {}, settings: Partial<Settings> = {}) {
+  const cliPath = installCli('.local/bin');
+  const context = setup(overrides, settings);
+  context.runner.respondWhen(isShellRequest, exited(0, shellOutput([cliPath], SHELL_PATH)));
+  context.runner.respond(cliPath, ['--version'], exited(0, '2.1.303 (Claude Code)\n'));
+  context.runner.respond(cliPath, ['--restricted', 'auth', 'status'], exited(0, LOGGED_IN));
+  return { ...context, cliPath };
+}
+
+/** 작동 확인으로 띄운 요청. */
+function checkRunRequest(runner: FakeProcessRunner, cliPath: string): ProcessRequest | undefined {
+  return runner.requests.find(isRunRequest(cliPath));
+}
+
+describe('에이전트 연결 확인: 작동 확인', () => {
+  it('로그인까지 통과하면 실행 계약의 플래그 묶음으로 최소 스키마 실행을 한 번 돌리고, ok를 받으면 연결됨이 된다', async () => {
+    const { runner, connection, cliPath } = setupLoggedIn();
+    answerCheckRun(runner, cliPath, exited(0, claudeSuccessStream({ ok: true })));
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'connected' });
+    expect(runner.requests.filter(isRunRequest(cliPath))).toHaveLength(1);
+    const request = checkRunRequest(runner, cliPath);
+    // 비어 있는 앱 전용 폴더에서 돌려 저장소나 홈 폴더를 읽을 수 없게 한다.
+    expect(request?.cwd).toBe(join(home, 'agent-check'));
+    expect(request?.args).toEqual(expect.arrayContaining(['--output-format', 'stream-json', '--restricted', '--permission-mode', 'dontAsk']));
+    expect(JSON.parse(request?.args[request.args.indexOf('--json-schema') + 1] ?? 'null')).toMatchObject({
+      properties: { ok: { type: 'boolean' } },
+      required: ['ok'],
+    });
+    expect(request?.args).not.toContain('--model');
+    expect(request?.stdin).not.toBe('');
+  });
+
+  it('작동 확인은 앱이 구성한 환경(API 키 변수 제외, 로그인 셸 PATH)으로 돈다', async () => {
+    const { runner, connection, cliPath } = setupLoggedIn();
+    answerCheckRun(runner, cliPath, exited(0, claudeSuccessStream({ ok: true })));
+
+    await connection.check();
+
+    expect(checkRunRequest(runner, cliPath)?.env).toEqual({ PATH: SHELL_PATH, HOME: home, LANG: 'ko_KR.UTF-8' });
+  });
+
+  it('고른 모델과 추가 비밀 파일 패턴으로 작동 확인을 돌린다', async () => {
+    const { runner, connection, cliPath } = setupLoggedIn({}, { agentModels: { 'claude-code': 'opus' }, extraSecretPatterns: ['*.secret'] });
+    answerCheckRun(runner, cliPath, exited(0, claudeSuccessStream({ ok: true })));
+
+    await connection.check();
+
+    const args = checkRunRequest(runner, cliPath)?.args ?? [];
+    expect(args.slice(-2)).toEqual(['--model', 'opus']);
+    expect(args[args.indexOf('--settings') + 1]).toContain('Read(//**/*.secret)');
+  });
+
+  it('작동 확인이 오류로 끝나면 작동 확인에서 멈추고 CLI가 알려 준 문장을 자세히에 남긴다', async () => {
+    const { runner, connection, cliPath } = setupLoggedIn();
+    /** 가짜 사용량 한도 문구. */
+    const text = 'Claude usage limit reached. Your limit will reset at 3pm.';
+    answerCheckRun(
+      runner,
+      cliPath,
+      exited(1, claudeStream(fakeClaudeEvent.init(), fakeClaudeEvent.apiError('rate_limit', text), fakeClaudeEvent.result({ is_error: true, result: text }))),
+    );
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'run-check', reason: 'run-failed' } });
+    expect(connection.state().details.errorOutput).toBe(text);
+  });
+
+  it('작동 확인에서 로그인이 만료된 것이 드러나면 로그인 필요로 멈춘다', async () => {
+    const { runner, connection, cliPath } = setupLoggedIn();
+    answerCheckRun(runner, cliPath, exited(1, claudeNotLoggedInStream()));
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'login', reason: 'not-logged-in' } });
+    expect(connection.state().details.errorOutput).toBe('Not logged in · Please run /login');
+  });
+
+  it('작동 확인이 제한 시간(60초)을 넘기면 작동 확인에서 멈춘다', async () => {
+    const { runner, connection, cliPath } = setupLoggedIn();
+    answerCheckRun(runner, cliPath, { kind: 'timed-out', stdout: claudeStream(fakeClaudeEvent.init()), stderr: '' });
+
+    await connection.check();
+
+    expect(checkRunRequest(runner, cliPath)?.timeoutMs).toBe(60_000);
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'run-check', reason: 'run-failed' } });
+    expect(connection.state().details.errorOutput).toBe('60초 안에 끝나지 않았습니다.');
+  });
+
+  it('스키마에 맞지 않는 결과면 작동 확인에서 멈춘다', async () => {
+    const { runner, connection, cliPath } = setupLoggedIn();
+    answerCheckRun(runner, cliPath, exited(0, claudeStream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ result: '그냥 쓴 글' }))));
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'run-check', reason: 'run-failed' } });
+  });
+});
+
+describe('에이전트 전역 문제', () => {
+  it('감지를 시작한 뒤 CLI가 없으면 CLI 없음 전역 문제가 생기고, 다시 확인해 연결되면 사라진다', async () => {
+    const { runner, connection, problems, notifier } = setup({}, { detectionStarted: true });
+    runner.respondWhen(isShellRequest, exited(0, shellOutput([], SHELL_PATH)));
+
+    await connection.check();
+
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'cli-missing' });
+    expect(notifier.sent).toHaveLength(1);
+
+    const cliPath = installCli('.local/bin');
+    answerHealthyCli(runner, cliPath);
+    await connection.rediscover();
+
+    expect(connection.state().progress).toEqual({ status: 'connected' });
+    expect(problems.current()).toBeNull();
+  });
+
+  it.each([
+    ['로그인 필요', exited(1, NOT_LOGGED_IN), 'not-logged-in'],
+    ['apiKeyHelper', exited(0, API_KEY_HELPER), 'not-logged-in'],
+  ] as const)('로그인 단계에서 멈추면(%s) 미로그인 전역 문제다', async (_label, unrestrictedReply, reason) => {
+    const cliPath = installCli('.local/bin');
+    const { runner, connection, problems } = setup({}, { detectionStarted: true });
+    runner.respondWhen(isShellRequest, exited(0, shellOutput([cliPath], SHELL_PATH)));
+    runner.respond(cliPath, ['--version'], exited(0, '2.1.303 (Claude Code)\n'));
+    runner.respond(cliPath, ['--restricted', 'auth', 'status'], exited(1, NOT_LOGGED_IN));
+    runner.respond(cliPath, ['auth', 'status'], unrestrictedReply);
+
+    await connection.check();
+
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason });
+  });
+
+  it('필수 플래그를 지원하지 않는 버전이면 CLI 업데이트 필요 전역 문제다', async () => {
+    const cliPath = installCli('.local/bin');
+    const { runner, connection, problems } = setup({}, { detectionStarted: true });
+    runner.respondWhen(isShellRequest, exited(0, shellOutput([cliPath], SHELL_PATH)));
+    answerHealthyCli(runner, cliPath, '2.1.250 (Claude Code)');
+
+    await connection.check();
+
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'update-required' });
+  });
+
+  it('작동 확인이 실패하면 점검 실행 실패 전역 문제다', async () => {
+    const { runner, connection, cliPath, problems } = setupLoggedIn({}, { detectionStarted: true });
+    answerCheckRun(runner, cliPath, exited(1, '', 'error: something broke'));
+
+    await connection.check();
+
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'check-failed' });
+  });
+
+  it('감지를 시작하기 전에는 실패해도 전역 문제를 띄우지 않는다(필수 설정 전 화면이 보여 준다)', async () => {
+    const { runner, connection, problems, notifier } = setup();
+    runner.respondWhen(isShellRequest, exited(0, shellOutput([], SHELL_PATH)));
+
+    await connection.check();
+
+    expect(connection.state().progress).toMatchObject({ status: 'failed' });
+    expect(problems.current()).toBeNull();
+    expect(notifier.sent).toEqual([]);
+  });
+});
+
+describe('작동 확인을 다시 도는 때', () => {
+  /** 연결까지 마친 연결 확인. */
+  async function setupConnected() {
+    const context = setupLoggedIn({}, { detectionStarted: true });
+    answerCheckRun(context.runner, context.cliPath, exited(0, claudeSuccessStream({ ok: true })));
+    await context.connection.check();
+    expect(context.connection.state().progress).toEqual({ status: 'connected' });
+    return context;
+  }
+
+  /** 초안 실행 입력. */
+  function draftRun() {
+    return {
+      kind: 'draft' as const,
+      instructions: '가짜 지침',
+      input: '가짜 맥락',
+      outputSchema: { type: 'object' },
+      readRoots: [home],
+      secretPatterns: [],
+      model: null,
+      timeoutMs: 600_000,
+      signal: new AbortController().signal,
+      onProgress: () => {},
+    };
+  }
+
+  /** 연결 확인이 `auth status`를 부른 횟수. 연결 확인을 처음부터 돌릴 때마다 는다. */
+  function loginChecks(runner: FakeProcessRunner): number {
+    return runner.requests.filter((request) => request.args.join(' ') === '--restricted auth status').length;
+  }
+
+  it('다시 확인하는 동안에도 앞 확인이 연결이었으면 실패하기 전까지 연결로 본다', async () => {
+    const { runner, connection, cliPath } = await setupConnected();
+    /** 버전 대답을 늦추는 장치. */
+    let releaseVersion: () => void = () => {};
+    const slowVersion = new Promise<void>((resolve) => {
+      releaseVersion = resolve;
+    });
+    runner.respond(cliPath, ['--version'], async () => {
+      await slowVersion;
+      return exited(0, '2.1.250 (Claude Code)\n');
+    });
+
+    const recheck = connection.rediscover();
+    await Promise.resolve();
+    expect(connection.state().progress).toMatchObject({ status: 'checking' });
+    expect(connection.isConnected()).toBe(true);
+
+    releaseVersion();
+    await recheck;
+    expect(connection.isConnected()).toBe(false);
+  });
+
+  it('연결 확인이 찾은 CLI와 환경으로 초안 실행을 띄운다', async () => {
+    const { runner, connection, cliPath } = await setupConnected();
+    runner.respondWhen(isRunRequest(cliPath), exited(0, claudeSuccessStream({ requirement: '가짜 요구' })));
+
+    const outcome = await connection.executor.run(draftRun());
+
+    expect(outcome).toEqual({ type: 'completed', output: { requirement: '가짜 요구' } });
+    expect(runner.requests.at(-1)).toMatchObject({ command: cliPath, cwd: home, env: { PATH: SHELL_PATH, HOME: home, LANG: 'ko_KR.UTF-8' } });
+  });
+
+  it('실행이 미로그인으로 끝나면 전역 실패를 의심해 연결 확인을 처음부터 다시 돌린다', async () => {
+    const { runner, connection, cliPath, problems } = await setupConnected();
+    runner.respondWhen(isRunRequest(cliPath), exited(1, claudeNotLoggedInStream()));
+    runner.respond(cliPath, ['--restricted', 'auth', 'status'], exited(1, NOT_LOGGED_IN));
+    runner.respond(cliPath, ['auth', 'status'], exited(1, NOT_LOGGED_IN));
+
+    await connection.executor.run(draftRun());
+    await connection.check();
+
+    expect(loginChecks(runner)).toBe(2);
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'login', reason: 'not-logged-in' } });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'not-logged-in' });
+  });
+
+  it('실행이 결과 메시지 없이 끝나면(지원하지 않는 플래그 등) 연결 확인을 다시 돌린다', async () => {
+    const { runner, connection, cliPath } = await setupConnected();
+    runner.respondWhen(isRunRequest(cliPath), exited(1, '', "error: unknown option '--permission-prompts'"));
+
+    await connection.executor.run(draftRun());
+    await connection.check();
+
+    expect(loginChecks(runner)).toBe(2);
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'run-check', reason: 'run-failed' } });
+  });
+
+  it('실행에서 본 CLI 버전이 작동 확인 때와 다르면 작동 확인을 다시 돈다', async () => {
+    const { runner, connection, cliPath } = await setupConnected();
+    runner.respond(cliPath, ['--version'], exited(0, '2.1.310 (Claude Code)\n'));
+    runner.respondWhen(isRunRequest(cliPath), exited(0, claudeSuccessStream({ ok: true }, '2.1.310')));
+
+    await connection.executor.run(draftRun());
+    await connection.check();
+
+    expect(loginChecks(runner)).toBe(2);
+    expect(connection.state().details.version).toBe('2.1.310');
+    expect(connection.state().progress).toEqual({ status: 'connected' });
+  });
+
+  it('같은 버전으로 성공하거나 일시적 실패(과부하)로 끝나면 다시 확인하지 않는다', async () => {
+    const { runner, connection, cliPath } = await setupConnected();
+    runner.respondWhen(isRunRequest(cliPath), exited(0, claudeSuccessStream({ requirement: '가짜 요구' })));
+    await connection.executor.run(draftRun());
+
+    runner.respondWhen(
+      isRunRequest(cliPath),
+      exited(
+        1,
+        claudeStream(
+          fakeClaudeEvent.init(),
+          fakeClaudeEvent.apiError('overloaded', 'API Error: 529 Overloaded'),
+          fakeClaudeEvent.result({ is_error: true, api_error_status: 529, result: 'API Error: 529 Overloaded' }),
+        ),
+      ),
+    );
+    await connection.executor.run(draftRun());
+
+    expect(loginChecks(runner)).toBe(1);
   });
 });

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readLoginShell } from './cli-discovery';
-import { NodeProcessRunner } from './node-process-runner';
+import { cmdShimCommandLine, NodeProcessRunner } from './node-process-runner';
 
 /** 테스트마다 만드는 임시 홈 폴더. 셸의 rc 파일을 여기에 둔다. */
 let home: string;
@@ -74,6 +74,114 @@ describe('프로세스 실행기', () => {
     expect(result).toEqual({ kind: 'timed-out', stdout: 'started\n', stderr: '' });
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(pgrep(`sleep ${marker}`)).toBe(false);
+  });
+
+  it.skipIf(!isPosix)('표준 입력을 넘기고, 표준 출력을 줄 단위로 넘겨준다', async () => {
+    /** 받은 줄. */
+    const lines: string[] = [];
+
+    const result = await runner.run({
+      command: '/bin/sh',
+      args: ['-c', 'while IFS= read -r line; do printf "got:%s\\r\\n" "$line"; done; printf "tail"'],
+      env: { PATH: '/usr/bin:/bin' },
+      cwd: home,
+      timeoutMs: 5_000,
+      stdin: '첫 줄\n둘째 줄\n',
+      onStdoutLine: (line) => lines.push(line),
+    });
+
+    expect(result).toMatchObject({ kind: 'exited', exitCode: 0 });
+    // 줄 끝의 \r을 떼고, 줄바꿈 없이 끝난 마지막 조각도 한 줄로 넘긴다.
+    expect(lines).toEqual(['got:첫 줄', 'got:둘째 줄', 'tail']);
+  });
+
+  it.skipIf(!isPosix)('표준 출력 길이 상한을 넘어도 모든 줄을 넘겨준다', async () => {
+    /** 받은 줄 수. */
+    let count = 0;
+    /** 마지막으로 받은 줄. */
+    let last = '';
+
+    await runner.run({
+      command: '/bin/sh',
+      // 100바이트 줄 2,000개(약 200KB)는 출력 상한(64KB)을 넘는다.
+      args: ['-c', 'i=0; while [ $i -lt 2000 ]; do printf "%099d\\n" $i; i=$((i+1)); done; echo last-line'],
+      env: { PATH: '/usr/bin:/bin' },
+      cwd: home,
+      timeoutMs: 10_000,
+      onStdoutLine: (line) => {
+        count += 1;
+        last = line;
+      },
+    });
+
+    expect(count).toBe(2_001);
+    expect(last).toBe('last-line');
+  });
+
+  it.skipIf(!isPosix)('중단 신호가 오면 자식 프로세스까지 끝내고 중단으로 돌려준다', async () => {
+    const marker = '43.2109';
+    const controller = new AbortController();
+    const started = Date.now();
+    const running = runner.run({
+      command: '/bin/sh',
+      args: ['-c', `echo started; sleep ${marker}; echo never`],
+      env: { PATH: '/usr/bin:/bin' },
+      cwd: home,
+      timeoutMs: 10_000,
+      signal: controller.signal,
+      onStdoutLine: (line) => {
+        if (line === 'started') controller.abort();
+      },
+    });
+
+    const result = await running;
+
+    expect(result).toEqual({ kind: 'aborted', stdout: 'started\n', stderr: '' });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(pgrep(`sleep ${marker}`)).toBe(false);
+  });
+
+  it('이미 중단된 신호를 받으면 띄우지 않는다', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await runner.run({
+      command: join(home, 'never-spawned'),
+      args: [],
+      env: {},
+      cwd: home,
+      timeoutMs: 5_000,
+      signal: controller.signal,
+    });
+
+    expect(result).toEqual({ kind: 'aborted', stdout: '', stderr: '' });
+  });
+});
+
+describe('Windows npm 래퍼(.cmd)의 명령줄', () => {
+  it('인수마다 따옴표로 감싸고, 래퍼가 cmd로 한 번 더 해석해도 JSON과 공백·한글 경로가 그대로 가게 특수 문자를 두 번 막는다', () => {
+    const line = cmdShimCommandLine('C:\\Users\\fake\\AppData\\Roaming\\npm\\claude.cmd', [
+      '-p',
+      '{"type":"object"}',
+      'C:\\Users\\가짜 사용자\\repo',
+      'C:\\trailing\\',
+    ]);
+
+    expect(line).toBe(
+      [
+        '"C:\\Users\\fake\\AppData\\Roaming\\npm\\claude.cmd"',
+        '^^^"-p^^^"',
+        '^^^"{\\^^^"type\\^^^":\\^^^"object\\^^^"}^^^"',
+        '^^^"C:\\Users\\가짜^^^ 사용자\\repo^^^"',
+        '^^^"C:\\trailing\\\\^^^"',
+      ].join(' '),
+    );
+  });
+
+  it('cmd가 변수나 명령 연결로 읽을 문자(%, &, |, <, >)를 막는다', () => {
+    expect(cmdShimCommandLine('C:\\npm\\claude.cmd', ['a&b|c<d>e%PATH%'])).toBe(
+      '"C:\\npm\\claude.cmd" ^^^"a^^^&b^^^|c^^^<d^^^>e^^^%PATH^^^%^^^"',
+    );
   });
 });
 

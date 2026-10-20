@@ -498,6 +498,11 @@ html[data-platform='win32'] .popover {
   font-weight: 600;
 }
 
+.agent-status-note {
+  margin: 2px 0 0;
+  text-align: center;
+}
+
 .agent-notice {
   margin: 12px 0 0;
   padding: 10px 12px;
@@ -659,4 +664,31 @@ html[data-platform='win32'] .popover {
   background: var(--accent);
   color: #fff;
   font-weight: 600;
+}
+
+/* 에이전트 칸 아래의 기본 에이전트와 모델. */
+.agent-card + .field,
+.agent-card + .plain-fieldset {
+  margin-top: 22px;
+}
+
+.plain-fieldset {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.plain-fieldset legend {
+  padding: 0;
+}
+
+.choice-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.model-select {
+  min-width: 280px;
 }

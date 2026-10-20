@@ -6,6 +6,7 @@ import { FakeExecutor } from './fake-executor';
 function draftRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunRequest {
   return {
     kind: 'draft',
+    instructions: '가짜 지침',
     input: '가짜 맥락',
     outputSchema: { type: 'object' },
     readRoots: ['/tmp/fake-repo'],

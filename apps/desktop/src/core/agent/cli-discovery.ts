@@ -74,6 +74,7 @@ export async function readLoginShell(options: {
   });
   if (result.kind === 'timed-out') return { kind: 'timed-out' };
   if (result.kind === 'spawn-failed') return { kind: 'failed', detail: result.message };
+  if (result.kind === 'aborted') return { kind: 'failed', detail: '로그인 셸 읽기를 중단했습니다.' };
 
   /** 표지 사이에서 읽은 값. */
   const parsed = parseLoginShellOutput(result.stdout);
@@ -211,6 +212,13 @@ export function terminalCommand(cliPath: string, commandName: string, nameResolv
 
 /** 자식 프로세스에 넘기지 않는 환경 변수. 구독 로그인을 전제로 하고, API 요금이 나가지 않게 한다. */
 const EXCLUDED_AGENT_ENV_VARS = ['ANTHROPIC_API_KEY', 'CODEX_API_KEY'] as const;
+
+/** 자식 프로세스에 넘기지 않는 API 키 변수를 뺀 환경. 대소문자를 가리지 않고 뺀다. */
+export function withoutAgentApiKeys(env: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => !(EXCLUDED_AGENT_ENV_VARS as readonly string[]).includes(key.toUpperCase())),
+  );
+}
 
 /**
  * 에이전트 CLI 자식 프로세스의 환경 변수. 앱이 받은 환경에서 API 키 변수를 빼고 PATH를 `pathValue`로 바꾼다.

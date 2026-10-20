@@ -14,6 +14,9 @@
   --danger-bg: #fdf1f0;
   --danger-border: #f2c9c5;
   --ok: #1e7438;
+  --ok-bg: #e6f3ea;
+  --hatch: repeating-linear-gradient(45deg, #eef0f3 0 10px, #e8ebef 10px 20px);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', sans-serif;
   color-scheme: light;
 }
@@ -360,4 +363,300 @@ html[data-platform='win32'] .popover {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* 에이전트 칸: Stardraft와 에이전트를 잇는 연결선. 선의 네 마디가 연결 확인의 네 단계다. */
+.agent-card {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.agent-link {
+  display: flex;
+  align-items: flex-start;
+  margin: 6px 0 2px;
+}
+
+.agent-node {
+  width: 84px;
+  flex: none;
+  text-align: center;
+  font-size: 12px;
+}
+
+.agent-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  margin: 0 auto 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.agent-mark.accent {
+  color: var(--accent);
+}
+
+.agent-segments {
+  display: flex;
+  flex: 1;
+  gap: 3px;
+  margin: 22px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-segment {
+  flex: 1;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+/* 남은 단계는 회색 점선이다. */
+.agent-bar {
+  position: relative;
+  display: block;
+  height: 4px;
+  margin-bottom: 6px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(90deg, var(--border-strong) 0 6px, transparent 6px 10px);
+}
+
+.agent-segment.ok {
+  color: var(--ok);
+}
+
+.agent-segment.ok .agent-bar {
+  background: var(--ok);
+}
+
+/* 진행 중인 단계는 움직이는 점선이다. */
+.agent-segment.cur {
+  color: var(--accent);
+}
+
+.agent-segment.cur .agent-bar {
+  background: repeating-linear-gradient(90deg, var(--accent) 0 6px, transparent 6px 10px);
+  background-size: 20px 4px;
+  animation: agent-dash 0.6s linear infinite;
+}
+
+/* 실패한 단계는 가운데가 끊긴 빨간 선이다. */
+.agent-segment.bad {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.agent-segment.bad .agent-bar {
+  background: linear-gradient(90deg, var(--danger) 0 40%, transparent 40% 60%, var(--danger) 60%);
+}
+
+.agent-break {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes agent-dash {
+  to {
+    background-position: 20px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-segment.cur .agent-bar {
+    animation: none;
+  }
+}
+
+.agent-status {
+  margin: 6px 0 0;
+  text-align: center;
+  font-weight: 600;
+}
+
+.agent-notice {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  text-align: center;
+}
+
+.agent-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.agent-actions .spacer {
+  flex: 1;
+}
+
+.agent-details {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 12px;
+  user-select: text;
+}
+
+.agent-details dl {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 3px 10px;
+  margin: 0;
+}
+
+.agent-details dt {
+  color: var(--muted);
+}
+
+.agent-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-details pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #7a1d14;
+  font: 11px/1.5 var(--mono);
+}
+
+/* 실패 카드 네 장: 터미널 열기, 명령 붙여 넣기, 원인별 다음 행동, 다시 확인. */
+.fix-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fix-card {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.fix-number {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fix-picture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 82px;
+  margin: 6px 0;
+  padding: 6px;
+  overflow: hidden;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  background: var(--hatch);
+}
+
+.fix-caption {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fix-copy {
+  align-self: flex-start;
+  margin-top: 6px;
+}
+
+.mini-app {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+  background: #1e1f22;
+  color: #8fbf7f;
+  font: 700 13px var(--mono);
+}
+
+.mini-term {
+  width: 100%;
+  padding: 4px 6px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #1e1f22;
+  color: #e6e6e6;
+  font: 9.5px/1.5 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.mini-prompt,
+.mini-done {
+  color: #8fbf7f;
+}
+
+.mini-command {
+  background: rgba(255, 214, 102, 0.2);
+  color: #fff;
+}
+
+.mini-browser {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 10px;
+}
+
+.mini-browser-bar {
+  height: 10px;
+  background: #eceef1;
+}
+
+.mini-browser-body {
+  padding: 5px 6px;
+  text-align: center;
+}
+
+.mini-browser-go {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
 }

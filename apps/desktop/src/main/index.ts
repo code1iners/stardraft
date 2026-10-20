@@ -1,5 +1,8 @@
 import { app, dialog, Menu, net, safeStorage } from 'electron';
+import { userInfo } from 'node:os';
 import { join } from 'node:path';
+import { AgentConnection } from '../core/agent/agent-connection';
+import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { errorFields } from '../core/logging/logger';
@@ -85,7 +88,17 @@ function start(): void {
       // 설정 창을 닫으면 그 창에서 시작한 키 확인과 확인을 기다리던 계정 바꾸기를 그만둔다.
       onSettingsClosed: () => flowAccount.cancelKeyCheck(),
     });
-    registerIpc({ windows, logger, flowAccount, globalProblems });
+    /** 설정 "에이전트" 칸의 연결 확인. 칸을 열 때 렌더러가 확인을 시작한다. */
+    const agentConnection = new AgentConnection({
+      platform: process.platform,
+      env: process.env,
+      homeDir: app.getPath('home'),
+      loginShell: loginShellPath(),
+      runner: new NodeProcessRunner(),
+      settingsStore: appData.settingsStore,
+      logger,
+    });
+    registerIpc({ windows, logger, flowAccount, globalProblems, agentConnection });
 
     /** 트레이 동작이 부를 창 관리자. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appWindows = windows;
@@ -103,6 +116,16 @@ function start(): void {
     // 저장된 키는 트레이를 띄운 뒤에 읽는다. 업데이트 뒤에는 키체인 재허용을 묻고 답할 때까지 끝나지 않기 때문이다.
     flowAccount.checkStoredKey().catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)));
   });
+}
+
+/** 사용자의 로그인 셸. Finder에서 켠 앱도 `$SHELL`을 받지만, 없으면 계정 정보의 셸을 쓴다. */
+function loginShellPath(): string {
+  if (process.env.SHELL) return process.env.SHELL;
+  try {
+    return userInfo().shell ?? '/bin/zsh';
+  } catch {
+    return '/bin/zsh';
+  }
 }
 
 /** 전역 문제에 맞춘 트레이 표시. 검토 대기 수는 멘션 묶음을 더하는 티켓이 넘긴다. */

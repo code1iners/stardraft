@@ -43,6 +43,13 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'cancel-flow-key-check' })).toEqual({ type: 'cancel-flow-key-check' });
   });
 
+  it('에이전트 확인 명령을 받고, 렌더러가 실은 경로나 명령은 버린다', () => {
+    expect(parseAppCommand({ type: 'check-agent' })).toEqual({ type: 'check-agent' });
+    expect(parseAppCommand({ type: 'rediscover-agent' })).toEqual({ type: 'rediscover-agent' });
+    expect(parseAppCommand({ type: 'pick-agent-cli', path: '/tmp/evil' })).toEqual({ type: 'pick-agent-cli' });
+    expect(parseAppCommand({ type: 'copy-agent-fix-command', text: 'rm -rf ~' })).toEqual({ type: 'copy-agent-fix-command' });
+  });
+
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {
     expect(parseAppCommand({ type: 'open-settings', section: '../../etc' })).toBeNull();
     expect(parseAppCommand({ type: 'run-shell', command: 'rm -rf /' })).toBeNull();

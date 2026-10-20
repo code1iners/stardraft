@@ -1,12 +1,15 @@
-import { app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 import { mkdir } from 'node:fs/promises';
+import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
+import { agentFixCommand } from '../shared/agent-fix-command';
 import {
   IPC_CHANNELS,
   parseAppCommand,
+  type AgentConnectionSnapshot,
   type AppCommand,
   type AppFolder,
   type AppSnapshot,
@@ -28,6 +31,8 @@ export interface IpcServices {
   flowAccount: FlowAccount;
   /** 작은 창 띠에 보일 전역 문제. */
   globalProblems: GlobalProblems;
+  /** "에이전트" 칸의 연결 확인. */
+  agentConnection: AgentConnection;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -50,21 +55,25 @@ export function registerIpc(services: IpcServices): void {
   services.globalProblems.onChange((current) =>
     services.windows.broadcast({ type: 'global-problem-changed', globalProblem: activeProblemSnapshot(current) }),
   );
+  services.agentConnection.onChange((state) =>
+    services.windows.broadcast({ type: 'agent-connection-changed', agentConnection: agentConnectionSnapshot(state) }),
+  );
 }
 
 /** 지금 앱 상태의 스냅숏. */
-function currentSnapshot({ flowAccount, globalProblems }: IpcServices): AppSnapshot {
+function currentSnapshot({ flowAccount, globalProblems, agentConnection }: IpcServices): AppSnapshot {
   return {
     appName: app.name,
     version: app.getVersion(),
     platform: appPlatform(),
     flowAccount: flowAccountSnapshot(flowAccount.state()),
     globalProblem: activeProblemSnapshot(globalProblems.current()),
+    agentConnection: agentConnectionSnapshot(agentConnection.state()),
   };
 }
 
 /** 검사를 통과한 명령을 실행한다. */
-async function runCommand({ windows, logger, flowAccount }: IpcServices, command: AppCommand): Promise<void> {
+async function runCommand({ windows, logger, flowAccount, agentConnection }: IpcServices, command: AppCommand): Promise<void> {
   switch (command.type) {
     case 'open-settings':
       windows.openSettings(command.section);
@@ -81,7 +90,53 @@ async function runCommand({ windows, logger, flowAccount }: IpcServices, command
     case 'cancel-flow-key-check':
       flowAccount.cancelKeyCheck();
       return;
+    case 'check-agent':
+      await agentConnection.check();
+      return;
+    case 'rediscover-agent':
+      await agentConnection.rediscover();
+      return;
+    case 'pick-agent-cli':
+      await pickAgentCli(windows, agentConnection);
+      return;
+    case 'copy-agent-fix-command':
+      copyAgentFixCommand(agentConnection);
+      return;
   }
+}
+
+/** 파일 선택 창으로 CLI를 받아 확인한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
+async function pickAgentCli(windows: AppWindows, agentConnection: AgentConnection): Promise<void> {
+  /** 파일 선택 창 설정. macOS는 `~/.local` 같은 숨김 폴더도 고를 수 있게 한다. */
+  const options: OpenDialogOptions = {
+    title: 'Claude Code CLI 직접 지정',
+    buttonLabel: '선택',
+    properties: ['openFile', 'showHiddenFiles'],
+    ...(process.platform === 'win32' ? { filters: [{ name: 'Claude Code CLI', extensions: ['exe', 'cmd'] }] } : {}),
+  };
+  /** 설정 창. 있으면 그 위에 시트로 띄운다. */
+  const parent = windows.settingsWindow();
+  /** 고른 결과. */
+  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  /** 고른 파일. */
+  const [picked] = result.filePaths;
+  if (result.canceled || picked === undefined) return;
+  await agentConnection.useCliPath(picked);
+}
+
+/** 지금 실패 카드의 명령을 클립보드에 넣는다. 명령으로 고칠 실패가 아니면 아무 일도 하지 않는다. */
+function copyAgentFixCommand(agentConnection: AgentConnection): void {
+  /** 지금 연결 상태. */
+  const { progress, details } = agentConnection.state();
+  if (progress.status !== 'failed') return;
+  /** 복사할 명령. */
+  const command = agentFixCommand(progress.failure, details, appPlatform());
+  if (command) clipboard.writeText(command);
+}
+
+/** core의 에이전트 연결 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function agentConnectionSnapshot(state: AgentConnectionState): AgentConnectionSnapshot {
+  return { progress: state.progress, details: { ...state.details, searchedDirs: [...state.details.searchedDirs] } };
 }
 
 /** 키 확인이 연결이나 실패로 끝났으면 열린 창에 알린다. 확인을 기다리거나 그만둔 경우는 상태 변경으로 충분하다. */

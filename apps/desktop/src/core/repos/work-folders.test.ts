@@ -38,6 +38,7 @@ async function setup(settings: Partial<Settings> = {}) {
   const settingsStore = new MemorySettingsStore(settings);
   const workFolders = new WorkFolders({ settingsStore, logger: createLogger([], new FakeClock()), homeDir: home });
   await workFolders.load();
+  await workFolders.refresh();
   /** 상태가 바뀐 횟수. */
   const changes = { count: 0 };
   workFolders.onChange(() => (changes.count += 1));
@@ -105,6 +106,17 @@ describe('작업 폴더 추가', () => {
     await workFolders.add([await folder('next')]);
 
     expect(workFolders.state().rejected).toEqual([]);
+  });
+
+  it('저장된 목록을 읽은 직후 훑기 전에 더해도 저장된 폴더를 지우지 않는다', async () => {
+    const saved = await folder('saved');
+    const work = await folder('work');
+    const settingsStore = new MemorySettingsStore({ workFolders: [saved] });
+    const workFolders = new WorkFolders({ settingsStore, logger: createLogger([], new FakeClock()), homeDir: home });
+
+    await Promise.all([workFolders.load(), workFolders.add([work])]);
+
+    expect(settingsStore.settings.workFolders).toEqual([saved, work]);
   });
 });
 

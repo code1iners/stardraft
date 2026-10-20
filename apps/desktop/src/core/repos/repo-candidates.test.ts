@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -69,6 +69,25 @@ describe('후보 찾기', () => {
     expect(await findRepoCandidates(root)).toEqual({ status: 'found', repos: [{ name: 'kept', path: kept }] });
   });
 
+  it('폴더 링크는 그 자체가 저장소일 때만 세고 그 안으로는 내려가지 않는다', async () => {
+    const target = await mkdtemp(join(tmpdir(), 'stardraft-linked-'));
+    try {
+      await mkdir(join(target, 'real/.git'), { recursive: true });
+      await mkdir(join(target, 'group/inner/.git'), { recursive: true });
+      await mkdir(join(root, 'links'));
+      await symlink(join(target, 'real'), join(root, 'links/real'), 'dir');
+      await symlink(join(target, 'group'), join(root, 'links/group'), 'dir');
+      await symlink(root, join(root, 'links/loop'), 'dir');
+
+      expect(await findRepoCandidates(root)).toEqual({
+        status: 'found',
+        repos: [{ name: 'links/real', path: join(root, 'links/real') }],
+      });
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
   it('고른 폴더 자체가 저장소면 그 하나만 센다', async () => {
     const self = await repo('self');
     await repo('self/vendor/nested');
@@ -102,5 +121,6 @@ describe('받지 않는 작업 폴더', () => {
     expect(rejectedFolderReason('C:\\Users\\me\\workspace')).toBeNull();
     expect(rejectedFolderReason('\\\\?\\C:\\Users\\me\\workspace')).toBeNull();
     expect(rejectedFolderReason('/Users/me/workspace')).toBeNull();
+    expect(rejectedFolderReason('//Users/me/workspace')).toBeNull();
   });
 });

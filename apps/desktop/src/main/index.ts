@@ -111,9 +111,10 @@ function start(): void {
     await agentPreferences.load();
     /** 설정 "저장소" 칸의 작업 폴더와 "이 PC에서 찾은 폴더". */
     const workFolders = new WorkFolders({ settingsStore: appData.settingsStore, logger, homeDir: app.getPath('home') });
+    await workFolders.load();
     registerIpc({ windows, logger, flowAccount, globalProblems, agentConnection, agentPreferences, workFolders });
     // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
-    workFolders.load().catch((error: unknown) => logger.error('work-folders.load-failed', errorFields(error)));
+    void workFolders.refresh();
 
     /** 트레이 동작이 부를 창 관리자. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appWindows = windows;

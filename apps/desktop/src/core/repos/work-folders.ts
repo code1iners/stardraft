@@ -81,21 +81,25 @@ export class WorkFolders {
   private nextScanId = 0;
   /** 홈 폴더 아래에서 저장소가 든 흔한 이름의 폴더. 작업 폴더인 것도 담고, 보일 때 거른다. */
   private commonFolders: WorkFolderSuggestion[] = [];
+  /** 마지막 흔한 폴더 훑기 번호. 늦게 끝난 앞선 훑기의 결과를 버린다. */
+  private commonScanId = 0;
   /** 마지막 추가에서 받지 않은 폴더. */
   private rejected: RejectedFolder[] = [];
-  /** 목록을 바꾸고 저장하는 일이 서로 끼어들지 않게 한다. */
-  private readonly saving = new SerialQueue();
+  /** 목록을 읽고 바꾸는 일이 서로 끼어들지 않게 한다. */
+  private readonly listUpdates = new SerialQueue();
   /** 상태가 바뀔 때 부를 함수. */
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly options: WorkFoldersOptions) {}
 
-  /** 저장된 작업 폴더를 읽고, 작업 폴더와 홈 폴더 아래 흔한 폴더를 훑는다. */
+  /** 저장된 작업 폴더 목록을 읽는다. 훑기는 `refresh`가 한다. */
   async load(): Promise<void> {
-    /** 저장된 설정. */
-    const settings = await this.options.settingsStore.load();
-    this.folders = [...settings.workFolders];
-    await this.refresh();
+    await this.listUpdates.run(async () => {
+      /** 저장된 설정. */
+      const settings = await this.options.settingsStore.load();
+      this.folders = [...settings.workFolders];
+    });
+    this.emit();
   }
 
   /** 지금 상태. */
@@ -139,7 +143,7 @@ export class WorkFolders {
     if (rejected.length > 0) this.options.logger.info('work-folders.rejected', { count: rejected.length });
 
     /** 새로 더한 경로. */
-    const added = await this.saving.run(async () => {
+    const added = await this.listUpdates.run(async () => {
       /** 목록에 없는 경로. 같은 경로를 두 번 골라도 한 번만 더한다. */
       const fresh = [...new Set(accepted)].filter((path) => !this.folders.includes(path));
       if (fresh.length > 0 && !(await this.save([...this.folders, ...fresh]))) return [];
@@ -161,7 +165,7 @@ export class WorkFolders {
   /** 작업 폴더를 지운다. 저장소 매핑은 그대로 둔다. */
   async remove(path: string): Promise<void> {
     /** 지웠는지 여부. */
-    const removed = await this.saving.run(async () => {
+    const removed = await this.listUpdates.run(async () => {
       if (!this.folders.includes(path)) return false;
       return this.save(this.folders.filter((folder) => folder !== path));
     });
@@ -201,6 +205,8 @@ export class WorkFolders {
 
   /** 홈 폴더 아래 흔한 이름의 폴더 가운데 저장소가 든 폴더를 찾는다. */
   private async findCommonFolders(): Promise<void> {
+    /** 이번 훑기 번호. */
+    const id = (this.commonScanId += 1);
     /** 흔한 이름 폴더별 결과. 없는 폴더는 `missing`이다. */
     const results = await Promise.all(
       COMMON_WORK_FOLDER_NAMES.map(async (name) => {
@@ -209,6 +215,7 @@ export class WorkFolders {
         return { path, result: await findRepoCandidates(path) };
       }),
     );
+    if (this.commonScanId !== id) return;
     this.commonFolders = results.flatMap(({ path, result }) =>
       result.status === 'found' && result.repos.length > 0 ? [{ path, repoCount: result.repos.length }] : [],
     );

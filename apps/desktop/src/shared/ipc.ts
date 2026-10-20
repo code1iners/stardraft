@@ -182,7 +182,7 @@ export interface AgentPreferencesSnapshot {
 
 /** 작업 폴더에서 찾은 저장소 하나. */
 export interface RepoCandidateSnapshot {
-  /** 화면에 보일 이름. 작업 폴더에서의 상대 경로다. */
+  /** 화면에 보일 이름. 작업 폴더에서의 상대 경로이고, 작업 폴더 자체가 저장소면 폴더 이름이다. */
   name: string;
   /** 저장소의 절대 경로. */
   path: string;
@@ -200,14 +200,38 @@ export type WorkFolderScanSnapshot =
 /** 작업 폴더로 받지 않은 이유. `network`는 네트워크 경로, `wsl`은 WSL 경로다. */
 export type RejectedFolderReason = 'network' | 'wsl';
 
+/** 작업 폴더 하나. */
+export interface WorkFolderSnapshot {
+  /** 작업 폴더의 절대 경로. */
+  path: string;
+  /** 훑은 상태. */
+  scan: WorkFolderScanSnapshot;
+}
+
+/** "이 PC에서 찾은 폴더" 하나. */
+export interface WorkFolderSuggestionSnapshot {
+  /** 폴더의 절대 경로. */
+  path: string;
+  /** 그 안에서 찾은 저장소 수. */
+  repoCount: number;
+}
+
+/** 작업 폴더로 받지 않은 폴더 하나. */
+export interface RejectedFolderSnapshot {
+  /** 고른 경로. */
+  path: string;
+  /** 받지 않은 이유. */
+  reason: RejectedFolderReason;
+}
+
 /** 설정 "저장소" 칸의 작업 폴더. */
 export interface WorkFoldersSnapshot {
-  /** 작업 폴더와 훑은 상태. */
-  folders: { path: string; scan: WorkFolderScanSnapshot }[];
-  /** 작업 폴더가 아닌 "이 PC에서 찾은 폴더"와 그 안의 저장소 수. */
-  suggestions: { path: string; repoCount: number }[];
+  /** 작업 폴더. 저장한 순서다. */
+  folders: WorkFolderSnapshot[];
+  /** 작업 폴더가 아닌 "이 PC에서 찾은 폴더". */
+  suggestions: WorkFolderSuggestionSnapshot[];
   /** 마지막 추가에서 받지 않은 폴더. */
-  rejected: { path: string; reason: RejectedFolderReason }[];
+  rejected: RejectedFolderSnapshot[];
 }
 
 /** 렌더러가 그릴 앱 상태 전체. */

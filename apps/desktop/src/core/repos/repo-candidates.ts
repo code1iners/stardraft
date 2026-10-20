@@ -1,5 +1,5 @@
 import type { Dirent } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join, relative } from 'node:path';
 
 /** 작업 폴더에서 저장소를 찾는 깊이. 고른 폴더 바로 아래가 1단계다. */
@@ -26,7 +26,7 @@ export type RejectedFolderReason = 'network' | 'wsl';
 /**
  * 작업 폴더에서 저장소 후보를 찾는다.
  * `.git` 디렉터리나 worktree의 `.git` 파일이 있으면 저장소로 보고 그 안으로는 내려가지 않는다.
- * 숨김 폴더, `node_modules`, 심볼릭 링크는 건너뛴다.
+ * 숨김 폴더와 `node_modules`는 건너뛴다. 폴더를 가리키는 심볼릭 링크는 그 자체가 저장소일 때만 세고, 순환을 막으려고 그 안으로는 내려가지 않는다.
  */
 export async function findRepoCandidates(folder: string): Promise<RepoScanResult> {
   /** 작업 폴더 바로 아래 항목. */
@@ -50,9 +50,12 @@ export async function findRepoCandidates(folder: string): Promise<RepoScanResult
 /** `entries`의 하위 폴더 가운데 `depth`단계에 있는 저장소를 `found`에 모으고, 저장소가 아니면 깊이 제한까지 내려간다. */
 async function collectRepos(dir: string, entries: readonly Dirent[], depth: number, found: string[]): Promise<void> {
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
     /** 하위 폴더 경로. */
     const child = join(dir, entry.name);
+    /** 심볼릭 링크인지 여부. */
+    const linked = entry.isSymbolicLink();
+    if (!entry.isDirectory() && !(linked && (await isDirectory(child)))) continue;
     /** 하위 폴더의 항목. */
     let childEntries: Dirent[];
     try {
@@ -62,7 +65,16 @@ async function collectRepos(dir: string, entries: readonly Dirent[], depth: numb
       continue;
     }
     if (await hasGitEntry(child, childEntries)) found.push(child);
-    else if (depth < REPO_SCAN_DEPTH) await collectRepos(child, childEntries, depth + 1, found);
+    else if (!linked && depth < REPO_SCAN_DEPTH) await collectRepos(child, childEntries, depth + 1, found);
+  }
+}
+
+/** 경로가 (링크를 따라가서) 폴더인지 본다. 깨진 링크는 폴더가 아니다. */
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
   }
 }
 
@@ -84,11 +96,12 @@ async function hasGitEntry(dir: string, entries: readonly Dirent[]): Promise<boo
  * 작업 폴더로 받지 않는 경로인지 본다. 받으면 `null`이다.
  * `\\wsl.localhost\…`, `\\wsl$\…`는 WSL 경로, 그 밖의 `\\server\share`와 `\\?\UNC\…`는 네트워크 경로다.
  * `\\?\C:\…`처럼 드라이브를 가리키는 긴 경로는 로컬이다.
+ * 폴더 선택 창은 Windows 경로를 `\`로 돌려주므로 `\\`로 시작할 때만 본다. POSIX의 `//foo`는 로컬 경로다.
  */
 export function rejectedFolderReason(path: string): RejectedFolderReason | null {
+  if (!path.startsWith('\\\\')) return null;
   /** 구분자를 `/`로 맞춘 경로. */
   const unified = path.replaceAll('\\', '/');
-  if (!unified.startsWith('//')) return null;
   /** `//` 뒤의 경로. 장치 경로 접두어(`?/`, `./`)는 떼고 본다. */
   let rest = unified.slice(2);
   if (/^[?.]\//.test(rest)) {

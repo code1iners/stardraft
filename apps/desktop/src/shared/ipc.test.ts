@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AGENT_MODEL_MAX_LENGTH, FLOW_API_KEY_MAX_LENGTH, parseAppCommand } from './ipc';
+import { AGENT_MODEL_MAX_LENGTH, FLOW_API_KEY_MAX_LENGTH, parseAppCommand, WORK_FOLDER_PATH_MAX_LENGTH } from './ipc';
 
 describe('렌더러가 보낸 명령 검사', () => {
   it('설정 열기 명령을 칸과 함께 받는다', () => {
@@ -75,6 +75,29 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'set-agent-model', agent: 'claude-code' })).toBeNull();
     expect(parseAppCommand({ type: 'set-agent-model', agent: 'unknown', model: 'opus' })).toBeNull();
     expect(parseAppCommand({ type: 'set-agent-model', agent: 'claude-code', model: 'm'.repeat(AGENT_MODEL_MAX_LENGTH + 1) })).toBeNull();
+  });
+
+  it('작업 폴더 고르기와 다시 훑기 명령을 받고, 렌더러가 실은 경로는 버린다', () => {
+    expect(parseAppCommand({ type: 'pick-work-folders', paths: ['/tmp/evil'] })).toEqual({ type: 'pick-work-folders' });
+    expect(parseAppCommand({ type: 'refresh-work-folders' })).toEqual({ type: 'refresh-work-folders' });
+  });
+
+  it('제안 폴더 추가와 작업 폴더 지우기 명령은 경로 문자열을 받는다', () => {
+    expect(parseAppCommand({ type: 'add-suggested-work-folder', path: '/Users/me/workspace' })).toEqual({
+      type: 'add-suggested-work-folder',
+      path: '/Users/me/workspace',
+    });
+    expect(parseAppCommand({ type: 'remove-work-folder', path: 'C:\\Users\\me\\code' })).toEqual({
+      type: 'remove-work-folder',
+      path: 'C:\\Users\\me\\code',
+    });
+  });
+
+  it('경로가 비었거나 문자열이 아니거나 너무 길면 작업 폴더 명령을 거부한다', () => {
+    expect(parseAppCommand({ type: 'add-suggested-work-folder', path: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-work-folder', path: 1 })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-work-folder' })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-work-folder', path: '/'.repeat(WORK_FOLDER_PATH_MAX_LENGTH + 1) })).toBeNull();
   });
 
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {

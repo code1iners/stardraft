@@ -5,6 +5,7 @@ import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agen
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
+import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import { agentFixCommand } from '../shared/agent-fix-command';
 import {
@@ -18,6 +19,7 @@ import {
   type FlowAccountProfile,
   type FlowAccountSnapshot,
   type GlobalProblemSnapshot,
+  type WorkFoldersSnapshot,
 } from '../shared/ipc';
 import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
 import type { AppWindows } from './app-windows';
@@ -37,6 +39,8 @@ export interface IpcServices {
   agentConnection: AgentConnection;
   /** "에이전트" 칸의 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferences;
+  /** "저장소" 칸의 작업 폴더. */
+  workFolders: WorkFolders;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -71,10 +75,13 @@ export function registerIpc(services: IpcServices): void {
     broadcastPreferences();
   });
   services.agentPreferences.onChange(broadcastPreferences);
+  services.workFolders.onChange(() =>
+    services.windows.broadcast({ type: 'work-folders-changed', workFolders: workFoldersSnapshot(services.workFolders.state()) }),
+  );
 }
 
 /** 지금 앱 상태의 스냅숏. */
-function currentSnapshot({ flowAccount, globalProblems, agentConnection, agentPreferences }: IpcServices): AppSnapshot {
+function currentSnapshot({ flowAccount, globalProblems, agentConnection, agentPreferences, workFolders }: IpcServices): AppSnapshot {
   return {
     appName: app.name,
     version: app.getVersion(),
@@ -83,12 +90,13 @@ function currentSnapshot({ flowAccount, globalProblems, agentConnection, agentPr
     globalProblem: activeProblemSnapshot(globalProblems.current()),
     agentConnection: agentConnectionSnapshot(agentConnection.state()),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
+    workFolders: workFoldersSnapshot(workFolders.state()),
   };
 }
 
 /** 검사를 통과한 명령을 실행한다. */
 async function runCommand(
-  { windows, logger, flowAccount, agentConnection, agentPreferences }: IpcServices,
+  { windows, logger, flowAccount, agentConnection, agentPreferences, workFolders }: IpcServices,
   command: AppCommand,
 ): Promise<void> {
   switch (command.type) {
@@ -125,7 +133,47 @@ async function runCommand(
     case 'set-agent-model':
       await agentPreferences.setModel(command.agent, command.model);
       return;
+    case 'pick-work-folders':
+      await pickWorkFolders(windows, workFolders);
+      return;
+    case 'add-suggested-work-folder':
+      await workFolders.addSuggestion(command.path);
+      return;
+    case 'remove-work-folder':
+      await workFolders.remove(command.path);
+      return;
+    case 'refresh-work-folders':
+      await workFolders.refresh();
+      return;
   }
+}
+
+/** 폴더 선택 창으로 작업 폴더를 여러 개 받아 더한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
+async function pickWorkFolders(windows: AppWindows, workFolders: WorkFolders): Promise<void> {
+  /** 폴더 선택 창 설정. */
+  const options: OpenDialogOptions = {
+    title: '작업 폴더 추가',
+    buttonLabel: '추가',
+    properties: ['openDirectory', 'multiSelections'],
+  };
+  /** 설정 창. 있으면 그 위에 시트로 띄운다. */
+  const parent = windows.settingsWindow();
+  /** 고른 결과. */
+  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  if (result.canceled || result.filePaths.length === 0) return;
+  await workFolders.add(result.filePaths);
+}
+
+/** core의 작업 폴더 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function workFoldersSnapshot(state: WorkFoldersState): WorkFoldersSnapshot {
+  return {
+    folders: state.folders.map(({ path, scan }) => ({
+      path,
+      scan: scan.status === 'found' ? { status: 'found', repos: scan.repos.map((repo) => ({ ...repo })) } : { status: scan.status },
+    })),
+    suggestions: state.suggestions.map((suggestion) => ({ ...suggestion })),
+    rejected: state.rejected.map((folder) => ({ ...folder })),
+  };
 }
 
 /** 파일 선택 창으로 CLI를 받아 확인한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */

@@ -15,6 +15,7 @@
   --danger-border: #f2c9c5;
   --ok: #1e7438;
   --ok-bg: #e6f3ea;
+  --warn: #8a5300;
   --hatch: repeating-linear-gradient(45deg, #eef0f3 0 10px, #e8ebef 10px 20px);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', sans-serif;
@@ -64,6 +65,10 @@ button:focus-visible {
 
 .danger-text {
   color: var(--danger);
+}
+
+.warning-text {
+  color: var(--warn);
 }
 
 .btn {
@@ -691,4 +696,52 @@ html[data-platform='win32'] .popover {
 
 .model-select {
   min-width: 280px;
+}
+
+/* 저장소 칸: 작업 폴더와 "이 PC에서 찾은 폴더" 목록. */
+.folder-list {
+  margin: 0 0 10px;
+  padding: 0;
+  max-width: 560px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  list-style: none;
+}
+
+.folder-item + .folder-item {
+  border-top: 1px solid var(--border);
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 4px 8px 4px 12px;
+}
+
+.folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px/1.5 var(--mono);
+  user-select: text;
+}
+
+.folder-warning {
+  margin: -2px 12px 8px;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.repo-names {
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  list-style: none;
+  font: 12px/1.6 var(--mono);
+  user-select: text;
 }

@@ -4,6 +4,7 @@ import { AccountSwitchSheet } from './AccountSwitchSheet';
 import { AgentSection } from './AgentSection';
 import { FlowAccountSection } from './FlowAccountSection';
 import { GeneralSection } from './GeneralSection';
+import { RepositoriesSection } from './RepositoriesSection';
 import { useSnapshot } from './useSnapshot';
 
 /** 칸 목록에 보이는 칸 이름. */
@@ -65,6 +66,7 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
           {section === 'agent' && snapshot && (
             <AgentSection agentConnection={snapshot.agentConnection} agentPreferences={snapshot.agentPreferences} platform={snapshot.platform} />
           )}
+          {section === 'repositories' && snapshot && <RepositoriesSection workFolders={snapshot.workFolders} />}
           {section === 'general' && <GeneralSection snapshot={snapshot} />}
         </main>
       </div>

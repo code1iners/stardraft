@@ -38,6 +38,9 @@ export type AgentId = (typeof AGENT_IDS)[number];
 /** 모델 고르기 명령이 받는 모델 이름의 최대 길이. */
 export const AGENT_MODEL_MAX_LENGTH = 200;
 
+/** 작업 폴더 명령이 받는 경로의 최대 길이. */
+export const WORK_FOLDER_PATH_MAX_LENGTH = 4096;
+
 /** "Flow 계정" 칸의 계정 카드에 보일 계정. */
 export interface FlowAccountProfile {
   /** 이름. */
@@ -177,6 +180,36 @@ export interface AgentPreferencesSnapshot {
   models: Partial<Record<AgentId, ModelChoiceSnapshot>>;
 }
 
+/** 작업 폴더에서 찾은 저장소 하나. */
+export interface RepoCandidateSnapshot {
+  /** 화면에 보일 이름. 작업 폴더에서의 상대 경로다. */
+  name: string;
+  /** 저장소의 절대 경로. */
+  path: string;
+}
+
+/** 작업 폴더 하나를 훑은 상태. */
+export type WorkFolderScanSnapshot =
+  /** 훑고 있다. */
+  | { status: 'scanning' }
+  /** 훑기를 마쳤다. 저장소가 없으면 빈 목록이다. */
+  | { status: 'found'; repos: RepoCandidateSnapshot[] }
+  /** 폴더가 없거나 읽을 수 없다. */
+  | { status: 'missing' };
+
+/** 작업 폴더로 받지 않은 이유. `network`는 네트워크 경로, `wsl`은 WSL 경로다. */
+export type RejectedFolderReason = 'network' | 'wsl';
+
+/** 설정 "저장소" 칸의 작업 폴더. */
+export interface WorkFoldersSnapshot {
+  /** 작업 폴더와 훑은 상태. */
+  folders: { path: string; scan: WorkFolderScanSnapshot }[];
+  /** 작업 폴더가 아닌 "이 PC에서 찾은 폴더"와 그 안의 저장소 수. */
+  suggestions: { path: string; repoCount: number }[];
+  /** 마지막 추가에서 받지 않은 폴더. */
+  rejected: { path: string; reason: RejectedFolderReason }[];
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -193,6 +226,8 @@ export interface AppSnapshot {
   agentConnection: AgentConnectionSnapshot;
   /** 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferencesSnapshot;
+  /** 작업 폴더와 "이 PC에서 찾은 폴더". */
+  workFolders: WorkFoldersSnapshot;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -208,7 +243,9 @@ export type AppEvent =
   /** 에이전트 연결 확인 상태가 바뀌었다. */
   | { type: 'agent-connection-changed'; agentConnection: AgentConnectionSnapshot }
   /** 기본 에이전트나 모델 선택이 바뀌었다. 연결된 에이전트가 바뀔 때도 온다. */
-  | { type: 'agent-preferences-changed'; agentPreferences: AgentPreferencesSnapshot };
+  | { type: 'agent-preferences-changed'; agentPreferences: AgentPreferencesSnapshot }
+  /** 작업 폴더나 그 훑은 결과, "이 PC에서 찾은 폴더"가 바뀌었다. */
+  | { type: 'work-folders-changed'; workFolders: WorkFoldersSnapshot };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =
@@ -233,7 +270,15 @@ export type AppCommand =
   /** 기본 에이전트를 고른다. 연결되지 않은 에이전트는 main이 받지 않는다. */
   | { type: 'set-default-agent'; agent: AgentId }
   /** 에이전트의 모델을 고른다. `null`은 기본 모델(에이전트가 정함)이다. 목록에 없는 모델은 main이 받지 않는다. */
-  | { type: 'set-agent-model'; agent: AgentId; model: string | null };
+  | { type: 'set-agent-model'; agent: AgentId; model: string | null }
+  /** 폴더 선택 창으로 작업 폴더를 여러 개 고른다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
+  | { type: 'pick-work-folders' }
+  /** "이 PC에서 찾은 폴더"를 작업 폴더로 더한다. 지금 제안에 없는 경로는 main이 받지 않는다. */
+  | { type: 'add-suggested-work-folder'; path: string }
+  /** 작업 폴더를 지운다. 그 안을 가리키는 저장소 매핑은 그대로 둔다. */
+  | { type: 'remove-work-folder'; path: string }
+  /** 작업 폴더와 "이 PC에서 찾은 폴더"를 다시 훑는다. "저장소" 칸을 열 때 보낸다. */
+  | { type: 'refresh-work-folders' };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -265,6 +310,11 @@ function isAgentModelInput(value: unknown): value is string | null {
   return value === null || (typeof value === 'string' && value !== '' && value.length <= AGENT_MODEL_MAX_LENGTH);
 }
 
+/** 작업 폴더 명령에 실을 수 있는 경로인지 확인한다. 목록이나 제안에 있는 경로인지는 main이 본다. */
+function isWorkFolderPathInput(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= WORK_FOLDER_PATH_MAX_LENGTH;
+}
+
 /** 키 확인 명령에 실을 수 있는 키인지 확인한다. 앞뒤 공백 정리와 키 형식 판단은 main이 한다. */
 function isFlowApiKeyInput(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '' && value.length <= FLOW_API_KEY_MAX_LENGTH;
@@ -294,12 +344,17 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isAgentId(candidate.agent) && isAgentModelInput(candidate.model)
         ? { type: 'set-agent-model', agent: candidate.agent, model: candidate.model }
         : null;
+    case 'add-suggested-work-folder':
+    case 'remove-work-folder':
+      return isWorkFolderPathInput(candidate.path) ? { type: candidate.type, path: candidate.path } : null;
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
     case 'check-agent':
     case 'rediscover-agent':
     case 'pick-agent-cli':
     case 'copy-agent-fix-command':
+    case 'pick-work-folders':
+    case 'refresh-work-folders':
       return { type: candidate.type };
     default:
       return null;

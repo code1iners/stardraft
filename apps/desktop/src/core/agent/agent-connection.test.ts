@@ -476,14 +476,15 @@ describe('에이전트 연결 확인: 작동 확인', () => {
     expect(checkRunRequest(runner, cliPath)?.env).toEqual({ PATH: SHELL_PATH, HOME: home, LANG: 'ko_KR.UTF-8' });
   });
 
-  it('고른 모델과 추가 비밀 파일 패턴으로 작동 확인을 돌린다', async () => {
+  it('작동 확인은 고른 모델과 상관없이 기본 모델로 돌고, 추가 비밀 파일 패턴은 넣는다', async () => {
+    // 모델 하나의 문제(사용량 한도 등)로 연결이 끊기면 모델 선택 상자도 사라져 되돌릴 수 없으므로 모델은 넘기지 않는다.
     const { runner, connection, cliPath } = setupLoggedIn({}, { agentModels: { 'claude-code': 'opus' }, extraSecretPatterns: ['*.secret'] });
     answerCheckRun(runner, cliPath, exited(0, claudeSuccessStream({ ok: true })));
 
     await connection.check();
 
     const args = checkRunRequest(runner, cliPath)?.args ?? [];
-    expect(args.slice(-2)).toEqual(['--model', 'opus']);
+    expect(args).not.toContain('--model');
     expect(args[args.indexOf('--settings') + 1]).toContain('Read(//**/*.secret)');
   });
 

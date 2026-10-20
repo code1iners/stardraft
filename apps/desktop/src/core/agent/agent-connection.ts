@@ -197,7 +197,7 @@ export class AgentConnection {
       runner: options.runner,
       launch: () => this.launch(),
       ...(options.tempRoot === undefined ? {} : { tempRoot: options.tempRoot }),
-      onRunFinished: (report) => this.reviewRun(report),
+      onRunFinished: (report) => this.recheckAfterRun(report),
     });
   }
 
@@ -250,7 +250,7 @@ export class AgentConnection {
   }
 
   /** 선택·초안 실행이 끝나면 결과를 보고, 전역 실패가 의심되거나 CLI 버전이 바뀌었으면 연결 확인을 다시 돌린다. */
-  private reviewRun({ kind, cliVersion, outcome }: ClaudeRunReport): void {
+  private recheckAfterRun({ kind, cliVersion, outcome }: ClaudeRunReport): void {
     if (kind === 'check') return;
     if (outcome.type === 'failed' && SUSPECTED_GLOBAL_FAILURES.includes(outcome.reason)) {
       this.options.logger.warn('agent.global-failure-suspected', { agent: AGENT, reason: outcome.reason });
@@ -322,9 +322,9 @@ export class AgentConnection {
     // 4. 작동 확인
     publish({ status: 'checking', step: 'run-check' });
     /** 작동 확인 결과. */
-    const runCheck = await this.checkRun(details, signal);
+    const working = await this.checkWorking(details, signal);
     if (!isCurrent()) return;
-    if (!runCheck.ok) return this.fail(publish, runCheck.failure, isCurrent);
+    if (!working.ok) return this.fail(publish, working.failure, isCurrent);
 
     this.confirmedVersion = details.version;
     this.options.logger.info('agent.connected', { agent: AGENT, version: details.version, authMethod: details.authMethod });
@@ -499,11 +499,12 @@ export class AgentConnection {
   }
 
   /**
-   * 점검 실행을 한 번 돌린다. 실제 실행과 같은 플래그 묶음, 고른 모델, 비밀 파일 패턴으로 최소 스키마 결과를 받는다.
+   * 점검 실행을 한 번 돌린다. 실제 실행과 같은 플래그 묶음과 비밀 파일 패턴으로 최소 스키마 결과를 받는다.
+   * 모델은 넘기지 않는다. 고른 모델 하나의 문제(사용량 한도 등)는 전역 실패가 아니고, 연결이 끊기면 모델 선택 상자도 사라져 되돌릴 수 없기 때문이다.
    * 로그인 상태 명령은 로컬 기록만 보므로, 여기서 로그인 만료가 드러나면 로그인 필요로 멈춘다.
    */
-  private async checkRun(details: AgentCheckDetails, signal: AbortSignal): Promise<StepResult> {
-    /** 고른 모델과 추가 비밀 파일 패턴을 읽을 설정. */
+  private async checkWorking(details: AgentCheckDetails, signal: AbortSignal): Promise<StepResult> {
+    /** 추가 비밀 파일 패턴을 읽을 설정. */
     const settings = await this.options.settingsStore.load();
     await mkdir(this.options.checkDir, { recursive: true });
     /** 점검 실행 결과. */
@@ -514,7 +515,7 @@ export class AgentConnection {
       outputSchema: CHECK_RUN_SCHEMA,
       readRoots: [this.options.checkDir],
       secretPatterns: settings.extraSecretPatterns,
-      model: settings.agentModels[AGENT] ?? null,
+      model: null,
       timeoutMs: CHECK_RUN_TIMEOUT_MS,
       signal,
       onProgress: () => {},

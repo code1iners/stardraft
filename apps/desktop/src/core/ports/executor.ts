@@ -24,7 +24,7 @@ export interface ExecutorRunRequest {
   outputSchema: Record<string, unknown>;
   /** 에이전트가 읽을 수 있는 디렉터리의 절대 경로 목록. 이 밖은 읽지 못하게 한다. */
   readRoots: string[];
-  /** 읽지 못하게 할 비밀 파일 패턴(기본 목록과 추가 패턴을 합친 것). */
+  /** 읽지 못하게 할 비밀 파일 패턴. 실행기는 앱의 기본 목록을 늘 함께 넣으므로 사용자가 추가한 패턴만 넘겨도 된다. */
   secretPatterns: string[];
   /** 고른 모델. 없으면 에이전트 기본값을 쓴다. */
   model: string | null;

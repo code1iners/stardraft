@@ -361,6 +361,24 @@ describe('Claude Code 실행기: 실패 분류', () => {
     expect(outcome).toEqual({ type: 'failed', reason: 'cli-error', detail: "error: unknown option '--permission-prompts'" });
   });
 
+  it('result 메시지 없이 끝난 실행의 오류 원문에는 표준 출력(읽은 파일 내용이 든 stream-json)을 넣지 않는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(
+      runner,
+      exited(
+        137,
+        stream(
+          fakeClaudeEvent.init(),
+          JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_fake', content: 'FAKE_FILE_CONTENT' }] } }),
+        ),
+      ),
+    );
+
+    const outcome = await executor.run(draftRequest());
+
+    expect(outcome).toEqual({ type: 'failed', reason: 'cli-error', detail: '종료 코드 137로 끝났습니다.' });
+  });
+
   it('제한 시간을 넘기면 시간 초과, 중단 신호로 끝나면 취소다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, { kind: 'timed-out', stdout: stream(fakeClaudeEvent.init(), fakeClaudeEvent.toolUse()), stderr: '' });

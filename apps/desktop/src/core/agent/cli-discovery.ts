@@ -229,17 +229,13 @@ export function agentProcessEnv(
   pathValue: string,
   platform: NodeJS.Platform,
 ): Record<string, string> {
-  /** 지울 변수 이름. Windows는 대문자로 비교한다. */
-  const removed = new Set<string>([...EXCLUDED_AGENT_ENV_VARS, 'PATH']);
-  /** 만들 환경. */
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(appEnv)) {
-    if (value === undefined) continue;
-    if (removed.has(platform === 'win32' ? key.toUpperCase() : key)) continue;
-    env[key] = value;
-  }
-  env.PATH = pathValue;
-  return env;
+  /** 값이 있고 PATH가 아닌 변수. Windows는 `Path`처럼 대소문자가 달라도 같은 변수다. */
+  const withoutPath = Object.fromEntries(
+    Object.entries(appEnv).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined && (platform === 'win32' ? entry[0].toUpperCase() : entry[0]) !== 'PATH',
+    ),
+  );
+  return { ...withoutAgentApiKeys(withoutPath), PATH: pathValue };
 }
 
 /** `dir`이 PATH에 없으면 맨 앞에 붙인다. */

@@ -45,6 +45,7 @@ const DETAIL_MAX_LENGTH = 2_000;
  * stream-json 마지막 `result` 메시지의 `structured_output`을 꺼낸다.
  */
 export class ClaudeCodeExecutor implements Executor {
+  /** 이 실행기가 부르는 에이전트. */
   readonly agent: AgentId = 'claude-code';
 
   constructor(private readonly options: ClaudeCodeExecutorOptions) {}
@@ -139,6 +140,7 @@ class ClaudeStreamReader {
   /** 마지막 `result` 메시지. */
   result: Record<string, unknown> | null = null;
 
+  /** 표준 출력 한 줄을 읽는다. */
   push(line: string): void {
     /** JSON으로 푼 이벤트. */
     const event = parseObject(line);
@@ -153,7 +155,10 @@ class ClaudeStreamReader {
   }
 }
 
-/** 프로세스 결과와 stream-json으로 실행 결과를 정한다. */
+/**
+ * 프로세스 결과와 stream-json으로 실행 결과를 정한다.
+ * 결과 메시지 없이 끝나면 표준 오류만 오류 원문으로 남긴다. 표준 출력의 stream-json에는 읽은 파일 내용이 들어 있을 수 있다.
+ */
 function classifyClaudeRun(result: ProcessResult, reader: ClaudeStreamReader): ExecutorOutcome {
   switch (result.kind) {
     case 'spawn-failed':
@@ -168,7 +173,7 @@ function classifyClaudeRun(result: ProcessResult, reader: ClaudeStreamReader): E
 
   /** 마지막 `result` 메시지. */
   const message = reader.result;
-  if (!message) return failed('cli-error', processOutputDetail(result.stderr, result.stdout, result.exitCode));
+  if (!message) return failed('cli-error', result.stderr.trim() || `종료 코드 ${String(result.exitCode)}로 끝났습니다.`);
   /** CLI가 알려 준 결과 문장. 실패면 오류 문장이다. */
   const text = typeof message.result === 'string' ? message.result : '';
 
@@ -202,11 +207,6 @@ function apiFailureReason(apiError: string | null, status: unknown): ExecutorFai
 /** 실패 결과를 만든다. 오류 원문은 길이 상한까지만 남긴다. */
 function failed(reason: ExecutorFailureReason, detail: string): ExecutorOutcome {
   return { type: 'failed', reason, detail: detail.slice(0, DETAIL_MAX_LENGTH) };
-}
-
-/** 결과 메시지 없이 끝난 프로세스의 오류 원문. 표준 오류를 먼저 쓴다. */
-function processOutputDetail(stderr: string, stdout: string, exitCode: number | null): string {
-  return stderr.trim() || stdout.trim() || `종료 코드 ${String(exitCode)}로 끝났습니다.`;
 }
 
 /** JSON 객체 한 줄을 푼다. 객체가 아니면 `null`. */

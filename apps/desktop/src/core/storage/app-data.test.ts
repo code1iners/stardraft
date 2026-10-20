@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeClock } from '../fakes/fake-clock';
+import { FakeEncryption } from '../fakes/fake-encryption';
 import { createLogger } from '../logging/logger';
+import type { FlowEmployee } from '../ports/flow-api';
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../ports/settings-store';
 import { openAppData, type AppData, type OpenAppDataOptions } from './app-data';
 import { SETTINGS_MIGRATIONS } from './file-settings-store';
@@ -28,9 +30,23 @@ afterEach(() => {
 /** 아무 데도 남기지 않는 로거. */
 const silentLogger = createLogger([], new FakeClock());
 
+/** 테스트용 Flow 계정. 실제 사람이 아니다. */
+const FAKE_ACCOUNT: FlowEmployee = {
+  userId: 'fake-user-1@example.test',
+  name: '테스트 사용자',
+  division: '테스트 팀',
+  email: 'fake-user-1@example.test',
+};
+
 /** 임시 데이터 폴더를 열고, 준비됐으면 테스트가 끝날 때 닫게 기록한다. */
 async function open(options: Partial<OpenAppDataOptions> = {}) {
-  const result = await openAppData({ dataDir, appVersion: '0.1.0', logger: silentLogger, ...options });
+  const result = await openAppData({
+    dataDir,
+    appVersion: '0.1.0',
+    logger: silentLogger,
+    encryption: new FakeEncryption(),
+    ...options,
+  });
   if (result.kind === 'ready') opened = result;
   return result;
 }
@@ -90,23 +106,35 @@ describe('데이터 폴더 열기', () => {
     expect(readUserVersion(join(nested, 'state.db'))).toBe(STATE_MIGRATIONS.length);
   });
 
-  it('상태 저장소에 저장한 계정과 기준점이 다시 켠 뒤에도 남는다', async () => {
+  it('상태 저장소에 저장한 계정(이름·소속·이메일 포함)과 기준점이 다시 켠 뒤에도 남는다', async () => {
     const first = await openReady();
-    await first.stateStore.setAccountUserId('fake-user-1');
+    await first.stateStore.setAccount(FAKE_ACCOUNT);
     await first.stateStore.setBaselineAlarmId('1001');
     closeOpened();
 
     const second = await openReady();
 
-    await expect(second.stateStore.getAccountUserId()).resolves.toBe('fake-user-1');
+    await expect(second.stateStore.getAccount()).resolves.toEqual(FAKE_ACCOUNT);
     await expect(second.stateStore.getBaselineAlarmId()).resolves.toBe('1001');
   });
 
   it('처음에는 계정과 기준점이 없다', async () => {
     const data = await openReady();
 
-    await expect(data.stateStore.getAccountUserId()).resolves.toBeNull();
+    await expect(data.stateStore.getAccount()).resolves.toBeNull();
     await expect(data.stateStore.getBaselineAlarmId()).resolves.toBeNull();
+  });
+
+  it('Flow 개인 API 키는 데이터 폴더의 파일에 암호문으로 남고, 다시 켠 뒤에도 읽힌다', async () => {
+    const first = await openReady();
+    await first.secretStore.writeFlowApiKey('fake-key-1');
+    closeOpened();
+
+    const second = await openReady();
+
+    await expect(second.secretStore.readFlowApiKey()).resolves.toEqual({ kind: 'found', value: 'fake-key-1' });
+    expect(readdirSync(dataDir)).toContain('flow-api-key.bin');
+    expect(readFileSync(join(dataDir, 'flow-api-key.bin')).includes(Buffer.from('fake-key-1'))).toBe(false);
   });
 
   it('state.db는 WAL로 쓴다', async () => {
@@ -206,7 +234,7 @@ describe('다운그레이드 차단', () => {
 describe('마이그레이션', () => {
   it('state.db를 올리기 직전에 state.db와 settings.json의 사본을 앱 버전 이름으로 남긴다', async () => {
     const first = await openReady({ appVersion: '0.1.0' });
-    await first.stateStore.setAccountUserId('fake-user-1');
+    await first.stateStore.setAccount(FAKE_ACCOUNT);
     await first.settingsStore.save({ ...DEFAULT_SETTINGS, workFolders: ['/fake/code'] });
     closeOpened();
     /** 마이그레이션 전 settings.json 내용. */
@@ -218,7 +246,7 @@ describe('마이그레이션', () => {
     });
 
     // 올린 뒤에도 원래 기록은 남는다.
-    await expect(second.stateStore.getAccountUserId()).resolves.toBe('fake-user-1');
+    await expect(second.stateStore.getAccount()).resolves.toEqual(FAKE_ACCOUNT);
     closeOpened();
     expect(readUserVersion()).toBe(STATE_MIGRATIONS.length + 1);
 
@@ -230,8 +258,25 @@ describe('마이그레이션', () => {
     expect(readFileSync(join(backupDir, 'settings.json'), 'utf8')).toBe(settingsBefore);
     /** 사본 DB. */
     const backup = new Database(join(backupDir, 'state.db'), { readonly: true });
-    expect(backup.prepare('SELECT user_id FROM account').get()).toEqual({ user_id: 'fake-user-1' });
+    expect(backup.prepare('SELECT user_id FROM account').get()).toEqual({ user_id: FAKE_ACCOUNT.userId });
     backup.close();
+  });
+
+  it('사용자 ID만 담던 버전 1의 계정은 올린 뒤에도 남고, 이름과 이메일 자리는 사용자 ID로 채운다', async () => {
+    writeStateDb(
+      1,
+      `${STATE_MIGRATIONS[0]} INSERT INTO account (id, user_id) VALUES (1, 'fake-user-1@example.test');`,
+      '0.1.0',
+    );
+
+    const data = await openReady({ appVersion: '0.2.0' });
+
+    await expect(data.stateStore.getAccount()).resolves.toEqual({
+      userId: 'fake-user-1@example.test',
+      name: 'fake-user-1@example.test',
+      division: '',
+      email: 'fake-user-1@example.test',
+    });
   });
 
   it('settings.json을 올리기 직전에도 사본을 남기고, 올린 형식으로 다시 쓴다', async () => {

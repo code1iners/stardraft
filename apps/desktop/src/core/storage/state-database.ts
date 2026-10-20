@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
+import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
 
 /** 열린 `state.db` 연결. */
@@ -26,7 +27,17 @@ export const STATE_MIGRATIONS: readonly string[] = [
     baseline_alarm_id TEXT NOT NULL
   ) STRICT;
   `,
+  // 2: 설정 창의 계정 카드에 보일 계정의 이름·소속·이메일. 사용자 ID만 있던 계정은 이름과 이메일 자리를 사용자 ID로 채운다.
+  `
+  ALTER TABLE account ADD COLUMN name TEXT NOT NULL DEFAULT '';
+  ALTER TABLE account ADD COLUMN division TEXT NOT NULL DEFAULT '';
+  ALTER TABLE account ADD COLUMN email TEXT NOT NULL DEFAULT '';
+  UPDATE account SET name = user_id, email = user_id;
+  `,
 ];
+
+/** 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록이다. */
+const TABLES_KEPT_ON_RESET: ReadonlySet<string> = new Set(['app_meta']);
 
 /** 열기 전에 읽은 `state.db`의 형식. */
 export interface StateDatabaseInfo {
@@ -112,16 +123,46 @@ function readAppVersion(db: StateDatabase): string | null {
 export class SqliteStateStore implements StateStore {
   constructor(private readonly db: StateDatabase) {}
 
-  async getAccountUserId(): Promise<string | null> {
+  async getAccount(): Promise<FlowEmployee | null> {
     /** 계정 한 줄. */
-    const row = this.db.prepare('SELECT user_id FROM account WHERE id = 1').get() as { user_id: string } | undefined;
-    return row?.user_id ?? null;
+    const row = this.db.prepare('SELECT user_id, name, division, email FROM account WHERE id = 1').get() as
+      | { user_id: string; name: string; division: string; email: string }
+      | undefined;
+    return row ? { userId: row.user_id, name: row.name, division: row.division, email: row.email } : null;
   }
 
-  async setAccountUserId(userId: string): Promise<void> {
+  async setAccount(account: FlowEmployee): Promise<void> {
+    this.writeAccount(account);
+  }
+
+  async resetForAccount(account: FlowEmployee): Promise<void> {
+    // 뒤 티켓이 더하는 표도 빠짐없이 지우도록, 표 목록을 코드에 적지 않고 DB에서 읽는다.
+    /** 지울 표 이름. */
+    const tables = (this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
+      .map((row) => row.name)
+      .filter((name) => !name.startsWith('sqlite_') && !TABLES_KEPT_ON_RESET.has(name));
+
+    // 모두 지우고 새 계정을 넣는 일을 한 트랜잭션으로 한다. 중간에 실패하면 지우기 전 그대로 남는다.
+    this.db.transaction(() => {
+      // 표끼리 외래 키가 있어도 지우는 순서와 상관없이 지우도록 검사를 커밋 때로 미룬다. 커밋 때는 모두 비어 있다.
+      this.db.pragma('defer_foreign_keys = ON');
+      for (const table of tables) this.db.exec(`DELETE FROM "${table.replaceAll('"', '""')}"`);
+      this.writeAccount(account);
+    })();
+
+    // secure_delete는 본 파일의 지운 자리만 덮으므로, 옛 계정의 글이 WAL에 남지 않게 본 파일에 반영하고 WAL을 비운다.
+    this.db.pragma('wal_checkpoint(TRUNCATE)');
+  }
+
+  /** 계정 한 줄을 넣거나 바꾼다. */
+  private writeAccount(account: FlowEmployee): void {
     this.db
-      .prepare('INSERT INTO account (id, user_id) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET user_id = excluded.user_id')
-      .run(userId);
+      .prepare(
+        `INSERT INTO account (id, user_id, name, division, email) VALUES (1, @userId, @name, @division, @email)
+         ON CONFLICT (id) DO UPDATE SET
+           user_id = excluded.user_id, name = excluded.name, division = excluded.division, email = excluded.email`,
+      )
+      .run(account);
   }
 
   async getBaselineAlarmId(): Promise<string | null> {

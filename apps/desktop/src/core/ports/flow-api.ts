@@ -19,7 +19,9 @@ export type FlowApiFailure =
   /** 응답을 받지 못했다. */
   | { kind: 'network' }
   /** 그 밖의 응답 코드. */
-  | { kind: 'http'; status: number };
+  | { kind: 'http'; status: number }
+  /** 성공 응답을 받았지만 본문이 앱이 아는 모양이 아니다. */
+  | { kind: 'unexpected-response' };
 
 /** Flow API 호출 결과. */
 export type FlowApiResult<T> = { ok: true; value: T } | { ok: false; failure: FlowApiFailure };

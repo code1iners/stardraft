@@ -3,9 +3,9 @@ export const CLAUDE_COMMAND_NAME = 'claude';
 
 /**
  * 실행 계약의 필수 플래그를 모두 지원하는 가장 낮은 Claude Code 버전.
- * 필수 플래그 가운데 가장 늦게 생긴 `--restricted`가 이 버전부터 있다.
+ * 배포된 바이너리로 확인하면 `--restricted`는 2.1.248, 가장 늦게 생긴 `--permission-prompts`는 2.1.259부터 있다.
  */
-export const MIN_CLAUDE_VERSION = '2.1.248';
+export const MIN_CLAUDE_VERSION = '2.1.259';
 
 /** 버전 확인과 로그인 확인 명령의 제한 시간(밀리초). */
 export const CLI_COMMAND_TIMEOUT_MS = 10_000;
@@ -49,4 +49,15 @@ export function parseClaudeAuthStatus(output: string): ClaudeAuthStatus | null {
   const record = parsed as Record<string, unknown>;
   if (typeof record.loggedIn !== 'boolean') return null;
   return { loggedIn: record.loggedIn, authMethod: typeof record.authMethod === 'string' ? record.authMethod : null };
+}
+
+/**
+ * 이 CLI를 업데이트하는 명령. Homebrew cask 설치본은 Homebrew가 관리하므로(`claude update`도 "Claude is managed by Homebrew"라며 brew로 넘긴다) brew 명령을 쓴다.
+ * @param realPath 링크를 푼 CLI 실제 경로.
+ * @param cliCommand 터미널에서 이 CLI를 부르는 말.
+ */
+export function claudeUpdateCommand(realPath: string, cliCommand: string): string {
+  /** Homebrew cask 이름(`claude-code`, `claude-code@latest` 등). cask 설치본은 `Caskroom/<cask>/<버전>/` 아래에 있다. */
+  const cask = /\/Caskroom\/([^/]+)\/[^/]+\/claude$/.exec(realPath)?.[1];
+  return cask ? `brew upgrade --cask ${cask}` : `${cliCommand} update`;
 }

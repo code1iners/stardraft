@@ -1,8 +1,10 @@
+import { realpath } from 'node:fs/promises';
 import { errorFields, type Logger } from '../logging/logger';
 import type { AgentId } from '../ports/executor';
 import type { SettingsStore } from '../ports/settings-store';
 import {
   CLAUDE_COMMAND_NAME,
+  claudeUpdateCommand,
   CLI_COMMAND_TIMEOUT_MS,
   compareVersions,
   MIN_CLAUDE_VERSION,
@@ -56,20 +58,25 @@ export type AgentCheckProgress =
   /** 찾기·버전·로그인을 통과했고 작동 확인이 남았다. */
   | { status: 'awaiting-run-check' };
 
+/** 자식 프로세스 PATH의 출처. `login-shell`은 로그인 셸에서 읽은 PATH, `app`은 앱이 받은 PATH다. */
+export type PathSource = 'login-shell' | 'app';
+
 /** "자세히"에만 보이는 확인 내용. */
 export interface AgentCheckDetails {
   /** 찾은 CLI의 절대 경로. */
   cliPath: string | null;
   /** 터미널에서 이 CLI를 부르는 말. 명령 카드의 명령 앞에 붙는다. */
   cliCommand: string;
+  /** 이 CLI를 업데이트하는 명령. 설치 방법(Homebrew 등)에 따라 다르다. */
+  updateCommand: string;
   /** 읽은 CLI 버전. */
   version: string | null;
   /** 필요한 가장 낮은 버전. */
   requiredVersion: string;
   /** 로그인 방식(`claude.ai`, `api_key_helper` 등). */
   authMethod: string | null;
-  /** 자식 프로세스 PATH를 어디서 얻었는지. `login-shell`은 로그인 셸, `app`은 앱이 받은 PATH다. */
-  pathSource: 'login-shell' | 'app' | null;
+  /** 자식 프로세스 PATH를 어디서 얻었는지. 아직 읽지 않았으면 `null`. */
+  pathSource: PathSource | null;
   /** PATH 말고 찾아본 알려진 설치 위치. */
   searchedDirs: string[];
   /** 실패한 CLI 명령의 오류 원문. */
@@ -111,7 +118,7 @@ interface ChildPath {
   /** PATH 값. */
   path: string;
   /** 어디서 얻었는지. */
-  source: 'login-shell' | 'app';
+  source: PathSource;
   /** 로그인 셸의 `command -v` 결과. */
   commandPath: string | null;
 }
@@ -193,11 +200,6 @@ export class AgentConnection {
     return this.start({ kind: 'picked', cliPath });
   }
 
-  /** 찾은 CLI 경로. 아직 못 찾았으면 `null`. */
-  cliPath(): string | null {
-    return this.current.details.cliPath;
-  }
-
   /** 에이전트 CLI 자식 프로세스의 환경 변수. 아직 PATH를 읽지 않았으면 `null`. */
   processEnv(): Record<string, string> | null {
     return this.childPath && agentProcessEnv(this.options.env, this.childPath.path, this.options.platform);
@@ -243,18 +245,18 @@ export class AgentConnection {
     // 2. 버전
     publish({ status: 'checking', step: 'version' });
     /** 버전 확인 결과. */
-    const version = await this.checkVersion(details);
+    const version = await this.checkVersion(found.cliPath, details);
     if (!isCurrent()) return;
     if (!version.ok) return this.fail(publish, version.failure);
 
     // 3. 로그인
     publish({ status: 'checking', step: 'login' });
     /** 로그인 확인 결과. */
-    const login = await this.checkLogin(details);
+    const login = await this.checkLogin(found.cliPath, details);
     if (!isCurrent()) return;
     if (!login.ok) return this.fail(publish, login.failure);
 
-    this.options.logger.info('agent.check-passed', { agent: AGENT, version: details.version, authMethod: details.authMethod });
+    this.options.logger.info('agent.awaiting-run-check', { agent: AGENT, version: details.version, authMethod: details.authMethod });
     publish({ status: 'awaiting-run-check' });
   }
 
@@ -299,6 +301,7 @@ export class AgentConnection {
         : childPath;
     details.cliPath = cliPath;
     details.cliCommand = await this.terminalCommandFor(cliPath, childPath);
+    details.updateCommand = claudeUpdateCommand(await realpath(cliPath).catch(() => cliPath), details.cliCommand);
     return { ok: true, cliPath, childPath: usedPath, changed: cliPath !== saved };
   }
 
@@ -369,9 +372,9 @@ export class AgentConnection {
   }
 
   /** `claude --version`으로 필수 플래그를 지원하는 버전인지 본다. */
-  private async checkVersion(details: AgentCheckDetails): Promise<StepResult> {
+  private async checkVersion(cliPath: string, details: AgentCheckDetails): Promise<StepResult> {
     /** 버전 명령 결과. */
-    const result = await this.runCli(details, ['--version']);
+    const result = await this.runCli(cliPath, ['--version']);
     /** 출력에서 읽은 버전. */
     const version = result.kind === 'exited' && result.exitCode === 0 ? parseCliVersion(result.stdout) : null;
     if (version === null) {
@@ -388,9 +391,9 @@ export class AgentConnection {
    * 로그인을 확인한다. 실제 실행처럼 `--restricted`를 붙여, 앱 실행에서 무시되는 `apiKeyHelper`를 로그인으로 치지 않는다.
    * 로그인이 안 되어 있으면 `--restricted` 없이 한 번 더 물어 `apiKeyHelper` 방식인지 가린다.
    */
-  private async checkLogin(details: AgentCheckDetails): Promise<StepResult> {
+  private async checkLogin(cliPath: string, details: AgentCheckDetails): Promise<StepResult> {
     /** 실제 실행과 같은 조건의 로그인 상태. */
-    const restricted = await this.runCli(details, ['--restricted', 'auth', 'status']);
+    const restricted = await this.runCli(cliPath, ['--restricted', 'auth', 'status']);
     /** 읽은 로그인 상태. 로그인되지 않았으면 종료 코드 1로 끝나므로 종료 코드는 보지 않는다. */
     const status = restricted.kind === 'exited' ? parseClaudeAuthStatus(restricted.stdout) : null;
     if (status === null) {
@@ -403,7 +406,7 @@ export class AgentConnection {
     }
 
     /** 사용자 설정까지 본 로그인 상태. */
-    const unrestricted = await this.runCli(details, ['auth', 'status']);
+    const unrestricted = await this.runCli(cliPath, ['auth', 'status']);
     /** 사용자 설정의 로그인 방식. */
     const userAuthMethod = unrestricted.kind === 'exited' ? parseClaudeAuthStatus(unrestricted.stdout)?.authMethod ?? null : null;
     details.authMethod = userAuthMethod ?? status.authMethod;
@@ -411,10 +414,10 @@ export class AgentConnection {
     return { ok: false, failure: { step: 'login', reason: 'not-logged-in' } };
   }
 
-  /** 이번 확인에서 찾은 CLI를 앱이 실제로 쓰는 환경 변수로 실행한다. 찾기 단계를 통과한 뒤에만 부른다. */
-  private runCli(details: AgentCheckDetails, args: string[]): Promise<ProcessResult> {
+  /** 찾은 CLI를 앱이 실제로 쓰는 환경 변수로 실행한다. 찾기 단계를 통과한 뒤에만 부른다. */
+  private runCli(cliPath: string, args: string[]): Promise<ProcessResult> {
     return this.options.runner.run({
-      command: details.cliPath ?? '',
+      command: cliPath,
       args,
       env: this.processEnv() ?? {},
       cwd: this.options.homeDir,
@@ -427,6 +430,7 @@ export class AgentConnection {
     return {
       cliPath: null,
       cliCommand: CLAUDE_COMMAND_NAME,
+      updateCommand: `${CLAUDE_COMMAND_NAME} update`,
       version: null,
       requiredVersion: MIN_CLAUDE_VERSION,
       authMethod: null,

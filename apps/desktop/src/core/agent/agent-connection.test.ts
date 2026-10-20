@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -301,22 +301,38 @@ describe('에이전트 연결 확인: 버전', () => {
 
   it('필수 플래그를 지원하지 않는 낮은 버전이면 업데이트 필요로 멈춘다', async () => {
     const { runner, connection, cliPath } = setupFound();
-    answerHealthyCli(runner, cliPath, '2.1.247 (Claude Code)');
+    // 2.1.258에는 --restricted는 있지만 --permission-prompts가 없다.
+    answerHealthyCli(runner, cliPath, '2.1.258 (Claude Code)');
 
     await connection.check();
 
     expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'version', reason: 'update-required' } });
-    expect(connection.state().details).toMatchObject({ version: '2.1.247', requiredVersion: '2.1.248' });
+    expect(connection.state().details).toMatchObject({ version: '2.1.258', requiredVersion: '2.1.259', updateCommand: 'claude update' });
     expect(runner.requests.some((request) => request.args.includes('auth'))).toBe(false);
   });
 
-  it('--restricted를 처음 지원하는 2.1.248이면 통과한다', async () => {
+  it('필수 플래그를 모두 처음 지원하는 2.1.259면 통과한다', async () => {
     const { runner, connection, cliPath } = setupFound();
-    answerHealthyCli(runner, cliPath, '2.1.248 (Claude Code)');
+    answerHealthyCli(runner, cliPath, '2.1.259 (Claude Code)');
 
     await connection.check();
 
     expect(connection.state().progress).toEqual({ status: 'awaiting-run-check' });
+  });
+
+  it('Homebrew cask 설치본은 업데이트 명령으로 brew 명령을 보인다', async () => {
+    const realCli = installCli('homebrew/Caskroom/claude-code@latest/2.1.250');
+    mkdirSync(join(home, 'homebrew/bin'), { recursive: true });
+    const linkPath = join(home, 'homebrew/bin/claude');
+    symlinkSync(realCli, linkPath);
+    const { runner, connection } = setup();
+    runner.respondWhen(isShellRequest, exited(0, shellOutput([linkPath], SHELL_PATH)));
+    answerHealthyCli(runner, linkPath, '2.1.250 (Claude Code)');
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'version', reason: 'update-required' } });
+    expect(connection.state().details).toMatchObject({ cliPath: linkPath, updateCommand: 'brew upgrade --cask claude-code@latest' });
   });
 
   it('버전 명령이 실패하면 오류 원문을 남기고 버전에서 멈춘다', async () => {

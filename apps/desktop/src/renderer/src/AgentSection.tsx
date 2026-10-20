@@ -73,20 +73,26 @@ const FAILURE_TEXT: Record<AgentCheckFailure['reason'], FailureText> = {
 /** 마디 하나의 상태. `ok`는 끝남, `cur`는 진행 중, `bad`는 끊김, 빈 문자열은 남은 단계다. */
 type SegmentState = 'ok' | 'cur' | 'bad' | '';
 
+/** 지금 확인하거나 멈춘 단계. 아직 확인하지 않았으면 `null`. 셋째 단계까지 통과했으면 작동 확인이 남은 단계다. */
+function currentStep(progress: AgentCheckProgress): AgentCheckStep | null {
+  switch (progress.status) {
+    case 'idle':
+      return null;
+    case 'checking':
+      return progress.step;
+    case 'failed':
+      return progress.failure.step;
+    case 'awaiting-run-check':
+      return 'run-check';
+  }
+}
+
 /** `index`번째 마디의 상태. */
 function segmentState(progress: AgentCheckProgress, index: number): SegmentState {
   /** 지금 확인하거나 멈춘 마디의 위치. */
-  const at =
-    progress.status === 'checking'
-      ? STEPS.findIndex((item) => item.step === progress.step)
-      : progress.status === 'failed'
-        ? STEPS.findIndex((item) => item.step === progress.failure.step)
-        : progress.status === 'awaiting-run-check'
-          ? STEPS.findIndex((item) => item.step === 'run-check')
-          : -1;
-  if (at < 0) return '';
+  const at = STEPS.findIndex((item) => item.step === currentStep(progress));
+  if (at < 0 || index > at) return '';
   if (index < at) return 'ok';
-  if (index > at) return '';
   if (progress.status === 'checking') return 'cur';
   return progress.status === 'failed' ? 'bad' : '';
 }

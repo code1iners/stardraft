@@ -103,20 +103,25 @@ export type AgentCheckProgress =
   /** 찾기·버전·로그인을 통과했고 작동 확인이 남았다. */
   | { status: 'awaiting-run-check' };
 
+/** 자식 프로세스 PATH의 출처. `login-shell`은 로그인 셸에서 읽은 PATH, `app`은 앱이 받은 PATH다. */
+export type PathSource = 'login-shell' | 'app';
+
 /** "자세히"에만 보이는 확인 내용. */
 export interface AgentCheckDetails {
   /** 찾은 CLI의 절대 경로. */
   cliPath: string | null;
   /** 터미널에서 이 CLI를 부르는 말(`claude` 또는 따옴표로 감싼 절대 경로). */
   cliCommand: string;
+  /** 이 CLI를 업데이트하는 명령. Homebrew 설치본은 brew 명령이다. */
+  updateCommand: string;
   /** 읽은 CLI 버전. */
   version: string | null;
   /** 필요한 가장 낮은 버전. */
   requiredVersion: string;
   /** 로그인 방식. */
   authMethod: string | null;
-  /** 자식 프로세스 PATH의 출처. `login-shell`은 로그인 셸, `app`은 앱이 받은 PATH다. */
-  pathSource: 'login-shell' | 'app' | null;
+  /** 자식 프로세스 PATH의 출처. 아직 읽지 않았으면 `null`. */
+  pathSource: PathSource | null;
   /** PATH 말고 찾아본 알려진 설치 위치. */
   searchedDirs: string[];
   /** 실패한 CLI 명령의 오류 원문. */

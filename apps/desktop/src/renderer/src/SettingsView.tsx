@@ -4,6 +4,7 @@ import { AccountSwitchSheet } from './AccountSwitchSheet';
 import { AgentSection } from './AgentSection';
 import { FlowAccountSection } from './FlowAccountSection';
 import { GeneralSection } from './GeneralSection';
+import { sectionNeedsSetup, SetupBand } from './Onboarding';
 import { RepositoriesSection } from './RepositoriesSection';
 import { useSnapshot } from './useSnapshot';
 
@@ -22,7 +23,10 @@ interface SettingsViewProps {
   initialSection: string | null;
 }
 
-/** 설정 창. 왼쪽 칸 목록과 오른쪽 내용으로 이뤄진다. 아직 내용이 없는 칸은 제목만 보인다. */
+/**
+ * 설정 창. 왼쪽 칸 목록과 오른쪽 내용으로 이뤄진다. 아직 내용이 없는 칸은 제목만 보인다.
+ * 감지를 시작하기 전에는 맨 위에 첫 설정 띠를 두고, 끝나지 않은 필수 칸에 점을 찍는다.
+ */
 export function SettingsView({ initialSection }: SettingsViewProps) {
   /** 앱 상태 스냅숏. */
   const snapshot = useSnapshot();
@@ -44,31 +48,35 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
 
   return (
     <>
-      <div className="settings" inert={switchingTo !== null}>
-        <nav className="settings-nav" aria-label="설정 칸">
-          {SETTINGS_SECTIONS.map((id) => (
-            <button
-              key={id}
-              type="button"
-              className="settings-nav-item"
-              aria-current={id === section ? 'page' : undefined}
-              onClick={() => setSection(id)}
-            >
-              {SECTION_LABELS[id]}
-            </button>
-          ))}
-        </nav>
-        <main className="settings-main">
-          <h2>{SECTION_LABELS[section]}</h2>
-          {section === 'flow-account' && snapshot && (
-            <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
-          )}
-          {section === 'agent' && snapshot && (
-            <AgentSection agentConnection={snapshot.agentConnection} agentPreferences={snapshot.agentPreferences} platform={snapshot.platform} />
-          )}
-          {section === 'repositories' && snapshot && <RepositoriesSection workFolders={snapshot.workFolders} repoMappings={snapshot.repoMappings} />}
-          {section === 'general' && <GeneralSection snapshot={snapshot} />}
-        </main>
+      <div className="settings-window" inert={switchingTo !== null}>
+        {snapshot && <SetupBand snapshot={snapshot} section={section} onSelectSection={setSection} />}
+        <div className="settings">
+          <nav className="settings-nav" aria-label="설정 칸">
+            {SETTINGS_SECTIONS.map((id) => (
+              <button
+                key={id}
+                type="button"
+                className="settings-nav-item"
+                aria-current={id === section ? 'page' : undefined}
+                onClick={() => setSection(id)}
+              >
+                {SECTION_LABELS[id]}
+                {snapshot && sectionNeedsSetup(snapshot, id) && <span className="settings-nav-dot" role="img" aria-label="설정 필요" />}
+              </button>
+            ))}
+          </nav>
+          <main className="settings-main">
+            <h2>{SECTION_LABELS[section]}</h2>
+            {section === 'flow-account' && snapshot && (
+              <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
+            )}
+            {section === 'agent' && snapshot && (
+              <AgentSection agentConnection={snapshot.agentConnection} agentPreferences={snapshot.agentPreferences} platform={snapshot.platform} />
+            )}
+            {section === 'repositories' && snapshot && <RepositoriesSection workFolders={snapshot.workFolders} repoMappings={snapshot.repoMappings} />}
+            {section === 'general' && <GeneralSection snapshot={snapshot} />}
+          </main>
+        </div>
       </div>
       {switchingTo && <AccountSwitchSheet account={switchingTo} />}
     </>

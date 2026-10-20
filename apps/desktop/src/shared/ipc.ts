@@ -286,6 +286,36 @@ export interface RepoMappingsSnapshot {
   projects: ParticipantProjectsSnapshot;
 }
 
+/** 감지를 시작하기 전에 필요한 필수 세 가지. 작은 창과 설정 창 띠에 이 순서로 보인다. */
+export const SETUP_REQUIREMENTS = ['flow-key', 'agent', 'work-folders'] as const;
+
+/** 필수 설정 하나. `flow-key`는 확인된 키, `agent`는 에이전트 연결, `work-folders`는 작업 폴더 1개 이상이다. */
+export type SetupRequirement = (typeof SETUP_REQUIREMENTS)[number];
+
+/** 필수 설정 하나의 상태. `checking`은 에이전트 연결을 확인하는 중이다. */
+export type SetupRequirementStatus = 'done' | 'needed' | 'checking';
+
+/** [감지 시작]이 실패한 이유. `no-key`는 쓸 키가 없는 것, `save-failed`는 기준점이나 설정을 저장하지 못한 것이다. */
+export type DetectionStartFailure = 'no-key' | 'unauthorized' | 'network' | 'rate-limited' | 'unexpected' | 'save-failed';
+
+/** [감지 시작]의 진행 상태. */
+export type DetectionStartSnapshot =
+  | { status: 'idle' }
+  | { status: 'starting' }
+  | { status: 'failed'; reason: DetectionStartFailure };
+
+/** 작은 창의 필수 설정 전 화면과 설정 창 첫 설정 띠가 그릴 온보딩 상태. */
+export interface OnboardingSnapshot {
+  /** 감지를 시작했는지 여부. 시작한 뒤에는 첫 설정 띠와 필수 설정 전 화면이 나오지 않는다. */
+  detectionStarted: boolean;
+  /** 필수 세 가지의 상태. */
+  requirements: Record<SetupRequirement, SetupRequirementStatus>;
+  /** 필수 세 가지가 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
+  ready: boolean;
+  /** [감지 시작]의 진행 상태. */
+  start: DetectionStartSnapshot;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -306,6 +336,10 @@ export interface AppSnapshot {
   workFolders: WorkFoldersSnapshot;
   /** 저장소 매핑과 고를 참여 Flow 프로젝트 목록. */
   repoMappings: RepoMappingsSnapshot;
+  /** 필수 세 가지와 감지 시작 여부. */
+  onboarding: OnboardingSnapshot;
+  /** 로그인 시 자동 시작이 켜져 있는지 여부. */
+  launchAtLogin: boolean;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -325,7 +359,11 @@ export type AppEvent =
   /** 작업 폴더나 그 훑은 결과, "이 PC에서 찾은 폴더"가 바뀌었다. */
   | { type: 'work-folders-changed'; workFolders: WorkFoldersSnapshot }
   /** 저장소 매핑이나 그 폴더 확인 결과, 참여 Flow 프로젝트 목록이 바뀌었다. */
-  | { type: 'repo-mappings-changed'; repoMappings: RepoMappingsSnapshot };
+  | { type: 'repo-mappings-changed'; repoMappings: RepoMappingsSnapshot }
+  /** 필수 세 가지의 상태나 감지 시작 여부, [감지 시작]의 진행 상태가 바뀌었다. */
+  | { type: 'onboarding-changed'; onboarding: OnboardingSnapshot }
+  /** 로그인 시 자동 시작이 켜지거나 꺼졌다. */
+  | { type: 'launch-at-login-changed'; launchAtLogin: boolean };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =
@@ -366,7 +404,11 @@ export type AppCommand =
   /** 매핑에서 저장소 하나를 뺀다. 마지막 저장소를 빼면 매핑도 없어진다. */
   | { type: 'remove-mapping-repo'; projectId: string; path: string }
   /** 매핑을 통째로 지운다. */
-  | { type: 'remove-repo-mapping'; projectId: string };
+  | { type: 'remove-repo-mapping'; projectId: string }
+  /** [감지 시작]. 필수 세 가지가 다 되기 전이거나 이미 시작했으면 main이 무시한다. */
+  | { type: 'start-detection' }
+  /** 로그인 시 자동 시작을 켜거나 끈다. */
+  | { type: 'set-launch-at-login'; enabled: boolean };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -447,6 +489,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isFlowProjectIdInput(candidate.projectId) && isWorkFolderPathInput(candidate.path)
         ? { type: 'remove-mapping-repo', projectId: candidate.projectId, path: candidate.path }
         : null;
+    case 'set-launch-at-login':
+      return typeof candidate.enabled === 'boolean' ? { type: 'set-launch-at-login', enabled: candidate.enabled } : null;
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
     case 'check-agent':
@@ -456,6 +500,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'pick-work-folders':
     case 'refresh-work-folders':
     case 'refresh-repo-mappings':
+    case 'start-detection':
       return { type: candidate.type };
     default:
       return null;

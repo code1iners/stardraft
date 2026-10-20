@@ -1,11 +1,13 @@
 /** 배지의 빨강(BGRA). 화면의 위험 색과 같다. */
 const BADGE_RED = [0x18, 0x23, 0xb4, 0xff] as const;
+/** "설정 필요" 점의 노랑(BGRA). 온보딩 프로토타입의 노란 점 색이다. */
+const SETUP_YELLOW = [0x00, 0x8a, 0xd0, 0xff] as const;
 /** "!"의 흰색(BGRA). */
 const MARK_WHITE = [0xff, 0xff, 0xff, 0xff] as const;
 /** 투명. */
 const CLEAR = [0, 0, 0, 0] as const;
 
-// 배지 모양은 16px 아이콘 기준이고, 큰 아이콘은 같은 비율로 키운다.
+// 배지와 점 모양은 16px 아이콘 기준이고, 큰 아이콘은 같은 비율로 키운다.
 // 오른쪽 아래 지름 10px 원 안에 폭 2px의 "!"(막대 4px, 1px 띄우고 점 2px)를 두고, 원 둘레 1px을 비운다.
 /** 배지 원의 중심(x, y 같음). */
 const CENTER = 11;
@@ -25,6 +27,16 @@ const DOT_Y = [13, 15] as const;
  * 비트맵은 Electron `nativeImage.toBitmap()`이 주는 premultiplied BGRA다. 완전히 불투명하거나 투명한 픽셀만 쓰므로 premultiply를 따로 하지 않는다.
  */
 export function drawAlertBadge(bitmap: Uint8Array, size: number): Uint8Array {
+  return drawBadge(bitmap, size, BADGE_RED, true);
+}
+
+/** 정사각형 트레이 아이콘 비트맵에 감지 시작 전("설정 필요") 노란 점을 그린 사본을 돌려준다. "!" 배지와 같은 자리, 같은 크기다. */
+export function drawSetupDot(bitmap: Uint8Array, size: number): Uint8Array {
+  return drawBadge(bitmap, size, SETUP_YELLOW, false);
+}
+
+/** 오른쪽 아래에 `color` 원을 그리고, `withMark`면 그 안에 흰 "!"를 그린 사본을 돌려준다. */
+function drawBadge(bitmap: Uint8Array, size: number, color: readonly number[], withMark: boolean): Uint8Array {
   /** 배지를 그린 사본. */
   const badged = Uint8Array.from(bitmap);
   /** 16px 기준 1px의 크기. */
@@ -42,8 +54,8 @@ export function drawAlertBadge(bitmap: Uint8Array, size: number): Uint8Array {
       if (distance > RADIUS + RING) continue;
 
       /** 이 픽셀에 칠할 색. */
-      const color = distance > RADIUS ? CLEAR : isMark(px, py) ? MARK_WHITE : BADGE_RED;
-      badged.set(color, (y * size + x) * 4);
+      const fill = distance > RADIUS ? CLEAR : withMark && isMark(px, py) ? MARK_WHITE : color;
+      badged.set(fill, (y * size + x) * 4);
     }
   }
   return badged;

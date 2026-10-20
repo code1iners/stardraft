@@ -4,7 +4,7 @@ import trayTemplateIcon from '../../resources/trayTemplate.png?asset';
 import type { TrayIndicator } from '../core/tray-indicator';
 import type { GlobalProblemText } from '../shared/global-problem-text';
 import type { SettingsSection } from '../shared/ipc';
-import { drawAlertBadge } from './tray-badge';
+import { drawAlertBadge, drawSetupDot } from './tray-badge';
 
 /** 트레이 아이콘과 메뉴가 부르는 동작. */
 export interface TrayActions {
@@ -18,12 +18,25 @@ export interface TrayActions {
   quit: () => void;
 }
 
+/** Windows 아이콘에 그려 넣는 표시. */
+type WindowsBadge = 'alert' | 'setup-needed';
+
+/** macOS 메뉴 막대 제목에 쓰는 노란 점. 제목 글자는 ANSI 색을 받는다. */
+const MAC_SETUP_DOT = '\x1b[33m●\x1b[0m';
+
 /** 트레이에 보일 앱 상태. */
 export interface TrayView {
   /** 아이콘에 덧붙이는 표시. */
   indicator: TrayIndicator;
   /** 오른쪽 클릭 메뉴 맨 위에 둘 전역 문제의 문구. 없으면 `null`. */
   problem: GlobalProblemText | null;
+}
+
+/** 표시마다 툴팁에 덧붙이는 말. */
+function tooltipNote({ indicator, problem }: TrayView): string | null {
+  if (problem) return problem.title;
+  if (indicator.kind === 'setup-needed') return '설정 필요';
+  return null;
 }
 
 /**
@@ -35,8 +48,8 @@ export class AppTray {
   private readonly tray: Tray;
   /** 지금 보이는 상태. 오른쪽 클릭할 때 메뉴를 이 상태로 만든다. */
   private view: TrayView = { indicator: { kind: 'none' }, problem: null };
-  /** Windows "!" 배지 아이콘. 처음 쓸 때 만든다. */
-  private alertIcon: NativeImage | null = null;
+  /** Windows 배지 아이콘. 표시마다 처음 쓸 때 만든다. */
+  private readonly badgedIcons = new Map<WindowsBadge, NativeImage>();
 
   constructor(private readonly actions: TrayActions) {
     // macOS는 메뉴 막대 색에 맞춰 칠해지는 템플릿 이미지, Windows는 색이 있는 이미지를 쓴다.
@@ -55,7 +68,9 @@ export class AppTray {
   /** 아이콘 표시, 툴팁, 메뉴를 앱 상태에 맞춘다. */
   show(view: TrayView): void {
     this.view = view;
-    this.tray.setToolTip(view.problem ? `${app.name} · ${view.problem.title}` : app.name);
+    /** 툴팁에 덧붙이는 말. */
+    const note = tooltipNote(view);
+    this.tray.setToolTip(note ? `${app.name} · ${note}` : app.name);
     this.applyIndicator(view.indicator);
   }
 
@@ -65,15 +80,19 @@ export class AppTray {
    */
   private applyIndicator(indicator: TrayIndicator): void {
     if (process.platform === 'darwin') {
-      this.tray.setTitle(indicator.kind === 'alert' ? '!' : indicator.kind === 'review-count' ? String(indicator.count) : '');
+      this.tray.setTitle(macTitle(indicator));
       return;
     }
-    this.tray.setImage(indicator.kind === 'alert' ? this.windowsAlertIcon() : trayIcon);
+    this.tray.setImage(indicator.kind === 'alert' || indicator.kind === 'setup-needed' ? this.windowsBadgedIcon(indicator.kind) : trayIcon);
   }
 
-  /** 색 아이콘의 오른쪽 아래에 빨간 "!" 배지를 그린 아이콘. 고해상도 화면용 2배 이미지에도 그린다. */
-  private windowsAlertIcon(): NativeImage {
-    if (this.alertIcon) return this.alertIcon;
+  /** 색 아이콘의 오른쪽 아래에 빨간 "!" 배지나 노란 점을 그린 아이콘. 고해상도 화면용 2배 이미지에도 그린다. */
+  private windowsBadgedIcon(badge: WindowsBadge): NativeImage {
+    /** 이미 만든 아이콘. */
+    const cached = this.badgedIcons.get(badge);
+    if (cached) return cached;
+    /** 비트맵에 표시를 그리는 함수. */
+    const draw = badge === 'alert' ? drawAlertBadge : drawSetupDot;
 
     /** 배지를 그릴 원래 아이콘. `@2x` 파일도 함께 읽힌다. */
     const base = nativeImage.createFromPath(trayIcon);
@@ -84,9 +103,9 @@ export class AppTray {
       const bitmap = base.toBitmap({ scaleFactor });
       /** 정사각형 아이콘의 한 변 픽셀 수. */
       const size = Math.round(Math.sqrt(bitmap.length / 4));
-      badged.addRepresentation({ scaleFactor, width: size, height: size, buffer: Buffer.from(drawAlertBadge(bitmap, size)) });
+      badged.addRepresentation({ scaleFactor, width: size, height: size, buffer: Buffer.from(draw(bitmap, size)) });
     }
-    this.alertIcon = badged;
+    this.badgedIcons.set(badge, badged);
     return badged;
   }
 
@@ -110,5 +129,19 @@ export class AppTray {
       { label: '종료', click: actions.quit },
     ];
     return Menu.buildFromTemplate(items);
+  }
+}
+
+/** macOS 메뉴 막대에서 아이콘 옆에 보일 글자. */
+function macTitle(indicator: TrayIndicator): string {
+  switch (indicator.kind) {
+    case 'alert':
+      return '!';
+    case 'review-count':
+      return String(indicator.count);
+    case 'setup-needed':
+      return MAC_SETUP_DOT;
+    case 'none':
+      return '';
   }
 }

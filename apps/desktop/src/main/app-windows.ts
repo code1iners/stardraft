@@ -146,6 +146,17 @@ export class AppWindows {
     this.load(window, 'settings', section ? { section } : {});
   }
 
+  /** 설정 창이 열려 있으면 닫고, 다 닫혀 Dock 아이콘을 숨긴 뒤에 끝난다. */
+  closeSettings(): Promise<void> {
+    /** 열려 있는 설정 창. */
+    const window = this.settings;
+    if (!window || window.isDestroyed()) return Promise.resolve();
+    return new Promise((resolve) => {
+      window.once('closed', () => resolve());
+      window.close();
+    });
+  }
+
   /** 설정 창을 보인다. 설정 창이 열려 있는 동안만 macOS Dock 아이콘을 보인다. */
   private async showSettings(window: BrowserWindow): Promise<void> {
     // Windows는 작업 표시줄을 건너뛰지 않는 창이라 창을 보이면 작업 표시줄 단추가 함께 생긴다.

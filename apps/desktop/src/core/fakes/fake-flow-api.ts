@@ -1,4 +1,4 @@
-import type { FlowApi, FlowApiResult, FlowEmployee, FlowProject } from '../ports/flow-api';
+import type { FlowAlarm, FlowAlarmPage, FlowApi, FlowApiResult, FlowEmployee, FlowProject } from '../ports/flow-api';
 
 /** 가짜 Flow API가 기본으로 쓰는 키 소유자. 실제 사람이나 회사가 아니다. */
 export const FAKE_ME: FlowEmployee = {
@@ -19,6 +19,8 @@ export class FakeFlowApi implements FlowApi {
   private meResult: FlowApiResult<FlowEmployee> = { ok: true, value: FAKE_ME };
   /** `listParticipantProjects`가 돌려줄 응답. */
   private projectsResult: FlowApiResult<FlowProject[]> = { ok: true, value: [] };
+  /** `listMentionAlarms`가 첫 쪽으로 돌려줄 응답. */
+  private alarmsResult: FlowApiResult<FlowAlarmPage> = { ok: true, value: { alarms: [], nextCursor: null } };
 
   /** `getMe`가 앞으로 돌려줄 응답을 바꾼다. */
   respondToGetMe(result: FlowApiResult<FlowEmployee>): void {
@@ -30,6 +32,11 @@ export class FakeFlowApi implements FlowApi {
     this.projectsResult = result;
   }
 
+  /** `listMentionAlarms`가 앞으로 돌려줄 응답을 바꾼다. 알림 배열을 주면 다음 쪽이 없는 한 쪽으로 돌려준다. */
+  respondToListMentionAlarms(result: FlowApiResult<FlowAlarmPage> | FlowAlarm[]): void {
+    this.alarmsResult = Array.isArray(result) ? { ok: true, value: { alarms: result, nextCursor: null } } : result;
+  }
+
   async getMe(): Promise<FlowApiResult<FlowEmployee>> {
     this.requests.push('GET /user/employees/me');
     return this.meResult;
@@ -38,5 +45,10 @@ export class FakeFlowApi implements FlowApi {
   async listParticipantProjects(): Promise<FlowApiResult<FlowProject[]>> {
     this.requests.push('GET /user/projects/participants');
     return this.projectsResult;
+  }
+
+  async listMentionAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>> {
+    this.requests.push(cursor === null ? 'GET /user/alarms' : `GET /user/alarms?cursor=${cursor}`);
+    return this.alarmsResult;
   }
 }

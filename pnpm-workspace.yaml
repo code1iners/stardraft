@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+
+# 의존성은 정확한 버전으로 고정한다.
+savePrefix: ''
+engineStrict: true
+
+# 설치 스크립트 허용 목록. electron-winstaller는 쓰지 않는 Squirrel.Windows 도구라 막는다.
+allowBuilds:
+  electron-winstaller: false

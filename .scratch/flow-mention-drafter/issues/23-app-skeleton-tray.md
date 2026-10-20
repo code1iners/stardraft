@@ -12,7 +12,7 @@
 - [x] pnpm 워크스페이스 + turbo, `packageManager` 고정, Node 24 LTS. 데스크톱 앱 패키지와 사이트 패키지 자리가 있다.
 - [x] Electron 최신 44.x, electron-vite + Vite(안정판 정확히 고정), React 19 + TypeScript. 앱은 core, main, preload, renderer 네 부분으로 나뉜다.
 - [x] core는 Electron을 import하지 않고, ESLint `no-restricted-imports`로 막혀 있으며, 포트(Flow API, 실행기, 상태 저장소, 설정 저장소, 비밀 저장소, 알림, 시계)의 인터페이스와 가짜 구현 골격이 있다. Vitest가 Node에서 돈다.
-- [ ] 트레이 아이콘, 클릭 시 트레이 근처의 작은 창, 오른쪽 클릭 메뉴(창 열기, 설정…, 종료)가 동작한다. macOS는 `LSUIElement`로 Dock 아이콘을 숨기고, 설정 창이 열려 있는 동안만 Dock 아이콘(Windows는 작업 표시줄 단추)을 보인다. 창은 닫을 때 없앤다.
+- [x] 트레이 아이콘, 클릭 시 트레이 근처의 작은 창, 오른쪽 클릭 메뉴(창 열기, 설정…, 종료)가 동작한다. macOS는 `LSUIElement`로 Dock 아이콘을 숨기고, 설정 창이 열려 있는 동안만 Dock 아이콘(Windows는 작업 표시줄 단추)을 보인다. 창은 닫을 때 없앤다.
 - [x] 렌더러는 `contextIsolation`·`sandbox` 켜짐, `nodeIntegration` 꺼짐, 엄격한 CSP, 원격 콘텐츠 없음이며, preload의 타입 있는 IPC(상태 스냅숏·변경 이벤트·명령)로만 main과 통신한다.
 - [x] Fuses 설정(`RunAsNode`·`EnableNodeOptionsEnvironmentVariable`·`EnableNodeCliInspectArguments` 끔, `EnableEmbeddedAsarIntegrityValidation`·`OnlyLoadAppFromAsar` 켬)이 빌드 설정에 있다.
 - [x] 앱 이름 `Stardraft`, 식별자 `app.squadify.stardraft`. 소스 실행 시 `Stardraft Dev`로 이름이 바뀐다.
@@ -75,3 +75,8 @@
 - Windows 동작(60 Windows 점검 때 확인): 트레이 아이콘 표시, 작은 창이 작업 표시줄 위 트레이 근처에 뜨는지와 테두리, 설정 창이 열려 있는 동안 작업 표시줄 단추가 보이는지.
 - CI 워크플로 실제 실행(59 마법사). 액션은 커밋 SHA로 고정했고, YAML 문법만 확인했다.
 - 소스 실행에서 이름을 바꿨을 때 키체인 항목 이름(`Stardraft Dev Safe Storage`)에 반영되는지는 `safeStorage`를 처음 쓰는 25에서 확인한다.
+
+### 2026-10-19 사용자 실기 확인
+
+- 저장소 주인이 macOS에서 소스 실행으로 직접 확인했다: 메뉴 막대 아이콘 왼쪽 클릭 시 작은 창이 뜨고 바깥을 누르면 닫힌다, 오른쪽 클릭 메뉴(창 열기, 설정…, 종료), 설정 창이 열린 동안만 Dock 아이콘 표시와 닫으면 숨김, 종료. 모두 정상.
+- Windows의 트레이·작은 창 위치·작업 표시줄 단추는 60 점검에서 확인한다.

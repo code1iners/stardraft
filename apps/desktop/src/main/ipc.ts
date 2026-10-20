@@ -1,37 +1,62 @@
 import { app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { mkdir } from 'node:fs/promises';
+import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import { errorFields, type Logger } from '../core/logging/logger';
-import { IPC_CHANNELS, parseAppCommand, type AppCommand, type AppFolder, type AppSnapshot } from '../shared/ipc';
+import type { FlowEmployee } from '../core/ports/flow-api';
+import {
+  IPC_CHANNELS,
+  parseAppCommand,
+  type AppCommand,
+  type AppFolder,
+  type AppSnapshot,
+  type FlowAccountProfile,
+  type FlowAccountSnapshot,
+} from '../shared/ipc';
 import { dataFolderPath, logsFolderPath } from './app-identity';
 import type { AppWindows } from './app-windows';
 import { isAppRendererUrl } from './renderer-page';
 
-/** 렌더러가 보내는 스냅숏 요청과 명령을 처리한다. */
-export function registerIpc(windows: AppWindows, logger: Logger): void {
+/** IPC가 부르는 main의 일. */
+export interface IpcServices {
+  /** 작은 창과 설정 창. */
+  windows: AppWindows;
+  /** 진단 로그. */
+  logger: Logger;
+  /** "Flow 계정" 칸의 키 확인과 계정. */
+  flowAccount: FlowAccount;
+}
+
+/** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
+export function registerIpc(services: IpcServices): void {
   ipcMain.handle(IPC_CHANNELS.getSnapshot, (event) => {
     assertFromAppRenderer(event);
-    return currentSnapshot();
+    return currentSnapshot(services);
   });
 
   ipcMain.handle(IPC_CHANNELS.command, (event, payload: unknown) => {
     assertFromAppRenderer(event);
     const command = parseAppCommand(payload);
     if (!command) throw new Error('알 수 없는 명령입니다.');
-    return runCommand(windows, logger, command);
+    return runCommand(services, command);
   });
+
+  services.flowAccount.onChange((state) =>
+    services.windows.broadcast({ type: 'flow-account-changed', flowAccount: flowAccountSnapshot(state) }),
+  );
 }
 
 /** 지금 앱 상태의 스냅숏. */
-function currentSnapshot(): AppSnapshot {
+function currentSnapshot({ flowAccount }: IpcServices): AppSnapshot {
   return {
     appName: app.name,
     version: app.getVersion(),
     platform: process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'other',
+    flowAccount: flowAccountSnapshot(flowAccount.state()),
   };
 }
 
 /** 검사를 통과한 명령을 실행한다. */
-async function runCommand(windows: AppWindows, logger: Logger, command: AppCommand): Promise<void> {
+async function runCommand({ windows, logger, flowAccount }: IpcServices, command: AppCommand): Promise<void> {
   switch (command.type) {
     case 'open-settings':
       windows.openSettings(command.section);
@@ -39,7 +64,38 @@ async function runCommand(windows: AppWindows, logger: Logger, command: AppComma
     case 'open-folder':
       await openAppFolder(command.folder, logger);
       return;
+    case 'check-flow-key':
+      announceKeyCheckOutcome(windows, await flowAccount.checkKey(command.apiKey));
+      return;
+    case 'confirm-flow-account-switch':
+      announceKeyCheckOutcome(windows, await flowAccount.confirmSwitch());
+      return;
+    case 'cancel-flow-key-check':
+      flowAccount.cancelKeyCheck();
+      return;
   }
+}
+
+/** 키 확인이 연결이나 실패로 끝났으면 열린 창에 알린다. 확인을 기다리거나 그만둔 경우는 상태 변경으로 충분하다. */
+function announceKeyCheckOutcome(windows: AppWindows, outcome: FlowKeyCheckOutcome): void {
+  if (outcome.kind === 'connected') windows.broadcast({ type: 'flow-key-check-finished', result: 'connected' });
+  if (outcome.kind === 'failed') windows.broadcast({ type: 'flow-key-check-finished', result: outcome.reason });
+}
+
+/** core의 Flow 계정 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function flowAccountSnapshot(state: FlowAccountState): FlowAccountSnapshot {
+  return {
+    account: state.account && accountProfile(state.account),
+    keyCheck:
+      state.keyCheck.status === 'awaiting-confirmation'
+        ? { status: 'awaiting-confirmation', account: accountProfile(state.keyCheck.account) }
+        : { status: state.keyCheck.status },
+  };
+}
+
+/** 계정 카드에 보일 값. 사용자 ID는 화면에 쓰지 않으므로 렌더러에 넘기지 않는다. */
+function accountProfile(account: FlowEmployee): FlowAccountProfile {
+  return { name: account.name, division: account.division, email: account.email };
 }
 
 /** 데이터 폴더나 로그 폴더를 OS 파일 관리자로 연다. 아직 없으면 만들어서 연다. */

@@ -1,5 +1,7 @@
-import { app, dialog, Menu, type Tray } from 'electron';
+import { app, dialog, Menu, net, safeStorage, type Tray } from 'electron';
 import { join } from 'node:path';
+import { FlowAccount } from '../core/account/flow-account';
+import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { errorFields } from '../core/logging/logger';
 import { openAppData, type AppData } from '../core/storage/app-data';
 import { APP_ID, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
@@ -7,6 +9,7 @@ import { createAppLogger } from './app-logger';
 import { AppWindows } from './app-windows';
 import { registerIpc } from './ipc';
 import { hardenRenderers } from './security';
+import { systemClock } from './system-clock';
 import { createTray } from './tray';
 
 /** 트레이 아이콘. 변수로 붙잡아 두지 않으면 가비지 컬렉션으로 사라진다. */
@@ -51,8 +54,21 @@ function start(): void {
     appData = await openDataOrQuit();
     if (!appData) return;
 
-    windows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 });
-    registerIpc(windows, logger);
+    /** 설정 창 "Flow 계정" 칸의 키 확인과 계정. Flow 요청은 OS 프록시와 인증서 설정을 따르는 Chromium 네트워크로 보낸다. */
+    const flowAccount = new FlowAccount({
+      connectFlow: (apiKey) => new HttpFlowApi({ apiKey, fetch: net.fetch, clock: systemClock }),
+      secretStore: appData.secretStore,
+      stateStore: appData.stateStore,
+      clock: systemClock,
+      logger,
+    });
+    await flowAccount.load();
+
+    windows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
+      // 설정 창을 닫으면 그 창에서 시작한 키 확인과 확인을 기다리던 계정 바꾸기를 그만둔다.
+      onSettingsClosed: () => flowAccount.cancelKeyCheck(),
+    });
+    registerIpc({ windows, logger, flowAccount });
 
     /** 트레이 동작이 부를 창 관리자. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appWindows = windows;
@@ -85,7 +101,8 @@ function logStartup(): void {
 async function openDataOrQuit(): Promise<AppData | null> {
   try {
     /** 데이터 폴더를 연 결과. */
-    const result = await openAppData({ dataDir: dataFolderPath(), appVersion: app.getVersion(), logger });
+    // 키는 safeStorage의 비동기 API로만 암호화한다. 푸는 열쇠는 macOS 키체인 항목(앱 이름 + " Safe Storage")이나 Windows DPAPI에 있다.
+    const result = await openAppData({ dataDir: dataFolderPath(), appVersion: app.getVersion(), logger, encryption: safeStorage });
     if (result.kind === 'ready') return result;
     await showStartupProblem(result.message);
   } catch (error) {

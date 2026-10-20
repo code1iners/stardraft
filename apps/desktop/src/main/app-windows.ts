@@ -14,6 +14,12 @@ const SETTINGS_SIZE = { width: 820, height: 600 };
  */
 const REOPEN_GUARD_MS = 300;
 
+/** 창 관리자가 창의 일을 알릴 곳. */
+export interface AppWindowsHooks {
+  /** 설정 창이 닫혔다. 설정 창에서 시작한 일(키 확인 등)을 그만둘 때 쓴다. */
+  onSettingsClosed: () => void;
+}
+
 /**
  * 트레이 옆 작은 창과 설정 창을 연다.
  * 상태는 main에 있으므로 두 창 모두 닫을 때 없애고, 열 때마다 새로 만든다.
@@ -26,7 +32,17 @@ export class AppWindows {
   /** 작은 창이 포커스를 잃어 닫힌 시각. */
   private popoverBlurClosedAt = 0;
 
-  constructor(private readonly getTrayBounds: () => Rectangle) {}
+  constructor(
+    private readonly getTrayBounds: () => Rectangle,
+    private readonly hooks: AppWindowsHooks,
+  ) {}
+
+  /** 열려 있는 모든 창에 변경 이벤트를 보낸다. */
+  broadcast(event: AppEvent): void {
+    for (const window of [this.popover, this.settings]) {
+      if (window) this.send(window, event);
+    }
+  }
 
   /** 트레이 아이콘 클릭. 작은 창이 열려 있으면 닫고, 닫혀 있으면 연다. */
   togglePopover(): void {
@@ -118,6 +134,7 @@ export class AppWindows {
     window.on('closed', () => {
       this.settings = null;
       app.dock?.hide();
+      this.hooks.onSettingsClosed();
     });
 
     this.settings = window;

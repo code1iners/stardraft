@@ -17,6 +17,14 @@ export function useSnapshot(): AppSnapshot | null {
     };
   }, []);
 
+  useEffect(function followFlowAccountChanges() {
+    return window.stardraft.onEvent((event) => {
+      if (event.type !== 'flow-account-changed') return;
+      // 스냅숏을 받기 전에 온 변경은 버린다. 곧 받을 스냅숏이 그 변경을 담고 있다.
+      setSnapshot((current) => current && { ...current, flowAccount: event.flowAccount });
+    });
+  }, []);
+
   useEffect(
     function applyPlatformToDocument() {
       if (snapshot) document.documentElement.dataset.platform = snapshot.platform;

@@ -1,18 +1,24 @@
+import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
 
 /** 메모리에만 두는 상태 저장소. */
 export class MemoryStateStore implements StateStore {
-  /** 저장한 계정의 Flow 사용자 ID. */
-  accountUserId: string | null = null;
+  /** 저장한 계정. */
+  account: FlowEmployee | null = null;
   /** 저장한 기준점. */
   baselineAlarmId: string | null = null;
 
-  async getAccountUserId(): Promise<string | null> {
-    return this.accountUserId;
+  async getAccount(): Promise<FlowEmployee | null> {
+    return this.account && { ...this.account };
   }
 
-  async setAccountUserId(userId: string): Promise<void> {
-    this.accountUserId = userId;
+  async setAccount(account: FlowEmployee): Promise<void> {
+    this.account = { ...account };
+  }
+
+  async resetForAccount(account: FlowEmployee): Promise<void> {
+    this.baselineAlarmId = null;
+    this.account = { ...account };
   }
 
   async getBaselineAlarmId(): Promise<string | null> {

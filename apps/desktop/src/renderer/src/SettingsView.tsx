@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { isSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from '../../shared/ipc';
+import { AccountSwitchSheet } from './AccountSwitchSheet';
+import { FlowAccountSection } from './FlowAccountSection';
 import { GeneralSection } from './GeneralSection';
 import { useSnapshot } from './useSnapshot';
 
@@ -33,25 +35,34 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
     });
   }, []);
 
+  /** 키 확인의 진행 상태. 스냅숏을 받기 전에는 없다. */
+  const keyCheck = snapshot?.flowAccount.keyCheck;
+  /** 다른 계정의 키라서 바꾸기 확인을 기다리는 계정. 확인 시트가 떠 있는 동안 뒤 화면은 누를 수 없다. */
+  const switchingTo = keyCheck?.status === 'awaiting-confirmation' ? keyCheck.account : null;
+
   return (
-    <div className="settings">
-      <nav className="settings-nav" aria-label="설정 칸">
-        {SETTINGS_SECTIONS.map((id) => (
-          <button
-            key={id}
-            type="button"
-            className="settings-nav-item"
-            aria-current={id === section ? 'page' : undefined}
-            onClick={() => setSection(id)}
-          >
-            {SECTION_LABELS[id]}
-          </button>
-        ))}
-      </nav>
-      <main className="settings-main">
-        <h2>{SECTION_LABELS[section]}</h2>
-        {section === 'general' && <GeneralSection snapshot={snapshot} />}
-      </main>
-    </div>
+    <>
+      <div className="settings" inert={switchingTo !== null}>
+        <nav className="settings-nav" aria-label="설정 칸">
+          {SETTINGS_SECTIONS.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className="settings-nav-item"
+              aria-current={id === section ? 'page' : undefined}
+              onClick={() => setSection(id)}
+            >
+              {SECTION_LABELS[id]}
+            </button>
+          ))}
+        </nav>
+        <main className="settings-main">
+          <h2>{SECTION_LABELS[section]}</h2>
+          {section === 'flow-account' && snapshot && <FlowAccountSection flowAccount={snapshot.flowAccount} />}
+          {section === 'general' && <GeneralSection snapshot={snapshot} />}
+        </main>
+      </div>
+      {switchingTo && <AccountSwitchSheet account={switchingTo} />}
+    </>
   );
 }

@@ -37,6 +37,11 @@ export class AppWindows {
     private readonly hooks: AppWindowsHooks,
   ) {}
 
+  /** 열려 있는 설정 창. 파일 선택 창을 그 위에 띄울 때 쓴다. 없으면 `null`. */
+  settingsWindow(): BrowserWindow | null {
+    return this.settings;
+  }
+
   /** 열려 있는 모든 창에 변경 이벤트를 보낸다. */
   broadcast(event: AppEvent): void {
     for (const window of [this.popover, this.settings]) {

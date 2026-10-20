@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { isSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from '../../shared/ipc';
 import { AccountSwitchSheet } from './AccountSwitchSheet';
+import { AgentSection } from './AgentSection';
 import { FlowAccountSection } from './FlowAccountSection';
 import { GeneralSection } from './GeneralSection';
 import { useSnapshot } from './useSnapshot';
@@ -61,6 +62,7 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
           {section === 'flow-account' && snapshot && (
             <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
           )}
+          {section === 'agent' && snapshot && <AgentSection agentConnection={snapshot.agentConnection} platform={snapshot.platform} />}
           {section === 'general' && <GeneralSection snapshot={snapshot} />}
         </main>
       </div>

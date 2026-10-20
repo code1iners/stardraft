@@ -24,6 +24,8 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, flowAccount: event.flowAccount });
       } else if (event.type === 'global-problem-changed') {
         setSnapshot((current) => current && { ...current, globalProblem: event.globalProblem });
+      } else if (event.type === 'agent-connection-changed') {
+        setSnapshot((current) => current && { ...current, agentConnection: event.agentConnection });
       }
     });
   }, []);

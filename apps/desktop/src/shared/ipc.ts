@@ -72,6 +72,65 @@ export type GlobalProblemSnapshot =
 /** "키 확인 필요"가 생긴 이유. `rejected`는 Flow가 키를 거부한 것(`401`), `unreadable`은 저장된 키를 읽을 수 없는 것이다. */
 export type FlowKeyProblemReason = 'rejected' | 'unreadable';
 
+/** 에이전트 연결 확인의 네 단계. 화면의 연결선 네 마디다. */
+export type AgentCheckStep = 'find' | 'version' | 'login' | 'run-check';
+
+/** 에이전트 연결 확인이 멈춘 이유. 단계마다 고치는 법이 다르다. */
+export type AgentCheckFailure =
+  /** 찾아본 곳 어디에도 CLI가 없다. */
+  | { step: 'find'; reason: 'not-found' }
+  /** 직접 지정한 파일을 실행할 수 없다. */
+  | { step: 'find'; reason: 'picked-invalid' }
+  /** 필수 플래그를 지원하지 않는 낮은 버전이다. */
+  | { step: 'version'; reason: 'update-required' }
+  /** 버전을 읽지 못했다. */
+  | { step: 'version'; reason: 'unreadable' }
+  /** 로그인되어 있지 않다. */
+  | { step: 'login'; reason: 'not-logged-in' }
+  /** `apiKeyHelper`로만 인증한다. 앱은 이 방식을 지원하지 않는다. */
+  | { step: 'login'; reason: 'api-key-helper' }
+  /** 로그인 상태를 읽지 못했다. */
+  | { step: 'login'; reason: 'unreadable' };
+
+/** 에이전트 연결 확인의 진행 상태. */
+export type AgentCheckProgress =
+  /** 아직 확인하지 않았다. */
+  | { status: 'idle' }
+  /** 이 단계를 확인하고 있다. */
+  | { status: 'checking'; step: AgentCheckStep }
+  /** 이 단계에서 멈췄다. */
+  | { status: 'failed'; failure: AgentCheckFailure }
+  /** 찾기·버전·로그인을 통과했고 작동 확인이 남았다. */
+  | { status: 'awaiting-run-check' };
+
+/** "자세히"에만 보이는 확인 내용. */
+export interface AgentCheckDetails {
+  /** 찾은 CLI의 절대 경로. */
+  cliPath: string | null;
+  /** 터미널에서 이 CLI를 부르는 말(`claude` 또는 따옴표로 감싼 절대 경로). */
+  cliCommand: string;
+  /** 읽은 CLI 버전. */
+  version: string | null;
+  /** 필요한 가장 낮은 버전. */
+  requiredVersion: string;
+  /** 로그인 방식. */
+  authMethod: string | null;
+  /** 자식 프로세스 PATH의 출처. `login-shell`은 로그인 셸, `app`은 앱이 받은 PATH다. */
+  pathSource: 'login-shell' | 'app' | null;
+  /** PATH 말고 찾아본 알려진 설치 위치. */
+  searchedDirs: string[];
+  /** 실패한 CLI 명령의 오류 원문. */
+  errorOutput: string | null;
+}
+
+/** 설정 "에이전트" 칸의 연결 표시가 그릴 상태. */
+export interface AgentConnectionSnapshot {
+  /** 진행 상태. */
+  progress: AgentCheckProgress;
+  /** "자세히" 내용. */
+  details: AgentCheckDetails;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -84,6 +143,8 @@ export interface AppSnapshot {
   flowAccount: FlowAccountSnapshot;
   /** 지금 보일 전역 문제. 없으면 `null`. */
   globalProblem: GlobalProblemSnapshot | null;
+  /** Claude Code 연결 확인 상태. */
+  agentConnection: AgentConnectionSnapshot;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -95,7 +156,9 @@ export type AppEvent =
   /** 키 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인과 확인을 기다리는 경우는 알리지 않는다. */
   | { type: 'flow-key-check-finished'; result: 'connected' | FlowKeyCheckFailure }
   /** 보일 전역 문제가 바뀌었다. */
-  | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null };
+  | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null }
+  /** 에이전트 연결 확인 상태가 바뀌었다. */
+  | { type: 'agent-connection-changed'; agentConnection: AgentConnectionSnapshot };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =
@@ -108,7 +171,15 @@ export type AppCommand =
   /** 다른 계정의 키로 바꾸는 것을 확인했다. 지금까지의 기록을 지우고 새 계정으로 시작한다. */
   | { type: 'confirm-flow-account-switch' }
   /** 진행 중인 키 확인이나 확인을 기다리는 계정 바꾸기를 그만둔다. */
-  | { type: 'cancel-flow-key-check' };
+  | { type: 'cancel-flow-key-check' }
+  /** 에이전트 연결을 확인한다. 칸을 열 때와 [다시 확인]에 쓴다. 저장한 CLI 경로가 있으면 그대로 쓴다. */
+  | { type: 'check-agent' }
+  /** 저장한 CLI 경로를 무시하고 다시 찾는다. */
+  | { type: 'rediscover-agent' }
+  /** 파일 선택 창으로 CLI를 직접 지정한다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
+  | { type: 'pick-agent-cli' }
+  /** 실패 카드의 명령을 클립보드에 복사한다. 명령은 main이 지금 상태에서 정한다. */
+  | { type: 'copy-agent-fix-command' };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -155,6 +226,10 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isFlowApiKeyInput(candidate.apiKey) ? { type: 'check-flow-key', apiKey: candidate.apiKey } : null;
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
+    case 'check-agent':
+    case 'rediscover-agent':
+    case 'pick-agent-cli':
+    case 'copy-agent-fix-command':
       return { type: candidate.type };
     default:
       return null;

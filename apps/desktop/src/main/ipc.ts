@@ -1,6 +1,7 @@
 import { app, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 import { mkdir } from 'node:fs/promises';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
+import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
@@ -10,6 +11,7 @@ import {
   IPC_CHANNELS,
   parseAppCommand,
   type AgentConnectionSnapshot,
+  type AgentPreferencesSnapshot,
   type AppCommand,
   type AppFolder,
   type AppSnapshot,
@@ -33,6 +35,8 @@ export interface IpcServices {
   globalProblems: GlobalProblems;
   /** "에이전트" 칸의 연결 확인. */
   agentConnection: AgentConnection;
+  /** "에이전트" 칸의 기본 에이전트와 모델 선택. */
+  agentPreferences: AgentPreferences;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -55,13 +59,22 @@ export function registerIpc(services: IpcServices): void {
   services.globalProblems.onChange((current) =>
     services.windows.broadcast({ type: 'global-problem-changed', globalProblem: activeProblemSnapshot(current) }),
   );
-  services.agentConnection.onChange((state) =>
-    services.windows.broadcast({ type: 'agent-connection-changed', agentConnection: agentConnectionSnapshot(state) }),
-  );
+  /** 기본 에이전트와 모델 선택을 열린 창에 알린다. */
+  const broadcastPreferences = () =>
+    services.windows.broadcast({
+      type: 'agent-preferences-changed',
+      agentPreferences: agentPreferencesSnapshot(services.agentPreferences.state()),
+    });
+  services.agentConnection.onChange((state) => {
+    services.windows.broadcast({ type: 'agent-connection-changed', agentConnection: agentConnectionSnapshot(state) });
+    // 연결되거나 끊기면 연결된 에이전트와 모델 선택 상자도 바뀐다.
+    broadcastPreferences();
+  });
+  services.agentPreferences.onChange(broadcastPreferences);
 }
 
 /** 지금 앱 상태의 스냅숏. */
-function currentSnapshot({ flowAccount, globalProblems, agentConnection }: IpcServices): AppSnapshot {
+function currentSnapshot({ flowAccount, globalProblems, agentConnection, agentPreferences }: IpcServices): AppSnapshot {
   return {
     appName: app.name,
     version: app.getVersion(),
@@ -69,11 +82,15 @@ function currentSnapshot({ flowAccount, globalProblems, agentConnection }: IpcSe
     flowAccount: flowAccountSnapshot(flowAccount.state()),
     globalProblem: activeProblemSnapshot(globalProblems.current()),
     agentConnection: agentConnectionSnapshot(agentConnection.state()),
+    agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
   };
 }
 
 /** 검사를 통과한 명령을 실행한다. */
-async function runCommand({ windows, logger, flowAccount, agentConnection }: IpcServices, command: AppCommand): Promise<void> {
+async function runCommand(
+  { windows, logger, flowAccount, agentConnection, agentPreferences }: IpcServices,
+  command: AppCommand,
+): Promise<void> {
   switch (command.type) {
     case 'open-settings':
       windows.openSettings(command.section);
@@ -101,6 +118,12 @@ async function runCommand({ windows, logger, flowAccount, agentConnection }: Ipc
       return;
     case 'copy-agent-fix-command':
       copyAgentFixCommand(agentConnection);
+      return;
+    case 'set-default-agent':
+      await agentPreferences.setDefaultAgent(command.agent);
+      return;
+    case 'set-agent-model':
+      await agentPreferences.setModel(command.agent, command.model);
       return;
   }
 }
@@ -139,6 +162,17 @@ function agentConnectionSnapshot(state: AgentConnectionState): AgentConnectionSn
   return { progress: state.progress, details: { ...state.details, searchedDirs: [...state.details.searchedDirs] } };
 }
 
+/** core의 기본 에이전트와 모델 선택을 렌더러에 넘길 모양으로 바꾼다. */
+function agentPreferencesSnapshot(state: AgentPreferencesState): AgentPreferencesSnapshot {
+  return {
+    connectedAgents: [...state.connectedAgents],
+    defaultAgent: state.defaultAgent,
+    models: Object.fromEntries(
+      Object.entries(state.models).map(([agent, choice]) => [agent, { options: choice.options.map((option) => ({ ...option })), selected: choice.selected }]),
+    ),
+  };
+}
+
 /** 키 확인이 연결이나 실패로 끝났으면 열린 창에 알린다. 확인을 기다리거나 그만둔 경우는 상태 변경으로 충분하다. */
 function announceKeyCheckOutcome(windows: AppWindows, outcome: FlowKeyCheckOutcome): void {
   if (outcome.kind === 'connected') windows.broadcast({ type: 'flow-key-check-finished', result: 'connected' });
@@ -158,7 +192,7 @@ function flowAccountSnapshot(state: FlowAccountState): FlowAccountSnapshot {
 
 /** core의 전역 문제를 렌더러·트레이·알림 문구가 쓰는 모양으로 바꾼다. */
 export function globalProblemSnapshot(problem: GlobalProblem): GlobalProblemSnapshot {
-  return { cause: problem.cause, reason: problem.reason };
+  return problem.cause === 'agent' ? { cause: 'agent', reason: problem.reason } : { cause: 'flow-key', reason: problem.reason };
 }
 
 /** 지금 보일 전역 문제를 렌더러에 넘길 모양으로 바꾼다. 없으면 `null`. */

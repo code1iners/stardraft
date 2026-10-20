@@ -62,7 +62,9 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
           {section === 'flow-account' && snapshot && (
             <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
           )}
-          {section === 'agent' && snapshot && <AgentSection agentConnection={snapshot.agentConnection} platform={snapshot.platform} />}
+          {section === 'agent' && snapshot && (
+            <AgentSection agentConnection={snapshot.agentConnection} agentPreferences={snapshot.agentPreferences} platform={snapshot.platform} />
+          )}
           {section === 'general' && <GeneralSection snapshot={snapshot} />}
         </main>
       </div>

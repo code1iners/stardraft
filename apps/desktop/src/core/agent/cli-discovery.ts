@@ -74,6 +74,7 @@ export async function readLoginShell(options: {
   });
   if (result.kind === 'timed-out') return { kind: 'timed-out' };
   if (result.kind === 'spawn-failed') return { kind: 'failed', detail: result.message };
+  if (result.kind === 'aborted') return { kind: 'failed', detail: '로그인 셸 읽기를 중단했습니다.' };
 
   /** 표지 사이에서 읽은 값. */
   const parsed = parseLoginShellOutput(result.stdout);
@@ -212,6 +213,13 @@ export function terminalCommand(cliPath: string, commandName: string, nameResolv
 /** 자식 프로세스에 넘기지 않는 환경 변수. 구독 로그인을 전제로 하고, API 요금이 나가지 않게 한다. */
 const EXCLUDED_AGENT_ENV_VARS = ['ANTHROPIC_API_KEY', 'CODEX_API_KEY'] as const;
 
+/** 자식 프로세스에 넘기지 않는 API 키 변수를 뺀 환경. 대소문자를 가리지 않고 뺀다. */
+export function withoutAgentApiKeys(env: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => !(EXCLUDED_AGENT_ENV_VARS as readonly string[]).includes(key.toUpperCase())),
+  );
+}
+
 /**
  * 에이전트 CLI 자식 프로세스의 환경 변수. 앱이 받은 환경에서 API 키 변수를 빼고 PATH를 `pathValue`로 바꾼다.
  * Windows는 이름의 대소문자를 가리지 않으므로 같은 이름의 변수를 모두 지운다.
@@ -221,17 +229,13 @@ export function agentProcessEnv(
   pathValue: string,
   platform: NodeJS.Platform,
 ): Record<string, string> {
-  /** 지울 변수 이름. Windows는 대문자로 비교한다. */
-  const removed = new Set<string>([...EXCLUDED_AGENT_ENV_VARS, 'PATH']);
-  /** 만들 환경. */
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(appEnv)) {
-    if (value === undefined) continue;
-    if (removed.has(platform === 'win32' ? key.toUpperCase() : key)) continue;
-    env[key] = value;
-  }
-  env.PATH = pathValue;
-  return env;
+  /** 값이 있고 PATH가 아닌 변수. Windows는 `Path`처럼 대소문자가 달라도 같은 변수다. */
+  const withoutPath = Object.fromEntries(
+    Object.entries(appEnv).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined && (platform === 'win32' ? entry[0].toUpperCase() : entry[0]) !== 'PATH',
+    ),
+  );
+  return { ...withoutAgentApiKeys(withoutPath), PATH: pathValue };
 }
 
 /** `dir`이 PATH에 없으면 맨 앞에 붙인다. */

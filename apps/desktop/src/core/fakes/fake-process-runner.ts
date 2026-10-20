@@ -14,6 +14,7 @@ interface FakeProcessRule {
 /**
  * 규칙대로 대답하는 프로세스 실행기. 실제 프로세스는 띄우지 않는다.
  * 나중에 더한 규칙이 앞선다. 맞는 규칙이 없으면 파일이 없는 것처럼 `spawn-failed`로 끝난다.
+ * 요청이 표준 출력을 줄 단위로 받으면, 대답의 표준 출력을 줄로 나눠 돌려주기 전에 넘긴다.
  */
 export class FakeProcessRunner implements ProcessRunner {
   /** 받은 요청. 받은 순서대로 쌓인다. */
@@ -36,7 +37,16 @@ export class FakeProcessRunner implements ProcessRunner {
     /** 이 요청을 맡을 규칙. */
     const rule = this.rules.find((candidate) => candidate.matches(request));
     if (!rule) return { kind: 'spawn-failed', message: `spawn ${request.command} ENOENT` };
-    return typeof rule.reply === 'function' ? rule.reply(request) : rule.reply;
+    /** 돌려줄 결과. */
+    const result = typeof rule.reply === 'function' ? await rule.reply(request) : rule.reply;
+    if (request.onStdoutLine && result.kind !== 'spawn-failed') {
+      // 실제 실행기처럼 줄 끝의 \r을 떼고, 줄바꿈 뒤의 빈 칸은 넘기지 않는다.
+      /** 표준 출력의 줄. */
+      const lines = result.stdout.split('\n').map((line) => line.replace(/\r$/, ''));
+      if (lines.at(-1) === '') lines.pop();
+      for (const line of lines) request.onStdoutLine(line);
+    }
+    return result;
   }
 }
 

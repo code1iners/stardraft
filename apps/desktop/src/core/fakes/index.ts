@@ -1,3 +1,4 @@
+export { claudeNotLoggedInStream, claudeStream, claudeSuccessStream, fakeClaudeEvent } from './fake-claude-stream';
 export { FakeClock } from './fake-clock';
 export { FakeEncryption } from './fake-encryption';
 export { FakeExecutor, type ScriptedRun } from './fake-executor';

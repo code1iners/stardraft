@@ -13,7 +13,7 @@ export type MentionDropReason =
   | 'unknown-location'
   /** 글에 나를 지목한 표기가 없다(`@전체`, 담당자 지정, 수정되어 표기가 사라짐). */
   | 'not-mentioned'
-  /** 글이 지워졌다(`404`, 목록에 없는 댓글·대댓글). */
+  /** 글이 지워졌다(`404`, 목록에 없는 댓글·대댓글, 지운 댓글의 대댓글 목록이 주는 `412`). */
   | 'gone'
   /** 글을 볼 권한이 없다(`403`). */
   | 'forbidden';
@@ -278,12 +278,12 @@ function fetched<T>(result: FlowApiResult<T>): Fetched<T> {
 }
 
 /**
- * 조회 실패를 판정으로 바꾼다. 지워졌거나(`404`) 권한이 없으면(`403`) 버린다.
+ * 조회 실패를 판정으로 바꾼다. 지워졌거나(`404`, 지운 댓글의 대댓글 목록이 주는 `412`) 권한이 없으면(`403`) 버린다.
  * 그 밖의 실패(키 거부, 연결 실패, 요청 한도, 서버 오류, 모르는 응답)는 다음 조회에서 다시 판정한다.
  */
 function judgementOfFailure(failure: FlowApiFailure): Exclude<MentionJudgement, { kind: 'mention' }> {
   if (failure.kind === 'http' && failure.status === 403) return dropped('forbidden');
-  if (failure.kind === 'http' && failure.status === 404) return dropped('gone');
+  if (failure.kind === 'http' && (failure.status === 404 || failure.status === 412)) return dropped('gone');
   return { kind: 'undecided', failure };
 }
 

@@ -13,6 +13,7 @@ import {
   type RepoCheckSnapshot,
   type RepoChoiceGroupSnapshot,
   type RunLineSnapshot,
+  type WritingChangeSnapshot,
 } from '../../shared/ipc';
 import { AGENT_NAMES } from './AgentSection';
 
@@ -27,6 +28,7 @@ export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; c
   posted: { label: '게시됨', className: 'done' },
   ignored: { label: '무시함', className: 'done' },
   'already-answered': { label: '이미 답함', className: 'done' },
+  'source-gone': { label: '원문 사라짐', className: 'done' },
 };
 
 /** 펼친 창의 목록 묶음 이름. */
@@ -55,7 +57,37 @@ export const PROCESSED_NOTES: Partial<Record<BundleStatusSnapshot, string>> = {
   posted: '게시한 묶음입니다. 되돌릴 수 없습니다.',
   ignored: '무시한 묶음입니다.',
   'already-answered': 'Flow에 이미 내 답이 있어 처리했습니다.',
+  'source-gone': 'Flow에서 멘션이 모두 사라져 처리했습니다.',
 };
+
+/** 원문 영역에서 초안을 만든 뒤 바뀐 글에 붙이는 태그 이름. */
+export const WRITING_CHANGE_LABELS: Record<WritingChangeSnapshot, string> = {
+  new: '새 글',
+  edited: '수정됨',
+};
+
+/** 준비된 뒤의 변화 감시가 묶음을 이미 답함으로 옮긴 뒤 초안 위에 띄우는 말. 옆에 [되돌리기]를 둔다. */
+export const ANSWERED_NOTICE = 'Flow에 이미 내 답이 있습니다';
+
+/**
+ * 초안 위 알림 줄의 문구. 합쳐진 새 멘션 수와 준비된 뒤의 변화를 한 줄로 잇는다.
+ * 예: "새 멘션 1건 · 초안을 만든 뒤 새 글 2건 · 원문 수정됨 · 멘션 1건 사라짐". 초안이 없는 묶음은 "초안을 만든 뒤"를 붙이지 않는다.
+ * 알릴 것이 없으면 `null`.
+ */
+export function noticeText({ newMentionCount, changes, draft }: Pick<BundleSnapshot, 'newMentionCount' | 'changes' | 'draft'>): string | null {
+  /** 준비된 뒤의 변화. */
+  const changed = [
+    changes.newWritingCount > 0 ? `새 글 ${changes.newWritingCount}건` : null,
+    changes.edited ? '원문 수정됨' : null,
+    changes.goneMentionCount > 0 ? `멘션 ${changes.goneMentionCount}건 사라짐` : null,
+  ].filter((part) => part !== null);
+  /** 알림 줄에 이을 조각. */
+  const parts = [
+    newMentionCount > 0 ? `새 멘션 ${newMentionCount}건` : null,
+    changed.length > 0 ? `${draft ? '초안을 만든 뒤 ' : ''}${changed.join(' · ')}` : null,
+  ].filter((part) => part !== null);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
 
 /** 처리됨 목록 아래의 보관 안내. */
 export const RETENTION_NOTE = '처리한 지 7일이 지나면 목록에서 사라지고 되돌릴 수 없습니다.';

@@ -20,6 +20,8 @@ function mention(alarmId: string, overrides: Partial<BundledMention> = {}): Bund
     detectedAt: 1_000,
     text: '@[테스트 사용자](me@example.test) 질문',
     answered: false,
+    gone: false,
+    goneExcluded: false,
     ...overrides,
   };
 }
@@ -40,6 +42,7 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     createdAt: 1_000,
     processedAt: null,
     context: null,
+    watchedContext: null,
     userRepos: null,
     repoCheck: null,
     draft: null,
@@ -103,9 +106,9 @@ describe('묶음 스냅숏', () => {
       projectTitle: '가짜 프로젝트',
       postTitle: '가짜 게시물',
       mentions: [
-        { senderName: '보낸 사람', place: 'comment', at: Date.UTC(2026, 9, 19, 23, 50), text: expect.any(Array) },
-        { senderName: '다른 사람', place: 'reply', at: Date.UTC(2026, 9, 19, 23, 51), text: expect.any(Array) },
-        { senderName: '보낸 사람', place: 'reply', at: Date.UTC(2026, 9, 19, 23, 52), text: expect.any(Array) },
+        { senderName: '보낸 사람', place: 'comment', at: Date.UTC(2026, 9, 19, 23, 50), text: expect.any(Array), edited: false },
+        { senderName: '다른 사람', place: 'reply', at: Date.UTC(2026, 9, 19, 23, 51), text: expect.any(Array), edited: false },
+        { senderName: '보낸 사람', place: 'reply', at: Date.UTC(2026, 9, 19, 23, 52), text: expect.any(Array), edited: false },
       ],
       senderNames: ['보낸 사람', '다른 사람'],
       newMentionCount: 2,
@@ -122,6 +125,7 @@ describe('묶음 스냅숏', () => {
       repoCheck: null,
       posting: null,
       postFailure: null,
+      changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
     });
     expect(snapshot.mentions[0]?.text).toEqual([
       { text: '@테스트 사용자', mention: true },
@@ -184,6 +188,84 @@ function context(): BundleContext {
   };
 }
 
+describe('묶음 스냅숏: 준비된 뒤의 변화', () => {
+  /** 가짜 초안. */
+  const draft = {
+    requirement: { text: '질문에 답해 달라는 요구', summary: '질문' },
+    paragraphs: [{ sentences: [{ text: '답입니다.', evidence: [] }] }],
+    evidence: [],
+    repositories: ['/fake/work/repo'],
+    autoSelection: null,
+    createdAt: 1_000,
+  };
+  /** 변화 감시가 조회한 내용. 머리 댓글이 수정되었고 대댓글 802가 새로 달렸다. */
+  const watched: BundleContext = {
+    ...context(),
+    fetchedAt: 3_000,
+    targetThread: {
+      ...context().targetThread!,
+      contents: '@[테스트 사용자](me@example.test) 질문을 고쳤습니다',
+      replies: [
+        ...context().targetThread!.replies,
+        { id: '802', authorId: 'sender@example.test', authorName: '보낸 사람', registeredDateTime: '20261020090100', contents: '운영 환경 얘기예요', attachments: [], mention: false },
+      ],
+    },
+  };
+
+  it('비교 기준과 감시 내용을 견준 새 글 수·원문 수정·사라진 멘션 수를 넘기고, 원문 영역은 지금 내용에 "새 글"·"수정됨"을 표시한다', () => {
+    /** 스냅숏. 대댓글 803의 멘션은 사라졌다. */
+    const snapshot = bundleSnapshot(
+      bundle({
+        status: 'ready',
+        draft,
+        context: context(),
+        watchedContext: watched,
+        mentions: [mention('101'), mention('102', { replyId: '803', gone: true })],
+      }),
+      () => null,
+    );
+
+    expect(snapshot.changes).toEqual({ newWritingCount: 1, edited: true, goneMentionCount: 1 });
+    expect(snapshot.mentions).toEqual([
+      {
+        senderName: '보낸 사람',
+        place: 'comment',
+        at: Date.UTC(2026, 9, 19, 23, 50),
+        text: [
+          { text: '@테스트 사용자', mention: true },
+          { text: ' 질문을 고쳤습니다', mention: false },
+        ],
+        edited: true,
+      },
+    ]);
+    expect(snapshot.thread.map((entry) => [entry.place, entry.authorName, entry.change])).toEqual([
+      ['post', '글쓴이', null],
+      ['comment', '보낸 사람', 'edited'],
+      ['reply', '동료', null],
+      ['reply', '', null],
+      ['reply', '보낸 사람', 'new'],
+    ]);
+  });
+
+  it('감시 내용이 없으면 변화가 없고 원문은 감지 때 받은 글이다', () => {
+    /** 스냅숏. */
+    const snapshot = bundleSnapshot(bundle({ status: 'ready', draft, context: context(), mentions: [mention('101')] }), () => null);
+
+    expect(snapshot.changes).toEqual({ newWritingCount: 0, edited: false, goneMentionCount: 0 });
+    expect(snapshot.mentions.map((item) => item.edited)).toEqual([false]);
+    expect(snapshot.thread.every((entry) => entry.change === null)).toBe(true);
+  });
+
+  it('원문 사라짐 묶음은 처리됨이고 되돌릴 수 있으며, 원문 영역에는 사라진 멘션을 보인다', () => {
+    /** 스냅숏. */
+    const snapshot = bundleSnapshot(bundle({ status: 'source-gone', processedAt: 5_000, draft, mentions: [mention('101', { gone: true })] }), () => null);
+
+    expect(snapshot).toMatchObject({ status: 'source-gone', group: 'processed', canRestore: true });
+    expect(snapshot.mentions).toHaveLength(1);
+    expect(snapshot.draft?.canPost).toBe(false);
+  });
+});
+
 describe('묶음 스냅숏: 스레드 보기', () => {
   it('댓글 스레드 묶음은 맥락의 게시물 본문과 대상 댓글 스레드를 시간순 글로 넘기고, 묶음의 멘션을 표시한다. 다른 댓글과 사용자 ID는 넘기지 않는다', () => {
     /** 스냅숏. */
@@ -200,8 +282,9 @@ describe('묶음 스냅숏: 스레드 보기', () => {
         ],
         attachments: ['설계서.pdf'],
         mention: false,
+        change: null,
       },
-      { authorName: '보낸 사람', place: 'comment', at: Date.UTC(2026, 9, 19, 23, 50), text: expect.any(Array), attachments: [], mention: true },
+      { authorName: '보낸 사람', place: 'comment', at: Date.UTC(2026, 9, 19, 23, 50), text: expect.any(Array), attachments: [], mention: true, change: null },
       {
         authorName: '동료',
         place: 'reply',
@@ -209,8 +292,9 @@ describe('묶음 스냅숏: 스레드 보기', () => {
         text: [{ text: '저도 궁금합니다', mention: false }],
         attachments: ['로그.txt'],
         mention: false,
+        change: null,
       },
-      { authorName: '', place: 'reply', at: null, text: [{ text: '시각 없음', mention: false }], attachments: [], mention: false },
+      { authorName: '', place: 'reply', at: null, text: [{ text: '시각 없음', mention: false }], attachments: [], mention: false, change: null },
     ]);
     expect(JSON.stringify(snapshot)).not.toContain('example.test');
   });
@@ -569,7 +653,7 @@ describe('게시', () => {
 
   it('게시 요청을 보낸 게시 중 묶음은 결과를 기다린다고 넘긴다', () => {
     /** 게시 요청을 보낸 묶음의 스냅숏. */
-    const snapshot = bundleSnapshot(bundle({ status: 'posting', draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: null } }), () => null);
+    const snapshot = bundleSnapshot(bundle({ status: 'posting', draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: null, answeredMentions: [] } }), () => null);
 
     expect(snapshot.posting).toEqual({ phase: 'sending' });
   });
@@ -577,7 +661,7 @@ describe('게시', () => {
   it('게시됨 묶음은 처리됨이고 되돌릴 수 없으며, 게시 중이 아니면 게시 단계가 없다', () => {
     /** 게시됨 묶음의 스냅숏. */
     const snapshot = bundleSnapshot(
-      bundle({ status: 'posted', processedAt: 20_000, draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: '950000001', failure: null } }),
+      bundle({ status: 'posted', processedAt: 20_000, draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: '950000001', failure: null, answeredMentions: [] } }),
       () => null,
     );
 
@@ -588,7 +672,7 @@ describe('게시', () => {
   it('게시 실패 묶음은 실패 목록에 들고 사유를 넘기며, 편집하고 다시 게시할 수 있지만 다시 만들 수는 없다', () => {
     /** 게시 실패 묶음의 스냅숏. */
     const snapshot = bundleSnapshot(
-      bundle({ status: 'post-failed', draft, mentions, editedText: '고친 답입니다.', posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: 'forbidden' } }),
+      bundle({ status: 'post-failed', draft, mentions, editedText: '고친 답입니다.', posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: 'forbidden', answeredMentions: [] } }),
       () => null,
     );
 
@@ -599,7 +683,7 @@ describe('게시', () => {
   it('게시 실패가 아니면 게시 실패의 사유를 넘기지 않고, 준비됨 묶음은 다시 만들 수 있다', () => {
     /** 무시한 게시 실패 묶음. 게시 기록에 사유가 남아 있다. */
     const ignored = bundleSnapshot(
-      bundle({ status: 'ignored', processedAt: 20_000, draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: 'gone' } }),
+      bundle({ status: 'ignored', processedAt: 20_000, draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: 'gone', answeredMentions: [] } }),
       () => null,
     );
 

@@ -113,6 +113,8 @@ describe('멘션 감지: 폴링', () => {
         detectedAt: NOW,
         text: `${MY_MARKUP} 재시도는 몇 번 하나요?`,
         answered: false,
+        gone: false,
+        goneExcluded: false,
       },
     ]);
     expect(bundles.reviewCount()).toBe(1);
@@ -423,6 +425,17 @@ describe('멘션 감지: 나를 지목했는지 판정', () => {
       `GET /user/comments/${POST_ID}/replies/700?cursor=10`,
       `GET /user/comments/${POST_ID}/replies/700?cursor=20`,
     ]);
+  });
+
+  it('대댓글 목록 API가 412(댓글이 존재하지 않음)를 주면 부모 댓글이 지워진 것으로 보고 버린다', async () => {
+    const replies = Array.from({ length: 12 }, (_, index) => ({ replyId: String(800 + index), contents: `대댓글 ${index}` }));
+    const { stored, stateStore } = await detectOne((flow) => {
+      flow.addComment(POST_ID, { commentId: '700', contents: '머리 댓글', replies });
+      flow.failOn(`GET /user/comments/${POST_ID}/replies/700`, { kind: 'http', status: 412 });
+    }, alarm('101', { remarkId: '700', replyId: '811' }));
+
+    expect(stored).toEqual([]);
+    expect(stateStore.baselineAlarmId).toBe('101');
   });
 
   it('대댓글 API로 넘겨도 대댓글이 없으면 지워진 것으로 보고 버린다', async () => {

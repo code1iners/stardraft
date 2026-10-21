@@ -1,5 +1,5 @@
 import { isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
-import { mentionLocationKey, type Mention } from '../detection/mention';
+import { mentionLocationKey, mentionLocationOf, type Mention } from '../detection/mention';
 import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
@@ -22,12 +22,15 @@ import {
   isProcessed,
   isDraftTouched,
   isRestorable,
+  isWatched,
   judgeAnswered,
   listGroupOf,
   mentionSetKey,
+  type BundledMention,
   type BundlePlace,
   type BundleStatus,
   type MentionBundle,
+  type PostedAnswerRanges,
   type PostFailureReason,
   type RecordedAnswer,
   type RepoCheck,
@@ -193,15 +196,15 @@ export class MentionBundles {
           entry = { bundle: open ? structuredClone(open) : newBundle(mention, now, resolutions.get(mention.projectId)), added: new Set() };
           touched.set(place, entry);
         }
-        entry.bundle.mentions.push({ ...mention, answered: false });
+        entry.bundle.mentions.push({ ...mention, answered: false, gone: false, goneExcluded: false });
         entry.added.add(location);
       }
 
-      /** 저장할 묶음. */
+      /** 이 PC가 게시한 글마다 그 글이 답한 멘션 위치. */
+      const ranges = this.postedRanges();
+      /** 저장할 묶음. 자리마다 조회한 결과로 "이미 답함"을 판정한다. */
       const updated = [...touched].map(([place, { bundle, added }]) => {
-        /** 이 자리를 조회한 결과. 다른 묶음이 게시한 글은 그 묶음의 답이라 내 답에서 뺀다. */
-        const lookup = lookups.get(place);
-        return applyDetection(bundle, added, lookup && { ...lookup, myAnswers: lookup.myAnswers && this.notPostedByOtherBundles(lookup.myAnswers, bundle.id) }, now);
+        return applyDetection(bundle, added, lookups.get(place), now, ranges);
       });
       /** 저장한 묶음. */
       const saved = await this.options.stateStore.saveDetectedBundles(updated, baselineAlarmId);
@@ -284,6 +287,84 @@ export class MentionBundles {
   }
 
   /**
+   * 준비된 뒤의 변화 감시. 사용자 행동을 기다리는 묶음(준비됨, 실패, 게시 실패, 저장소 확인 필요)마다 Flow 내용을 대기열 순서로 다시 조회한다.
+   * 알림 폴링이 끝날 때마다 부른다. 검토 화면을 열 때는 부르지 않는다.
+   * 쓸 키가 없거나 Flow에 닿지 못하면(키 거부, 연결 실패, 요청 한도) 다른 묶음도 같으므로 이번 감시를 멈춘다.
+   */
+  async watchWaiting(): Promise<void> {
+    /** 감시할 묶음. 대기열 순서다. */
+    const ids = this.bundles
+      .filter((bundle) => isWatched(bundle.status))
+      .sort(compareBundles)
+      .map((bundle) => bundle.id);
+    for (const bundleId of ids) {
+      if ((await this.watch(bundleId)) === 'stop') break;
+    }
+  }
+
+  /**
+   * 묶음 하나의 Flow 내용을 다시 조회해 반영한다. 다른 묶음의 감시를 멈춰야 하면 `stop`이다.
+   * 게시물이 지워졌거나(`404`) 볼 수 없거나(`403`) 머리 댓글이 지워졌으면(목록에 없음, 대댓글 목록의 `412`) 멘션이 모두 사라진 것으로 본다.
+   * 서버 오류나 모르는 응답은 그 묶음만 이번 감시에서 건너뛴다. 네트워크 오류, `5xx`, `429`는 사라진 것으로 보지 않는다.
+   */
+  private async watch(bundleId: number): Promise<'continue' | 'stop'> {
+    /** 감시할 묶음. */
+    const bundle = this.bundles.find((item) => item.id === bundleId);
+    if (!bundle || !isWatched(bundle.status)) return 'continue';
+    /** 이 조회의 번호. 늦게 끝난 옛 조회가 이 결과를 덮지 않게 한다. */
+    const request = this.startContextRequest(bundleId);
+    /** 조회한 결과. 쓸 키가 없으면 `null`. */
+    let result: BundleContextResult | null;
+    try {
+      result = await this.options.collectContext(structuredClone(bundle));
+    } catch {
+      // 예외 문구에 Flow 글이 섞일 수 있어 로그에는 남기지 않는다.
+      this.options.logger.warn('bundle.watch-failed', { bundleId, reason: 'crashed' });
+      return 'continue';
+    }
+    if (this.contextRequests.get(bundleId) !== request) return 'continue';
+    this.contextRequests.delete(bundleId);
+    if (result === null) return 'stop';
+
+    /** 반영할 관찰. */
+    let observed: WatchObservation;
+    if (result.ok) {
+      observed = {
+        kind: 'found',
+        context: result.context,
+        myAnswers: result.myAnswers,
+        goneMentions: new Set(result.goneMentions.map(mentionLocationKey)),
+      };
+    } else if (isSourceGone(result.failure)) {
+      observed = { kind: 'gone' };
+    } else {
+      /** 조회하지 못한 까닭. */
+      const failure = result.failure;
+      this.options.logger.warn('bundle.watch-failed', { bundleId, reason: failure.kind, status: failure.kind === 'http' ? failure.status : null });
+      return failure.kind === 'unauthorized' || failure.kind === 'network' || failure.kind === 'rate-limited' ? 'stop' : 'continue';
+    }
+
+    await this.lane.run(async () => {
+      /** 지금 묶음. 조회하는 사이에 바뀌었을 수 있다. */
+      const latest = this.bundles.find((item) => item.id === bundleId);
+      if (!latest || !isWatched(latest.status)) return;
+      /** 관찰을 반영한 묶음. */
+      const next = applyWatch(latest, observed, this.options.clock.now(), this.postedRanges());
+      if (sameIgnoringFetchTime(next, latest)) return;
+
+      await this.options.stateStore.saveBundle(next);
+      this.bundles = this.bundles.map((item) => (item.id === bundleId ? next : item));
+      this.options.logger.info(next.status === latest.status ? 'bundle.watched' : `bundle.${next.status}-after-ready`, {
+        bundleId,
+        status: next.status,
+        goneCount: next.mentions.filter((mention) => mention.gone).length,
+      });
+      this.emit();
+    });
+    return 'continue';
+  }
+
+  /**
    * 초안 실행 직전에 맥락을 Flow에서 새로 조회해 비교 기준으로 저장하고, 같은 조회에서 찾은 내 답으로 "이미 답함"을 다시 판정한다(감지 때와 같은 규칙).
    * 내가 마지막으로 답한 글보다 앞선 멘션은 묶음에서 빼고, 모두 빠지면 초안 없이 처리됨의 "이미 답함"으로 옮긴다.
    * 쓸 키가 없거나 Flow가 키를 거부했거나 지금 Flow에 닿지 못하면(네트워크 오류, 요청 한도) 묶음을 바꾸지 않고 그렇게 알린다.
@@ -324,9 +405,9 @@ export class MentionBundles {
       const latest = this.bundles.find((item) => item.id === bundleId);
       if (!latest || latest.status !== 'generating') return { kind: 'skipped' };
       /** 새로 찾은 내 답을 더한 기록. 다른 묶음이 게시한 글은 그 묶음의 답이라 뺀다. */
-      const answers = mergeAnswers(latest.answers, this.notPostedByOtherBundles(result.myAnswers, bundleId));
+      const answers = mergeAnswers(latest.answers, result.myAnswers);
       /** 다시 판정한 멘션. */
-      const mentions = judgeAnswered(latest.mentions, answers);
+      const mentions = judgeAnswered(latest.mentions, answers, this.postedRanges());
       /** 모든 멘션이 빠졌는지 여부. */
       const answered = activeMentions({ mentions }).length === 0;
       /** 맥락과 판정을 반영한 묶음. 맥락의 멘션 표시는 묶음에 남은 멘션으로 다시 한다. */
@@ -335,6 +416,8 @@ export class MentionBundles {
         answers,
         mentions,
         context: markContextMentions(result.context, { ...latest, mentions }),
+        // 비교 기준이 새로 바뀌므로 옛 기준과 견주던 감시 내용은 버린다.
+        watchedContext: null,
         ...(answered ? { status: 'already-answered' as const, processedAt: this.options.clock.now() } : {}),
       };
       await this.options.stateStore.saveBundle(next);
@@ -563,7 +646,11 @@ export class MentionBundles {
       const body = postableBody(bundle);
       return body === null
         ? { ...bundle, status: 'ready' }
-        : { ...bundle, posting: { body, sentAt: this.options.clock.now(), postedId: null, failure: null } };
+        : {
+            ...bundle,
+            // 게시 중에는 새 멘션이 합쳐지지 않아 지금 남은 멘션이 곧 [게시]를 누를 때 본 멘션이다.
+            posting: { body, sentAt: this.options.clock.now(), postedId: null, failure: null, answeredMentions: activeMentions(bundle).map(mentionLocationOf) },
+          };
     });
     return changed?.posting?.body ?? null;
   }
@@ -607,18 +694,18 @@ export class MentionBundles {
   }
 
   /**
-   * 무시함이나 이미 답함에서 되돌린다. 초안이 있으면 그대로 준비됨이 되고, 없으면 새로 만들도록 생성 중으로 올린다.
+   * 무시함, 이미 답함, 원문 사라짐에서 되돌린다. 초안이 있으면 그대로 준비됨이 되고, 없으면 새로 만들도록 생성 중으로 올린다.
    * 초안이 없는데 매핑된 폴더가 사라졌으면 저장소 확인 필요로 돌아간다. 매핑이 없으면 생성 중으로 올라 자동 선택부터 한다.
-   * 이미 답함에서 되돌리면 그때 Flow에 있는 내 답을 새로 조회해 이후 "이미 답함" 판정에서 빼기로 기록한다.
-   * 같은 답으로 다시 처리됨이 되지 않게 하려는 것이고, 그 답으로 빠졌던 멘션도 다시 든다. 조회하지 못하면 판정 때 기록한 답만 뺀다.
+   * 이미 답함·원문 사라짐에서 되돌리면 그때 있던 내 답과 사라진 멘션을 기록해 이후 판정에서 뺀다. 내 답은 Flow에서 새로 조회한다.
+   * 같은 답이나 같은 사라짐으로 다시 처리됨이 되지 않게 하려는 것이고, 그래서 빠졌던 멘션도 다시 든다. 조회하지 못하면 판정 때 기록한 답만 뺀다.
    * 무시함에서 되돌리면 답을 빼지 않아, 이미 답한 앞선 멘션은 빠진 채로 둔다.
    */
   async restore(bundleId: number): Promise<void> {
     /** 되돌릴 묶음. */
     const bundle = this.bundles.find((item) => item.id === bundleId);
     if (!bundle || !isRestorable(bundle.status)) return;
-    /** 지금 Flow에 있는 내 답. 이미 답함이 아니거나 조회하지 못하면 `null`. */
-    const current = bundle.status === 'already-answered' ? await this.options.findMyAnswers(bundle).catch(() => null) : null;
+    /** 지금 Flow에 있는 내 답. 자동으로 옮겨진 묶음이 아니거나 조회하지 못하면 `null`. */
+    const current = isAutoProcessed(bundle.status) ? await this.options.findMyAnswers(bundle).catch(() => null) : null;
     /** 초안이 없을 때 돌아갈 상태를 정할 저장소 매핑. */
     const resolution = await this.options.resolveRepos(bundle.projectId);
 
@@ -626,10 +713,12 @@ export class MentionBundles {
     /** 되돌린 묶음. */
     const restored = await this.change(bundleId, 'bundle.restored', (latest) => {
       if (!isRestorable(latest.status)) return null;
+      /** 판정에서 뺄 것을 기록하는지 여부. */
+      const recording = isAutoProcessed(latest.status);
       /** 되돌린 뒤의 내 답 기록. */
-      const answers = latest.status === 'already-answered' ? excludeAnswers(latest.answers, current ?? []) : latest.answers;
-      /** 되돌린 뒤의 멘션. */
-      const mentions = judgeAnswered(latest.mentions, answers);
+      const answers = recording ? excludeAnswers(latest.answers, current ?? []) : latest.answers;
+      /** 되돌린 뒤의 멘션. 사라진 멘션은 사라짐 판정에서 빼기로 기록하고 다시 든다. */
+      const mentions = judgeAnswered(recording ? latest.mentions.map(excludeGone) : latest.mentions, answers, this.postedRanges());
       /** 처리됨에서 벗어난 묶음. */
       const reopened = { ...latest, processedAt: null, answers, mentions };
       // 초안이 있으면 그대로 준비됨이다. 합쳐진 뒤 다시 만들지 않은 새 멘션 표시도 그대로 둔다.
@@ -658,15 +747,15 @@ export class MentionBundles {
   }
 
   /**
-   * 묶음 자리에서 찾은 내 답에서 이 PC의 다른 묶음이 게시한 글을 뺀다. 이 PC가 게시한 글은 그 글을 올린 묶음의 멘션에만 답한 것으로 보기 때문이다.
-   * 그래야 게시 중에 들어와 새 묶음이 된 멘션이 그 글 때문에 바로 "이미 답함"으로 숨지 않는다. 다른 PC나 Flow 화면에서 쓴 내 답은 그대로 둔다.
+   * 이 PC가 게시한 글마다 그 글이 답한 멘션 위치. 이 PC가 게시한 글은 게시를 누를 때 조회한 내용에 있던 멘션에만 답한 것으로 보기 때문이다.
+   * 그래야 게시 중에 들어와 새 묶음이 된 멘션이 그 글 때문에 바로 "이미 답함"으로 숨지 않는다. 다른 PC나 Flow 화면에서 쓴 내 답은 시각으로 판정한다.
    */
-  private notPostedByOtherBundles(answers: readonly MyAnswer[], bundleId: number | null): MyAnswer[] {
-    /** 이 PC의 다른 묶음이 게시한 글의 ID. */
-    const postedByOthers = new Set(
-      this.bundles.flatMap((bundle) => (bundle.id !== bundleId && bundle.posting?.postedId ? [bundle.posting.postedId] : [])),
+  private postedRanges(): PostedAnswerRanges {
+    return new Map(
+      this.bundles.flatMap((bundle): [string, Set<string>][] =>
+        bundle.posting?.postedId ? [[bundle.posting.postedId, new Set(bundle.posting.answeredMentions.map(mentionLocationKey))]] : [],
+      ),
     );
-    return answers.filter((answer) => !postedByOthers.has(answer.answerId));
   }
 
   /** Flow 프로젝트마다 저장소 매핑을 한 번씩 확인한다. 확인하다 예외가 나면 매핑이 없는 것으로 본다. */
@@ -715,6 +804,7 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
     createdAt: now,
     processedAt: null,
     context: null,
+    watchedContext: null,
     userRepos: null,
     draft: null,
     editedText: null,
@@ -731,12 +821,16 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
 /** 실패 묶음을 다시 시도할 때 바꿀 것. 생성 중으로 올라 초안 대기열에 들어가고, 합쳐진 새 멘션도 이번 초안에 들어간다. */
 const retried = { status: 'generating', failure: null, newMentionCount: 0 } as const satisfies Partial<MentionBundle>;
 
-/** 다시 만들 때 바로 지우는 것. 직전 초안과 편집본, 비교 기준(초안을 만들 때 넘긴 맥락)이다. 생성 중으로 올라 초안 대기열에 들어간다. */
+/**
+ * 다시 만들 때 바로 지우는 것. 직전 초안과 편집본, 비교 기준(초안을 만들 때 넘긴 맥락)과 그것과 견주던 감시 내용이다.
+ * 생성 중으로 올라 초안 대기열에 들어간다.
+ */
 const clearedForRegeneration = {
   status: 'generating',
   draft: null,
   editedText: null,
   context: null,
+  watchedContext: null,
   failure: null,
   newMentionCount: 0,
 } as const satisfies Partial<MentionBundle>;
@@ -819,7 +913,13 @@ function showsContextWithoutDraft(bundle: MentionBundle): boolean {
  * - 그 밖(손댄 준비됨, 저장소 확인 필요): 합치기만 하고 "새 멘션"을 센다.
  * 모든 멘션이 빠지면 이미 답함으로 옮긴다.
  */
-function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, lookup: PlaceLookup | undefined, now: number): UnsavedBundle {
+function applyDetection(
+  bundle: UnsavedBundle,
+  added: ReadonlySet<string>,
+  lookup: PlaceLookup | undefined,
+  now: number,
+  postedRanges: PostedAnswerRanges,
+): UnsavedBundle {
   /** 반영한 묶음. */
   let next: UnsavedBundle = { ...bundle };
   if (lookup?.post) {
@@ -828,7 +928,7 @@ function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, looku
   }
   // 내 답을 조회하지 못했으면 이미 아는 답으로 판정한다. 모르는 답 때문에 멘션을 건너뛰지 않는다.
   if (lookup?.myAnswers) next.answers = mergeAnswers(next.answers, lookup.myAnswers);
-  next.mentions = judgeAnswered(next.mentions, next.answers);
+  next.mentions = judgeAnswered(next.mentions, next.answers, postedRanges);
 
   /** 이번에 넣은 멘션 가운데 묶음에 남은 것. */
   const addedActive = next.mentions.filter((mention) => !mention.answered && added.has(mentionLocationKey(mention)));
@@ -840,6 +940,61 @@ function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, looku
     next.processedAt = now;
   }
   return next;
+}
+
+/** 변화 감시가 묶음 자리를 다시 조회해 본 것. */
+type WatchObservation =
+  /**
+   * 맥락과 묶음 자리의 내 답을 조회했다. 내 답에서 이 PC의 다른 묶음이 게시한 글은 뺐다.
+   * `goneMentions`는 사라진 멘션의 위치(`mentionLocationKey`)다.
+   */
+  | { kind: 'found'; context: BundleContext; myAnswers: MyAnswer[]; goneMentions: ReadonlySet<string> }
+  /** 게시물이나 머리 댓글이 지워졌거나 볼 수 없어, 묶음의 멘션이 모두 사라졌다. */
+  | { kind: 'gone' };
+
+/**
+ * 준비된 뒤의 변화 감시가 본 것을 묶음에 반영한다.
+ * - 새로 찾은 내 답으로 "이미 답함"을 다시 판정한다(감지 때와 같은 규칙).
+ * - 사라진 멘션은 묶음에서 뺀다. 되돌릴 때 사라진 것으로 기록한 멘션은 다시 빼지 않는다.
+ * - 남아 있던 멘션이 모두 빠지면 처리됨으로 옮기고 초안은 편집본까지 그대로 둔다. 하나라도 내 답으로 빠졌으면 "이미 답함", 아니면 "원문 사라짐"이다.
+ * - 조회한 맥락은 초안이 있으면 비교 기준과 견줄 감시 내용으로, 초안이 없으면 원문 영역에 보일 맥락으로 둔다.
+ */
+function applyWatch(bundle: MentionBundle, observed: WatchObservation, now: number, postedRanges: PostedAnswerRanges): MentionBundle {
+  /** 새로 찾은 내 답을 더한 기록. */
+  const answers = observed.kind === 'found' ? mergeAnswers(bundle.answers, observed.myAnswers) : bundle.answers;
+  /** 다시 판정한 멘션. */
+  const mentions = judgeAnswered(bundle.mentions, answers, postedRanges).map((mention) => ({
+    ...mention,
+    gone: !mention.goneExcluded && (observed.kind === 'gone' || observed.goneMentions.has(mentionLocationKey(mention))),
+  }));
+  /** 반영한 묶음. */
+  let next: MentionBundle = { ...bundle, answers, mentions };
+  if (observed.kind === 'found') {
+    /** 묶음에 남은 멘션을 표시한 맥락. */
+    const context = markContextMentions(observed.context, next);
+    next = bundle.draft ? { ...next, watchedContext: context } : { ...next, context };
+  }
+
+  /** 감시하기 전에 묶음에 남아 있던 멘션의 위치. */
+  const wasActive = new Set(activeMentions(bundle).map(mentionLocationKey));
+  if (wasActive.size > 0 && activeMentions(next).length === 0) {
+    /** 이번에 내 답으로 빠진 멘션이 있는지 여부. */
+    const answered = mentions.some((mention) => mention.answered && wasActive.has(mentionLocationKey(mention)));
+    next = { ...next, status: answered ? 'already-answered' : 'source-gone', processedAt: now };
+  }
+  return next;
+}
+
+/** 두 묶음이 맥락을 조회한 시각 말고는 같은지 본다. 변화 감시가 바뀐 것 없이 매번 저장하고 알리지 않게 한다. */
+function sameIgnoringFetchTime(a: MentionBundle, b: MentionBundle): boolean {
+  /** 조회 시각을 지운 묶음의 JSON. */
+  const comparable = (bundle: MentionBundle) =>
+    JSON.stringify({
+      ...bundle,
+      context: bundle.context && { ...bundle.context, fetchedAt: 0 },
+      watchedContext: bundle.watchedContext && { ...bundle.watchedContext, fetchedAt: 0 },
+    });
+  return comparable(a) === comparable(b);
 }
 
 /**
@@ -868,6 +1023,16 @@ function mergeAnswers(recorded: readonly RecordedAnswer[], fetched: readonly MyA
   /** 빼기로 기록한 답의 ID. */
   const excludedIds = new Set(excluded.map((answer) => answer.answerId));
   return [...excluded, ...fetched.filter((answer) => !excludedIds.has(answer.answerId)).map((answer) => ({ ...answer, excluded: false }))];
+}
+
+/** Flow에 내 답이 생겼거나 멘션이 사라져 자동으로 처리됨이 된 상태인지 본다. 되돌릴 때 그 까닭을 기록해 이후 판정에서 뺀다. */
+function isAutoProcessed(status: BundleStatus): boolean {
+  return status === 'already-answered' || status === 'source-gone';
+}
+
+/** 사라진 멘션을 사라짐 판정에서 빼기로 기록한다. 기록한 멘션은 다시 묶음에 든다. */
+function excludeGone(mention: BundledMention): BundledMention {
+  return mention.gone ? { ...mention, gone: false, goneExcluded: true } : mention;
 }
 
 /** 기록한 답과 지금 Flow에 있는 답을 모두 빼기로 기록한다. */

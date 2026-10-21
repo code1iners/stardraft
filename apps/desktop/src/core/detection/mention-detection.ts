@@ -34,6 +34,11 @@ export interface MentionDetectionOptions {
   logger: Logger;
   /** 지금 키로 Flow 연결을 만든다. 쓸 키가 없으면 `null`. */
   connectFlow: () => FlowConnection | null;
+  /**
+   * 준비된 뒤의 변화 감시. 알림 조회를 마친 뒤 사용자 행동을 기다리는 묶음의 Flow 내용을 다시 조회한다.
+   * 알림을 끝까지 판정하지 못한 조회(키 거부, 연결 실패, 요청 한도)에서는 부르지 않는다. 주지 않으면 감시하지 않는다.
+   */
+  watchBundles?: () => Promise<void>;
 }
 
 /** 조회 한 번이 끝난 뒤 다음 조회를 언제 할지. */
@@ -228,7 +233,18 @@ export class MentionDetection {
       mentionCount: mentions.length,
       stopped: stoppedBy?.kind ?? null,
     });
-    return stoppedBy ? this.nextAfterFailure(flow, stoppedBy) : NEXT_INTERVAL;
+    if (stoppedBy) return this.nextAfterFailure(flow, stoppedBy);
+    await this.watchBundles();
+    return NEXT_INTERVAL;
+  }
+
+  /** 준비된 뒤의 변화 감시를 한다. 감시가 실패해도 폴링은 이어 간다. */
+  private async watchBundles(): Promise<void> {
+    try {
+      await this.options.watchBundles?.();
+    } catch (error) {
+      this.options.logger.error('detection.watch-failed', errorFields(error));
+    }
   }
 
   /**

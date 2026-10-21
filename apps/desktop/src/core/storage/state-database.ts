@@ -150,6 +150,13 @@ export const STATE_MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE mention_bundle ADD COLUMN posting TEXT;
   `,
+  // 13: 준비된 뒤의 변화 감시. 멘션마다 사라져 빠졌는지와 되돌릴 때 사라짐 판정에서 빼기로 기록했는지를 두고,
+  // 묶음마다 감시가 마지막으로 조회한 맥락을 JSON으로 둔다. 이미 있던 멘션은 사라진 적이 없고, 묶음은 감시한 적이 없다.
+  `
+  ALTER TABLE mention ADD COLUMN gone INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE mention ADD COLUMN gone_excluded INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE mention_bundle ADD COLUMN watched_context TEXT;
+  `,
 ];
 
 /** 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록이다. */
@@ -305,7 +312,8 @@ export class SqliteStateStore implements StateStore {
     const mentions = groupBy(
       this.db
         .prepare(
-          `SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered
+          `SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
+             gone, gone_excluded
            FROM mention ORDER BY bundle_id, registered_date_time, length(alarm_id), alarm_id`,
         )
         .all() as MentionRow[],
@@ -336,6 +344,8 @@ export class SqliteStateStore implements StateStore {
         detectedAt: mention.detected_at,
         text: mention.text,
         answered: mention.answered === 1,
+        gone: mention.gone === 1,
+        goneExcluded: mention.gone_excluded === 1,
       })),
       answers: (answers.get(row.id) ?? []).map((answer) => ({
         answerId: answer.answer_id,
@@ -346,6 +356,7 @@ export class SqliteStateStore implements StateStore {
       createdAt: row.created_at,
       processedAt: row.processed_at,
       context: readJson<BundleContext>(row.context),
+      watchedContext: readJson<BundleContext>(row.watched_context),
       repoCheck: readJson<RepoCheck>(row.repo_check),
       userRepos: readJson<string[]>(row.user_repos),
       draft: readJson<Draft>(row.draft),
@@ -356,7 +367,7 @@ export class SqliteStateStore implements StateStore {
       regeneration: readJson<Regeneration>(row.regeneration),
       failure: readJson<DraftFailure>(row.failure),
       runs: readJson<RunRecord[]>(row.runs) ?? [],
-      posting: postingRecordOf(readJson<PostingRecord>(row.posting)),
+      posting: postingRecordOf(readJson<PostingRecord>(row.posting), mentions.get(row.id) ?? []),
     }));
   }
 
@@ -390,6 +401,7 @@ export class SqliteStateStore implements StateStore {
       createdAt: bundle.createdAt,
       processedAt: bundle.processedAt,
       context: jsonOrNull(bundle.context),
+      watchedContext: jsonOrNull(bundle.watchedContext),
       repoCheck: jsonOrNull(bundle.repoCheck),
       userRepos: jsonOrNull(bundle.userRepos),
       draft: jsonOrNull(bundle.draft),
@@ -409,9 +421,9 @@ export class SqliteStateStore implements StateStore {
         this.db
           .prepare(
             `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
-               context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting)
+               context, watched_context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting)
              VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
-               @context, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting)`,
+               @context, @watchedContext, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -421,7 +433,7 @@ export class SqliteStateStore implements StateStore {
         .prepare(
           `UPDATE mention_bundle SET post_id = @postId, remark_id = @remarkId, project_id = @projectId, status = @status, post_title = @postTitle,
              connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt,
-             context = @context, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, edited_text = @editedText,
+             context = @context, watched_context = @watchedContext, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, edited_text = @editedText,
              removed_recipients = @removedRecipients, directives = @directives, fixed_requirement = @fixedRequirement,
              regeneration = @regeneration, failure = @failure, runs = @runs, posting = @posting
            WHERE id = @id`,
@@ -433,10 +445,20 @@ export class SqliteStateStore implements StateStore {
     this.db.prepare('DELETE FROM mention WHERE bundle_id = ?').run(id);
     /** 멘션 하나를 넣는 문장. */
     const insertMention = this.db.prepare(
-      `INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered)
-       VALUES (@postId, @remarkId, @replyId, @bundleId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt, @text, @answered)`,
+      `INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
+         gone, gone_excluded)
+       VALUES (@postId, @remarkId, @replyId, @bundleId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt, @text, @answered,
+         @gone, @goneExcluded)`,
     );
-    for (const mention of bundle.mentions) insertMention.run({ ...mention, bundleId: id, answered: mention.answered ? 1 : 0 });
+    for (const mention of bundle.mentions) {
+      insertMention.run({
+        ...mention,
+        bundleId: id,
+        answered: mention.answered ? 1 : 0,
+        gone: mention.gone ? 1 : 0,
+        goneExcluded: mention.goneExcluded ? 1 : 0,
+      });
+    }
 
     this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id = ?').run(id);
     /** 내 답 하나를 넣는 문장. */
@@ -458,9 +480,18 @@ export class SqliteStateStore implements StateStore {
   }
 }
 
-/** 저장한 게시 기록. 게시 실패의 사유가 생기기 전에 적은 기록은 사유가 없으므로 `null`로 채운다. */
-function postingRecordOf(record: PostingRecord | null): PostingRecord | null {
-  return record && { ...record, failure: record.failure ?? null };
+/**
+ * 저장한 게시 기록. 게시 실패의 사유가 생기기 전에 적은 기록은 사유가 없으므로 `null`로 채운다.
+ * 답한 범위가 생기기 전에 적은 기록은 그때 판정하던 대로 그 묶음의 멘션에 답한 것으로 채운다.
+ */
+function postingRecordOf(record: PostingRecord | null, mentions: readonly MentionRow[]): PostingRecord | null {
+  return (
+    record && {
+      ...record,
+      failure: record.failure ?? null,
+      answeredMentions: record.answeredMentions ?? mentions.map((mention) => ({ postId: mention.post_id, remarkId: mention.remark_id, replyId: mention.reply_id })),
+    }
+  );
 }
 
 /**
@@ -513,6 +544,8 @@ interface BundleRow {
   processed_at: number | null;
   /** 마지막으로 조회한 맥락의 JSON. 조회하지 않았으면 `null`. */
   context: string | null;
+  /** 변화 감시가 마지막으로 조회한 맥락의 JSON. 감시하지 않았으면 `null`. */
+  watched_context: string | null;
   /** 저장소 확인 필요 사유의 JSON. 사유가 없으면 `null`. */
   repo_check: string | null;
   /** 사용자가 저장소 선택 창에서 고른 구성의 JSON. 고른 적이 없으면 `null`. */
@@ -575,4 +608,8 @@ interface MentionRow {
   text: string;
   /** "이미 답함"으로 묶음에서 빠졌으면 1. */
   answered: number;
+  /** 사라져 묶음에서 빠졌으면 1. */
+  gone: number;
+  /** 되돌릴 때 사라짐 판정에서 빼기로 기록했으면 1. */
+  gone_excluded: number;
 }

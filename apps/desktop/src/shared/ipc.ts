@@ -331,7 +331,7 @@ export interface OnboardingSnapshot {
   start: DetectionStartSnapshot;
 }
 
-/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시 실패, 게시됨, 무시함, 이미 답함이다. */
+/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시 실패, 게시됨, 무시함, 이미 답함, 원문 사라짐이다. */
 export type BundleStatusSnapshot =
   | 'generating'
   | 'ready'
@@ -341,7 +341,8 @@ export type BundleStatusSnapshot =
   | 'post-failed'
   | 'posted'
   | 'ignored'
-  | 'already-answered';
+  | 'already-answered'
+  | 'source-gone';
 
 /**
  * 게시 실패의 사유. 권한 없음(`403`), 지워짐(`404`, `412`), 받지 않음(`400`, `422` 등), 요청 한도 초과(`429` 두 번),
@@ -381,9 +382,14 @@ export interface BundleMentionSnapshot {
   place: MentionPlaceSnapshot;
   /** 멘션 시각(Unix epoch 밀리초). */
   at: number;
-  /** Flow 원문. */
+  /** Flow 원문. 준비된 뒤의 변화 감시가 조회했으면 지금 내용이다. */
   text: TextPartSnapshot[];
+  /** 초안을 만든 뒤 수정됐는지 여부. 참이면 "수정됨"을 표시한다. */
+  edited: boolean;
 }
+
+/** 원문 영역의 글이 초안을 만든 뒤 바뀐 것. 새로 달린 글(`new`)과 수정된 글(`edited`)이다. */
+export type WritingChangeSnapshot = 'new' | 'edited';
 
 /** 원문 영역의 "스레드 보기"로 펼치는 글 하나. 맥락에서 읽는다. */
 export interface ThreadEntrySnapshot {
@@ -399,6 +405,18 @@ export interface ThreadEntrySnapshot {
   attachments: string[];
   /** 묶음의 멘션인지 여부. 화면이 표시한다. */
   mention: boolean;
+  /** 초안을 만든 뒤 새로 달렸거나 수정됐으면 그 변화. "새 글"·"수정됨"을 표시한다. 바뀌지 않았거나 지켜볼 범위 밖이면 `null`. */
+  change: WritingChangeSnapshot | null;
+}
+
+/** 준비된 뒤의 변화 감시가 찾은 변화. 초안 위 알림 줄에 보인다. 트레이 숫자와 점은 바꾸지 않는다. */
+export interface BundleChangesSnapshot {
+  /** 초안을 만든 뒤 지켜볼 범위에 새로 달린 글 수. */
+  newWritingCount: number;
+  /** 초안을 만든 뒤 지켜볼 범위의 글이 수정됐는지 여부. */
+  edited: boolean;
+  /** Flow에서 사라져 묶음에서 빠진 멘션 수. */
+  goneMentionCount: number;
 }
 
 /** 초안 문장 하나. */
@@ -619,6 +637,7 @@ export interface BundleSnapshot {
   canOpenInFlow: boolean;
   /**
    * "스레드 보기"로 펼칠 글. 시간순이고 묶음의 멘션도 들어 있다. 맥락을 아직 조회하지 않았으면 비어 있다.
+   * 준비된 뒤의 변화 감시가 조회했으면 지금 내용이고, 초안을 만든 뒤 새로 달렸거나 수정된 글에 변화가 붙는다.
    * 댓글 스레드 묶음은 게시물 본문과 대상 댓글 스레드, 본문 묶음은 본문과 다른 댓글(대댓글 포함)이다.
    */
   thread: ThreadEntrySnapshot[];
@@ -636,6 +655,8 @@ export interface BundleSnapshot {
   posting: PostingSnapshot | null;
   /** 게시 실패의 사유. 상세 머리에 한 줄로 보인다. 게시 실패가 아니면 `null`. */
   postFailure: PostFailureSnapshot | null;
+  /** 준비된 뒤의 변화 감시가 찾은 변화. 변화가 없으면 모두 0과 거짓이다. */
+  changes: BundleChangesSnapshot;
 }
 
 /** 묶음을 보는 창. 작은 창(`compact`)과 펼친 창(`expanded`)이다. */

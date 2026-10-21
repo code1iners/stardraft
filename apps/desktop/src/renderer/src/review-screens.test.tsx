@@ -4,7 +4,7 @@ import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/i
 import { DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
-import { nextBundleAfter } from './useReview';
+import { nextBundleAfter, resolveSelection } from './useReview';
 
 /** 창마다 처음 영역 펼침 상태. */
 const SECTIONS: ReviewSnapshot['sections'] = {
@@ -30,12 +30,14 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
           { text: '@테스트 사용자', mention: true },
           { text: ' 첫 질문입니다', mention: false },
         ],
+        edited: false,
       },
       {
         senderName: '다른 사람',
         place: 'reply',
         at: Date.UTC(2026, 9, 19, 23, 51),
         text: [{ text: '둘째 질문입니다', mention: false }],
+        edited: false,
       },
     ],
     senderNames: ['보낸 사람', '다른 사람'],
@@ -53,6 +55,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     repoCheck: null,
     posting: null,
     postFailure: null,
+    changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
     ...overrides,
   };
 }
@@ -63,7 +66,7 @@ const ANSWERED = bundle(3, {
   group: 'processed',
   place: 'post',
   senderNames: ['세번째 사람'],
-  mentions: [{ senderName: '세번째 사람', place: 'post', at: Date.UTC(2026, 9, 19, 23, 40), text: [{ text: '본문 질문', mention: false }] }],
+  mentions: [{ senderName: '세번째 사람', place: 'post', at: Date.UTC(2026, 9, 19, 23, 40), text: [{ text: '본문 질문', mention: false }], edited: false }],
   processedAt: Date.UTC(2026, 9, 20, 0, 0),
   canRestore: true,
 });
@@ -154,8 +157,8 @@ describe('작은 창: 멘션 묶음', () => {
   it('맥락을 조회한 묶음은 원문 영역에 "스레드 보기"를 두고, 맥락이 없으면 두지 않는다', () => {
     /** 본문, 멘션인 머리 댓글, 앞선 대댓글이 든 스레드. */
     const thread: BundleSnapshot['thread'] = [
-      { authorName: '글쓴이', place: 'post', at: null, text: [{ text: '게시물 본문', mention: false }], attachments: [], mention: false },
-      { authorName: '보낸 사람', place: 'comment', at: null, text: [{ text: '첫 질문입니다', mention: false }], attachments: [], mention: true },
+      { authorName: '글쓴이', place: 'post', at: null, text: [{ text: '게시물 본문', mention: false }], attachments: [], mention: false, change: null },
+      { authorName: '보낸 사람', place: 'comment', at: null, text: [{ text: '첫 질문입니다', mention: false }], attachments: [], mention: true, change: null },
     ];
 
     expect(textOf(<PopoverContent snapshot={snapshot([bundle(1, { thread })])} />)).toContain('스레드 보기');
@@ -167,7 +170,7 @@ describe('작은 창: 멘션 묶음', () => {
     const text = textOf(
       <ThreadList
         entries={[
-          { authorName: '글쓴이', place: 'post', at: null, text: [{ text: '게시물 본문', mention: false }], attachments: ['설계서.pdf'], mention: false },
+          { authorName: '글쓴이', place: 'post', at: null, text: [{ text: '게시물 본문', mention: false }], attachments: ['설계서.pdf'], mention: false, change: null },
           {
             authorName: '보낸 사람',
             place: 'comment',
@@ -175,8 +178,9 @@ describe('작은 창: 멘션 묶음', () => {
             text: [{ text: '@테스트 사용자', mention: true }, { text: ' 질문', mention: false }],
             attachments: [],
             mention: true,
+            change: null,
           },
-          { authorName: '', place: 'reply', at: null, text: [{ text: '앞선 대댓글', mention: false }], attachments: [], mention: false },
+          { authorName: '', place: 'reply', at: null, text: [{ text: '앞선 대댓글', mention: false }], attachments: [], mention: false, change: null },
         ]}
       />,
     );
@@ -1039,5 +1043,97 @@ describe('게시하거나 무시한 뒤 넘어갈 묶음', () => {
     expect(nextBundleAfter([{ ...READY, id: 1 }, GENERATING], 1)?.id).toBe(GENERATING.id);
     expect(nextBundleAfter([FAILED, { ...READY, id: 1 }], 1)?.id).toBe(FAILED.id);
     expect(nextBundleAfter([{ ...READY, id: 1 }], 1)).toBeNull();
+  });
+});
+
+describe('준비된 뒤의 변화', () => {
+  /** 변화가 있는 준비됨 묶음. */
+  const changed = (changes: BundleSnapshot['changes'], overrides: Partial<BundleSnapshot> = {}): BundleSnapshot => ({ ...READY, changes, ...overrides });
+
+  it('변화가 있으면 초안 위 알림 줄에 "초안을 만든 뒤 새 글 2건 · 원문 수정됨 · 멘션 1건 사라짐"과 [다시 만들기]를 보인다', () => {
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([changed({ newWritingCount: 2, edited: true, goneMentionCount: 1 })])} />);
+
+    expect(html).toMatch(/<div class="notice-line"[^>]*><span>초안을 만든 뒤 새 글 2건 · 원문 수정됨 · 멘션 1건 사라짐<\/span><button[^>]*>다시 만들기<\/button><\/div>/);
+  });
+
+  it('새 멘션과 변화가 함께 있으면 한 줄에 잇고, 변화가 없으면 알림 줄이 없다', () => {
+    const both = renderToStaticMarkup(
+      <PopoverContent snapshot={snapshot([changed({ newWritingCount: 1, edited: false, goneMentionCount: 0 }, { newMentionCount: 1 })])} />,
+    );
+
+    expect(both).toMatch(/<span>새 멘션 1건 · 초안을 만든 뒤 새 글 1건<\/span>/);
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('notice-line');
+  });
+
+  it('초안이 없는 묶음은 사라진 멘션 수만 보이고 [다시 만들기]가 없다', () => {
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([bundle(1, { changes: { newWritingCount: 0, edited: false, goneMentionCount: 1 } })])} />);
+
+    expect(html).toContain('<div class="notice-line"><span>멘션 1건 사라짐</span></div>');
+  });
+
+  it('이미 답함으로 옮겨진 초안 묶음은 상태 태그만 바꾸고 "Flow에 이미 내 답이 있습니다 · 되돌리기"를 띄운다', () => {
+    /** 이미 답함으로 옮겨진 묶음. 초안은 그대로다. */
+    const answered: BundleSnapshot = {
+      ...READY,
+      status: 'already-answered',
+      group: 'processed',
+      canRestore: true,
+      draft: { ...READY.draft!, canEdit: false, canRegenerate: false, canPost: false },
+    };
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([answered])} initialBundleId={4} />);
+
+    expect(html).toMatch(/<div class="notice-line"[^>]*><span>Flow에 이미 내 답이 있습니다<\/span><button[^>]*>되돌리기<\/button><\/div>/);
+    expect(html).toContain('<span class="tag done">이미 답함</span>');
+    expect(html).toContain('실제 서비스에서는 다섯 번까지 다시 시도합니다.');
+  });
+
+  it('원문 사라짐 묶음은 상태 태그, 처리됨 안내, [되돌리기]를 보인다', () => {
+    /** 원문 사라짐 묶음. */
+    const gone: BundleSnapshot = { ...READY, status: 'source-gone', group: 'processed', canRestore: true };
+    const text = textOf(<PopoverContent snapshot={snapshot([gone])} initialBundleId={4} />);
+
+    expect(text).toContain('원문 사라짐');
+    expect(text).toContain('Flow에서 멘션이 모두 사라져 처리했습니다.');
+    expect(text).toContain('되돌리기');
+  });
+
+  it('원문 영역은 수정된 멘션에 "수정됨"을 붙이고, 새로 달린 글을 멘션 뒤에 "새 글"로 보인다', () => {
+    /** 머리 댓글이 수정되고 새 대댓글이 달린 묶음. */
+    const item = bundle(1, {
+      mentions: [{ ...bundle(1).mentions[0]!, edited: true }],
+      thread: [
+        { authorName: '보낸 사람', place: 'comment', at: null, text: [{ text: '첫 질문입니다', mention: false }], attachments: [], mention: true, change: 'edited' },
+        { authorName: '동료', place: 'reply', at: null, text: [{ text: '운영 환경 얘기예요', mention: false }], attachments: [], mention: false, change: 'new' },
+      ],
+    });
+    const text = textOf(<PopoverContent snapshot={snapshot([item])} />);
+
+    expect(text).toMatch(/보낸 사람 댓글 .*수정됨/);
+    expect(text.indexOf('첫 질문입니다')).toBeLessThan(text.indexOf('운영 환경 얘기예요'));
+    expect(text).toMatch(/동료 대댓글 새 글 운영 환경 얘기예요/);
+  });
+
+  it('스레드 보기는 새로 달린 글과 수정된 글에 태그를 붙인다', () => {
+    const text = textOf(
+      <ThreadList
+        entries={[
+          { authorName: '글쓴이', place: 'post', at: null, text: [{ text: '게시물 본문', mention: false }], attachments: [], mention: false, change: 'edited' },
+          { authorName: '동료', place: 'reply', at: null, text: [{ text: '새 대댓글', mention: false }], attachments: [], mention: false, change: 'new' },
+        ]}
+      />,
+    );
+
+    expect(text).toMatch(/글쓴이 본문 수정됨 게시물 본문/);
+    expect(text).toMatch(/동료 대댓글 새 글 새 대댓글/);
+  });
+
+  it('보고 있던 묶음은 처리됨으로 옮겨져도 계속 보인다. 고르지 않고 보던 대기열 첫 묶음도 같다', () => {
+    /** 처음 연 창의 선택. 고른 묶음이 없다. */
+    const first = resolveSelection([READY, bundle(5)], { id: null, skip: null });
+    expect(first.selected?.id).toBe(4);
+
+    /** 보던 묶음이 이미 답함으로 옮겨진 뒤의 묶음. */
+    const moved: BundleSnapshot = { ...READY, status: 'already-answered', group: 'processed', canRestore: true };
+    expect(resolveSelection([bundle(5), moved], first.selection).selected?.id).toBe(4);
   });
 });

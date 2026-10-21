@@ -36,6 +36,8 @@ function mention(overrides: Partial<BundledMention> = {}): BundledMention {
     detectedAt: NOW,
     text: '',
     answered: false,
+    gone: false,
+    goneExcluded: false,
     ...overrides,
   };
 }

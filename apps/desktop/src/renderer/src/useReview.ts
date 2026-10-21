@@ -9,7 +9,7 @@ const TOAST_MS = 5_000;
 const COUNTDOWN_TICK_MS = 250;
 
 /** 창에서 고른 묶음. */
-interface Selection {
+export interface Selection {
   /** 고른 묶음 ID. 고르지 않았으면 `null`이고 대기열 첫 묶음을 보인다. */
   id: number | null;
   /** 막 떠난 묶음 ID. 처리됐다는 상태가 오기 전에 그 묶음을 다시 고르지 않는다. */
@@ -46,6 +46,20 @@ export function nextBundleAfter(queue: readonly BundleSnapshot[], bundleId: numb
 }
 
 /**
+ * 창이 보일 묶음과 기억할 선택. 고른 묶음이 있으면 처리됨이 되어도 그 묶음을 보인다.
+ * 고른 묶음이 없거나 사라졌으면 대기열에서 막 떠난 묶음을 뺀 첫 묶음을 보이고, 그 묶음을 고른 것으로 기억한다.
+ * 그래야 보던 묶음이 변화 감시로 이미 답함·원문 사라짐이 되어도 화면이 다음 묶음으로 넘어가지 않는다. 보일 묶음이 없으면 `null`.
+ */
+export function resolveSelection(bundles: readonly BundleSnapshot[], selection: Selection): { selected: BundleSnapshot | null; selection: Selection } {
+  /** 보일 묶음. */
+  const selected =
+    bundles.find((bundle) => bundle.id === selection.id) ??
+    bundles.find((bundle) => bundle.group !== 'processed' && bundle.id !== selection.skip) ??
+    null;
+  return { selected, selection: selected && selected.id !== selection.id ? { id: selected.id, skip: null } : selection };
+}
+
+/**
  * 창에서 고른 묶음. 묶음 상태는 main의 스냅숏에서 읽고, 무엇을 보고 있는지만 창이 기억한다.
  * 창을 열 때 주소에 실린 묶음을 먼저 고르고, OS 알림을 눌러 main이 묶음을 보내면 그 묶음으로 바꾼다.
  */
@@ -61,8 +75,12 @@ export function useBundleSelection(bundles: readonly BundleSnapshot[], initialBu
 
   /** 작은 창 대기열. */
   const queue = bundles.filter((bundle) => bundle.group !== 'processed');
+  /** 보이는 묶음과 기억할 선택. */
+  const resolved = resolveSelection(bundles, selection);
   /** 보이는 묶음. */
-  const selected = bundles.find((bundle) => bundle.id === selection.id) ?? queue.find((bundle) => bundle.id !== selection.skip) ?? null;
+  const selected = resolved.selected;
+  // 고르지 않고 보던 묶음도 고른 것으로 기억한다. 이전 렌더의 값에서 다음 값을 정하는 것이라 렌더 중에 바꾼다.
+  if (resolved.selection !== selection) setSelection(resolved.selection);
 
   return {
     queue,

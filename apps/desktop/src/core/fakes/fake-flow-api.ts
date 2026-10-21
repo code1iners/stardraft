@@ -136,16 +136,56 @@ export class FakeFlowApi implements FlowApi {
     this.comments.set(postId, [...(this.comments.get(postId) ?? []), comment]);
   }
 
+  /** 게시물을 지운다. 그 뒤 게시물과 댓글 조회는 `404`다. */
+  removePost(postId: string): void {
+    this.posts.delete(postId);
+  }
+
+  /** 게시물 본문의 글 조각을 바꾼다(수정). */
+  editPost(postId: string, textComponents: FlowPost['textComponents']): void {
+    /** 고칠 게시물. */
+    const post = this.posts.get(postId);
+    if (!post) throw new Error(`가짜 게시물 ${postId}가 없습니다.`);
+    post.textComponents = structuredClone(textComponents);
+  }
+
   /** 게시물의 댓글을 지운다. 대댓글도 함께 사라진다. */
   removeComment(postId: string, commentId: string): void {
     this.comments.set(postId, (this.comments.get(postId) ?? []).filter((comment) => comment.commentId !== commentId));
   }
 
+  /** 댓글의 글을 바꾼다(수정). */
+  editComment(postId: string, commentId: string, contents: string): void {
+    this.commentOf(postId, commentId).contents = contents;
+  }
+
+  /** 대댓글의 글을 바꾼다(수정). */
+  editReply(postId: string, commentId: string, replyId: string, contents: string): void {
+    /** 고칠 대댓글. */
+    const reply = this.commentOf(postId, commentId).replies?.find((item) => item.replyId === replyId);
+    if (!reply) throw new Error(`가짜 대댓글 ${replyId}가 없습니다.`);
+    reply.contents = contents;
+  }
+
+  /** 대댓글을 지운다. */
+  removeReply(postId: string, commentId: string, replyId: string): void {
+    /** 부모 댓글. */
+    const comment = this.commentOf(postId, commentId);
+    comment.replies = (comment.replies ?? []).filter((reply) => reply.replyId !== replyId);
+  }
+
+  /** 게시물의 댓글 하나. 없으면 던진다. */
+  private commentOf(postId: string, commentId: string): FakeFlowComment {
+    /** 찾은 댓글. */
+    const comment = this.comments.get(postId)?.find((item) => item.commentId === commentId);
+    if (!comment) throw new Error(`가짜 댓글 ${commentId}가 없습니다.`);
+    return comment;
+  }
+
   /** 댓글에 대댓글을 단다. 대댓글은 단 순서대로 온다. */
   addReply(postId: string, commentId: string, reply: FakeFlowCommentReply): void {
     /** 부모 댓글. */
-    const comment = this.comments.get(postId)?.find((item) => item.commentId === commentId);
-    if (!comment) throw new Error(`가짜 댓글 ${commentId}가 없습니다.`);
+    const comment = this.commentOf(postId, commentId);
     comment.replies = [...(comment.replies ?? []), reply];
   }
 

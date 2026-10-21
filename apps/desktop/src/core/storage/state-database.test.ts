@@ -90,6 +90,8 @@ function mention(alarmId: string, overrides: Partial<BundledMention> = {}): Bund
     detectedAt: 1_000,
     text: '@[테스트 사용자](me@example.test) 가짜 질문',
     answered: false,
+    gone: false,
+    goneExcluded: false,
     ...overrides,
   };
 }
@@ -110,6 +112,7 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     createdAt: 1_000,
     processedAt: null,
     context: null,
+    watchedContext: null,
     repoCheck: null,
     userRepos: null,
     draft: null,
@@ -605,10 +608,17 @@ describe('멘션 묶음', () => {
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
     await store.saveDetectedBundles(
       [
-        bundle([mention('101')], { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null, failure: null } }),
-        bundle([mention('102', { postId: '90000012' })], { status: 'posted', processedAt: 6_000, posting: { body: '답', sentAt: 6_000, postedId: '950000001', failure: null } }),
+        bundle([mention('101')], {
+          status: 'posting',
+          posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null, failure: null, answeredMentions: [] },
+        }),
+        bundle([mention('102', { postId: '90000012' })], {
+          status: 'posted',
+          processedAt: 6_000,
+          posting: { body: '답', sentAt: 6_000, postedId: '950000001', failure: null, answeredMentions: [{ postId: '90000012', remarkId: '-1', replyId: '-1' }] },
+        }),
         bundle([mention('103', { postId: '90000013' })], { status: 'ready' }),
-        bundle([mention('104', { postId: '90000014' })], { status: 'post-failed', posting: { body: '답', sentAt: 7_000, postedId: null, failure: 'no-response' } }),
+        bundle([mention('104', { postId: '90000014' })], { status: 'post-failed', posting: { body: '답', sentAt: 7_000, postedId: null, failure: 'no-response', answeredMentions: [] } }),
       ],
       '104',
     );
@@ -617,22 +627,31 @@ describe('멘션 묶음', () => {
     const reopened = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
 
     expect(reopened.map(({ status, posting }) => ({ status, posting }))).toEqual([
-      { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null, failure: null } },
-      { status: 'posted', posting: { body: '답', sentAt: 6_000, postedId: '950000001', failure: null } },
+      { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null, failure: null, answeredMentions: [] } },
+      {
+        status: 'posted',
+        posting: { body: '답', sentAt: 6_000, postedId: '950000001', failure: null, answeredMentions: [{ postId: '90000012', remarkId: '-1', replyId: '-1' }] },
+      },
       { status: 'ready', posting: null },
-      { status: 'post-failed', posting: { body: '답', sentAt: 7_000, postedId: null, failure: 'no-response' } },
+      { status: 'post-failed', posting: { body: '답', sentAt: 7_000, postedId: null, failure: 'no-response', answeredMentions: [] } },
     ]);
   });
 
-  it('게시 실패의 사유가 생기기 전에 적은 게시 기록은 사유 없이 읽는다', async () => {
+  it('게시 실패의 사유와 답한 범위가 생기기 전에 적은 게시 기록은 사유 없이, 그 묶음의 멘션에 답한 것으로 읽는다', async () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
-    /** 형식 12로 만든 DB. 게시 기록에 사유가 없다. */
+    /** 형식 12로 만든 DB. 게시 기록에 사유와 답한 범위가 없다. */
     const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 12), '0.0.12');
     old
       .prepare(
         `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at, posting)
-         VALUES ('90000011', '-1', '900001', 'posting', '가짜 게시물', NULL, 0, 1000, NULL, '{"body":"답","sentAt":5000,"postedId":null}')`,
+         VALUES ('90000011', '700', '900001', 'posted', '가짜 게시물', NULL, 0, 1000, 6000, '{"body":"답","sentAt":5000,"postedId":"950000001"}')`,
+      )
+      .run();
+    old
+      .prepare(
+        `INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered)
+         VALUES ('90000011', '700', '801', 1, '900001', '101', 'sender@example.test', '보낸 사람', '20261020085000', 1000, '', 0)`,
       )
       .run();
     old.close();
@@ -640,7 +659,70 @@ describe('멘션 묶음', () => {
     /** 마지막 형식으로 연 저장소. */
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
-    expect((await store.listBundles()).map(({ posting }) => posting)).toEqual([{ body: '답', sentAt: 5_000, postedId: null, failure: null }]);
+    expect((await store.listBundles()).map(({ posting }) => posting)).toEqual([
+      { body: '답', sentAt: 5_000, postedId: '950000001', failure: null, answeredMentions: [{ postId: '90000011', remarkId: '700', replyId: '801' }] },
+    ]);
+  });
+
+  it('형식 12에서 올리면 이미 있던 멘션은 사라진 적이 없고, 묶음은 변화 감시 내용이 없다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 12로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 12), '0.0.12');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'ready', '가짜 게시물', NULL, 0, 1000, NULL)`,
+      )
+      .run();
+    old
+      .prepare(
+        `INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered)
+         VALUES ('90000011', '-1', '-1', 1, '900001', '101', 'sender@example.test', '보낸 사람', '20261020085000', 1000, '', 0)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const [reopened] = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
+
+    expect(reopened?.watchedContext).toBeNull();
+    expect(reopened?.mentions.map(({ answered, gone, goneExcluded }) => ({ answered, gone, goneExcluded }))).toEqual([
+      { answered: false, gone: false, goneExcluded: false },
+    ]);
+  });
+
+  it('사라진 멘션, 사라짐 판정에서 빼기로 기록한 멘션, 변화 감시 내용을 다시 열어도 그대로 읽는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    /** 변화 감시가 조회한 맥락. */
+    const watchedContext = {
+      fetchedAt: 9_000,
+      post: { title: '가짜 게시물', authorId: '', authorName: '', registeredDateTime: '', contents: '본문', attachments: [], mention: true },
+      targetThread: null,
+      otherComments: [{ id: '710', authorId: '', authorName: '동료', registeredDateTime: '20261020090100', contents: '새 댓글', attachments: [], mention: false, replies: [] }],
+    };
+    await store.saveDetectedBundles(
+      [
+        bundle([mention('101', { gone: true }), mention('102', { replyId: '801', remarkId: '700', goneExcluded: true })], {
+          remarkId: '700',
+          status: 'source-gone',
+          watchedContext,
+        }),
+      ],
+      '102',
+    );
+
+    /** 다시 연 저장소에서 읽은 묶음. */
+    const [reopened] = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
+
+    expect(reopened?.status).toBe('source-gone');
+    expect(reopened?.watchedContext).toEqual(watchedContext);
+    expect(reopened?.mentions.map(({ alarmId, gone, goneExcluded }) => ({ alarmId, gone, goneExcluded }))).toEqual([
+      { alarmId: '101', gone: true, goneExcluded: false },
+      { alarmId: '102', gone: false, goneExcluded: true },
+    ]);
   });
 
   it('형식 11에서 올리면 이미 있던 묶음은 게시 기록 없이 남는다', async () => {

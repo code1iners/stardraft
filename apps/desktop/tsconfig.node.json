@@ -2,15 +2,19 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2024"],
-    "types": ["node", "electron-vite/node"]
+    "types": ["node", "electron-vite/node"],
+    // 빌드 스크립트는 Node가 TypeScript를 직접 실행하므로 상대 import에 확장자를 붙인다.
+    "allowImportingTsExtensions": true
   },
   "include": [
     "electron.vite.config.ts",
+    "electron-builder.ts",
     "vitest.config.mts",
     "src/core/**/*",
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
+    "scripts/**/*",
     "test/**/*"
   ]
 }

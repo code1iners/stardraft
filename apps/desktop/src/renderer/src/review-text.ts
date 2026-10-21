@@ -188,12 +188,14 @@ export function postStoppedToastText(stop: PostStopSnapshot): string {
       ].filter((part) => part !== null);
       return `게시하지 않았습니다: ${parts.join(' · ')}`;
     }
+    case 'secret-evidence':
+      return '게시하지 않았습니다: 비밀 파일을 근거로 든 초안';
   }
 }
 
-/** 멈춘 게시 토스트의 행동. 처리됨으로 옮겨졌으면 되돌리기, 준비됨으로 돌아왔으면 그 묶음 보기다. */
+/** 멈춘 게시 토스트의 행동. 처리됨으로 옮겨졌으면 되돌리기, 준비됨으로 돌아왔거나 실패로 옮겨졌으면 그 묶음 보기다. */
 export function postStoppedAction(stop: PostStopSnapshot): 'restore' | 'show' {
-  return stop.kind === 'changed' ? 'show' : 'restore';
+  return stop.kind === 'changed' || stop.kind === 'secret-evidence' ? 'show' : 'restore';
 }
 
 /**

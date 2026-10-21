@@ -3,12 +3,14 @@ import { mkdir } from 'node:fs/promises';
 import type { MentionBundles } from '../core/bundles/mention-bundles';
 import { evidenceFileOf, type EditorOpener, type EditorOpenerState } from '../core/editors/editor-opener';
 import type { DraftQueue } from '../core/drafts/draft-queue';
+import type { DraftSettings, DraftSettingsState } from '../core/drafts/draft-settings';
 import type { Posting } from '../core/posting/posting';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
+import type { Notifier } from '../core/ports/notifier';
 import type { RepoMappings, RepoMappingsState } from '../core/repos/repo-mappings';
 import type { RepoPicker } from '../core/repos/repo-picker';
 import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
@@ -25,6 +27,7 @@ import {
   type AppCommand,
   type AppFolder,
   type AppSnapshot,
+  type DraftSettingsSnapshot,
   type EditorSnapshot,
   type FlowAccountProfile,
   type FlowAccountSnapshot,
@@ -75,6 +78,10 @@ export interface IpcServices {
   editorOpener: EditorOpener;
   /** 최근 멘션으로 시험의 멘션 고르기 목록. */
   trialRun: TrialRun;
+  /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
+  draftSettings: DraftSettings;
+  /** 설정 "일반"의 [알림 시험]이 띄우는 OS 알림. */
+  notifier: Notifier;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -137,6 +144,9 @@ export function registerIpc(services: IpcServices): void {
   services.onboarding.onChange(broadcastTrial);
   services.repoMappings.onChange(broadcastReview);
   services.repoPicker.onChange(broadcastReview);
+  services.draftSettings.onChange(() =>
+    services.windows.broadcast({ type: 'draft-settings-changed', draftSettings: draftSettingsSnapshot(services.draftSettings.state()) }),
+  );
 }
 
 /** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서, 게시 카운트다운은 게시에서 읽는다. */
@@ -189,6 +199,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     editor: editorSnapshot(services.editorOpener.state()),
     review: currentReviewSnapshot(services),
     trial: currentTrialSnapshot(services),
+    draftSettings: draftSettingsSnapshot(services.draftSettings.state()),
   };
 }
 
@@ -212,6 +223,8 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     reviewSections,
     editorOpener,
     trialRun,
+    draftSettings,
+    notifier,
   } = services;
   switch (command.type) {
     case 'open-settings':
@@ -375,7 +388,33 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'end-trial':
       await bundles.endTrial(command.bundleId);
       return;
+    case 'set-extra-instructions':
+      await draftSettings.setExtraInstructions(command.text);
+      return;
+    case 'add-secret-pattern': {
+      /** 추가한 결과. 받지 않은 패턴은 화면이 먼저 알리므로 로그만 남긴다. 패턴의 글은 남기지 않는다. */
+      const result = await draftSettings.addSecretPattern(command.pattern);
+      if (result !== 'added') logger.warn('draft-settings.pattern-rejected', { result });
+      return;
+    }
+    case 'test-notification':
+      notifier.notify(testNotification(app.name));
+      return;
   }
+}
+
+/** [알림 시험]이 띄우는 알림. 초안 준비됨 알림처럼 보이되 묶음을 가리키지 않아 누르면 작은 창만 띄운다. */
+function testNotification(appName: string) {
+  return { title: `${appName} 알림 시험`, body: '알림이 이렇게 보입니다. 초안이 준비되면 같은 방식으로 알려 드립니다.' };
+}
+
+/** core의 설정 "초안" 칸 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function draftSettingsSnapshot(state: DraftSettingsState): DraftSettingsSnapshot {
+  return {
+    extraInstructions: state.extraInstructions,
+    defaultSecretPatterns: [...state.defaultSecretPatterns],
+    extraSecretPatterns: [...state.extraSecretPatterns],
+  };
 }
 
 /** 초안 근거의 파일을 에디터에서 연다. 위치를 찾지 못한 근거나 저장소 밖 경로는 열지 않고 로그만 남긴다. 경로는 로그에 남기지 않는다. */

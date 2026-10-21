@@ -109,6 +109,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     editor: { choice: null, installed: [], picker: null },
     review: { bundles, sections: SECTIONS, repoPicker: null },
     trial: { canStart: true, bundleId: null, picker: null },
+    draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     ...overrides,
   };
 }
@@ -1072,6 +1073,10 @@ describe('게시를 누를 때의 확인으로 멈춘 게시', () => {
 
   it('원문 사라짐으로 멈추면 "게시하지 않았습니다: Flow에서 멘션이 사라짐"과 [되돌리기]를 보인다', () => {
     expect(stoppedText({ kind: 'source-gone' })).toBe(' 게시하지 않았습니다: Flow에서 멘션이 사라짐 되돌리기 ');
+  });
+
+  it('카운트다운 중에 추가한 비밀 파일 패턴에 초안의 근거가 맞아 멈추면 "게시하지 않았습니다: 비밀 파일을 근거로 든 초안"과 [보기]를 보인다', () => {
+    expect(stoppedText({ kind: 'secret-evidence' })).toBe(' 게시하지 않았습니다: 비밀 파일을 근거로 든 초안 보기 ');
   });
 
   it('화면에 없던 변화로 멈추면 "게시하지 않았습니다: 새 글 1건"과 [보기]를 보이고, 변화가 여럿이면 알림 줄처럼 잇는다', () => {

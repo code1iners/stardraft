@@ -114,7 +114,41 @@ export function EditorField({ editor, platform }: EditorFieldProps) {
   );
 }
 
-/** 설정 "일반" 칸. 로그인 시 자동 시작, 에디터, 데이터 폴더·로그 폴더 열기와 버전을 보인다. 바꾸는 설정은 즉시 저장하므로 저장 버튼은 없다. */
+/** OS마다 알림이 보이지 않을 때 확인할 곳. */
+const NOTIFICATION_SETTINGS_HINT: Record<AppSnapshot['platform'], string> = {
+  darwin: '시스템 설정 > 알림',
+  win32: '설정 > 시스템 > 알림',
+  other: 'OS의 알림 설정',
+};
+
+/** 알림 칸에 넘기는 값. */
+interface NotificationFieldProps {
+  /** 화면에 보일 앱 이름. OS 알림 설정에 이 이름으로 보인다. */
+  appName: string;
+  /** 실행 중인 OS. 알림 설정의 위치를 OS에 맞춘다. */
+  platform: AppSnapshot['platform'];
+}
+
+/** [알림 시험]. 시험 알림을 하나 띄우고, 보이지 않으면 OS 알림 설정을 확인하게 안내한다. */
+export function NotificationField({ appName, platform }: NotificationFieldProps) {
+  return (
+    <div className="field">
+      <span className="field-label">알림</span>
+      <p className="field-help muted">초안이 준비되거나 확인할 일이 생기면 OS 알림으로 알려 드립니다.</p>
+      <button type="button" className="btn" onClick={() => void window.stardraft.send({ type: 'test-notification' })}>
+        알림 시험
+      </button>
+      <p className="field-note muted">
+        알림이 보이지 않으면 {NOTIFICATION_SETTINGS_HINT[platform]}에서 {appName}의 알림을 허용해 주세요.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 설정 "일반" 칸. 로그인 시 자동 시작, 알림 시험, 에디터, 데이터 폴더·로그 폴더 열기와 버전을 보인다.
+ * 바꾸는 설정은 즉시 저장하므로 저장 버튼은 없다.
+ */
 export function GeneralSection({ snapshot }: GeneralSectionProps) {
   /** 폴더를 OS 파일 관리자로 연다. 경로는 main이 정한다. */
   const handleOpenFolder = (folder: AppFolder) => {
@@ -137,6 +171,7 @@ export function GeneralSection({ snapshot }: GeneralSectionProps) {
           <p className="field-note muted">앱이 켜져 있어야 멘션을 감지합니다.</p>
         </fieldset>
       )}
+      {snapshot && <NotificationField appName={snapshot.appName} platform={snapshot.platform} />}
       {snapshot && <EditorField editor={snapshot.editor} platform={snapshot.platform} />}
       <div className="field">
         <span className="field-label">데이터</span>

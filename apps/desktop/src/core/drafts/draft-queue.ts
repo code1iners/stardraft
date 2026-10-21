@@ -114,8 +114,8 @@ export interface DraftQueueOptions {
   logger: Logger;
 }
 
-/** 앱이 실행을 멈춘 까닭. `user`는 [취소], `bundle-changed`는 묶음이 바뀜, `app-quit`은 앱 종료다. */
-type Interruption = 'user' | 'bundle-changed' | 'app-quit';
+/** 앱이 실행을 멈춘 까닭. `user`는 [취소], `bundle-changed`는 묶음이 바뀜, `secret-patterns-changed`는 비밀 파일 패턴 추가, `app-quit`은 앱 종료다. */
+type Interruption = 'user' | 'bundle-changed' | 'secret-patterns-changed' | 'app-quit';
 
 /** 자리의 순서. 작을수록 앞이다. */
 const PRIORITY_ORDER: Readonly<Record<QueuePriority, number>> = { resume: 0, user: 1, auto: 2 };
@@ -315,6 +315,14 @@ export class DraftQueue {
       return;
     }
     await this.options.bundles.markFailed(bundleId, { reason: 'cancelled', detail: null, lastStep: null, runKind: null }, [], null);
+  }
+
+  /**
+   * 비밀 파일 패턴을 추가했다. 실행 중인 실행이 있으면 끊어 프로세스 트리를 끝내고, 그 묶음을 대기열 맨 앞에 다시 넣어 새 패턴으로 처음부터 다시 만든다.
+   * 옛 패턴으로는 새 패턴에 맞는 파일을 읽을 수 있기 때문이다. 기다리는 묶음은 실행할 때 설정을 새로 읽으므로 그대로 둔다.
+   */
+  restartForSecretPatterns(): void {
+    if (this.running) this.interrupt(this.running, 'secret-patterns-changed');
   }
 
   /** 실패 묶음을 [다시 시도]한다. 사용자 행동이라 생성 중으로 돌아가면 감지해서 기다리는 묶음보다 앞에 들어간다. */
@@ -851,7 +859,7 @@ export class DraftQueue {
   }
 
   /**
-   * 앱이 멈춘 실행을 정리한다. [취소]면 "취소함" 실패, 묶음이 바뀌었으면 처음부터 다시 만든다.
+   * 앱이 멈춘 실행을 정리한다. [취소]면 "취소함" 실패, 묶음이 바뀌었거나 비밀 파일 패턴을 추가했으면 처음부터 다시 만든다.
    * 앱을 끝내는 중이면 묶음을 생성 중으로 둔 채 실행 기록만 더한다. 끊은 실행은 "앱 종료로 중단"으로 남는다.
    */
   private async afterInterruption(entry: RunningDraft, runs: RunRecord[]): Promise<void> {
@@ -860,6 +868,7 @@ export class DraftQueue {
         await this.options.bundles.markFailed(entry.bundleId, failureOf(entry, 'cancelled', null), runs, null);
         return;
       case 'bundle-changed':
+      case 'secret-patterns-changed':
         await this.requeueFromStart(entry, runs);
         return;
       case 'app-quit':
@@ -997,12 +1006,13 @@ function regenerationInputOf(bundle: MentionBundle): RegenerationInput | null {
   return null;
 }
 
-/** 실행 기록의 결과. 앱이 실행을 멈췄으면 그 까닭(취소함, 묶음이 바뀜, 앱 종료로 중단)이고, 아니면 실행의 결과다. */
+/** 실행 기록의 결과. 앱이 실행을 멈췄으면 그 까닭(취소함, 묶음이 바뀜, 비밀 파일 패턴 추가, 앱 종료로 중단)이고, 아니면 실행의 결과다. */
 function runResultOf(interruption: Interruption | null, verdict: RunVerdict<unknown>): RunResult {
   switch (interruption) {
     case 'user':
       return 'cancelled';
     case 'bundle-changed':
+    case 'secret-patterns-changed':
     case 'app-quit':
       return interruption;
     case null:

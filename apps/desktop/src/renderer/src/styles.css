@@ -1882,3 +1882,47 @@ p.detail-empty {
   display: flex;
   gap: 4px;
 }
+
+/* 초안 칸: 추가 지침 여러 줄 입력. */
+textarea.instructions-input {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  min-height: 72px;
+  padding: 6px 8px;
+  field-sizing: content;
+  line-height: 1.5;
+  resize: vertical;
+  user-select: text;
+}
+
+/* 초안 칸: 비밀 파일 패턴 목록. 기본 패턴은 읽기 전용이라 지우기 버튼 없이 이어 보인다. */
+.pattern-heading {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+.pattern-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 560px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.pattern-list > li {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  font: 12px/1.6 var(--mono);
+  user-select: text;
+}
+
+.pattern-input {
+  width: 240px;
+  font-family: var(--mono);
+}

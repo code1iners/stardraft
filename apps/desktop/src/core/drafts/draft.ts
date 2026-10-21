@@ -168,11 +168,12 @@ export interface DraftFailure {
 export type RunFailureReason = Exclude<DraftFailureReason, ContextFailureReason>;
 
 /**
- * 실행 하나의 결과. 성공, 묶음이 바뀌어 멈춤, 앱 종료로 중단, 또는 실패 사유다.
+ * 실행 하나의 결과. 성공, 묶음이 바뀌어 멈춤, 비밀 파일 패턴을 추가해 멈춤, 앱 종료로 중단, 또는 실패 사유다.
  * `bundle-changed`는 실행 중에 새 멘션이 합쳐졌거나 묶음이 처리됨이 되어 앱이 실행을 멈춘 것이다. 생성 중으로 남았으면 처음부터 다시 만든다.
+ * `secret-patterns-changed`는 실행 중에 비밀 파일 패턴을 추가해 앱이 실행을 멈춘 것이다. 대기열 맨 앞에서 새 패턴으로 처음부터 다시 만든다.
  * `app-quit`은 앱을 끄며 실행을 끊은 것이다. 자동 재시도 1회에 세지 않고, 다시 켜면 그 묶음을 대기열 맨 앞에서 처음부터 다시 만든다.
  */
-export type RunResult = 'succeeded' | 'bundle-changed' | 'app-quit' | RunFailureReason;
+export type RunResult = 'succeeded' | 'bundle-changed' | 'secret-patterns-changed' | 'app-quit' | RunFailureReason;
 
 /**
  * 실행 기록. 에이전트를 한 번 실행할 때마다 남긴다. 화면에는 상세 머리의 실행 줄만 보이고 비용은 보이지 않는다.

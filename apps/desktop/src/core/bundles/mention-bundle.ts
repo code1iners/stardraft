@@ -199,6 +199,15 @@ export function isBeforePostRequest(bundle: Pick<MentionBundle, 'status' | 'post
   return bundle.status === 'posting' && bundle.posting === null;
 }
 
+/**
+ * 게시하지 않은 초안이 있는지 본다. 비밀 파일 패턴을 추가하면 이 초안의 근거를 다시 검사한다.
+ * 게시됨과 게시 요청을 이미 보낸 게시 중은 빼고, 처리됨이어도 되돌려 게시할 수 있는 초안은 넣는다.
+ */
+export function hasUnpostedDraft(bundle: Pick<MentionBundle, 'draft' | 'status' | 'posting'>): boolean {
+  if (bundle.draft === null || bundle.status === 'posted') return false;
+  return bundle.status !== 'posting' || isBeforePostRequest(bundle);
+}
+
 /** 게시 요청을 보냈지만 올라갔는지 아직 모르는 게시 중 묶음인지 본다. 보내기 전 기록은 있고 결과(올라간 글의 ID, 실패 사유)가 없다. */
 export function isPostOutcomePending<T extends Pick<MentionBundle, 'status' | 'posting'>>(bundle: T): bundle is T & { posting: PostingRecord } {
   return bundle.status === 'posting' && bundle.posting !== null && bundle.posting.postedId === null && bundle.posting.failure === null;
@@ -214,7 +223,9 @@ export type PostStop =
    * [게시]를 누를 때 화면에 없던 변화가 있어 준비됨으로 돌렸다. 확인이 끝나기 전에 합쳐진 새 멘션 수,
    * 화면에 보이던 내용 뒤에 새로 생긴 글 수(나를 멘션한 글 포함), 원문 수정 여부, 새로 사라진 멘션 수다.
    */
-  | { kind: 'changed'; newMentionCount: number; newWritingCount: number; edited: boolean; goneMentionCount: number };
+  | { kind: 'changed'; newMentionCount: number; newWritingCount: number; edited: boolean; goneMentionCount: number }
+  /** 카운트다운 중에 비밀 파일 패턴을 추가했더니 초안의 근거가 그 패턴에 맞아, 결과를 버리고 "비밀 파일을 근거로 듦" 실패로 옮겼다. */
+  | { kind: 'secret-evidence' };
 
 /** 이 PC가 게시한 글마다 그 글이 답한 멘션 위치(`mentionLocationKey`). 글의 ID(`commentId`·`replyId`)로 찾는다. */
 export type PostedAnswerRanges = ReadonlyMap<string, ReadonlySet<string>>;

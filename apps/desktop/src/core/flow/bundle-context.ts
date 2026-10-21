@@ -1,9 +1,10 @@
 import { activeMentions, type MentionBundle } from '../bundles/mention-bundle';
-import { compareAlarmIds } from '../flow/alarm-id';
-import { splitMentionMarkup } from '../flow/mention-markup';
-import { isPostBody } from '../flow/mention-place';
-import { walkPages } from '../flow/pages';
 import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowRemarkAuthorship, FlowReply } from '../ports/flow-api';
+import { compareAlarmIds } from './alarm-id';
+import { readableFlowTime } from './flow-time';
+import { splitMentionMarkup } from './mention-markup';
+import { isPostBody, mentionPlaceOf } from './mention-place';
+import { walkPages } from './pages';
 
 /** 맥락 문서의 길이 상한(글자 수). 넘치면 정한 순서대로 빼고, 절대 빼지 않는 것만으로 넘치면 그대로 둔다. */
 export const CONTEXT_CHAR_LIMIT = 30_000;
@@ -13,39 +14,31 @@ const TRUNCATED_BODY_CHARS = 10_000;
 const OTHER_COMMENT_LIMIT = 20;
 /** 다른 댓글마다 담는 대댓글 수. 댓글과 함께 받은 처음 10개다. */
 const OTHER_REPLY_LIMIT = 10;
-/** Flow가 해당 없는 ID 자리에 두는 값. */
-const NONE = '-1';
 
-/** 맥락의 게시물. */
-export interface ContextPost {
-  /** 게시물 제목. 비어 있을 수 있다. */
-  title: string;
-  /** 작성자 이름. 비어 있을 수 있다. */
-  authorName: string;
-  /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. 없으면 빈 문자열. */
-  registeredDateTime: string;
-  /** 본문. TEXT 컴포넌트의 글을 줄바꿈으로 이었고, 멘션 표기가 그대로 들어 있다. */
-  contents: string;
-  /** 첨부 파일 이름. 이미지는 넣지 않는다. */
-  attachments: string[];
-  /** 본문이 묶음의 멘션인지 여부. 본문 묶음이면 참이다. */
-  mention: boolean;
-}
-
-/** 맥락의 댓글이나 대댓글 하나. 시스템 댓글은 맥락에 넣지 않는다. */
-export interface ContextRemark {
-  /** 댓글이면 `commentId`, 대댓글이면 `replyId`. */
-  id: string;
-  /** 쓴 사람 이름. 비어 있을 수 있다. Flow 사용자 ID는 담지 않는다. */
+/** 맥락의 글 하나가 갖는 값. 게시물 본문, 댓글, 대댓글이 함께 갖는다. Flow 사용자 ID는 담지 않는다. */
+export interface ContextWriting {
+  /** 쓴 사람 이름. 비어 있을 수 있다. */
   authorName: string;
   /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. 없으면 빈 문자열. */
   registeredDateTime: string;
   /** 글. 멘션 표기가 그대로 들어 있다. 에이전트에게 넘길 때 이름 표기로 바꾼다. */
   contents: string;
-  /** 첨부 파일 이름. */
+  /** 첨부 파일 이름. 이미지는 넣지 않는다. */
   attachments: string[];
-  /** 묶음의 멘션인지 여부. */
+  /** 묶음의 멘션인지 여부. 게시물 본문은 본문 묶음이면 참이다. */
   mention: boolean;
+}
+
+/** 맥락의 게시물. 본문은 TEXT 컴포넌트의 글을 줄바꿈으로 이은 것이다. */
+export interface ContextPost extends ContextWriting {
+  /** 게시물 제목. 비어 있을 수 있다. */
+  title: string;
+}
+
+/** 맥락의 댓글이나 대댓글 하나. 시스템 댓글은 맥락에 넣지 않는다. */
+export interface ContextRemark extends ContextWriting {
+  /** 댓글이면 `commentId`, 대댓글이면 `replyId`. */
+  id: string;
 }
 
 /** 맥락의 댓글 하나와 그 대댓글. */
@@ -65,7 +58,7 @@ export interface BundleContext {
   post: ContextPost;
   /** 대상 댓글 스레드. 머리 댓글부터 대댓글까지 전부다. 본문 묶음이면 `null`. */
   targetThread: ContextComment | null;
-  /** 대상 댓글 스레드가 아닌 댓글 가운데 최근 20개. 오래된 것부터다. 본문 묶음이면 이것이 스레드 맥락이다. */
+  /** 대상 댓글 스레드가 아닌 댓글 가운데 최근 20개. 오래된 것부터다. 본문 묶음이면 본문 아래의 댓글이 모두 여기에 든다. */
   otherComments: ContextComment[];
 }
 
@@ -84,10 +77,10 @@ export type ContextTarget = Pick<MentionBundle, 'postId' | 'remarkId' | 'mention
  * 대상 댓글 스레드는 댓글과 함께 받은 처음 10개 뒤에 대댓글이 더 있으면 대댓글 목록 API로 끝까지 넘긴다.
  */
 export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, now: number): Promise<BundleContextResult> {
-  /** 묶음에 남은 멘션의 대댓글 ID와, 댓글 멘션이 있는지 여부. */
+  /** 묶음에 남은 멘션. */
   const active = activeMentions(bundle);
   /** 묶음의 대댓글 멘션 ID. */
-  const mentionedReplies = new Set(active.filter((mention) => mention.replyId !== NONE).map((mention) => mention.replyId));
+  const mentionedReplies = new Set(active.filter((mention) => mentionPlaceOf(mention) === 'reply').map((mention) => mention.replyId));
   /** 본문 묶음인지 여부. */
   const postBody = isPostBody(bundle);
 
@@ -118,7 +111,7 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     const replies = head.replyHasNext ? await allReplies(api, bundle.postId, head.commentId) : { ok: true as const, value: head.replies };
     if (!replies.ok) return replies;
     targetThread = {
-      ...remarkOf(head.commentId, head, active.some((mention) => mention.replyId === NONE)),
+      ...remarkOf(head.commentId, head, active.some((mention) => mentionPlaceOf(mention) === 'comment')),
       replies: replies.value
         .filter(isHumanRemark)
         .sort(compareRemarks((reply) => reply.replyId))
@@ -239,7 +232,7 @@ export function contextDocument(context: BundleContext): ContextDocument {
     ...context.otherComments.map((_, index) => () => {
       cut.otherComments = index + 1;
     }),
-    ...(!context.post.mention && charCount(context.post.contents) > TRUNCATED_BODY_CHARS ? [() => (cut.postBodyTruncated = true)] : []),
+    ...(!context.post.mention && charCount(namedText(context.post.contents)) > TRUNCATED_BODY_CHARS ? [() => (cut.postBodyTruncated = true)] : []),
     ...(context.targetThread?.replies ?? []).flatMap((reply, index) => (reply.mention ? [] : [() => cut.threadReplies.add(index)])),
   ];
   for (const step of steps) {
@@ -272,17 +265,21 @@ interface Cut {
 
 /** 맥락과 뺀 것으로 문서를 쓴다. */
 function writeDocument(context: BundleContext, cut: Cut): string {
+  /** 게시물, 대상 댓글 스레드, 다른 댓글. */
   const { post, targetThread, otherComments } = context;
-  /** 게시물 본문. 잘랐으면 앞 10,000자와 생략 표시다. */
-  const body = cut.postBodyTruncated ? `${[...post.contents].slice(0, TRUNCATED_BODY_CHARS).join('')}\n[본문 뒷부분 생략]` : post.contents;
+  // 표기를 바꾼 뒤에 자른다. 원문을 자르면 자른 자리에 걸린 표기가 바뀌지 않아 사용자 ID 일부가 남는다.
+  /** 이름 표기로 바꾼 게시물 본문. 잘랐으면 앞 10,000자와 생략 표시다. */
+  const named = namedText(post.contents);
+  /** 문서에 쓸 본문. */
+  const body = cut.postBodyTruncated ? `${[...named].slice(0, TRUNCATED_BODY_CHARS).join('')}\n[본문 뒷부분 생략]` : named;
   /** 문서의 줄. */
   const lines = [
     '# 게시물',
     `제목: ${post.title}`,
-    `작성: ${byline(post.authorName, post.registeredDateTime, post.mention)}`,
+    `작성: ${byline(post)}`,
     ...attachmentLines(post.attachments, ''),
     '',
-    ...namedText(body).split('\n'),
+    ...body.split('\n'),
   ];
   if (targetThread) {
     lines.push('', '# 대상 댓글 스레드', ...commentLines(targetThread, cut.threadReplies));
@@ -324,7 +321,7 @@ function commentLines(comment: ContextComment, dropped: ReadonlySet<number>): st
 /** 댓글이나 대댓글 하나의 줄. 머리 줄 아래에 글과 첨부를 두 칸 들여 쓴다. */
 function remarkLines(remark: ContextRemark, indent: string): string[] {
   return [
-    `${indent}- ${byline(remark.authorName, remark.registeredDateTime, remark.mention)}`,
+    `${indent}- ${byline(remark)}`,
     ...namedText(remark.contents)
       .split('\n')
       .map((line) => `${indent}  ${line}`),
@@ -333,7 +330,7 @@ function remarkLines(remark: ContextRemark, indent: string): string[] {
 }
 
 /** 쓴 사람·시각 줄. 묶음의 멘션이면 "[멘션]"을 붙인다. */
-function byline(authorName: string, registeredDateTime: string, mention: boolean): string {
+function byline({ authorName, registeredDateTime, mention }: ContextWriting): string {
   /** 읽을 수 있게 바꾼 시각. */
   const time = readableFlowTime(registeredDateTime);
   return `${authorName || '이름 없음'}${time ? ` · ${time}` : ''}${mention ? ' [멘션]' : ''}`;
@@ -349,13 +346,6 @@ function namedText(text: string): string {
   return splitMentionMarkup(text)
     .map((part) => part.text)
     .join('');
-}
-
-/** Flow 시각(`yyyyMMddHHmmss`)을 `yyyy-MM-dd HH:mm`으로 바꾼다. 형식이 다르면 빈 문자열. */
-function readableFlowTime(value: string): string {
-  /** 형식에 맞춰 읽은 결과. */
-  const match = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})\d{2}$/.exec(value);
-  return match ? `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}` : '';
 }
 
 /** 글자 수. 이모지처럼 두 단위로 된 글자도 한 글자로 센다. */

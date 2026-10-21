@@ -1,4 +1,4 @@
-import type { BundleContext } from '../context/bundle-context';
+import type { BundleContext } from '../flow/bundle-context';
 import type { Mention, MentionLocation } from '../detection/mention';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';

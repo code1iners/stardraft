@@ -351,6 +351,19 @@ describe('맥락 문서', () => {
     expect(omittedItemCount(document.omissions)).toBe(2);
   });
 
+  it('본문을 자를 때는 멘션 표기를 이름 표기로 바꾼 뒤 잘라, 자른 자리에 걸린 표기에서도 사용자 ID가 들어가지 않는다', () => {
+    /** 9,990자 뒤에 표기가 오는 35,000자 본문. 원문 그대로 자르면 10,000자 경계가 표기 한가운데에 걸린다. */
+    const body = `${filler('본문', 9_990)}@[다른 동료](other@example.test)${filler('뒷부분', 25_000)}`;
+    const thread = comment('900000102', `${MY_MARKUP} 질문`, [], { mention: true });
+
+    const document = contextDocument(context({ post: { ...context().post, contents: body, mention: false }, targetThread: thread }));
+
+    expect(document.omissions.postBodyTruncated).toBe(true);
+    expect(document.text).not.toContain('example.test');
+    // 바꾼 본문의 앞 10,000자는 9,990자, "@다른 동료" 6자, 뒷부분의 첫 4자다.
+    expect(document.text).toContain(`${filler('본문', 9_990)}@다른 동료뒷부분:\n[본문 뒷부분 생략]`);
+  });
+
   it('본문 묶음의 본문은 자르지 않고, 절대 빼지 않는 것만으로 넘치면 그대로 넘긴다', () => {
     /** 35,000자 본문. */
     const body = filler('본문', 35_000);

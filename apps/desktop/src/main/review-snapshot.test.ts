@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BundledMention, MentionBundle } from '../core/bundles/mention-bundle';
-import type { BundleContext } from '../core/context/bundle-context';
+import type { BundleContext } from '../core/flow/bundle-context';
 import { bundleSnapshot, flowUrlOf } from './review-snapshot';
 
 /** 가짜 멘션. 실제 사람이나 글이 아니다. 기본은 08:50(한국 표준시)에 온 댓글 멘션이다. */

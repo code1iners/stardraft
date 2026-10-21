@@ -2,7 +2,7 @@ import { activeMentions, isRestorable, listGroupOf, type MentionBundle } from '.
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
-import type { BundleContext, ContextComment, ContextRemark } from '../core/context/bundle-context';
+import type { BundleContext, ContextWriting } from '../core/flow/bundle-context';
 import type { BundleMentionSnapshot, BundleSnapshot, MentionPlaceSnapshot, ReviewSnapshot, ThreadEntrySnapshot } from '../shared/ipc';
 
 /** 참여 목록에서 찾은 Flow 프로젝트. */
@@ -65,39 +65,25 @@ export function bundleSnapshot(bundle: MentionBundle, projectOf: ProjectLookup):
  * 댓글 스레드 묶음에서 다른 댓글 스레드는 넣지 않는다. 멘션 표기는 이름만 넘기고 사용자 ID는 넘기지 않는다.
  */
 function threadEntries(context: BundleContext): ThreadEntrySnapshot[] {
+  /** 게시물, 대상 댓글 스레드, 다른 댓글. */
   const { post, targetThread, otherComments } = context;
   /** 이어 붙일 댓글. */
   const comments = targetThread ? [targetThread] : otherComments;
   return [
-    entryOf(post.authorName, post.registeredDateTime, post.contents, post.attachments, post.mention, 'post'),
-    ...comments.flatMap((comment: ContextComment) => [
-      remarkEntry(comment, 'comment'),
-      ...comment.replies.map((reply) => remarkEntry(reply, 'reply')),
-    ]),
+    entryOf(post, 'post'),
+    ...comments.flatMap((comment) => [entryOf(comment, 'comment'), ...comment.replies.map((reply) => entryOf(reply, 'reply'))]),
   ];
 }
 
-/** 맥락의 댓글이나 대댓글을 "스레드 보기"의 글로 바꾼다. */
-function remarkEntry(remark: ContextRemark, place: MentionPlaceSnapshot): ThreadEntrySnapshot {
-  return entryOf(remark.authorName, remark.registeredDateTime, remark.contents, remark.attachments, remark.mention, place);
-}
-
-/** "스레드 보기"의 글 하나. */
-function entryOf(
-  authorName: string,
-  registeredDateTime: string,
-  contents: string,
-  attachments: readonly string[],
-  mention: boolean,
-  place: MentionPlaceSnapshot,
-): ThreadEntrySnapshot {
+/** 맥락의 글 하나를 "스레드 보기"의 글로 바꾼다. */
+function entryOf(writing: ContextWriting, place: MentionPlaceSnapshot): ThreadEntrySnapshot {
   return {
-    authorName,
+    authorName: writing.authorName,
     place,
-    at: flowTimeToEpochMs(registeredDateTime),
-    text: splitMentionMarkup(contents),
-    attachments: [...attachments],
-    mention,
+    at: flowTimeToEpochMs(writing.registeredDateTime),
+    text: splitMentionMarkup(writing.contents),
+    attachments: [...writing.attachments],
+    mention: writing.mention,
   };
 }
 

@@ -6,7 +6,7 @@ import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
-import { collectBundleContext } from '../core/context/bundle-context';
+import { collectBundleContext } from '../core/flow/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { MentionJudge } from '../core/flow/mention-judgement';

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { compareMentions, type BundleStatus, type MentionBundle, type UnsavedBundle } from '../bundles/mention-bundle';
-import type { BundleContext } from '../context/bundle-context';
+import type { BundleContext } from '../flow/bundle-context';
 import type { MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';

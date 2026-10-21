@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectBundleContext } from '../context/bundle-context';
+import { collectBundleContext } from '../flow/bundle-context';
 import { MentionDetection } from '../detection/mention-detection';
 import { FakeClock } from '../fakes/fake-clock';
 import { FAKE_ME, FakeFlowApi } from '../fakes/fake-flow-api';

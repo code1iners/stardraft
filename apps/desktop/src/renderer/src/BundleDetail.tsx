@@ -175,7 +175,7 @@ export function ThreadList({ entries }: ThreadListProps) {
 
 /** 원문 영역 내용에 넘기는 값. */
 interface OriginalBodyProps extends BundleProps {
-  /** 스레드를 펼쳤는지 여부. */
+  /** "스레드 보기"로 펼쳤는지 여부. */
   threadOpen: boolean;
   /** "스레드 보기"나 "멘션만 보기"를 눌렀다. */
   onToggleThread: () => void;
@@ -209,10 +209,10 @@ interface BundleSectionsProps extends BundleProps {
 export function BundleSections({ bundle, windowKind, sections }: BundleSectionsProps) {
   /** 이 창의 영역 펼침 상태. */
   const open = sections[windowKind];
-  // 스레드 펼침은 보고 있는 묶음에만 둔다. 다른 묶음으로 넘어가면 다시 멘션만 보인다.
-  /** 스레드를 펼친 묶음 ID. 펼치지 않았으면 `null`. */
+  // "스레드 보기"는 보고 있는 묶음에만 펼친다. 다른 묶음으로 넘어가면 다시 멘션만 보인다.
+  /** "스레드 보기"로 펼친 묶음 ID. 펼치지 않았으면 `null`. */
   const [threadBundleId, setThreadBundleId] = useState<number | null>(null);
-  /** 스레드를 펼치거나 접는다. */
+  /** "스레드 보기"를 펼치거나 접는다. */
   const handleToggleThread = () => setThreadBundleId((current) => (current === bundle.id ? null : bundle.id));
 
   return (

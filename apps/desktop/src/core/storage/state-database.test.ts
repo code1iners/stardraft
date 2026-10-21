@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BundledMention, UnsavedBundle } from '../bundles/mention-bundle';
-import type { BundleContext } from '../context/bundle-context';
+import type { BundleContext } from '../flow/bundle-context';
 import type { FlowEmployee } from '../ports/flow-api';
 import { openStateDatabase, SqliteStateStore, STATE_MIGRATIONS } from './state-database';
 

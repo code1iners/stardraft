@@ -1,4 +1,4 @@
-import { contextDocument, omittedItemCount, type BundleContext, type BundleContextResult } from '../context/bundle-context';
+import type { BundleContext, BundleContextResult } from '../flow/bundle-context';
 import { mentionLocationKey, type Mention } from '../detection/mention';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
@@ -171,10 +171,7 @@ export class MentionBundles {
       for (const bundle of next) {
         await this.options.stateStore.saveBundle(bundle);
         this.bundles = this.bundles.map((item) => (item.id === bundle.id ? bundle : item));
-        this.options.logger.info('bundle.context-saved', {
-          bundleId: bundle.id,
-          omittedCount: omittedItemCount(contextDocument(bundle.context).omissions),
-        });
+        this.options.logger.info('bundle.context-saved', { bundleId: bundle.id });
       }
       if (next.length > 0) this.emit();
     });

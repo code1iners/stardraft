@@ -458,15 +458,15 @@ export class SqliteStateStore implements StateStore {
   }
 }
 
-/**
- * 묶음 줄에 JSON으로 둔 값을 읽는다. 없거나 읽을 수 없으면 `null`이다.
- * 맥락은 조회하지 않은 것으로, 초안·실패 사유는 없는 것으로 보고 다음 조회와 실행이 새로 채운다.
- */
 /** 저장한 게시 기록. 게시 실패의 사유가 생기기 전에 적은 기록은 사유가 없으므로 `null`로 채운다. */
 function postingRecordOf(record: PostingRecord | null): PostingRecord | null {
   return record && { ...record, failure: record.failure ?? null };
 }
 
+/**
+ * 묶음 줄에 JSON으로 둔 값을 읽는다. 없거나 읽을 수 없으면 `null`이다.
+ * 맥락은 조회하지 않은 것으로, 초안·실패 사유는 없는 것으로 보고 다음 조회와 실행이 새로 채운다.
+ */
 function readJson<T>(json: string | null): T | null {
   if (json === null) return null;
   try {

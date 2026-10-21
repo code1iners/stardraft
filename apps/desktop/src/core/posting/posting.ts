@@ -1,6 +1,6 @@
 import type { MentionBundle, PostFailureReason } from '../bundles/mention-bundle';
 import type { MentionBundles } from '../bundles/mention-bundles';
-import { MentionJudge } from '../flow/mention-judgement';
+import { MentionJudge, type MyWritingsLookup } from '../flow/mention-judgement';
 import { isPostBody } from '../flow/mention-place';
 import type { Logger } from '../logging/logger';
 import type { CancelScheduled, Clock } from '../ports/clock';
@@ -137,8 +137,10 @@ export class Posting {
       this.waitThen(bundleId, CHECK_RETRY_MS, () => this.checkOutcome(bundleId));
       return;
     }
-    /** 그 자리의 내 글. */
-    const lookup = await new MentionJudge(flow.api, myUserId).myWritings(bundle, [myUserId]);
+    /** 그 자리의 내 글. 조회가 예외로 끝나면 조회하지 못한 것으로 본다. */
+    const lookup: MyWritingsLookup = await new MentionJudge(flow.api, myUserId)
+      .myWritings(bundle, [myUserId])
+      .catch(() => ({ kind: 'undecided' as const, failure: { kind: 'network' as const } }));
     switch (lookup.kind) {
       case 'found': {
         /** 이 PC가 이미 기록한 글의 ID. 다른 묶음이 같은 본문을 올렸어도 그 글로 정하지 않는다. */
@@ -161,9 +163,7 @@ export class Posting {
         const failure = lookup.failure;
         this.options.logger.warn('posting.check-postponed', { bundleId, reason: failure.kind });
         if (failure.kind === 'unauthorized') flow.reportKeyRejected();
-        this.waitThen(bundleId, failure.kind === 'rate-limited' ? Math.max(failure.retryAfterMs ?? CHECK_RETRY_MS, MIN_RETRY_DELAY_MS) : CHECK_RETRY_MS, () =>
-          this.checkOutcome(bundleId),
-        );
+        this.waitThen(bundleId, checkRetryDelayMs(failure), () => this.checkOutcome(bundleId));
         return;
       }
     }
@@ -197,8 +197,7 @@ export class Posting {
 
     if (!this.options.bundles.get(bundleId)) return;
     if (!this.options.connectFlow()) {
-      this.options.logger.warn('posting.no-key', { bundleId });
-      await this.options.bundles.returnToReady(bundleId);
+      await this.returnWithoutKey(bundleId);
       return;
     }
     /** 기록한 게시 본문. 그사이 취소했으면 `null`. */
@@ -212,10 +211,10 @@ export class Posting {
    * - 성공: 올라간 글의 ID를 기록하고 게시됨이다.
    * - `401`: 묶음의 실패가 아니다. "키 확인 필요"를 올리고 준비됨으로 둔다.
    * - 응답 없음·`5xx`·모르는 응답: 올라갔는지 알 수 없어 `checkOutcome`으로 확인한다.
-   * - `429`: 처리되지 않은 것이 확실하다. `Retry-After`만큼 기다렸다가 한 번 더 보내고(`rateLimited`가 거짓일 때만), 또 오면 게시 실패다.
+   * - `429`: 처리되지 않은 것이 확실하다. `Retry-After`만큼 기다렸다가 한 번 더 보내고(`retried`가 거짓일 때만), 또 오면 게시 실패다.
    * - 그 밖의 거절: 그 사유로 게시 실패다.
    */
-  private async deliver(bundleId: number, body: string, rateLimited: boolean): Promise<void> {
+  private async deliver(bundleId: number, body: string, retried: boolean): Promise<void> {
     /** 게시할 묶음. */
     const bundle = this.options.bundles.get(bundleId);
     if (bundle?.status !== 'posting') return;
@@ -223,8 +222,7 @@ export class Posting {
     const flow = this.options.connectFlow();
     if (!flow) {
       // 429 뒤 기다리는 사이에 키가 지워졌다. 앞선 요청은 처리되지 않았으므로 준비됨으로 돌린다.
-      this.options.logger.warn('posting.no-key', { bundleId });
-      await this.options.bundles.returnToReady(bundleId);
+      await this.returnWithoutKey(bundleId);
       return;
     }
 
@@ -249,7 +247,7 @@ export class Posting {
       await this.checkOutcome(bundleId);
       return;
     }
-    if (failure.kind === 'rate-limited' && !rateLimited) {
+    if (failure.kind === 'rate-limited' && !retried) {
       /** 다시 보내기 전에 기다릴 시간. 너무 오래 기다려야 하면 `null`이다. */
       const delay = rateLimitDelayMs(failure.retryAfterMs);
       if (delay !== null) {
@@ -259,6 +257,12 @@ export class Posting {
       }
     }
     await this.fail(bundleId, refusalReasonOf(failure));
+  }
+
+  /** 쓸 키가 없어 보내지 못한 게시 중 묶음을 준비됨으로 돌린다. */
+  private async returnWithoutKey(bundleId: number): Promise<void> {
+    this.options.logger.warn('posting.no-key', { bundleId });
+    await this.options.bundles.returnToReady(bundleId);
   }
 
   /** 게시 본문을 묶음 자리에 올린다. 요청이 예외로 끝나면 응답을 받지 못한 것으로 본다. */
@@ -326,6 +330,11 @@ function rateLimitDelayMs(retryAfterMs: number | null): number | null {
   if (retryAfterMs === null) return DEFAULT_RATE_LIMIT_DELAY_MS;
   if (retryAfterMs > MAX_RATE_LIMIT_DELAY_MS) return null;
   return Math.max(MIN_RETRY_DELAY_MS, retryAfterMs);
+}
+
+/** 올라갔는지 확인하는 조회가 실패했을 때 다시 확인하기까지 기다릴 시간. 요청 한도면 `Retry-After`를, 아니면 폴링 주기를 쓴다. */
+function checkRetryDelayMs(failure: FlowApiFailure): number {
+  return failure.kind === 'rate-limited' ? Math.max(failure.retryAfterMs ?? CHECK_RETRY_MS, MIN_RETRY_DELAY_MS) : CHECK_RETRY_MS;
 }
 
 /** 성공한 결과의 값을 바꾼다. 실패는 그대로 둔다. */

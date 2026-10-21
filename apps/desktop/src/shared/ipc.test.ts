@@ -152,6 +152,14 @@ describe('렌더러가 보낸 명령 검사', () => {
     }
   });
 
+  it('[게시]와 게시 취소 명령은 묶음 ID만 받고, 렌더러가 실은 게시 본문은 버린다', () => {
+    for (const type of ['post-bundle', 'cancel-posting'] as const) {
+      expect(parseAppCommand({ type, bundleId: 3, body: '렌더러가 만든 본문' })).toEqual({ type, bundleId: 3 });
+      expect(parseAppCommand({ type, bundleId: 0 })).toBeNull();
+      expect(parseAppCommand({ type })).toBeNull();
+    }
+  });
+
   it('묶음 저장소 연결과 저장소 선택 창 열기 명령은 묶음 ID를, 후보 체크 명령은 경로와 참·거짓을 받고, 나머지 선택 창 명령은 값 없이 받는다', () => {
     for (const type of ['link-bundle-repos', 'open-repo-picker'] as const) {
       expect(parseAppCommand({ type, bundleId: 3 })).toEqual({ type, bundleId: 3 });

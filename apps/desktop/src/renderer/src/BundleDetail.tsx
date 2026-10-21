@@ -17,6 +17,7 @@ import {
   BUNDLE_PLACE_LABELS,
   BUNDLE_STATUS_TAGS,
   circledNumber,
+  countdownToastText,
   evidenceLocation,
   failureText,
   formatMentionTime,
@@ -27,13 +28,14 @@ import {
   postBodyLength,
   postBodyLengthText,
   postLine,
+  postingFooterText,
   PROCESSED_NOTES,
   reasonText,
   repoCheckText,
   runLineText,
   senderLine,
 } from './review-text';
-import type { IgnoreToastState } from './useReview';
+import { useSecondsLeft, type IgnoreToastState } from './useReview';
 
 /** 문체 검사에 걸린 문장과 근거 설명 옆에 작게 붙이는 말. */
 const DEVELOPER_TERMS_NOTE = '개발자 용어가 있을 수 있음';
@@ -798,14 +800,19 @@ interface BundleFooterProps extends BundleProps {
   onCancel: () => void;
   /** 실패 묶음의 [다시 시도]를 눌렀다. */
   onRetry: () => void;
+  /** 준비됨 묶음의 [게시]를 눌렀다. */
+  onPost: () => void;
+  /** 카운트다운 중인 게시의 [취소]를 눌렀다. */
+  onCancelPost: () => void;
 }
 
 /**
  * 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다.
- * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가, 준비됨 묶음은 오른쪽에 재생성 메뉴가 있다.
+ * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가, 준비됨 묶음은 오른쪽에 재생성 메뉴와 [게시]가 있다.
+ * 게시 중 묶음은 카운트다운 중이면 남은 초와 [취소]만, 게시 요청을 보냈으면 결과를 기다린다는 말과 꺼진 [게시]만 있다.
  * 재생성 메뉴에서 지시를 덧붙이기로 하면 바닥 줄이 지시를 쓰는 칸이 되고, 편집한 초안이 있으면 다시 만들기 전에 바닥 줄에서 버릴지 묻는다.
  */
-export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }: BundleFooterProps) {
+export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, onPost, onCancelPost }: BundleFooterProps) {
   // 바닥 줄의 칸은 보고 있는 묶음에만 연다. 다른 묶음으로 넘어가거나 준비됨이 아니게 되면 닫힌다.
   /** 바닥 줄에 연 칸과 그 묶음 ID. 지시를 쓰는 칸이거나, 그 경로로 다시 만들기 전에 편집본을 버릴지 묻는 칸이다. 열지 않았으면 `null`. */
   const [pane, setPane] = useState<{ bundleId: number; kind: RegenerateChoice } | null>(null);
@@ -850,6 +857,10 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }:
       </footer>
     );
   }
+  if (bundle.status === 'posting' && bundle.posting) {
+    // 카운트다운이 바뀌면 남은 초를 새로 세도록 다시 만든다.
+    return <PostingFooter key={`${bundle.id}-${bundle.posting.phase}`} posting={bundle.posting} onCancel={onCancelPost} />;
+  }
   if (bundle.group === 'processed') {
     return (
       <footer className="review-foot">
@@ -874,7 +885,47 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }:
           다시 시도
         </button>
       )}
-      {bundle.status === 'ready' && <RegenerateMenu onPick={handlePick} />}
+      {bundle.status === 'ready' && (
+        <>
+          <RegenerateMenu onPick={handlePick} />
+          <button type="button" className="btn primary" disabled={!bundle.draft?.canPost} onClick={onPost}>
+            게시
+          </button>
+        </>
+      )}
+    </footer>
+  );
+}
+
+/** 게시 중 바닥 줄에 넘기는 값. */
+interface PostingFooterProps {
+  /** 게시 중 묶음의 단계. */
+  posting: NonNullable<BundleSnapshot['posting']>;
+  /** 카운트다운 중인 게시의 [취소]를 눌렀다. */
+  onCancel: () => void;
+}
+
+/**
+ * 게시 중 묶음의 바닥 줄. 카운트다운 중이면 남은 초와 [취소]만 둔다(무시·재생성 없음).
+ * 게시 요청을 보낸 뒤에는 결과를 기다린다는 말과 꺼진 [게시]만 둔다.
+ */
+function PostingFooter({ posting, onCancel }: PostingFooterProps) {
+  /** 카운트다운의 남은 초. 게시 요청을 보냈으면 `null`. */
+  const secondsLeft = useSecondsLeft(posting.phase === 'countdown' ? posting.endsAt : null);
+
+  return (
+    <footer className="review-foot">
+      <span className="small muted">{postingFooterText(secondsLeft)}</span>
+      <span className="spacer" />
+      {posting.phase === 'countdown' ? (
+        <button type="button" className="btn" onClick={onCancel}>
+          취소
+        </button>
+      ) : (
+        <button type="button" className="btn primary" disabled>
+          게시
+        </button>
+      )}
     </footer>
   );
 }
@@ -1126,6 +1177,61 @@ function NewMentionNotice({ bundle }: BundleProps) {
   );
 }
 
+/** 창 아래 토스트 자리에 넘기는 값. */
+interface ToastStackProps {
+  /** 묶음 전부. 카운트다운 중인 묶음마다 카운트다운 토스트를 띄운다. */
+  bundles: readonly BundleSnapshot[];
+  /** 보이는 무시 토스트. 없으면 `null`. */
+  ignoreToast: IgnoreToastState | null;
+  /** 무시 토스트의 [되돌리기]를 눌렀다. */
+  onRestore: (bundleId: number) => void;
+  /** 카운트다운 토스트의 [취소]를 눌렀다. */
+  onCancelPost: (bundleId: number) => void;
+}
+
+/**
+ * 창 아래 토스트 자리. 카운트다운 토스트를 먼저, 무시 토스트를 그 아래에 쌓는다. 띄울 토스트가 없으면 그리지 않는다.
+ * 카운트다운 토스트는 main의 묶음 상태를 따르므로, 다른 묶음을 보고 있거나 창을 바꿔도 카운트다운 동안 보인다.
+ */
+export function ToastStack({ bundles, ignoreToast, onRestore, onCancelPost }: ToastStackProps) {
+  /** 카운트다운 중인 묶음과 카운트다운이 끝날 시각. */
+  const countdowns = bundles.flatMap((bundle) => (bundle.posting?.phase === 'countdown' ? [{ bundle, endsAt: bundle.posting.endsAt }] : []));
+  if (countdowns.length === 0 && !ignoreToast) return null;
+  return (
+    <div className="toast-stack">
+      {countdowns.map(({ bundle, endsAt }) => (
+        <CountdownToast key={`${bundle.id}-${endsAt}`} bundle={bundle} endsAt={endsAt} onCancel={() => onCancelPost(bundle.id)} />
+      ))}
+      {ignoreToast && <IgnoreToast toast={ignoreToast} onRestore={() => onRestore(ignoreToast.bundleId)} />}
+    </div>
+  );
+}
+
+/** 카운트다운 토스트에 넘기는 값. */
+interface CountdownToastProps {
+  /** 카운트다운 중인 묶음. */
+  bundle: BundleSnapshot;
+  /** 카운트다운이 끝나 게시 요청을 보낼 시각(Unix epoch 밀리초). */
+  endsAt: number;
+  /** [취소]를 눌렀다. */
+  onCancel: () => void;
+}
+
+/** [게시]를 누른 뒤 5초 동안 뜨는 토스트. 남은 초와 [취소]를 보인다. 확인 창은 따로 없다. */
+function CountdownToast({ bundle, endsAt, onCancel }: CountdownToastProps) {
+  /** 카운트다운의 남은 초. */
+  const secondsLeft = useSecondsLeft(endsAt) ?? 0;
+
+  return (
+    <div className="toast" role="status">
+      <span>{countdownToastText(bundle, secondsLeft)}</span>
+      <button type="button" className="btn link" onClick={onCancel}>
+        취소
+      </button>
+    </div>
+  );
+}
+
 /** 무시 토스트에 넘기는 값. */
 interface IgnoreToastProps {
   /** 보일 토스트. */
@@ -1135,7 +1241,7 @@ interface IgnoreToastProps {
 }
 
 /** 무시한 직후 창 아래에 뜨는 토스트. 5초 안에 [되돌리기]로 살릴 수 있다. */
-export function IgnoreToast({ toast, onRestore }: IgnoreToastProps) {
+function IgnoreToast({ toast, onRestore }: IgnoreToastProps) {
   return (
     <div className="toast" role="status">
       <span>{toast.text}</span>

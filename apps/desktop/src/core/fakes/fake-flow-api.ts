@@ -5,6 +5,8 @@ import type {
   FlowApiFailure,
   FlowApiResult,
   FlowCommentPage,
+  FlowCreatedComment,
+  FlowCreatedReply,
   FlowEmployee,
   FlowPost,
   FlowProject,
@@ -43,6 +45,14 @@ export interface FakeFlowComment extends Partial<FlowRemarkAuthorship> {
   replies?: FakeFlowCommentReply[];
 }
 
+/** 게시로 받은 글 하나. */
+export interface FakeFlowWrite {
+  /** 받은 요청(`메서드 경로`). */
+  request: string;
+  /** 받은 `contents`. 게시 본문 그대로다. */
+  contents: string;
+}
+
 /** 대본으로 정한 실패 하나. */
 interface ScriptedFailure {
   /** 실패시킬 요청의 경로(`?` 앞). */
@@ -56,10 +66,15 @@ interface ScriptedFailure {
 /**
  * 메모리 안의 알림·게시물·댓글·대댓글로 응답하는 Flow API.
  * 목록은 Flow처럼 커서(앞에서부터 센 위치)로 나눠 준다. 응답 코드는 대본으로 바꿀 수 있고, 받은 요청은 `requests`에 남는다.
+ * 게시로 받은 글은 `writes`에 남기고, 키 소유자(`FAKE_ME`)가 쓴 댓글·대댓글로 목록에도 넣는다.
  */
 export class FakeFlowApi implements FlowApi {
   /** 받은 요청을 `메서드 경로` 형식으로 받은 순서대로 쌓는다. */
   readonly requests: string[] = [];
+  /** 게시로 받은 글. 받은 순서다. */
+  readonly writes: FakeFlowWrite[] = [];
+  /** 게시로 단 글의 쓴 시각(Flow 형식). 쓰기 응답에는 시각이 없고 목록에만 보인다. */
+  writtenDateTime = '';
   /** 알림 목록 한 쪽의 크기. */
   alarmPageSize = 20;
   /** 댓글 목록 한 쪽의 크기. */
@@ -80,6 +95,8 @@ export class FakeFlowApi implements FlowApi {
   private failures: ScriptedFailure[] = [];
   /** 요청을 받을 때 응답하기 전에 할 일. 요청 문자열마다 한 번씩 한다. */
   private readonly hooks = new Map<string, () => void>();
+  /** 게시로 다음에 만들 글의 ID. */
+  private nextWrittenId = 950_000_001;
 
   /** `getMe`가 앞으로 돌려줄 응답을 바꾼다. */
   respondToGetMe(result: FlowApiResult<FlowEmployee>): void {
@@ -189,6 +206,39 @@ export class FakeFlowApi implements FlowApi {
       const page = pageOf(comment.replies ?? [], cursor, this.replyPageSize);
       return { replies: page.items.map(replyOf), nextCursor: page.nextCursor };
     });
+  }
+
+  async createComment(postId: string, contents: string): Promise<FlowApiResult<FlowCreatedComment>> {
+    return this.answer(`POST /user/comments/${postId}`, null, () => {
+      if (!this.posts.has(postId)) return NOT_FOUND;
+      /** 만든 댓글의 ID. */
+      const commentId = this.writeOf(`POST /user/comments/${postId}`, contents);
+      this.addComment(postId, { commentId, contents, ...this.writtenAuthorship() });
+      return { commentId };
+    });
+  }
+
+  async createReply(postId: string, commentId: string, contents: string): Promise<FlowApiResult<FlowCreatedReply>> {
+    return this.answer(`POST /user/comments/${postId}/replies/${commentId}`, null, () => {
+      /** 부모 댓글. */
+      const comment = this.posts.has(postId) ? this.comments.get(postId)?.find((item) => item.commentId === commentId) : undefined;
+      if (!comment) return NOT_FOUND;
+      /** 만든 대댓글의 ID. */
+      const replyId = this.writeOf(`POST /user/comments/${postId}/replies/${commentId}`, contents);
+      this.addReply(postId, commentId, { replyId, contents, ...this.writtenAuthorship() });
+      return { commentId, replyId };
+    });
+  }
+
+  /** 게시로 받은 글을 남기고 새 글 ID를 돌려준다. */
+  private writeOf(request: string, contents: string): string {
+    this.writes.push({ request, contents });
+    return String(this.nextWrittenId++);
+  }
+
+  /** 게시로 단 글을 쓴 사람(키 소유자)과 시각. */
+  private writtenAuthorship(): FlowRemarkAuthorship {
+    return { registerId: FAKE_ME.userId, registerName: FAKE_ME.name, registeredDateTime: this.writtenDateTime, systemCode: '' };
   }
 
   /** 요청을 남기고, 대본의 실패가 있으면 그 실패를, 없으면 `respond`의 값으로 답한다. */

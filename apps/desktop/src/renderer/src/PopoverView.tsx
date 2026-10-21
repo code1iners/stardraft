@@ -1,6 +1,6 @@
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleMeta, BundleSections, IgnoreToast, StatusTag } from './BundleDetail';
+import { BundleFooter, BundleMeta, BundleSections, StatusTag, ToastStack } from './BundleDetail';
 import { SetupChecklist, WindowsTrayHint } from './Onboarding';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
@@ -70,8 +70,8 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음과 대기열. */
   const { queue, selected, select } = selection;
-  /** [무시]·[되돌리기]·[취소]·[다시 시도]와 무시 토스트. */
-  const { toast, ignore, restore, cancel, retry } = useBundleActions(selection);
+  /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]와 무시 토스트. */
+  const { toast, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 연다. 작은 창은 main이 닫는다. */
   const handleExpand = () => {
@@ -93,6 +93,8 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
             onRestore={() => restore(selected.id)}
             onCancel={() => cancel(selected.id)}
             onRetry={() => retry(selected.id)}
+            onPost={() => post(selected)}
+            onCancelPost={() => cancelPost(selected.id)}
           />
         </>
       ) : (
@@ -109,7 +111,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
           <EmptyDetection snapshot={snapshot} />
         </>
       )}
-      {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
+      <ToastStack bundles={bundles} ignoreToast={toast} onRestore={restore} onCancelPost={cancelPost} />
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
     </>

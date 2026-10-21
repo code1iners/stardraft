@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
+import { nextBundleAfter } from './useReview';
 
 /** 창마다 처음 영역 펼침 상태. */
 const SECTIONS: ReviewSnapshot['sections'] = {
@@ -50,6 +51,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     generation: null,
     failure: null,
     repoCheck: null,
+    posting: null,
     ...overrides,
   };
 }
@@ -286,6 +288,7 @@ const READY = bundle(4, {
     canEdit: true,
     recipients: [{ name: '보낸 사람' }, { name: '다른 사람' }],
     postBodyPrefixLength: 59,
+    canPost: true,
   },
   run: { agent: 'claude-code', durationMs: 134_000, contextOmitted: true },
 });
@@ -864,5 +867,117 @@ describe('근거와 에디터에서 열기', () => {
       expect(text).toContain('IntelliJ IDEA');
       expect(text).toContain('다음부터는 바로 열고');
     }
+  });
+});
+
+describe('게시', () => {
+  /** 화면을 그리는 시각. 카운트다운의 남은 초를 이 시각으로 센다. */
+  const NOW = Date.UTC(2026, 9, 20, 0, 5);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 그린 HTML에서 [게시] 버튼. 없으면 `undefined`. */
+  function postButton(html: string): string | undefined {
+    return html.match(/<button[^>]*>게시<\/button>/)?.[0];
+  }
+
+  /** 카운트다운 중인 게시 중 묶음. 그리는 시각에서 4.2초 뒤에 게시 요청을 보내므로 남은 초는 올림해 5초다. */
+  function countingDown(): BundleSnapshot {
+    return {
+      ...READY,
+      id: 8,
+      status: 'posting',
+      draft: { ...READY.draft!, canEdit: false, canPost: false },
+      posting: { phase: 'countdown', endsAt: NOW + 4_200 },
+    };
+  }
+
+  it('준비됨 묶음의 바닥 줄 오른쪽에 재생성 메뉴와 [게시]를 둔다. 게시할 수 없는 초안이면 [게시]를 끈다', () => {
+    /** 게시할 수 없는 묶음(빈 편집기 텍스트나 4,000자 초과). */
+    const blocked: BundleSnapshot = { ...READY, draft: { ...READY.draft!, canPost: false } };
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />);
+
+    expect(postButton(html)).toBeDefined();
+    expect(postButton(html)).not.toContain('disabled');
+    expect(html.indexOf('다시 만들기 ▾')).toBeLessThan(html.indexOf(postButton(html)!));
+    expect(postButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([blocked])} />))).toContain('disabled');
+    // 확인 창은 없다.
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('게시할까요');
+  });
+
+  it('카운트다운 중인 게시 중 묶음은 "게시 중" 태그와, 바닥 줄에 남은 초와 [취소]만 둔다. [무시]·[게시]·재생성 메뉴는 없다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([countingDown()])} initialBundleId={8} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([countingDown()])} initialBundleId={8} />);
+
+    expect(text).toContain('게시 중');
+    expect(text).toContain('5초 뒤 게시합니다.');
+    expect(text).toContain('취소');
+    expect(text).not.toContain('무시');
+    expect(postButton(html)).toBeUndefined();
+    expect(text).not.toContain('다시 만들기 ▾');
+    expect(html).not.toContain('<textarea');
+  });
+
+  it('게시 요청을 보낸 게시 중 묶음은 "게시 결과 확인 중"을 보이고 [게시]를 끈 채로 두며, 취소할 수 없고 토스트도 띄우지 않는다', () => {
+    /** 게시 요청을 보낸 묶음. */
+    const sending: BundleSnapshot = { ...countingDown(), posting: { phase: 'sending' } };
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([sending])} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([sending])} />);
+
+    expect(text).toContain('게시 결과 확인 중입니다.');
+    expect(postButton(html)).toContain('disabled');
+    expect(text).not.toContain('취소');
+    expect(html).not.toContain('class="toast"');
+  });
+
+  it('게시 중 묶음이 있으면 다른 묶음을 보고 있어도 창 아래에 카운트다운 토스트와 [취소]를 보인다. 펼친 창도 같다', () => {
+    /** 게시 중 묶음과 다음 준비된 묶음. */
+    const bundles = [countingDown(), { ...READY, id: 9 }];
+
+    for (const text of [
+      textOf(<PopoverContent snapshot={snapshot(bundles)} initialBundleId={9} />),
+      textOf(<ReviewContent snapshot={snapshot(bundles)} initialBundleId={9} />),
+    ]) {
+      expect(text).toContain('5초 뒤 게시합니다: 보낸 사람, 다른 사람님 멘션 취소');
+    }
+  });
+
+  it('펼친 창에서 게시 중 묶음은 검토 대기에 남고, 게시됨 묶음은 처리됨에 들며 되돌릴 수 없다', () => {
+    /** 게시됨 묶음. */
+    const posted: BundleSnapshot = { ...READY, id: 10, status: 'posted', group: 'processed', processedAt: Date.UTC(2026, 9, 20, 0, 5), draft: { ...READY.draft!, canEdit: false, canPost: false } };
+    const list = textOf(<ReviewContent snapshot={snapshot([countingDown(), posted])} initialBundleId={10} />);
+
+    expect(list).toContain('검토 대기 1');
+    expect(list).toContain('처리됨 1');
+    expect(list).toContain('게시됨');
+    expect(list).toContain('게시한 묶음입니다. 되돌릴 수 없습니다.');
+    expect(list).not.toContain('되돌리기');
+  });
+});
+
+describe('게시하거나 무시한 뒤 넘어갈 묶음', () => {
+  /** 준비됨, 생성 중, 저장소 확인 필요, 실패, 게시 중 묶음이 섞인 대기열. */
+  const queue = [{ ...READY, id: 1 }, GENERATING, bundle(2), FAILED, { ...READY, id: 3, status: 'posting' as const }, { ...READY, id: 4 }];
+
+  it('떠나는 묶음 뒤에서 검토할 수 있는 다음 묶음(준비됨, 저장소 확인 필요)으로 넘어가고, 뒤에 없으면 앞에서 찾는다', () => {
+    expect(nextBundleAfter(queue, 1)?.id).toBe(2);
+    expect(nextBundleAfter(queue, 2)?.id).toBe(4);
+    expect(nextBundleAfter(queue, 4)?.id).toBe(1);
+  });
+
+  it('검토할 수 있는 묶음이 없으면 바로 뒤, 그것도 없으면 바로 앞 묶음이고, 떠나는 묶음뿐이면 없다', () => {
+    expect(nextBundleAfter([{ ...READY, id: 1 }, GENERATING], 1)?.id).toBe(GENERATING.id);
+    expect(nextBundleAfter([FAILED, { ...READY, id: 1 }], 1)?.id).toBe(FAILED.id);
+    expect(nextBundleAfter([{ ...READY, id: 1 }], 1)).toBeNull();
   });
 });

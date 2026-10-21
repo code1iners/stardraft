@@ -1,5 +1,5 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleSections, IgnoreToast, OpenInFlowButton, RunLine, StatusTag } from './BundleDetail';
+import { BundleFooter, BundleSections, OpenInFlowButton, RunLine, StatusTag, ToastStack } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
@@ -40,8 +40,8 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음. */
   const { selected, select } = selection;
-  /** [무시]·[되돌리기]·[취소]·[다시 시도]와 무시 토스트. */
-  const { toast, ignore, restore, cancel, retry } = useBundleActions(selection);
+  /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]와 무시 토스트. */
+  const { toast, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {
@@ -85,6 +85,8 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                 onRestore={() => restore(selected.id)}
                 onCancel={() => cancel(selected.id)}
                 onRetry={() => retry(selected.id)}
+                onPost={() => post(selected)}
+                onCancelPost={() => cancelPost(selected.id)}
               />
             </>
           ) : (
@@ -100,7 +102,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
           )}
         </section>
       </div>
-      {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
+      <ToastStack bundles={bundles} ignoreToast={toast} onRestore={restore} onCancelPost={cancelPost} />
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
     </div>

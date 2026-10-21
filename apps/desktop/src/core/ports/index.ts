@@ -18,6 +18,8 @@ export type {
   FlowComment,
   FlowCommentPage,
   FlowConnection,
+  FlowCreatedComment,
+  FlowCreatedReply,
   FlowEmployee,
   FlowPost,
   FlowReply,

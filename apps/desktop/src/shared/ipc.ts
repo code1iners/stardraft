@@ -331,8 +331,23 @@ export interface OnboardingSnapshot {
   start: DetectionStartSnapshot;
 }
 
-/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 실패, 무시함, 이미 답함이다. */
-export type BundleStatusSnapshot = 'generating' | 'ready' | 'repo-check-needed' | 'failed' | 'ignored' | 'already-answered';
+/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시됨, 무시함, 이미 답함이다. */
+export type BundleStatusSnapshot =
+  | 'generating'
+  | 'ready'
+  | 'repo-check-needed'
+  | 'posting'
+  | 'failed'
+  | 'posted'
+  | 'ignored'
+  | 'already-answered';
+
+/** 게시 중 묶음의 단계. */
+export type PostingSnapshot =
+  /** 게시 취소 카운트다운 중이다. `endsAt`(Unix epoch 밀리초)에 게시 요청을 보내고, 그 전까지 취소할 수 있다. */
+  | { phase: 'countdown'; endsAt: number }
+  /** 게시 요청을 보냈고 결과를 기다린다. 취소할 수 없다. */
+  | { phase: 'sending' };
 
 /** 펼친 창 목록의 묶음. 목록에 이 순서로 보인다. 검토 대기·생성 중·실패·처리됨이다. */
 export const BUNDLE_GROUPS = ['awaiting-review', 'generating', 'failed', 'processed'] as const;
@@ -457,6 +472,8 @@ export interface DraftSnapshot {
    * 글자 수는 이 값에 앞뒤 공백을 뗀 편집기 텍스트의 길이를 더한 것이다.
    */
   postBodyPrefixLength: number;
+  /** [게시]를 켤지 여부. 준비됨 묶음이고, 편집기 텍스트가 비지 않았고, 게시 본문이 4,000자를 넘지 않을 때만 참이다. */
+  canPost: boolean;
 }
 
 /** 받는 사람 한 명. */
@@ -606,6 +623,8 @@ export interface BundleSnapshot {
   failure: FailureSnapshot | null;
   /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
   repoCheck: RepoCheckSnapshot | null;
+  /** 게시 중 묶음의 단계. 게시 중이 아니면 `null`. */
+  posting: PostingSnapshot | null;
 }
 
 /** 묶음을 보는 창. 작은 창(`compact`)과 펼친 창(`expanded`)이다. */
@@ -799,6 +818,10 @@ export type AppCommand =
   | { type: 'collapse-review'; bundleId: number | null }
   /** 창의 영역을 접거나 편다. */
   | { type: 'set-review-section'; window: ReviewWindow; section: ReviewSection; open: boolean }
+  /** [게시]. 준비됨 묶음의 5초 카운트다운을 시작한다. 게시할 수 없는 묶음이면 main이 무시한다. 게시 본문은 main이 묶음에서 만든다. */
+  | { type: 'post-bundle'; bundleId: number }
+  /** 카운트다운 중인 게시를 취소한다. 카운트다운이 끝났으면 main이 무시한다. */
+  | { type: 'cancel-posting'; bundleId: number }
   /** 근거의 "에디터에서 열기". 근거는 초안 근거 목록의 위치로 가리키고, 파일 경로는 main이 정한다. */
   | { type: 'open-evidence-in-editor'; bundleId: number; evidenceIndex: number }
   /** 에디터 고르기 창에서 에디터를 골랐다. 기억하고 그 파일을 연다. */
@@ -961,6 +984,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'open-bundle-in-flow':
     case 'link-bundle-repos':
     case 'open-repo-picker':
+    case 'post-bundle':
+    case 'cancel-posting':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
     case 'expand-review':
     case 'collapse-review':

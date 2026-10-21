@@ -1,7 +1,10 @@
-import { activeMentions, compareMentions, type MentionBundle } from '../bundles/mention-bundle';
+import { activeMentions, canPost, compareMentions, type MentionBundle } from '../bundles/mention-bundle';
 import { mentionWritingOf } from '../flow/bundle-context';
 import { isSameFlowUser } from '../flow/user-id';
 import type { Draft } from './draft';
+
+/** 게시 본문 길이 상한. Flow 댓글 `contents`의 상한이고 `String.length`로 센다. 넘으면 [게시]를 끈다. */
+export const POST_BODY_CHAR_LIMIT = 4_000;
 
 /** 받는 사람 한 명. 게시 본문 앞에서 `@[이름](ID)`로 다시 멘션한다. */
 export interface Recipient {
@@ -51,4 +54,28 @@ export function postBody(recipients: readonly Recipient[], editorText: string): 
   /** 앞뒤 공백을 뗀 편집기 텍스트. */
   const text = editorText.trim();
   return markup ? `${markup} ${text}` : text;
+}
+
+/** 묶음의 편집기 텍스트. 편집본이 있으면 편집본, 없으면 원래 초안에서 만든 텍스트다. 초안이 없으면 `null`. */
+export function bundleEditorText(bundle: Pick<MentionBundle, 'draft' | 'editedText'>): string | null {
+  if (!bundle.draft) return null;
+  return bundle.editedText ?? draftEditorText(bundle.draft);
+}
+
+/**
+ * 묶음을 지금 게시하면 올라갈 게시 본문. 게시할 수 없는 글이면 `null`이다.
+ * 초안이 없거나, 편집기 텍스트가 비었거나(앞뒤 공백만), 게시 본문이 상한(4,000자)을 넘으면 게시할 수 없다.
+ */
+export function postableBody(bundle: Pick<MentionBundle, 'mentions' | 'context' | 'removedRecipients' | 'draft' | 'editedText'>): string | null {
+  /** 편집기 텍스트. */
+  const text = bundleEditorText(bundle);
+  if (text === null || text.trim() === '') return null;
+  /** 게시 본문. */
+  const body = postBody(bundleRecipients(bundle), text);
+  return body.length > POST_BODY_CHAR_LIMIT ? null : body;
+}
+
+/** 지금 [게시]를 눌러 게시를 시작할 수 있는지 본다. 준비됨 묶음이고 게시할 수 있는 글(`postableBody`)일 때다. */
+export function isPostable(bundle: Pick<MentionBundle, 'status' | 'mentions' | 'context' | 'removedRecipients' | 'draft' | 'editedText'>): boolean {
+  return canPost(bundle.status) && postableBody(bundle) !== null;
 }

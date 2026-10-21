@@ -35,6 +35,8 @@ describe('Flow 어댑터: 키 소유자의 구성원 정보 조회', () => {
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'error',
+        contentType: null,
+        body: null,
       },
     ]);
   });
@@ -684,5 +686,60 @@ describe('Flow 어댑터: 맥락에 쓰는 작성자와 첨부', () => {
       attachments: ['오류.log'],
       replies: [{ registerName: '다른 사람', attachments: ['표.xlsx'] }],
     });
+  });
+});
+
+describe('Flow 어댑터: 게시(댓글·대댓글 쓰기)', () => {
+  it('본문 묶음의 게시는 POST /user/comments/{postId}에 게시 본문을 contents JSON으로 보내고, 만든 댓글의 commentId를 돌려준다(캐시·쿠키·리디렉트 없이)', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ projectId: '900001', postId: '90000011', commentId: 900000031 }) });
+
+    /** 게시 본문. 받는 사람 표기와 줄바꿈이 그대로 들어 있다. */
+    const body = '@[보낸 사람](sender@example.test) 재시도는 5번입니다.\n\n간격은 2초입니다.';
+    const result = await connect(server).createComment('90000011', body);
+
+    expect(result).toEqual({ ok: true, value: { commentId: '900000031' } });
+    expect(server.requests).toEqual([
+      {
+        method: 'POST',
+        url: 'https://api.flow.team/user/comments/90000011',
+        apiKey: 'fake-key-1',
+        cache: 'no-store',
+        credentials: 'omit',
+        redirect: 'error',
+        contentType: 'application/json',
+        body: JSON.stringify({ contents: body }),
+      },
+    ]);
+  });
+
+  it('댓글 스레드 묶음의 게시는 POST /user/comments/{postId}/replies/{remarkId}로 보내고, 부모 댓글과 만든 대댓글의 ID를 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ projectId: '900001', postId: '90000011', commentId: '700', replyId: '9000081' }) });
+
+    const result = await connect(server).createReply('90000011', '700', '답입니다.');
+
+    expect(result).toEqual({ ok: true, value: { commentId: '700', replyId: '9000081' } });
+    expect(server.requests.map(({ method, url, body }) => [method, url, body])).toEqual([
+      ['POST', 'https://api.flow.team/user/comments/90000011/replies/700', JSON.stringify({ contents: '답입니다.' })],
+    ]);
+  });
+
+  it('실패 응답은 응답 코드대로 돌려주고, 만든 글의 ID가 없는 성공 응답은 응답 모양이 다르다고 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.addAccount('fake-key-1', { userId: 'me@example.test', name: '테스트 사용자', division: '', email: 'me@example.test' });
+    server.replyNext(
+      { status: 403, body: { response: { success: false, code: 403, message: 'error', error: { code: 'FORBIDDEN_ERROR', message: '' } } } },
+      { status: 401 },
+      { status: 200, body: flowEnvelope({ projectId: '900001', postId: '90000011' }) },
+      { status: 200, body: flowEnvelope({ projectId: '900001', postId: '90000011', commentId: '700' }) },
+    );
+    /** 가짜 서버에 붙인 Flow 어댑터. */
+    const api = connect(server);
+
+    await expect(api.createComment('90000011', '답')).resolves.toEqual({ ok: false, failure: { kind: 'http', status: 403 } });
+    await expect(api.createComment('90000011', '답')).resolves.toEqual({ ok: false, failure: { kind: 'unauthorized' } });
+    await expect(api.createComment('90000011', '답')).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+    await expect(api.createReply('90000011', '700', '답')).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
   });
 });

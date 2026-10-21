@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import type { MentionBundles } from '../core/bundles/mention-bundles';
 import { evidenceFileOf, type EditorOpener, type EditorOpenerState } from '../core/editors/editor-opener';
 import type { DraftQueue } from '../core/drafts/draft-queue';
+import type { Posting } from '../core/posting/posting';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
@@ -63,6 +64,8 @@ export interface IpcServices {
   bundles: MentionBundles;
   /** 생성 중 묶음의 진행과 취소, 생성을 다시 시작하는 사용자 행동(다시 시도, 되돌리기). */
   drafts: DraftQueue;
+  /** [게시]의 카운트다운과 취소, 게시 요청. */
+  posting: Posting;
   /** 저장소 선택 창. */
   repoPicker: RepoPicker;
   /** 작은 창과 펼친 창의 영역 펼침 상태. */
@@ -112,18 +115,19 @@ export function registerIpc(services: IpcServices): void {
   services.onboarding.onChange((state) => services.windows.broadcast({ type: 'onboarding-changed', onboarding: onboardingSnapshot(state) }));
   services.launchAtLogin.onChange((enabled) => services.windows.broadcast({ type: 'launch-at-login-changed', launchAtLogin: enabled }));
   services.editorOpener.onChange(() => services.windows.broadcast({ type: 'editor-changed', editor: editorSnapshot(services.editorOpener.state()) }));
-  // 묶음이나 생성 중 묶음의 진행이 바뀌거나 영역을 접고 펼 때, 그리고 참여 Flow 프로젝트 목록(프로젝트 이름과 주소)이 바뀔 때 묶음 상태를 다시 보낸다.
+  // 묶음이나 생성 중 묶음의 진행, 게시 카운트다운이 바뀌거나 영역을 접고 펼 때, 그리고 참여 Flow 프로젝트 목록(프로젝트 이름과 주소)이 바뀔 때 묶음 상태를 다시 보낸다.
   /** 묶음 상태를 열린 창에 알린다. */
   const broadcastReview = () => services.windows.broadcast({ type: 'review-changed', review: currentReviewSnapshot(services) });
   services.bundles.onChange(broadcastReview);
   services.drafts.onChange(broadcastReview);
+  services.posting.onChange(broadcastReview);
   services.reviewSections.onChange(broadcastReview);
   services.repoMappings.onChange(broadcastReview);
   services.repoPicker.onChange(broadcastReview);
 }
 
-/** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서 읽는다. */
-function currentReviewSnapshot({ bundles, drafts, reviewSections, repoMappings, repoPicker }: IpcServices) {
+/** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서, 게시 카운트다운은 게시에서 읽는다. */
+function currentReviewSnapshot({ bundles, drafts, posting, reviewSections, repoMappings, repoPicker }: IpcServices) {
   return reviewSnapshot(
     bundles.state(),
     reviewSections.state(),
@@ -131,6 +135,7 @@ function currentReviewSnapshot({ bundles, drafts, reviewSections, repoMappings, 
     (bundleId) => drafts.progress(bundleId),
     (projectId, repos) => repoMappings.matchOf(projectId, repos),
     repoPicker.state(),
+    (bundleId) => posting.countdownEndsAt(bundleId),
   );
 }
 
@@ -183,6 +188,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     launchAtLogin,
     bundles,
     drafts,
+    posting,
     repoPicker,
     reviewSections,
     editorOpener,
@@ -275,6 +281,12 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'remove-recipient':
       await bundles.removeRecipient(command.bundleId, command.index, command.name);
+      return;
+    case 'post-bundle':
+      await posting.post(command.bundleId);
+      return;
+    case 'cancel-posting':
+      await posting.cancel(command.bundleId);
       return;
     // 재생성은 사용자 행동이라 초안 대기열이 감지한 묶음보다 앞에 넣는다.
     case 'regenerate-bundle':

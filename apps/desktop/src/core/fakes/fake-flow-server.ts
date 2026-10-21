@@ -23,6 +23,10 @@ export interface FakeFlowRequest {
   credentials: NonNullable<RequestInit['credentials']> | null;
   /** 리디렉트를 따라가는지. 정하지 않았으면 `null`. */
   redirect: NonNullable<RequestInit['redirect']> | null;
+  /** `content-type` 헤더 값. 없으면 `null`. */
+  contentType: string | null;
+  /** 요청 본문. 문자열로 보낸 그대로이고, 없으면 `null`. */
+  body: string | null;
 }
 
 /**
@@ -57,8 +61,10 @@ export class FakeFlowServer {
 
   /** Flow 어댑터에 넣을 fetch. */
   readonly fetch = async (url: string, init: RequestInit): Promise<Response> => {
+    /** 요청 헤더. */
+    const headers = new Headers(init.headers);
     /** 요청에 실린 키. */
-    const apiKey = new Headers(init.headers).get('x-flow-api-key');
+    const apiKey = headers.get('x-flow-api-key');
     this.requests.push({
       method: init.method ?? 'GET',
       url,
@@ -66,6 +72,8 @@ export class FakeFlowServer {
       cache: init.cache ?? null,
       credentials: init.credentials ?? null,
       redirect: init.redirect ?? null,
+      contentType: headers.get('content-type'),
+      body: typeof init.body === 'string' ? init.body : null,
     });
 
     /** 이번 요청에 줄 응답. */

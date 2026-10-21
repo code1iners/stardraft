@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
-import { compareMentions, type BundleStatus, type MentionBundle, type RepoCheck, type UnsavedBundle } from '../bundles/mention-bundle';
+import { compareMentions, type BundleStatus, type MentionBundle, type PostingRecord, type RepoCheck, type UnsavedBundle } from '../bundles/mention-bundle';
 import type { Draft, DraftFailure, Regeneration, RunRecord } from '../drafts/draft';
 import type { BundleContext } from '../flow/bundle-context';
 import type { MentionLocation } from '../detection/mention';
@@ -144,6 +144,11 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ALTER TABLE mention_bundle ADD COLUMN directives TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE mention_bundle ADD COLUMN fixed_requirement TEXT;
   ALTER TABLE mention_bundle ADD COLUMN regeneration TEXT;
+  `,
+  // 12: 게시. 게시 기록(게시 본문, 게시 요청을 보낸 시각, 올라간 글의 ID)을 JSON으로 둔다. 게시 요청을 보내기 직전에 먼저 적는다.
+  // 이미 있던 묶음은 게시한 적이 없다.
+  `
+  ALTER TABLE mention_bundle ADD COLUMN posting TEXT;
   `,
 ];
 
@@ -351,6 +356,7 @@ export class SqliteStateStore implements StateStore {
       regeneration: readJson<Regeneration>(row.regeneration),
       failure: readJson<DraftFailure>(row.failure),
       runs: readJson<RunRecord[]>(row.runs) ?? [],
+      posting: readJson<PostingRecord>(row.posting),
     }));
   }
 
@@ -394,6 +400,7 @@ export class SqliteStateStore implements StateStore {
       regeneration: jsonOrNull(bundle.regeneration),
       failure: jsonOrNull(bundle.failure),
       runs: JSON.stringify(bundle.runs),
+      posting: jsonOrNull(bundle.posting),
     };
     /** 묶음 ID. */
     let id = bundle.id;
@@ -402,9 +409,9 @@ export class SqliteStateStore implements StateStore {
         this.db
           .prepare(
             `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
-               context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs)
+               context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting)
              VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
-               @context, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs)`,
+               @context, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -416,7 +423,7 @@ export class SqliteStateStore implements StateStore {
              connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt,
              context = @context, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, edited_text = @editedText,
              removed_recipients = @removedRecipients, directives = @directives, fixed_requirement = @fixedRequirement,
-             regeneration = @regeneration, failure = @failure, runs = @runs
+             regeneration = @regeneration, failure = @failure, runs = @runs, posting = @posting
            WHERE id = @id`,
         )
         .run({ ...values, id });
@@ -521,6 +528,8 @@ interface BundleRow {
   failure: string | null;
   /** 실행 기록 배열의 JSON. */
   runs: string;
+  /** 게시 기록의 JSON. 게시 요청을 보내기 전이면 `null`. */
+  posting: string | null;
 }
 
 /** `bundle_answer` 표의 한 줄. */

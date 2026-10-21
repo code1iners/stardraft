@@ -6,7 +6,7 @@ import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
-import { bundleRecipients, draftEditorText } from '../drafts/post-body';
+import { bundleRecipients, draftEditorText, isPostable, postableBody } from '../drafts/post-body';
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
@@ -185,7 +185,11 @@ export class MentionBundles {
       }
 
       /** 저장할 묶음. */
-      const updated = [...touched].map(([place, { bundle, added }]) => applyDetection(bundle, added, lookups.get(place), now));
+      const updated = [...touched].map(([place, { bundle, added }]) => {
+        /** 이 자리를 조회한 결과. 다른 묶음이 게시한 글은 그 묶음의 답이라 내 답에서 뺀다. */
+        const lookup = lookups.get(place);
+        return applyDetection(bundle, added, lookup && { ...lookup, myAnswers: lookup.myAnswers && this.notPostedByOtherBundles(lookup.myAnswers, bundle.id) }, now);
+      });
       /** 저장한 묶음. */
       const saved = await this.options.stateStore.saveDetectedBundles(updated, baselineAlarmId);
       if (saved.length === 0) return [];
@@ -306,8 +310,8 @@ export class MentionBundles {
       /** 지금 묶음. */
       const latest = this.bundles.find((item) => item.id === bundleId);
       if (!latest || latest.status !== 'generating') return { kind: 'skipped' };
-      /** 새로 찾은 내 답을 더한 기록. */
-      const answers = mergeAnswers(latest.answers, result.myAnswers);
+      /** 새로 찾은 내 답을 더한 기록. 다른 묶음이 게시한 글은 그 묶음의 답이라 뺀다. */
+      const answers = mergeAnswers(latest.answers, this.notPostedByOtherBundles(result.myAnswers, bundleId));
       /** 다시 판정한 멘션. */
       const mentions = judgeAnswered(latest.mentions, answers);
       /** 모든 멘션이 빠졌는지 여부. */
@@ -509,10 +513,66 @@ export class MentionBundles {
     });
   }
 
-  /** 묶음을 무시한다. 처리됨의 "무시함"이 되고, 7일 안에 되돌릴 수 있다. 이미 처리됨이면 아무것도 하지 않는다. */
+  /**
+   * 준비됨 묶음의 게시를 시작해 게시 중(카운트다운)으로 둔다. 게시 중 묶음은 검토 대기에 남지만 트레이 숫자에서는 빠진다.
+   * 준비됨이 아니거나 게시할 수 없는 글(빈 편집기 텍스트, 상한을 넘는 게시 본문)이면 바꾸지 않는다. 시작했으면 참이다.
+   */
+  async startPosting(bundleId: number): Promise<boolean> {
+    /** 게시 중이 된 묶음. */
+    const changed = await this.change(bundleId, 'bundle.posting-started', (bundle) =>
+      isPostable(bundle) ? { ...bundle, status: 'posting', posting: null } : null,
+    );
+    return changed !== null;
+  }
+
+  /**
+   * 카운트다운 중인 게시를 취소해 준비됨으로 돌린다. 초안·편집본·받는 사람은 그대로다.
+   * 게시 요청을 이미 보냈으면(게시 기록이 있음) 취소하지 않는다. 취소했으면 참이다.
+   */
+  async cancelPosting(bundleId: number): Promise<boolean> {
+    /** 준비됨으로 돌아간 묶음. */
+    const changed = await this.change(bundleId, 'bundle.posting-cancelled', (bundle) =>
+      bundle.status === 'posting' && bundle.posting === null ? { ...bundle, status: 'ready' } : null,
+    );
+    return changed !== null;
+  }
+
+  /**
+   * 카운트다운이 끝난 묶음의 게시 요청을 보내기 직전에, "게시 요청 보냄"과 게시 본문을 게시 기록으로 먼저 저장한다.
+   * 저장했으면 보낼 게시 본문을 돌려준다. 그사이 취소했거나 이미 보냈으면 `null`이다.
+   * 게시할 수 없는 글이 되었으면 보내지 않고 준비됨으로 돌린 뒤 `null`이다.
+   */
+  async recordPostRequest(bundleId: number): Promise<string | null> {
+    /** 게시 기록을 저장한 묶음. */
+    const changed = await this.change(bundleId, 'bundle.post-requested', (bundle) => {
+      if (bundle.status !== 'posting' || bundle.posting !== null) return null;
+      /** 보낼 게시 본문. 게시 중에는 초안과 받는 사람을 바꿀 수 없어 [게시]를 누를 때와 같다. */
+      const body = postableBody(bundle);
+      return body === null ? { ...bundle, status: 'ready' } : { ...bundle, posting: { body, sentAt: this.options.clock.now(), postedId: null } };
+    });
+    return changed?.posting?.body ?? null;
+  }
+
+  /** 게시 요청이 성공했다. 올라간 글의 ID(`commentId`나 `replyId`)를 게시 기록에 더하고 처리됨의 "게시됨"으로 둔다. */
+  async markPosted(bundleId: number, postedId: string): Promise<void> {
+    await this.change(bundleId, 'bundle.posted', (bundle) =>
+      bundle.status === 'posting' && bundle.posting
+        ? { ...bundle, status: 'posted', processedAt: this.options.clock.now(), posting: { ...bundle.posting, postedId } }
+        : null,
+    );
+  }
+
+  /** 게시하지 못한 게시 중 묶음을 준비됨으로 돌린다. 게시 기록은 지우고 초안·편집본·받는 사람은 그대로 둔다. */
+  async returnToReady(bundleId: number): Promise<void> {
+    await this.change(bundleId, 'bundle.posting-returned', (bundle) =>
+      bundle.status === 'posting' ? { ...bundle, status: 'ready', posting: null } : null,
+    );
+  }
+
+  /** 묶음을 무시한다. 처리됨의 "무시함"이 되고, 7일 안에 되돌릴 수 있다. 이미 처리됨이거나 게시 중이면 아무것도 하지 않는다. */
   async ignore(bundleId: number): Promise<void> {
     await this.change(bundleId, 'bundle.ignored', (bundle) => {
-      if (isProcessed(bundle.status)) return null;
+      if (isProcessed(bundle.status) || bundle.status === 'posting') return null;
       return { ...bundle, status: 'ignored', processedAt: this.options.clock.now() };
     });
   }
@@ -568,6 +628,18 @@ export class MentionBundles {
     });
   }
 
+  /**
+   * 묶음 자리에서 찾은 내 답에서 이 PC의 다른 묶음이 게시한 글을 뺀다. 이 PC가 게시한 글은 그 글을 올린 묶음의 멘션에만 답한 것으로 보기 때문이다.
+   * 그래야 게시 중에 들어와 새 묶음이 된 멘션이 그 글 때문에 바로 "이미 답함"으로 숨지 않는다. 다른 PC나 Flow 화면에서 쓴 내 답은 그대로 둔다.
+   */
+  private notPostedByOtherBundles(answers: readonly MyAnswer[], bundleId: number | null): MyAnswer[] {
+    /** 이 PC의 다른 묶음이 게시한 글의 ID. */
+    const postedByOthers = new Set(
+      this.bundles.flatMap((bundle) => (bundle.id !== bundleId && bundle.posting?.postedId ? [bundle.posting.postedId] : [])),
+    );
+    return answers.filter((answer) => !postedByOthers.has(answer.answerId));
+  }
+
   /** Flow 프로젝트마다 저장소 매핑을 한 번씩 확인한다. 확인하다 예외가 나면 매핑이 없는 것으로 본다. */
   private async resolveProjects(projectIds: readonly string[]): Promise<Map<string, RepoResolution>> {
     /** 확인할 Flow 프로젝트. 같은 프로젝트는 한 번만 확인한다. */
@@ -582,10 +654,13 @@ export class MentionBundles {
     return new Map(resolved);
   }
 
-  /** 자리의 처리되지 않은 묶음. 되돌린 묶음과 새 묶음이 함께 있으면 가장 최근에 만든 묶음이다. */
+  /**
+   * 자리의 새 멘션을 합칠 묶음. 처리되지 않은 묶음이고, 되돌린 묶음과 새 묶음이 함께 있으면 가장 최근에 만든 묶음이다.
+   * 게시 중 묶음에는 합치지 않는다. 게시는 그대로 진행하고 새 멘션은 새 묶음이 된다.
+   */
   private openBundleAt(place: string): MentionBundle | undefined {
     return this.bundles
-      .filter((bundle) => !isProcessed(bundle.status) && bundlePlaceKey(bundle) === place)
+      .filter((bundle) => !isProcessed(bundle.status) && bundle.status !== 'posting' && bundlePlaceKey(bundle) === place)
       .sort((a, b) => b.id - a.id)[0];
   }
 
@@ -620,6 +695,7 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
     regeneration: null,
     failure: null,
     runs: [],
+    posting: null,
   };
 }
 

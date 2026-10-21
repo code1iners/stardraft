@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import { activeMentions, canEditDraft, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
-import { bundleRecipients, draftEditorText, postBody } from '../core/drafts/post-body';
+import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
 import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
@@ -16,6 +16,7 @@ import type {
   DraftSnapshot,
   GenerationSnapshot,
   MentionPlaceSnapshot,
+  PostingSnapshot,
   RepoCheckSnapshot,
   RepoPickerSnapshot,
   RepositorySnapshot,
@@ -41,6 +42,9 @@ export type GenerationLookup = (bundleId: number) => GenerationSnapshot | null;
 /** Flow 프로젝트의 저장소 매핑과 저장소 구성을 견준다. */
 export type MappingLookup = (projectId: string, repos: readonly string[]) => MappingMatch;
 
+/** 묶음 ID로 게시 카운트다운이 끝날 시각을 찾는다. 카운트다운 중이 아니면 `null`. */
+export type CountdownLookup = (bundleId: number) => number | null;
+
 /** 작은 창과 펼친 창이 그릴 묶음 상태. `bundles`는 대기열 순서 그대로 넘긴다. */
 export function reviewSnapshot(
   bundles: readonly MentionBundle[],
@@ -49,9 +53,10 @@ export function reviewSnapshot(
   generationOf: GenerationLookup,
   mappingOf: MappingLookup,
   repoPicker: RepoPickerState | null,
+  countdownOf: CountdownLookup,
 ): ReviewSnapshot {
   return {
-    bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf)),
+    bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf)),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
     repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
   };
@@ -66,13 +71,14 @@ function repoPickerSnapshot(picker: RepoPickerState): RepoPickerSnapshot {
 /**
  * 묶음 하나를 렌더러에 넘길 모양으로 바꾼다. Flow 사용자 ID와 주소, 실행 기록의 비용은 넘기지 않는다.
  * 원문 영역에는 묶음에 남은 멘션을 보이고, 모든 멘션이 빠진 이미 답함 묶음이면 빠진 멘션을 보인다.
- * 생성 중 묶음의 진행은 초안 대기열에서 찾고, 대기열이 아직 모르면 기다리는 것으로 본다.
+ * 생성 중 묶음의 진행은 초안 대기열에서 찾고, 대기열이 아직 모르면 기다리는 것으로 본다. 게시 중 묶음의 카운트다운은 게시에서 찾는다.
  */
 export function bundleSnapshot(
   bundle: MentionBundle,
   projectOf: ProjectLookup,
   generationOf: GenerationLookup = () => null,
   mappingOf: MappingLookup = () => 'unmapped',
+  countdownOf: CountdownLookup = () => null,
 ): BundleSnapshot {
   /** 묶음에 남은 멘션. */
   const active = activeMentions(bundle);
@@ -104,7 +110,19 @@ export function bundleSnapshot(
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
     failure: bundle.failure && { ...bundle.failure },
     repoCheck: bundle.repoCheck && repoCheckSnapshot(bundle.repoCheck, bundle.userRepos !== null),
+    posting: postingSnapshot(bundle, countdownOf),
   };
+}
+
+/**
+ * 게시 중 묶음의 단계. 카운트다운 중이면 게시 요청을 보낼 시각을, 그 밖에는 결과를 기다린다고 넘긴다.
+ * 게시 요청을 보낸 뒤(게시 기록이 있음)에는 카운트다운이 없다. 게시 중이 아니면 `null`.
+ */
+function postingSnapshot(bundle: MentionBundle, countdownOf: CountdownLookup): PostingSnapshot | null {
+  if (bundle.status !== 'posting') return null;
+  /** 카운트다운이 끝날 시각. */
+  const endsAt = bundle.posting === null ? countdownOf(bundle.id) : null;
+  return endsAt === null ? { phase: 'sending' } : { phase: 'countdown', endsAt };
 }
 
 /**
@@ -140,6 +158,7 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
     recipients: recipients.map(({ name }) => ({ name })),
     // 빈 편집기 텍스트의 게시 본문이 곧 받는 사람 표기와 이어 붙이는 공백이다.
     postBodyPrefixLength: postBody(recipients, '').length,
+    canPost: isPostable(bundle),
   };
 }
 

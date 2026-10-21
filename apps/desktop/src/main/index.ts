@@ -15,6 +15,7 @@ import { MentionJudge } from '../core/flow/mention-judgement';
 import { errorFields } from '../core/logging/logger';
 import { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import { Onboarding } from '../core/onboarding/onboarding';
+import { Posting } from '../core/posting/posting';
 import type { FlowConnection } from '../core/ports/flow-api';
 import { findSelectionScope } from '../core/repos/repo-candidates';
 import { RepoMappings } from '../core/repos/repo-mappings';
@@ -45,6 +46,8 @@ let appData: AppData | null = null;
 let detection: MentionDetection | null = null;
 /** 초안 대기열. 끝낼 때 실행 중인 에이전트의 프로세스 트리를 끝낸다. */
 let drafts: DraftQueue | null = null;
+/** 게시. 끝낼 때 카운트다운을 멈춘다. */
+let posting: Posting | null = null;
 
 applyAppIdentity();
 
@@ -71,6 +74,8 @@ function start(): void {
     detection?.stop();
     // 에이전트 CLI는 새 프로세스 그룹으로 띄워 앱과 함께 끝나지 않으므로 실행을 끊어 프로세스 트리를 끝낸다. 묶음은 생성 중으로 남는다.
     drafts?.stop();
+    // state.db를 닫은 뒤에 카운트다운이 끝나 게시 요청을 보내지 않게 멈춘다. 카운트다운 중이던 묶음은 게시 중으로 남는다.
+    posting?.stop();
     appData?.close();
     appData = null;
   });
@@ -208,6 +213,9 @@ function start(): void {
       regenerate: (bundleId, repos) => draftQueue.regenerateWithRepos(bundleId, repos),
     });
     mentionBundles.onChange(() => repoPicker.bundlesChanged());
+    /** [게시]. 5초 카운트다운 뒤 지금 키로 묶음 자리에 댓글이나 대댓글을 단다. */
+    const bundlePosting = new Posting({ bundles: mentionBundles, connectFlow: connectCurrentFlow, clock: systemClock, logger });
+    posting = bundlePosting;
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
     // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.
     /** 목록을 받은 계정의 사용자 ID. */
@@ -269,6 +277,7 @@ function start(): void {
       launchAtLogin,
       bundles: mentionBundles,
       drafts: draftQueue,
+      posting: bundlePosting,
       repoPicker,
       reviewSections: new ReviewSections(),
       editorOpener,

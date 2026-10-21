@@ -72,6 +72,7 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     regeneration: null,
     failure: null,
     runs: [],
+    posting: null,
     ...overrides,
   };
 }

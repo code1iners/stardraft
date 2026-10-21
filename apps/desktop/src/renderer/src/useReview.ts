@@ -5,6 +5,9 @@ import { ignoredText } from './review-text';
 /** 무시 토스트를 보이는 시간(밀리초). */
 const TOAST_MS = 5_000;
 
+/** 카운트다운의 남은 초를 다시 셀 간격(밀리초). 초가 바뀌는 때를 크게 놓치지 않을 만큼 짧다. */
+const COUNTDOWN_TICK_MS = 250;
+
 /** 창에서 고른 묶음. */
 interface Selection {
   /** 고른 묶음 ID. 고르지 않았으면 `null`이고 대기열 첫 묶음을 보인다. */
@@ -21,8 +24,25 @@ export interface BundleSelection {
   selected: BundleSnapshot | null;
   /** 묶음을 고른다. */
   select: (bundleId: number) => void;
-  /** 무시한 묶음을 떠나 대기열의 다음 묶음으로 넘어간다. 다음이 없으면 앞 묶음, 그것도 없으면 빈 화면이다. */
+  /** 게시하거나 무시한 묶음을 떠나 다음 준비된 묶음으로 넘어간다. 넘어갈 묶음은 `nextBundleAfter`가 고르고, 없으면 빈 화면이다. */
   leave: (bundleId: number) => void;
+}
+
+/** 게시하거나 무시한 뒤 넘어가도 검토할 것이 있는 상태. 준비됨과 저장소 확인 필요다. */
+const REVIEWABLE: readonly BundleSnapshot['status'][] = ['ready', 'repo-check-needed'];
+
+/**
+ * 게시하거나 무시한 묶음을 떠날 때 넘어갈 묶음. 대기열에서 떠나는 묶음 뒤의 첫 준비된 묶음(준비됨, 저장소 확인 필요)이고, 뒤에 없으면 앞에서 찾는다.
+ * 준비된 묶음이 없으면 바로 뒤, 그것도 없으면 바로 앞 묶음이다. 넘어갈 묶음이 없으면 `null`.
+ */
+export function nextBundleAfter(queue: readonly BundleSnapshot[], bundleId: number): BundleSnapshot | null {
+  /** 떠나는 묶음의 대기열 위치. */
+  const index = queue.findIndex((bundle) => bundle.id === bundleId);
+  /** 떠나는 묶음 뒤와 앞의 묶음. 뒤가 먼저다. */
+  const others = index >= 0 ? [...queue.slice(index + 1), ...queue.slice(0, index)] : queue.filter((bundle) => bundle.id !== bundleId);
+  /** 바로 뒤나 바로 앞 묶음. */
+  const adjacent = index >= 0 ? (queue[index + 1] ?? queue[index - 1]) : others[0];
+  return others.find((bundle) => REVIEWABLE.includes(bundle.status)) ?? adjacent ?? null;
 }
 
 /**
@@ -49,11 +69,7 @@ export function useBundleSelection(bundles: readonly BundleSnapshot[], initialBu
     selected,
     select: (bundleId) => setSelection({ id: bundleId, skip: null }),
     leave: (bundleId) => {
-      /** 떠나는 묶음의 대기열 위치. */
-      const index = queue.findIndex((bundle) => bundle.id === bundleId);
-      /** 넘어갈 묶음. */
-      const next = index >= 0 ? (queue[index + 1] ?? queue[index - 1]) : undefined;
-      setSelection({ id: next?.id ?? null, skip: bundleId });
+      setSelection({ id: nextBundleAfter(queue, bundleId)?.id ?? null, skip: bundleId });
     },
   };
 }
@@ -78,11 +94,15 @@ export interface BundleActions {
   cancel: (bundleId: number) => void;
   /** 실패 묶음을 다시 시도한다. 묶음은 생성 중이 되어 그대로 보인다. */
   retry: (bundleId: number) => void;
+  /** [게시]. 5초 카운트다운을 시작하고 다음 준비된 묶음으로 넘어간다. 카운트다운은 게시 토스트에 보인다. */
+  post: (bundle: BundleSnapshot) => void;
+  /** 카운트다운 중인 게시를 취소하고 그 묶음을 보인다. */
+  cancelPost: (bundleId: number) => void;
 }
 
 /**
- * 작은 창과 펼친 창이 같이 쓰는 [무시]·[되돌리기]·[취소]·[다시 시도]. 묶음 상태는 main이 바꾸고, 창은 보이는 묶음과 토스트만 바꾼다.
- * 취소와 다시 시도는 묶음이 대기열에 남으므로 보고 있는 묶음을 바꾸지 않는다.
+ * 작은 창과 펼친 창이 같이 쓰는 [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]. 묶음 상태는 main이 바꾸고, 창은 보이는 묶음과 토스트만 바꾼다.
+ * 생성 취소와 다시 시도는 묶음이 대기열에 남으므로 보고 있는 묶음을 바꾸지 않는다. 게시하거나 무시하면 다음 준비된 묶음으로 넘어간다.
  */
 export function useBundleActions({ select, leave }: Pick<BundleSelection, 'select' | 'leave'>): BundleActions {
   /** 무시 토스트. */
@@ -106,7 +126,33 @@ export function useBundleActions({ select, leave }: Pick<BundleSelection, 'selec
     retry: (bundleId) => {
       void window.stardraft.send({ type: 'retry-bundle', bundleId });
     },
+    post: (bundle) => {
+      leave(bundle.id);
+      void window.stardraft.send({ type: 'post-bundle', bundleId: bundle.id });
+    },
+    cancelPost: (bundleId) => {
+      select(bundleId);
+      void window.stardraft.send({ type: 'cancel-posting', bundleId });
+    },
   };
+}
+
+/** 카운트다운이 `endsAt`(Unix epoch 밀리초)까지 남은 초. 올림해서 세고 0 아래로 내려가지 않는다. 카운트다운 중이 아니면(`null`) `null`이다. */
+export function useSecondsLeft(endsAt: number | null): number | null {
+  /** 지금 시각. 카운트다운 동안 주기적으로 다시 읽는다. */
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(
+    function tickCountdown() {
+      if (endsAt === null) return;
+      /** 지금 시각을 다시 읽는 예약. */
+      const timer = setInterval(() => setNow(Date.now()), COUNTDOWN_TICK_MS);
+      return () => clearInterval(timer);
+    },
+    [endsAt],
+  );
+
+  return endsAt === null ? null : Math.max(0, Math.ceil((endsAt - now) / 1_000));
 }
 
 /** 무시 토스트. 띄운 뒤 5초가 지나면 저절로 사라진다. */

@@ -7,6 +7,8 @@ import type {
   FlowApiResult,
   FlowComment,
   FlowCommentPage,
+  FlowCreatedComment,
+  FlowCreatedReply,
   FlowEmployee,
   FlowPost,
   FlowProject,
@@ -147,10 +149,49 @@ export class HttpFlowApi implements FlowApi {
   }
 
   /**
-   * GET 요청을 보내고 응답 봉투의 data를 돌려준다.
+   * `POST /user/comments/{postId}`로 게시물에 새 댓글을 단다. 요청 본문은 `{ contents }` JSON이다.
+   * 응답 data에는 `projectId`·`postId`·`commentId`(만든 댓글)가 오고, 쓴 시각(`registeredDateTime`)은 오지 않는다.
+   */
+  async createComment(postId: string, contents: string): Promise<FlowApiResult<FlowCreatedComment>> {
+    /** 응답 봉투의 data를 읽은 결과. */
+    const result = await this.post(`/user/comments/${encodeURIComponent(postId)}`, { contents });
+    if (!result.ok) return result;
+
+    /** 만든 댓글의 ID. */
+    const commentId = isRecord(result.value) ? idString(result.value.commentId) : '';
+    return commentId ? { ok: true, value: { commentId } } : UNEXPECTED_RESPONSE;
+  }
+
+  /**
+   * `POST /user/comments/{postId}/replies/{commentId}`로 댓글에 대댓글을 단다. 요청 본문은 `{ contents }` JSON이다.
+   * 응답 data에는 `commentId`(부모 댓글)와 `replyId`(만든 대댓글)가 온다.
+   */
+  async createReply(postId: string, commentId: string, contents: string): Promise<FlowApiResult<FlowCreatedReply>> {
+    /** 응답 봉투의 data를 읽은 결과. */
+    const result = await this.post(`/user/comments/${encodeURIComponent(postId)}/replies/${encodeURIComponent(commentId)}`, { contents });
+    if (!result.ok) return result;
+
+    /** 만든 대댓글의 ID. */
+    const replyId = isRecord(result.value) ? idString(result.value.replyId) : '';
+    if (!replyId) return UNEXPECTED_RESPONSE;
+    return { ok: true, value: { commentId: (isRecord(result.value) && idString(result.value.commentId)) || commentId, replyId } };
+  }
+
+  /** GET 요청을 보내고 응답 봉투의 data를 돌려준다. */
+  private get(path: string): Promise<FlowApiResult<unknown>> {
+    return this.send('GET', path, null);
+  }
+
+  /** `body`를 JSON으로 실은 POST 요청을 보내고 응답 봉투의 data를 돌려준다. */
+  private post(path: string, body: unknown): Promise<FlowApiResult<unknown>> {
+    return this.send('POST', path, JSON.stringify(body));
+  }
+
+  /**
+   * 요청을 보내고 응답 봉투의 data를 돌려준다. `body`가 있으면 JSON 본문으로 싣는다.
    * 제한 시간 안에 본문까지 받지 못하면 요청을 끊고 응답을 받지 못한 것으로 본다.
    */
-  private async get(path: string): Promise<FlowApiResult<unknown>> {
+  private async send(method: 'GET' | 'POST', path: string, body: string | null): Promise<FlowApiResult<unknown>> {
     // 헤더에 실을 수 없는 키는 fetch가 연결 오류처럼 실패하므로, 보내기 전에 맞지 않는 키로 판정한다.
     if (!HEADER_SAFE_KEY.test(this.options.apiKey)) return { ok: false, failure: { kind: 'unauthorized' } };
 
@@ -165,8 +206,13 @@ export class HttpFlowApi implements FlowApi {
         // Flow 글이 HTTP 캐시로 디스크에 남지 않게 캐시를 쓰지 않는다. 키 인증이라 쿠키도 싣거나 받지 않는다.
         // 리디렉트를 따라가면 키 헤더가 다른 출처로 갈 수 있으므로 리디렉트는 실패로 본다.
         response = await this.options.fetch(`${FLOW_API_BASE_URL}${path}`, {
-          method: 'GET',
-          headers: { 'x-flow-api-key': this.options.apiKey, accept: 'application/json' },
+          method,
+          headers: {
+            'x-flow-api-key': this.options.apiKey,
+            accept: 'application/json',
+            ...(body === null ? {} : { 'content-type': 'application/json' }),
+          },
+          ...(body === null ? {} : { body }),
           cache: 'no-store',
           credentials: 'omit',
           redirect: 'error',
@@ -182,15 +228,15 @@ export class HttpFlowApi implements FlowApi {
         return { ok: false, failure: this.failureOf(response) };
       }
 
-      /** JSON으로 읽은 본문. */
-      let body: unknown;
+      /** JSON으로 읽은 응답 본문. */
+      let json: unknown;
       try {
-        body = await response.json();
+        json = await response.json();
       } catch {
         // 본문을 받는 도중 제한 시간이 지난 것과 본문이 JSON이 아닌 것을 나눈다.
         return controller.signal.aborted ? NETWORK_FAILURE : UNEXPECTED_RESPONSE;
       }
-      return isRecord(body) && isRecord(body.response) ? { ok: true, value: body.response.data } : UNEXPECTED_RESPONSE;
+      return isRecord(json) && isRecord(json.response) ? { ok: true, value: json.response.data } : UNEXPECTED_RESPONSE;
     } finally {
       cancelTimeout();
     }

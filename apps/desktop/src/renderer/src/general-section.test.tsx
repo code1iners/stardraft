@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AppSnapshot, EditorSnapshot } from '../../shared/ipc';
-import { EditorField } from './GeneralSection';
+import { EditorField, NotificationField } from './GeneralSection';
 
 /** 이 PC에서 찾은 가짜 에디터. */
 const INSTALLED: EditorSnapshot['installed'] = [
@@ -44,5 +44,18 @@ describe('설정 "일반"의 에디터', () => {
 
   it('찾은 에디터가 없으면 OS 기본 앱으로 파일만 연다고 알린다', () => {
     expect(htmlOf({ choice: null, installed: [], picker: null })).toContain('찾은 에디터가 없어 OS 기본 앱으로 파일만 엽니다.');
+  });
+});
+
+describe('설정 "일반"의 알림 시험', () => {
+  it('[알림 시험]과 함께 알림이 보이지 않을 때 OS마다 확인할 알림 설정을 앱 이름으로 안내한다', () => {
+    /** macOS에서 그린 HTML. */
+    const mac = renderToStaticMarkup(<NotificationField appName="Stardraft" platform="darwin" />);
+    /** Windows에서 그린 HTML. */
+    const windows = renderToStaticMarkup(<NotificationField appName="Stardraft Dev" platform="win32" />);
+
+    expect(mac).toContain('<button type="button" class="btn">알림 시험</button>');
+    expect(mac).toContain('시스템 설정 &gt; 알림에서 Stardraft의 알림을 허용해 주세요.');
+    expect(windows).toContain('설정 &gt; 시스템 &gt; 알림에서 Stardraft Dev의 알림을 허용해 주세요.');
   });
 });

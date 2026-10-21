@@ -69,6 +69,16 @@ export async function checkDraftOutput(output: DraftOutput, options: DraftCheckO
 }
 
 /**
+ * 저장한 초안의 근거 가운데 비밀 파일 패턴에 맞는 첫 근거. 없으면 `null`. 비밀 파일 패턴을 추가했을 때 게시하지 않은 초안을 다시 검사한다.
+ * 출력 검증과 같이 에이전트가 적은 경로와 근거 파일이 실제로 가리키는 파일을 모두 본다. 저장소는 초안을 만들 때 넘긴 저장소다.
+ */
+export async function findSecretEvidence(draft: Pick<Draft, 'evidence' | 'repositories'>, secretPatterns: readonly string[]): Promise<DraftEvidence | null> {
+  /** 근거 파일이 실제로 가리키는 파일. */
+  const targetOf: TargetOf = (item) => evidenceTarget(item, draft.repositories);
+  return firstSecretEvidence(draft.evidence, secretPatterns, targetOf);
+}
+
+/**
  * 문장의 근거 번호와 근거 목록을 맞춘다.
  * - 없는 근거 번호와 한 문장 안에서 거듭 나온 번호는 지운다. 남은 번호가 없는 문장은 근거 없음이다.
  * - 같은 번호의 근거가 여럿이면 처음 것만 그 번호로 가리킬 수 있다. 나머지는 참조 없는 근거다.
@@ -123,7 +133,7 @@ function renumber(output: DraftOutput, fixes: string[]): { paragraphs: DraftPara
  * 에이전트가 적은 경로와, 근거 파일이 실제로 가리키는 파일(심볼릭 링크를 푼 경로)을 모두 본다.
  * 실제 파일이 저장소 안이면 저장소 기준 경로로, 밖이면 절대 경로로 맞춘다. 저장소나 파일이 맞지 않아도 적은 경로만으로 본다.
  */
-async function firstSecretEvidence(evidence: readonly AgentEvidence[], secretPatterns: readonly string[], targetOf: TargetOf): Promise<AgentEvidence | null> {
+async function firstSecretEvidence<T extends AgentEvidence>(evidence: readonly T[], secretPatterns: readonly string[], targetOf: TargetOf): Promise<T | null> {
   for (const item of evidence) {
     if (matchesSecretPattern(normalizedPath(item.path), secretPatterns)) return item;
     /** 근거 파일이 실제로 가리키는 파일. */

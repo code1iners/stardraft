@@ -57,6 +57,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
       repoPicker: null,
     },
     trial: { canStart: false, bundleId: null, picker: null },
+    draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     ...overrides,
   };
 }

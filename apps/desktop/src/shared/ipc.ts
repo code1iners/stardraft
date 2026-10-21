@@ -59,6 +59,12 @@ export const RECIPIENT_NAME_MAX_LENGTH = 200;
 /** 지시를 덧붙여 다시 만들기와 요구 고치기 명령이 받는 글의 최대 길이. */
 export const REGENERATION_TEXT_MAX_LENGTH = 2_000;
 
+/** 추가 지침 저장 명령이 받는 글의 최대 길이. core의 상한과 같다. */
+export const EXTRA_INSTRUCTIONS_MAX_LENGTH = 4_000;
+
+/** 비밀 파일 패턴 추가 명령이 받는 패턴의 최대 길이. core의 상한과 같다. */
+export const SECRET_PATTERN_MAX_LENGTH = 200;
+
 /** "Flow 계정" 칸의 계정 카드에 보일 계정. */
 export interface FlowAccountProfile {
   /** 이름. */
@@ -365,6 +371,16 @@ export type TrialPickerSnapshot =
   /** 불러오지 못했다. */
   | { window: TrialWindowSnapshot; status: 'failed'; reason: TrialLoadFailureSnapshot };
 
+/** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
+export interface DraftSettingsSnapshot {
+  /** 모든 초안에 적용할 추가 지침. 기본 지침 뒤에 붙는다. */
+  extraInstructions: string;
+  /** 앱에 넣어 둔 비밀 파일 패턴. 읽기 전용이다. */
+  defaultSecretPatterns: string[];
+  /** 사용자가 추가한 비밀 파일 패턴. 추가한 순서이고 뺄 수 없다. */
+  extraSecretPatterns: string[];
+}
+
 /** 최근 멘션으로 시험의 상태. */
 export interface TrialSnapshot {
   /** 지금 시험을 시작할 수 있는지 여부. 감지를 시작했고 시험 묶음이 없어야 한다. */
@@ -401,7 +417,9 @@ export type PostFailureSnapshot = 'forbidden' | 'gone' | 'rejected' | 'rate-limi
 export type PostStopSnapshot =
   | { kind: 'already-answered' }
   | { kind: 'source-gone' }
-  | { kind: 'changed'; newMentionCount: number; newWritingCount: number; edited: boolean; goneMentionCount: number };
+  | { kind: 'changed'; newMentionCount: number; newWritingCount: number; edited: boolean; goneMentionCount: number }
+  /** 카운트다운 중에 추가한 비밀 파일 패턴에 초안의 근거가 맞아 결과를 버렸다. */
+  | { kind: 'secret-evidence' };
 
 /** 게시 중 묶음의 단계. */
 export type PostingSnapshot =
@@ -789,6 +807,8 @@ export interface AppSnapshot {
   review: ReviewSnapshot;
   /** 최근 멘션으로 시험. */
   trial: TrialSnapshot;
+  /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
+  draftSettings: DraftSettingsSnapshot;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -819,6 +839,8 @@ export type AppEvent =
   | { type: 'review-changed'; review: ReviewSnapshot }
   /** 시험을 시작할 수 있는지, 시험 묶음, 멘션 고르기 목록이 바뀌었다. */
   | { type: 'trial-changed'; trial: TrialSnapshot }
+  /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
+  | { type: 'draft-settings-changed'; draftSettings: DraftSettingsSnapshot }
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
   | { type: 'review-bundle-requested'; bundleId: number }
   /** 묶음의 게시가 실패했다. 다른 묶음을 보고 있어도 토스트를 한 번 띄운다. */
@@ -936,7 +958,16 @@ export type AppCommand =
   /** 멘션 고르기 목록에서 고른 멘션으로 시험을 시작한다. 목록에 없는 알림 ID는 main이 받지 않는다. */
   | { type: 'start-trial'; alarmId: string }
   /** [시험 끝내기]. 시험 묶음과 실행 기록을 지운다. 시험 묶음이 아니면 main이 무시한다. */
-  | { type: 'end-trial'; bundleId: number };
+  | { type: 'end-trial'; bundleId: number }
+  /** 추가 지침을 저장한다. 여러 줄 입력이라 칸을 벗어날 때 보낸다. 다음 실행부터 쓴다. */
+  | { type: 'set-extra-instructions'; text: string }
+  /**
+   * 비밀 파일 패턴을 추가한다. 빈 패턴은 받지 않고, 앞뒤 공백 정리, 쓸 수 없는 글자와 이미 있는 패턴 판단은 main이 한다.
+   * 실행 중인 실행을 새 패턴으로 다시 돌리고, 게시하지 않은 초안의 근거를 다시 검사한다.
+   */
+  | { type: 'add-secret-pattern'; pattern: string }
+  /** 설정 "일반"의 [알림 시험]. 시험 알림을 하나 띄운다. */
+  | { type: 'test-notification' };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -1118,6 +1149,12 @@ export function parseAppCommand(value: unknown): AppCommand | null {
         : null;
     case 'open-trial-picker':
       return isTrialWindow(candidate.window) ? { type: 'open-trial-picker', window: candidate.window } : null;
+    case 'set-extra-instructions':
+      return typeof candidate.text === 'string' && candidate.text.length <= EXTRA_INSTRUCTIONS_MAX_LENGTH ? { type: 'set-extra-instructions', text: candidate.text } : null;
+    case 'add-secret-pattern':
+      return typeof candidate.pattern === 'string' && candidate.pattern.trim() !== '' && candidate.pattern.length <= SECRET_PATTERN_MAX_LENGTH
+        ? { type: 'add-secret-pattern', pattern: candidate.pattern }
+        : null;
     case 'start-trial':
       return isAlarmIdInput(candidate.alarmId) ? { type: 'start-trial', alarmId: candidate.alarmId } : null;
     case 'choose-editor':
@@ -1148,6 +1185,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'close-repo-picker':
     case 'reload-trial-picker':
     case 'close-trial-picker':
+    case 'test-notification':
       return { type: candidate.type };
     default:
       return null;

@@ -62,3 +62,27 @@ function secretPatternRegExp(pattern: string): RegExp {
   }
   return new RegExp(`^(?:.*/)?${source}(?:/.*)?$`, 'i');
 }
+
+/** 추가 비밀 파일 패턴 하나의 가장 긴 길이. */
+export const SECRET_PATTERN_MAX_LENGTH = 200;
+
+/**
+ * 사용자가 추가하려는 비밀 파일 패턴을 읽는다. 앞뒤 공백을 뗀 패턴을 돌려주고, 쓸 수 없으면 그 까닭을 돌려준다.
+ * 패턴은 실행기의 deny 규칙(Claude `Read(//**\/<패턴>)`, Codex `"**\/<패턴>"="deny"`)에 그대로 들어가므로
+ * 규칙을 깨는 따옴표·괄호·역슬래시와 제어 문자는 받지 않는다. gitignore의 되돌리기(`!`로 시작)는 막을 파일을 줄이는 것이라 받지 않는다.
+ */
+export function readSecretPattern(input: string): { kind: 'pattern'; pattern: string } | { kind: 'empty' | 'invalid' } {
+  /** 앞뒤 공백을 뗀 패턴. */
+  const pattern = input.trim();
+  if (pattern === '') return { kind: 'empty' };
+  // eslint-disable-next-line no-control-regex
+  if (pattern.length > SECRET_PATTERN_MAX_LENGTH || pattern.startsWith('!') || /["\\()\u0000-\u001f\u007f]/.test(pattern)) return { kind: 'invalid' };
+  return { kind: 'pattern', pattern };
+}
+
+/** 같은 패턴이 이미 목록에 있는지 본다. 판정이 대소문자를 가리지 않으므로 비교도 가리지 않는다. */
+export function hasSecretPattern(patterns: readonly string[], pattern: string): boolean {
+  /** 견줄 패턴. */
+  const lower = pattern.toLowerCase();
+  return patterns.some((item) => item.toLowerCase() === lower);
+}

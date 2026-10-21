@@ -3,11 +3,13 @@ import {
   AGENT_MODEL_MAX_LENGTH,
   DRAFT_TEXT_MAX_LENGTH,
   EDITOR_COMMAND_MAX_LENGTH,
+  EXTRA_INSTRUCTIONS_MAX_LENGTH,
   FLOW_API_KEY_MAX_LENGTH,
   FLOW_PROJECT_ID_MAX_LENGTH,
   parseAppCommand,
   RECIPIENT_NAME_MAX_LENGTH,
   REGENERATION_TEXT_MAX_LENGTH,
+  SECRET_PATTERN_MAX_LENGTH,
   WORK_FOLDER_PATH_MAX_LENGTH,
 } from './ipc';
 
@@ -297,6 +299,21 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'start-trial', alarmId: 12 })).toBeNull();
     expect(parseAppCommand({ type: 'end-trial', bundleId: 3 })).toEqual({ type: 'end-trial', bundleId: 3 });
     expect(parseAppCommand({ type: 'end-trial', bundleId: '3' })).toBeNull();
+  });
+
+  it('추가 지침은 빈 글도 받되 상한까지만, 비밀 파일 패턴은 비어 있지 않고 상한 안인 글만 받는다. 알림 시험은 값 없이 받는다', () => {
+    expect(parseAppCommand({ type: 'set-extra-instructions', text: '맺음말을 붙입니다.\n호칭은 님.', extra: 1 })).toEqual({
+      type: 'set-extra-instructions',
+      text: '맺음말을 붙입니다.\n호칭은 님.',
+    });
+    expect(parseAppCommand({ type: 'set-extra-instructions', text: '' })).toEqual({ type: 'set-extra-instructions', text: '' });
+    expect(parseAppCommand({ type: 'set-extra-instructions', text: 'x'.repeat(EXTRA_INSTRUCTIONS_MAX_LENGTH + 1) })).toBeNull();
+    expect(parseAppCommand({ type: 'set-extra-instructions', text: 3 })).toBeNull();
+    expect(parseAppCommand({ type: 'add-secret-pattern', pattern: ' *.vault.yml ' })).toEqual({ type: 'add-secret-pattern', pattern: ' *.vault.yml ' });
+    expect(parseAppCommand({ type: 'add-secret-pattern', pattern: '  ' })).toBeNull();
+    expect(parseAppCommand({ type: 'add-secret-pattern', pattern: 'x'.repeat(SECRET_PATTERN_MAX_LENGTH + 1) })).toBeNull();
+    expect(parseAppCommand({ type: 'add-secret-pattern', pattern: ['*.env'] })).toBeNull();
+    expect(parseAppCommand({ type: 'test-notification', title: '가짜' })).toEqual({ type: 'test-notification' });
   });
 
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {

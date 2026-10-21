@@ -24,6 +24,8 @@ import { GlobalProblems } from '../problems/global-problems';
 import { RepoMappings } from '../repos/repo-mappings';
 import { DRAFT_INSTRUCTIONS } from './draft-input';
 import { draftAgentFrom, DraftQueue, type DraftQueueOptions } from './draft-queue';
+import { DraftSettings } from './draft-settings';
+import { Posting } from '../posting/posting';
 import { SELECTION_INSTRUCTIONS } from './repo-selection';
 import { listRecentMentions } from '../trial/recent-mentions';
 
@@ -2607,5 +2609,120 @@ describe('최근 멘션으로 시험', () => {
     ]);
     await bundles.endTrial(trialId!);
     expect((await stateStore.listBundles()).map((bundle) => bundle.trial)).toEqual([false]);
+  });
+});
+
+describe('설정: 비밀 파일 패턴 추가의 반영', () => {
+  /** 테스트의 묶음과 초안 대기열에 이어 붙인 설정 "초안" 칸. 앱처럼 패턴을 추가하면 실행 재시작과 초안 재검사를 맡긴다. */
+  async function draftSettingsOf({ settingsStore, drafts, bundles }: Awaited<ReturnType<typeof setup>>) {
+    /** 설정 "초안" 칸. */
+    const draftSettings = new DraftSettings({ settingsStore, logger: createLogger([{ write: () => {} }], new FakeClock(NOW)), drafts, bundles });
+    await draftSettings.load();
+    return draftSettings;
+  }
+
+  it('패턴을 추가하면 실행 중인 실행을 취소해 대기열 맨 앞에 다시 넣고, 새 패턴으로 처음부터 다시 만든다', async () => {
+    /** 가짜 포트로 만든 감지·묶음·대기열. */
+    const context = await setup();
+    const { flow, executor, bundles, settingsStore, repos, poll } = context;
+    executor.script({ progress: [{ step: '파일 읽는 중: RetryConfig.kt', filesRead: 1 }], outcome: 'wait-for-abort' });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    /** 실행 중인 묶음과 기다리는 묶음. */
+    const [first, second] = bundles.state();
+    /** 설정 "초안" 칸. */
+    const draftSettings = await draftSettingsOf(context);
+
+    await draftSettings.addSecretPattern('  *.vault.yml ');
+    await settle();
+
+    expect(settingsStore.settings.extraSecretPatterns).toEqual(['*.vault.yml']);
+    expect(executor.requests[0]?.signal.aborted).toBe(true);
+    expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 재시도는 몇 번 하나요?', '@테스트 사용자 재시도는 몇 번 하나요?', '@테스트 사용자 두 번째 질문']);
+    expect(executor.requests.map((request) => request.secretPatterns)).toEqual([[], ['*.vault.yml'], ['*.vault.yml']]);
+    expect(bundles.get(first!.id)).toMatchObject({ status: 'ready', failure: null });
+    expect(bundles.get(first!.id)?.runs.map((run) => run.result)).toEqual(['secret-patterns-changed', 'succeeded']);
+    expect(bundles.get(second!.id)?.status).toBe('ready');
+  });
+
+  it('패턴을 추가하면 게시하지 않은 초안의 근거 경로를 다시 검사해, 걸린 초안은 결과를 버리고 "비밀 파일을 근거로 듦" 실패로 둔다. 카운트다운 중이면 게시하지 않는다', async () => {
+    /** 가짜 포트로 만든 감지·묶음·대기열. */
+    const context = await setup();
+    const { flow, executor, bundles, clock, repos, poll } = context;
+    /** 새 패턴에 걸리지 않는 근거를 든 출력. */
+    const safeOutput = draftOutput(repos.a);
+    safeOutput.evidence[0]!.path = 'src/main/kotlin/RetryConfig.kt';
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: safeOutput } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(
+      alarm('101'),
+      addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'),
+      addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085700'),
+    );
+    /** 카운트다운 중으로 둘 묶음, 걸리지 않는 묶음, 무시한 묶음. */
+    const [counting, safe, ignored] = bundles.state();
+    expect([counting?.status, safe?.status, ignored?.status]).toEqual(['ready', 'ready', 'ready']);
+    await bundles.editDraft(counting!.id, '고친 초안입니다.');
+    await bundles.ignore(ignored!.id);
+    /** 버리는 진단 로그. */
+    const logger = createLogger([{ write: () => {} }], clock);
+    /** [게시]의 카운트다운. */
+    const posting = new Posting({ bundles, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }), myUserId: () => ME, clock, logger });
+    /** 게시를 멈춘 까닭. */
+    const stops: unknown[] = [];
+    bundles.onPostStopped((bundleId, stop) => stops.push({ bundleId, stop }));
+    await posting.post(counting!.id);
+    await settle();
+    expect(bundles.get(counting!.id)?.status).toBe('posting');
+    /** 설정 "초안" 칸. */
+    const draftSettings = await draftSettingsOf(context);
+
+    await draftSettings.addSecretPattern('application-prod.yml');
+    clock.advance(10_000);
+    await settle();
+
+    expect(bundles.get(counting!.id)).toMatchObject({
+      status: 'failed',
+      failure: { reason: 'secret-evidence' },
+      draft: null,
+      editedText: null,
+      posting: null,
+    });
+    expect(stops).toEqual([{ bundleId: counting!.id, stop: { kind: 'secret-evidence' } }]);
+    expect(posting.countdownEndsAt(counting!.id)).toBeNull();
+    expect(flow.requests.filter((request) => request.startsWith('POST'))).toEqual([]);
+    expect(bundles.get(safe!.id)).toMatchObject({ status: 'ready', draft: { evidence: [{ path: 'src/main/kotlin/RetryConfig.kt' }] } });
+    expect(bundles.get(ignored!.id)).toMatchObject({ status: 'ignored', draft: null });
+    // 이미 만든 초안은 다시 만들지 않는다.
+    expect(executor.requests).toHaveLength(3);
+  });
+
+  it('실행이 끝나 초안을 저장하는 중에 패턴을 추가해도, 저장이 끝난 뒤 그 초안까지 다시 검사해 걸리면 결과를 버린다', async () => {
+    /** 가짜 포트로 만든 감지·묶음·대기열. */
+    const context = await setup();
+    const { executor, bundles, stateStore, repos, poll } = context;
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    await poll(alarm('101'));
+    /** 생성 중인 묶음. */
+    const [bundle] = bundles.state();
+    /** 설정 "초안" 칸. */
+    const draftSettings = await draftSettingsOf(context);
+    // 실행이 끝나 초안을 저장하는 순간을 붙잡는다. 실행을 끊기에는 이미 늦은 때다.
+    stateStore.holdNextSave();
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    /** 패턴 추가. 붙잡은 저장이 끝나기를 기다린다. */
+    const adding = draftSettings.addSecretPattern('application-prod.yml');
+    await settle();
+    stateStore.releaseSave();
+    await adding;
+    await settle();
+
+    expect(bundles.get(bundle!.id)).toMatchObject({ status: 'failed', failure: { reason: 'secret-evidence' }, draft: null });
   });
 });

@@ -1,6 +1,7 @@
 import { isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
 import { mentionLocationKey, mentionLocationOf, type Mention, type MentionLocation } from '../detection/mention';
 import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
+import { findSecretEvidence } from '../drafts/draft-check';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import { errorFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
@@ -22,6 +23,7 @@ import {
   compareBundles,
   compareMentions,
   countsForReview,
+  hasUnpostedDraft,
   isBeforePostRequest,
   isProcessed,
   isAutoProcessed,
@@ -930,6 +932,53 @@ export class MentionBundles {
     });
     // 초안 없이 기다리게 되면 원문 영역에 보일 맥락을 새로 조회한다. 생성 중이면 초안 실행 직전에 조회한다.
     if (restored && showsContextWithoutDraft(restored)) await this.refreshContexts([bundleId]);
+  }
+
+  /**
+   * 비밀 파일 패턴을 추가한 뒤 게시하지 않은 초안의 근거 경로를 `secretPatterns`(기본 목록과 추가 패턴 전부)로 다시 검사한다.
+   * 근거가 패턴에 맞으면 결과(초안과 편집본)를 버린다. 사용자 행동을 기다리던 묶음(준비됨, 게시 실패, 카운트다운 중인 게시 중)은
+   * "비밀 파일을 근거로 듦" 실패로 옮기고, 카운트다운 중이었으면 게시를 멈췄다고 알린다. 처리됨 묶음은 상태를 그대로 두고 초안만 버려,
+   * 되돌리면 새로 만든다. 다시 만들지는 않는다. 결과를 버린 묶음의 ID를 돌려준다.
+   */
+  async discardSecretEvidenceDrafts(secretPatterns: readonly string[]): Promise<number[]> {
+    // 실행을 끊기에는 늦어 옛 패턴으로 검사한 초안을 저장하는 중일 수 있으므로, 맡은 묶음 바꾸기가 끝난 뒤에 검사할 초안을 고른다.
+    await this.whenIdle();
+    /** 결과를 버린 묶음의 ID. */
+    const discarded: number[] = [];
+    for (const candidate of this.bundles.filter(hasUnpostedDraft)) {
+      /** 검사할 초안. */
+      const draft = candidate.draft!;
+      /** 비밀 파일 패턴에 맞는 근거. 파일을 보는 동안 줄을 막지 않게 줄 밖에서 찾는다. */
+      const secret = await findSecretEvidence(draft, secretPatterns);
+      if (!secret) continue;
+      /** 카운트다운 중이던 게시를 멈췄는지 여부. */
+      let postStopped = false;
+      /** 결과를 버린 묶음. */
+      const changed = await this.change(
+        candidate.id,
+        'bundle.secret-evidence-discarded',
+        (bundle) => {
+          // 검사하는 사이에 다시 만들었거나 게시 요청을 보냈으면 검사한 초안이 아니므로 그대로 둔다.
+          if (!hasUnpostedDraft(bundle) || bundle.draft?.createdAt !== draft.createdAt) return null;
+          if (isProcessed(bundle.status)) return { ...bundle, draft: null, editedText: null };
+          postStopped = bundle.status === 'posting';
+          return {
+            ...bundle,
+            status: 'failed',
+            draft: null,
+            editedText: null,
+            posting: null,
+            quitDuringCountdown: false,
+            failure: { reason: 'secret-evidence', detail: null, lastStep: null, runKind: null },
+          };
+        },
+        () => this.postChecks.delete(candidate.id),
+      );
+      if (!changed) continue;
+      discarded.push(changed.id);
+      if (postStopped) this.emitStopped(changed.id, { kind: 'secret-evidence' });
+    }
+    return discarded;
   }
 
   /**

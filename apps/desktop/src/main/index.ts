@@ -11,6 +11,7 @@ import { EditorOpener } from '../core/editors/editor-opener';
 import { collectBundleContext } from '../core/flow/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
 import { draftAgentFrom, DraftQueue } from '../core/drafts/draft-queue';
+import { DraftSettings } from '../core/drafts/draft-settings';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { MentionJudge } from '../core/flow/mention-judgement';
 import { errorFields } from '../core/logging/logger';
@@ -226,6 +227,9 @@ function start(): void {
       logger,
     });
     drafts = draftQueue;
+    /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. 패턴을 추가하면 실행 중인 실행을 다시 돌리고 게시하지 않은 초안을 다시 검사한다. */
+    const draftSettings = new DraftSettings({ settingsStore: appData.settingsStore, logger, drafts: draftQueue, bundles: mentionBundles });
+    await draftSettings.load();
     /** 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. 창을 열 때마다 설정의 작업 폴더를 새로 훑는다. */
     const repoPicker = new RepoPicker({
       bundle: (bundleId) => mentionBundles.get(bundleId),
@@ -319,6 +323,8 @@ function start(): void {
       reviewSections: new ReviewSections(),
       editorOpener,
       trialRun,
+      draftSettings,
+      notifier,
     });
     /**
      * 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣고,

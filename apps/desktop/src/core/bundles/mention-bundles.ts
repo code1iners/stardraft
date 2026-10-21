@@ -6,11 +6,14 @@ import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
+import { draftEditorText } from '../drafts/post-body';
+import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
 import {
   activeMentions,
   bundlePlaceKey,
+  canEditDraft,
   canPickRepos,
   compareBundles,
   compareMentions,
@@ -361,6 +364,7 @@ export class MentionBundles {
     const changed = await this.finishGeneration(bundleId, 'bundle.draft-ready', runs, mentionSet, () => ({
       status: 'ready',
       draft: structuredClone(draft),
+      editedText: null,
       failure: null,
     }));
     if (changed) this.options.notifier.notify(draftReadyNotification(changed));
@@ -421,9 +425,37 @@ export class MentionBundles {
     if (repos.length === 0) return;
     await this.change(bundleId, 'bundle.regenerated-with-repos', (bundle) =>
       canPickRepos(bundle.status)
-        ? { ...bundle, status: 'generating', userRepos: [...repos], draft: null, repoCheck: null, failure: null, newMentionCount: 0 }
+        ? { ...bundle, status: 'generating', userRepos: [...repos], draft: null, editedText: null, repoCheck: null, failure: null, newMentionCount: 0 }
         : null,
     );
+  }
+
+  /**
+   * 준비됨 묶음의 초안을 편집기에서 고친 텍스트를 편집본으로 저장한다. 원래 초안에서 만든 편집기 텍스트와 같아지면 편집본을 지운다.
+   * 초안이 없거나 준비됨이 아니면 아무것도 하지 않는다.
+   */
+  async editDraft(bundleId: number, text: string): Promise<void> {
+    await this.change(bundleId, 'bundle.draft-edited', (bundle) => {
+      if (!bundle.draft || !canEditDraft(bundle.status)) return null;
+      /** 저장할 편집본. */
+      const editedText = text === draftEditorText(bundle.draft) ? null : text;
+      return editedText === bundle.editedText ? null : { ...bundle, editedText };
+    });
+  }
+
+  /** "원래 초안으로 되돌리기". 준비됨 묶음의 편집본을 버려, 편집기 텍스트가 원래 초안으로 돌아가고 근거 번호가 다시 보인다. */
+  async revertDraftEdit(bundleId: number): Promise<void> {
+    await this.change(bundleId, 'bundle.draft-reverted', (bundle) =>
+      bundle.editedText !== null && canEditDraft(bundle.status) ? { ...bundle, editedText: null } : null,
+    );
+  }
+
+  /** 준비됨 묶음의 받는 사람에서 한 사람을 뺀다. 이미 뺀 사람이면 아무것도 하지 않는다. 더하는 기능은 없다. */
+  async removeRecipient(bundleId: number, recipientId: string): Promise<void> {
+    await this.change(bundleId, 'bundle.recipient-removed', (bundle) => {
+      if (!canEditDraft(bundle.status) || bundle.removedRecipients.some((id) => isSameFlowUser(id, recipientId))) return null;
+      return { ...bundle, removedRecipients: [...bundle.removedRecipients, recipientId] };
+    });
   }
 
   /** 묶음을 무시한다. 처리됨의 "무시함"이 되고, 7일 안에 되돌릴 수 있다. 이미 처리됨이면 아무것도 하지 않는다. */
@@ -530,6 +562,8 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
     context: null,
     userRepos: null,
     draft: null,
+    editedText: null,
+    removedRecipients: [],
     failure: null,
     runs: [],
   };

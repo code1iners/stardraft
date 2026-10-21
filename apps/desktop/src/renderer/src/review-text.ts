@@ -12,6 +12,7 @@ import type {
   RepoChoiceGroupSnapshot,
   RunLineSnapshot,
 } from '../../shared/ipc';
+import { POST_BODY_CHAR_LIMIT } from '../../shared/ipc';
 import { AGENT_NAMES } from './AgentSection';
 
 /** 상태 태그의 이름과 색. 준비됨은 파랑, 생성 중은 회색, 실패는 빨강, 확인이 필요한 상태는 노랑, 처리됨은 옅은 회색이다. */
@@ -188,3 +189,24 @@ export function evidenceLocation({ repositoryName, path, startLine, endLine }: E
 export function generationStepText(generation: GenerationSnapshot): string {
   return generation.status === 'running' ? generation.step : '차례를 기다리는 중';
 }
+
+/** 글자 수 표기. 예: 4,120 */
+const COUNT_FORMAT = new Intl.NumberFormat('ko-KR');
+
+/**
+ * 게시 본문의 글자 수. 받는 사람 표기와 공백의 길이(`prefixLength`)에 앞뒤 공백을 뗀 편집기 텍스트의 길이를 더한다.
+ * main이 게시 본문을 만드는 규칙과 같고, `String.length`로 센다.
+ */
+export function postBodyLength(prefixLength: number, editorText: string): number {
+  return prefixLength + editorText.trim().length;
+}
+
+/** 편집기 아래의 글자 수 줄. 상한을 넘으면 Flow 댓글 길이 제한 안내다. */
+export function postBodyLengthText(length: number): { text: string; over: boolean } {
+  /** 글자 수와 상한. */
+  const count = `${COUNT_FORMAT.format(length)} / ${COUNT_FORMAT.format(POST_BODY_CHAR_LIMIT)}`;
+  return length > POST_BODY_CHAR_LIMIT
+    ? { text: `Flow 댓글 길이 제한을 넘었습니다 (${count})`, over: true }
+    : { text: `글자 수 ${count}`, over: false };
+}
+

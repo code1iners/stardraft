@@ -9,7 +9,8 @@ import { MentionJudge } from '../flow/mention-judgement';
 import { createLogger } from '../logging/logger';
 import type { FlowAlarm } from '../ports/flow-api';
 import type { RepoResolution } from '../repos/repo-mappings';
-import type { MentionBundle } from './mention-bundle';
+import type { Draft } from '../drafts/draft';
+import { mentionSetKey, type MentionBundle } from './mention-bundle';
 import { MentionBundles } from './mention-bundles';
 
 /** 지금 시각. 2026-10-20 09:00:00 한국 표준시(00:00:00 UTC). */
@@ -46,6 +47,19 @@ function alarm(alarmId: string, overrides: Partial<FlowAlarm> = {}): FlowAlarm {
     ...overrides,
   };
 }
+
+/** 가짜 초안. 두 문단이고 첫 문장에만 근거가 있다. */
+const DRAFT: Draft = {
+  requirement: { text: '재시도 횟수를 알려 달라는 요구', summary: '재시도 횟수' },
+  paragraphs: [
+    { sentences: [{ text: '재시도는 5번입니다.', evidence: [1] }, { text: '간격은 2초입니다.', evidence: [] }] },
+    { sentences: [{ text: '테스트 환경은 다를 수 있습니다.', evidence: [] }] },
+  ],
+  evidence: [{ id: 1, explanation: '재시도 설정', repository: '/fake/work/repo', path: 'config.yml', startLine: 3, endLine: 4, located: true }],
+  repositories: ['/fake/work/repo'],
+  autoSelection: null,
+  createdAt: NOW,
+};
 
 /** 가짜 시계가 부른 조회가 끝나도록 대기 중인 비동기 일을 모두 돌린다. 가짜 포트는 모두 바로 답한다. */
 async function settle(): Promise<void> {
@@ -520,5 +534,83 @@ describe('멘션 묶음: 대기열과 트레이 숫자', () => {
     expect(notifier.sent).toEqual([{ title: '저장소 확인 필요 2건', body: '보낸 사람님 외 1건의 멘션이 왔습니다.', bundleId: first.id }]);
     // 멘션을 넣을 때 한 번, 두 묶음의 맥락을 저장할 때 한 번 알린다.
     expect(changes).toBe(2);
+  });
+});
+
+describe('멘션 묶음: 초안 편집과 받는 사람', () => {
+  /** 송신자의 댓글 멘션과 다른 송신자의 대댓글 멘션이 든 묶음에 초안을 담아 준비됨으로 둔다. */
+  async function readyBundle() {
+    const context = await setup();
+    const { flow, bundles, poll } = context;
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 덧붙여 질문`, registerId: OTHER_SENDER, registerName: '다른 사람' });
+    await poll(
+      alarm('101', { remarkId: '700' }),
+      alarm('102', { remarkId: '700', replyId: '801', registerId: OTHER_SENDER, registerName: '다른 사람', registeredDateTime: '20261020085100' }),
+    );
+    /** 묶음 ID. */
+    const bundleId = bundles.state()[0]!.id;
+    await bundles.regenerateWithRepos(bundleId, ['/fake/work/repo']);
+    await bundles.saveDraft(bundleId, DRAFT, [], mentionSetKey(bundles.get(bundleId)!));
+    return { ...context, bundleId };
+  }
+
+  it('편집하면 편집본을 묶음에 저장하고, 다시 읽어도 남는다. 원래 초안과 같아지면 편집하지 않은 것으로 본다', async () => {
+    const { stateStore, notifier, clock, bundles, bundleId } = await readyBundle();
+
+    await bundles.editDraft(bundleId, '재시도는 다섯 번입니다.');
+    expect(bundles.get(bundleId)?.editedText).toBe('재시도는 다섯 번입니다.');
+
+    /** 같은 저장소를 다시 읽은 멘션 묶음. 창을 닫았다 열거나 앱을 다시 켠 것과 같다. */
+    const reloaded = new MentionBundles({
+      stateStore,
+      notifier,
+      clock,
+      logger: createLogger([], clock),
+      findMyAnswers: async () => null,
+      collectContext: async () => null,
+      resolveRepos: async () => GONE_REPO,
+    });
+    await reloaded.load();
+    expect(reloaded.get(bundleId)?.editedText).toBe('재시도는 다섯 번입니다.');
+
+    await bundles.editDraft(bundleId, '재시도는 5번입니다. 간격은 2초입니다.\n\n테스트 환경은 다를 수 있습니다.');
+    expect(bundles.get(bundleId)?.editedText).toBeNull();
+  });
+
+  it('"원래 초안으로 되돌리기"는 편집본을 버린다', async () => {
+    const { bundles, bundleId } = await readyBundle();
+    await bundles.editDraft(bundleId, '고친 초안');
+
+    await bundles.revertDraftEdit(bundleId);
+
+    expect(bundles.get(bundleId)?.editedText).toBeNull();
+    expect(bundles.get(bundleId)?.draft).toEqual(DRAFT);
+  });
+
+  it('받는 사람에서 뺀 사람을 묶음에 기록하고, 같은 사람을 거듭 빼도 한 번만 남는다', async () => {
+    const { bundles, bundleId } = await readyBundle();
+
+    await bundles.removeRecipient(bundleId, OTHER_SENDER);
+    await bundles.removeRecipient(bundleId, OTHER_SENDER);
+
+    expect(bundles.get(bundleId)?.removedRecipients).toEqual([OTHER_SENDER]);
+  });
+
+  it('준비됨이 아닌 묶음은 편집하거나 받는 사람을 빼지 않는다', async () => {
+    const { bundles, bundleId } = await readyBundle();
+    await bundles.ignore(bundleId);
+
+    await bundles.editDraft(bundleId, '고친 초안');
+    await bundles.removeRecipient(bundleId, SENDER);
+
+    expect(bundles.get(bundleId)).toMatchObject({ editedText: null, removedRecipients: [] });
+  });
+
+  it('다른 저장소로 다시 만들면 직전 초안과 함께 편집본을 버린다', async () => {
+    const { bundles, bundleId } = await readyBundle();
+    await bundles.editDraft(bundleId, '고친 초안');
+
+    await bundles.regenerateWithRepos(bundleId, ['/fake/work/other']);
+    expect(bundles.get(bundleId)?.editedText).toBeNull();
   });
 });

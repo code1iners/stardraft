@@ -285,6 +285,7 @@ function readPost(data: unknown, requestedPostId: string): FlowPost | null {
   const heading = {
     title: trimmedString(data.title),
     connectUrl: trimmedString(data.connectUrl) || null,
+    registerId: trimmedString(data.registerId),
     registerName: trimmedString(data.registerName),
     registeredDateTime: idString(data.registeredDateTime),
   };

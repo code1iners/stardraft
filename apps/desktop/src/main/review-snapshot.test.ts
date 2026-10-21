@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { BundledMention, MentionBundle } from '../core/bundles/mention-bundle';
 import type { RunRecord } from '../core/drafts/draft';
+import { POST_BODY_CHAR_LIMIT } from '../core/drafts/post-body';
+import { POST_BODY_CHAR_LIMIT as SHOWN_POST_BODY_CHAR_LIMIT } from '../shared/ipc';
 import type { BundleContext } from '../core/flow/bundle-context';
 import { bundleSnapshot, flowUrlOf, reviewSnapshot } from './review-snapshot';
 
@@ -41,6 +43,8 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     userRepos: null,
     repoCheck: null,
     draft: null,
+    editedText: null,
+    removedRecipients: [],
     failure: null,
     runs: [],
     ...overrides,
@@ -146,6 +150,7 @@ function context(): BundleContext {
     fetchedAt: 2_000,
     post: {
       title: '가짜 게시물',
+      authorId: 'author@example.test',
       authorName: '글쓴이',
       registeredDateTime: '20261020080000',
       contents: '본문 @[다른 동료](other@example.test)',
@@ -154,18 +159,19 @@ function context(): BundleContext {
     },
     targetThread: {
       id: '700',
+      authorId: 'sender@example.test',
       authorName: '보낸 사람',
       registeredDateTime: '20261020085000',
       contents: '@[테스트 사용자](me@example.test) 질문',
       attachments: [],
       mention: true,
       replies: [
-        { id: '800', authorName: '동료', registeredDateTime: '20261020085500', contents: '저도 궁금합니다', attachments: ['로그.txt'], mention: false },
-        { id: '801', authorName: '', registeredDateTime: '', contents: '시각 없음', attachments: [], mention: false },
+        { id: '800', authorId: 'colleague@example.test', authorName: '동료', registeredDateTime: '20261020085500', contents: '저도 궁금합니다', attachments: ['로그.txt'], mention: false },
+        { id: '801', authorId: 'colleague@example.test', authorName: '', registeredDateTime: '', contents: '시각 없음', attachments: [], mention: false },
       ],
     },
     otherComments: [
-      { id: '690', authorName: '동료', registeredDateTime: '20261020081000', contents: '다른 이야기', attachments: [], mention: false, replies: [] },
+      { id: '690', authorId: 'colleague@example.test', authorName: '동료', registeredDateTime: '20261020081000', contents: '다른 이야기', attachments: [], mention: false, replies: [] },
     ],
   };
 }
@@ -210,7 +216,7 @@ describe('묶음 스냅숏: 스레드 보기', () => {
       otherComments: [
         {
           ...context().otherComments[0]!,
-          replies: [{ id: '691', authorName: '동료', registeredDateTime: '20261020081500', contents: '답글', attachments: [], mention: false }],
+          replies: [{ id: '691', authorId: 'colleague@example.test', authorName: '동료', registeredDateTime: '20261020081500', contents: '답글', attachments: [], mention: false }],
         },
       ],
     };
@@ -278,6 +284,12 @@ describe('묶음 스냅숏: 초안 실행', () => {
       ],
       autoSelection: null,
       mapping: 'unmapped',
+      editorText: '다섯 번까지 다시 시도합니다. 시험 환경은 세 번으로 보입니다.',
+      edited: false,
+      canEdit: true,
+      recipients: [{ name: '보낸 사람' }],
+      // `@[보낸 사람](sender@example.test)` 29자와 공백 하나.
+      postBodyPrefixLength: 30,
     });
     expect(snapshot.run).toEqual({ agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
     expect(JSON.stringify(snapshot)).not.toContain('costUsd');
@@ -444,5 +456,65 @@ describe('Flow에서 열기 주소', () => {
     expect(flowUrlOf(bundle({ connectUrl: 'http://fake.flow.test/post/1' }), () => ({ ...PROJECT, projectUrl: 'file:///etc/passwd' }))).toBeNull();
     expect(flowUrlOf(bundle({ connectUrl: '주소 아님' }), () => PROJECT)).toBe('https://fake.flow.test/project/900001');
     expect(bundleSnapshot(bundle({ connectUrl: 'javascript:alert(1)' }), () => null).canOpenInFlow).toBe(false);
+  });
+});
+
+describe('초안 편집기와 받는 사람', () => {
+  /** 두 문단짜리 초안. */
+  const draft = {
+    requirement: { text: '요구', summary: '요약' },
+    paragraphs: [{ sentences: [{ text: '첫 문장입니다.', evidence: [1] }, { text: '둘째 문장입니다.', evidence: [] }] }, { sentences: [{ text: '새 문단입니다.', evidence: [] }] }],
+    evidence: [],
+    repositories: ['/fake/work/web'],
+    autoSelection: null,
+    createdAt: 144_000,
+  };
+  /** 송신자 둘의 멘션. 송신자는 두 번 멘션했다. */
+  const mentions = [
+    mention('101'),
+    mention('102', { replyId: '801', senderId: 'other@example.test', senderName: '다른 사람', registeredDateTime: '20261020085100' }),
+    mention('103', { replyId: '802', registeredDateTime: '20261020085200' }),
+  ];
+
+  it('편집하지 않은 초안은 원래 초안에서 만든 편집기 텍스트를 넘기고, 받는 사람은 이름만 처음 멘션한 순서로 넘긴다. 사용자 ID는 넘기지 않는다', () => {
+    /** 넘긴 초안. */
+    const snapshot = bundleSnapshot(bundle({ status: 'ready', draft, mentions }), () => null).draft;
+
+    expect(snapshot).toMatchObject({
+      editorText: '첫 문장입니다. 둘째 문장입니다.\n\n새 문단입니다.',
+      edited: false,
+      canEdit: true,
+      recipients: [{ name: '보낸 사람' }, { name: '다른 사람' }],
+      // `@[보낸 사람](sender@example.test)` 29자, `@[다른 사람](other@example.test)` 28자와 공백 둘.
+      postBodyPrefixLength: 59,
+    });
+    expect(JSON.stringify(snapshot)).not.toContain('@example.test');
+  });
+
+  it('편집한 초안은 편집본을 넘기고 편집했다고 알린다', () => {
+    /** 넘긴 초안. */
+    const snapshot = bundleSnapshot(bundle({ status: 'ready', draft, mentions, editedText: '고친 초안입니다.' }), () => null).draft;
+
+    expect(snapshot).toMatchObject({ editorText: '고친 초안입니다.', edited: true });
+  });
+
+  it('뺀 사람은 받는 사람에 넣지 않고, 모두 빼면 받는 사람이 없어 게시 본문 앞부분도 없다', () => {
+    expect(
+      bundleSnapshot(bundle({ status: 'ready', draft, mentions, removedRecipients: ['sender@example.test'] }), () => null).draft,
+    ).toMatchObject({ recipients: [{ name: '다른 사람' }], postBodyPrefixLength: 29 });
+    expect(
+      bundleSnapshot(bundle({ status: 'ready', draft, mentions, removedRecipients: ['sender@example.test', 'other@example.test'] }), () => null).draft,
+    ).toMatchObject({ recipients: [], postBodyPrefixLength: 0 });
+  });
+
+  it('렌더러가 글자 수 안내에 쓰는 상한은 core의 게시 본문 상한과 같다', () => {
+    expect(SHOWN_POST_BODY_CHAR_LIMIT).toBe(POST_BODY_CHAR_LIMIT);
+  });
+
+  it('준비됨이 아닌 묶음의 초안은 고칠 수 없다고 넘긴다', () => {
+    /** 무시한 묶음의 초안. */
+    const snapshot = bundleSnapshot(bundle({ status: 'ignored', processedAt: 2_000, draft, mentions, editedText: '고친 초안입니다.' }), () => null).draft;
+
+    expect(snapshot).toMatchObject({ editorText: '고친 초안입니다.', edited: true, canEdit: false });
   });
 });

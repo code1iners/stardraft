@@ -2,6 +2,7 @@ import { app, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent, type O
 import { mkdir } from 'node:fs/promises';
 import type { MentionBundles } from '../core/bundles/mention-bundles';
 import type { DraftQueue } from '../core/drafts/draft-queue';
+import { bundleRecipients } from '../core/drafts/post-body';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
@@ -260,6 +261,15 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);
       return;
+    case 'edit-draft':
+      await bundles.editDraft(command.bundleId, command.text);
+      return;
+    case 'revert-draft-edit':
+      await bundles.revertDraftEdit(command.bundleId);
+      return;
+    case 'remove-recipient':
+      await removeRecipient(bundles, command.bundleId, command.index, command.name);
+      return;
     case 'link-bundle-repos':
       await repoPicker.linkBundle(command.bundleId);
       return;
@@ -308,6 +318,19 @@ async function openBundleInFlow({ bundles, repoMappings, logger }: IpcServices, 
   } catch (error) {
     logger.warn('flow.open-failed', { bundleId, ...errorFields(error) });
   }
+}
+
+/**
+ * 화면에 보인 받는 사람 목록의 `index`번째 사람을 뺀다. 렌더러는 사용자 ID를 모르므로 지금 목록에서 찾는다.
+ * 그사이 목록이 바뀌어 그 자리의 이름이 `name`과 다르면 다른 사람을 빼지 않게 아무것도 하지 않는다.
+ */
+async function removeRecipient(bundles: MentionBundles, bundleId: number, index: number, name: string): Promise<void> {
+  /** 묶음. */
+  const bundle = bundles.get(bundleId);
+  /** 뺄 사람. */
+  const recipient = bundle && bundleRecipients(bundle)[index];
+  if (!recipient || recipient.name !== name) return;
+  await bundles.removeRecipient(bundleId, recipient.id);
 }
 
 /** 저장소 선택 창의 "폴더 직접 고르기". 폴더 선택 창으로 받은 폴더를 체크한 후보로 더한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */

@@ -55,6 +55,11 @@ export function canPickRepos(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
 }
 
+/** 초안을 편집하고 받는 사람을 뺄 수 있는 상태인지 본다. 준비됨이다. */
+export function canEditDraft(status: BundleStatus): boolean {
+  return status === 'ready';
+}
+
 /** 트레이 숫자에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. */
 export function countsForReview(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
@@ -143,6 +148,13 @@ export interface MentionBundle extends BundlePlace {
   userRepos: string[] | null;
   /** 초안 실행이 만든 초안(원래 초안). 아직 없으면 `null`. */
   draft: Draft | null;
+  /**
+   * 편집본. 사용자가 편집기에서 고친 텍스트다. 고치지 않았거나 원래 초안과 같아졌으면 `null`이고, 그때 편집기 텍스트는 원래 초안에서 만든다.
+   * 초안이 바뀌거나 지워지면 함께 지운다.
+   */
+  editedText: string | null;
+  /** 사용자가 받는 사람에서 ×로 뺀 사람의 Flow 사용자 ID. 뺀 순서다. */
+  removedRecipients: string[];
   /** 생성이 실패한 까닭. 실패가 아니면 `null`. */
   failure: DraftFailure | null;
   /** 실행 기록. 실행한 순서다. */

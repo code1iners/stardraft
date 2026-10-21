@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AGENT_MODEL_MAX_LENGTH,
+  DRAFT_TEXT_MAX_LENGTH,
   FLOW_API_KEY_MAX_LENGTH,
   FLOW_PROJECT_ID_MAX_LENGTH,
   parseAppCommand,
@@ -163,6 +164,35 @@ describe('렌더러가 보낸 명령 검사', () => {
     for (const type of ['pick-repo-picker-folders', 'link-repo-picker', 'generate-with-repo-picker', 'close-repo-picker'] as const) {
       expect(parseAppCommand({ type, paths: ['/etc'] })).toEqual({ type });
     }
+  });
+
+  it('초안 편집 명령은 묶음 ID와 편집기 텍스트를 받는다. 빈 텍스트와 게시 본문 상한을 넘는 텍스트도 받고, 너무 길면 거부한다', () => {
+    expect(parseAppCommand({ type: 'edit-draft', bundleId: 3, text: '고친 초안\n\n둘째 문단' })).toEqual({
+      type: 'edit-draft',
+      bundleId: 3,
+      text: '고친 초안\n\n둘째 문단',
+    });
+    expect(parseAppCommand({ type: 'edit-draft', bundleId: 3, text: '' })).toEqual({ type: 'edit-draft', bundleId: 3, text: '' });
+    expect(parseAppCommand({ type: 'edit-draft', bundleId: 3, text: '가'.repeat(4_120) })).not.toBeNull();
+    expect(parseAppCommand({ type: 'edit-draft', bundleId: 3, text: '가'.repeat(DRAFT_TEXT_MAX_LENGTH + 1) })).toBeNull();
+    expect(parseAppCommand({ type: 'edit-draft', bundleId: 3 })).toBeNull();
+    expect(parseAppCommand({ type: 'edit-draft', bundleId: 0, text: '초안' })).toBeNull();
+  });
+
+  it('원래 초안으로 되돌리기 명령은 묶음 ID를, 받는 사람 빼기 명령은 묶음 ID와 받는 사람의 위치·이름을 받는다', () => {
+    expect(parseAppCommand({ type: 'revert-draft-edit', bundleId: 3 })).toEqual({ type: 'revert-draft-edit', bundleId: 3 });
+    expect(parseAppCommand({ type: 'revert-draft-edit', bundleId: 0 })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1, name: '이영희' })).toEqual({
+      type: 'remove-recipient',
+      bundleId: 3,
+      index: 1,
+      name: '이영희',
+    });
+    expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 0, name: '' })).toEqual({ type: 'remove-recipient', bundleId: 3, index: 0, name: '' });
+    expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: -1, name: '이영희' })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1.5, name: '이영희' })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1 })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1, name: '가'.repeat(DRAFT_TEXT_MAX_LENGTH + 1) })).toBeNull();
   });
 
   it('펼쳐 보기·접어 보기 명령은 보고 있던 묶음 ID나 null을 받는다', () => {

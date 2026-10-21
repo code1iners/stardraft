@@ -1,6 +1,7 @@
 import { app, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 import { mkdir } from 'node:fs/promises';
 import type { MentionBundles } from '../core/bundles/mention-bundles';
+import type { DraftQueue } from '../core/drafts/draft-queue';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
@@ -57,6 +58,8 @@ export interface IpcServices {
   launchAtLogin: LaunchAtLogin;
   /** 작은 창과 펼친 창의 멘션 묶음. */
   bundles: MentionBundles;
+  /** 생성 중 묶음의 진행과 취소. */
+  drafts: DraftQueue;
   /** 작은 창과 펼친 창의 영역 펼침 상태. */
   reviewSections: ReviewSections;
 }
@@ -101,17 +104,18 @@ export function registerIpc(services: IpcServices): void {
   );
   services.onboarding.onChange((state) => services.windows.broadcast({ type: 'onboarding-changed', onboarding: onboardingSnapshot(state) }));
   services.launchAtLogin.onChange((enabled) => services.windows.broadcast({ type: 'launch-at-login-changed', launchAtLogin: enabled }));
-  // 묶음이 바뀌거나 영역을 접고 펼 때, 그리고 참여 Flow 프로젝트 목록(프로젝트 이름과 주소)이 바뀔 때 묶음 상태를 다시 보낸다.
+  // 묶음이나 생성 중 묶음의 진행이 바뀌거나 영역을 접고 펼 때, 그리고 참여 Flow 프로젝트 목록(프로젝트 이름과 주소)이 바뀔 때 묶음 상태를 다시 보낸다.
   /** 묶음 상태를 열린 창에 알린다. */
   const broadcastReview = () => services.windows.broadcast({ type: 'review-changed', review: currentReviewSnapshot(services) });
   services.bundles.onChange(broadcastReview);
+  services.drafts.onChange(broadcastReview);
   services.reviewSections.onChange(broadcastReview);
   services.repoMappings.onChange(broadcastReview);
 }
 
-/** 지금 묶음 상태의 스냅숏. */
-function currentReviewSnapshot({ bundles, reviewSections, repoMappings }: IpcServices) {
-  return reviewSnapshot(bundles.state(), reviewSections.state(), projectLookup(repoMappings));
+/** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서 읽는다. */
+function currentReviewSnapshot({ bundles, drafts, reviewSections, repoMappings }: IpcServices) {
+  return reviewSnapshot(bundles.state(), reviewSections.state(), projectLookup(repoMappings), (bundleId) => drafts.progress(bundleId));
 }
 
 /** 참여 Flow 프로젝트 목록에서 Flow 프로젝트를 찾는 함수. 목록을 아직 받지 않았으면 언제나 `null`이다. */
@@ -150,8 +154,20 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
 /** 검사를 통과한 명령을 실행한다. */
 async function runCommand(services: IpcServices, command: AppCommand): Promise<void> {
   /** 명령을 처리할 main의 일. */
-  const { windows, logger, flowAccount, agentConnection, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin, bundles, reviewSections } =
-    services;
+  const {
+    windows,
+    logger,
+    flowAccount,
+    agentConnection,
+    agentPreferences,
+    workFolders,
+    repoMappings,
+    onboarding,
+    launchAtLogin,
+    bundles,
+    drafts,
+    reviewSections,
+  } = services;
   switch (command.type) {
     case 'open-settings':
       windows.openSettings(command.section);
@@ -221,6 +237,12 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'restore-bundle':
       await bundles.restore(command.bundleId);
+      return;
+    case 'cancel-generation':
+      await drafts.cancel(command.bundleId);
+      return;
+    case 'retry-bundle':
+      await bundles.retry(command.bundleId);
       return;
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);

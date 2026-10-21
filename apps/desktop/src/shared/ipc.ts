@@ -316,8 +316,8 @@ export interface OnboardingSnapshot {
   start: DetectionStartSnapshot;
 }
 
-/** 멘션 묶음의 상태. 저장소 확인 필요, 무시함, 이미 답함이다. */
-export type BundleStatusSnapshot = 'repo-check-needed' | 'ignored' | 'already-answered';
+/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 실패, 무시함, 이미 답함이다. */
+export type BundleStatusSnapshot = 'generating' | 'ready' | 'repo-check-needed' | 'failed' | 'ignored' | 'already-answered';
 
 /** 펼친 창 목록의 묶음. 목록에 이 순서로 보인다. 검토 대기·생성 중·실패·처리됨이다. */
 export const BUNDLE_GROUPS = ['awaiting-review', 'generating', 'failed', 'processed'] as const;
@@ -364,6 +364,108 @@ export interface ThreadEntrySnapshot {
   mention: boolean;
 }
 
+/** 초안 문장 하나. */
+export interface DraftSentenceSnapshot {
+  /** 문장. */
+  text: string;
+  /** 이 문장을 뒷받침하는 근거 번호. 비어 있으면 "근거 없음"이다. */
+  evidence: number[];
+}
+
+/** 초안 문단 하나. */
+export interface DraftParagraphSnapshot {
+  /** 문단의 문장. 나온 순서다. */
+  sentences: DraftSentenceSnapshot[];
+}
+
+/** 근거 하나. 자연어 설명과 파일·줄 위치다. */
+export interface EvidenceSnapshot {
+  /** 근거 번호. 초안 문장의 번호가 이것을 가리킨다. */
+  id: number;
+  /** 근거를 쉬운 말로 적은 설명. */
+  explanation: string;
+  /** 저장소 이름(폴더 이름). */
+  repositoryName: string;
+  /** 저장소 루트 기준 상대 경로. */
+  path: string;
+  /** 시작 줄. 1부터 센다. */
+  startLine: number;
+  /** 끝 줄. 이 줄까지 포함한다. */
+  endLine: number;
+}
+
+/** 초안을 만들 때 읽기 범위로 넘긴 저장소 하나. */
+export interface RepositorySnapshot {
+  /** 폴더 이름. */
+  name: string;
+  /** 절대 경로. */
+  path: string;
+}
+
+/** 초안 실행이 만든 초안. */
+export interface DraftSnapshot {
+  /** 에이전트가 이해한 요구. `summary`는 목록 행에 보인다. */
+  requirement: { text: string; summary: string };
+  /** 초안 문단. 문장마다 근거 번호가 붙는다. */
+  paragraphs: DraftParagraphSnapshot[];
+  /** 근거. 에이전트가 낸 순서다. */
+  evidence: EvidenceSnapshot[];
+  /** 쓴 저장소. 첫 저장소가 실행의 cwd였다. */
+  repositories: RepositorySnapshot[];
+}
+
+/** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"처럼 보인다. 비용은 넘기지 않는다. */
+export interface RunLineSnapshot {
+  /** 실행한 에이전트. */
+  agent: AgentId;
+  /** 걸린 시간(밀리초). */
+  durationMs: number;
+  /** 맥락 길이 상한 때문에 뺀 것이 있는지 여부. */
+  contextOmitted: boolean;
+}
+
+/** 생성 중 묶음의 진행. */
+export type GenerationSnapshot =
+  /** 대기열에서 차례를 기다린다. */
+  | { status: 'waiting' }
+  /** 실행하고 있다. 마지막 진행 단계 한 줄과 읽은 파일 수다. */
+  | { status: 'running'; step: string; filesRead: number };
+
+/** 생성이 실패한 사유. */
+export type DraftFailureReasonSnapshot =
+  | 'cancelled'
+  | 'timed-out'
+  | 'invalid-output'
+  | 'empty-draft'
+  | 'flow-unavailable'
+  | 'source-gone'
+  | 'app-error'
+  | 'cli-missing'
+  | 'cli-error'
+  | 'not-logged-in'
+  | 'overloaded'
+  | 'network'
+  | 'max-turns'
+  | 'agent-error';
+
+/** 생성이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
+export interface FailureSnapshot {
+  /** 사유. */
+  reason: DraftFailureReasonSnapshot;
+  /** 에이전트가 알려 준 오류 원문. 없으면 `null`. */
+  detail: string | null;
+  /** 실패할 때의 마지막 진행 단계. 없으면 `null`. */
+  lastStep: string | null;
+}
+
+/** 저장소 확인 필요의 사유. 연결된 저장소 폴더를 찾을 수 없음이다. */
+export interface RepoCheckSnapshot {
+  /** 사유의 종류. */
+  kind: 'missing-folders';
+  /** 찾을 수 없는 폴더의 절대 경로. */
+  paths: string[];
+}
+
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
   /** 묶음 ID. 명령에 실어 보낸다. */
@@ -397,6 +499,16 @@ export interface BundleSnapshot {
    * 댓글 스레드 묶음은 게시물 본문과 대상 댓글 스레드, 본문 묶음은 본문과 다른 댓글(대댓글 포함)이다.
    */
   thread: ThreadEntrySnapshot[];
+  /** 초안 실행이 만든 초안. 아직 없으면 `null`. */
+  draft: DraftSnapshot | null;
+  /** 상세 머리의 실행 줄. 초안을 만든 실행이나 실패한 실행이 없으면 `null`. */
+  run: RunLineSnapshot | null;
+  /** 생성 중 묶음의 진행. 생성 중이 아니면 `null`. */
+  generation: GenerationSnapshot | null;
+  /** 생성이 실패한 까닭. 실패가 아니면 `null`. */
+  failure: FailureSnapshot | null;
+  /** 저장소 확인 필요의 사유. 사유가 없으면(저장소 매핑이 없음) `null`. */
+  repoCheck: RepoCheckSnapshot | null;
 }
 
 /** 묶음을 보는 창. 작은 창(`compact`)과 펼친 창(`expanded`)이다. */
@@ -405,8 +517,8 @@ export const REVIEW_WINDOWS = ['compact', 'expanded'] as const;
 /** 묶음을 보는 창 하나. */
 export type ReviewWindow = (typeof REVIEW_WINDOWS)[number];
 
-/** 머리를 눌러 접고 펴는 상세 영역. 원문과 저장소다. */
-export const REVIEW_SECTIONS = ['original', 'repository'] as const;
+/** 머리를 눌러 접고 펴는 상세 영역. 원문, 에이전트가 이해한 요구, 초안, 근거, 저장소, 진행(생성 중의 진행 단계와 실패의 오류)이다. */
+export const REVIEW_SECTIONS = ['original', 'requirement', 'draft', 'evidence', 'repository', 'progress'] as const;
 
 /** 접고 펴는 상세 영역 하나. */
 export type ReviewSection = (typeof REVIEW_SECTIONS)[number];
@@ -522,6 +634,10 @@ export type AppCommand =
   | { type: 'ignore-bundle'; bundleId: number }
   /** 처리됨 묶음을 되돌린다. 되돌릴 수 없는 묶음이면 main이 무시한다. */
   | { type: 'restore-bundle'; bundleId: number }
+  /** 생성 중 묶음의 초안 실행을 취소한다. 생성 중이 아니면 main이 무시한다. */
+  | { type: 'cancel-generation'; bundleId: number }
+  /** 실패 묶음을 다시 시도한다. 실패가 아니면 main이 무시한다. */
+  | { type: 'retry-bundle'; bundleId: number }
   /** 묶음의 게시물을 Flow에서 연다. 주소는 main이 정한다. */
   | { type: 'open-bundle-in-flow'; bundleId: number }
   /** 작은 창을 닫고 펼친 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
@@ -629,6 +745,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return typeof candidate.enabled === 'boolean' ? { type: 'set-launch-at-login', enabled: candidate.enabled } : null;
     case 'ignore-bundle':
     case 'restore-bundle':
+    case 'cancel-generation':
+    case 'retry-bundle':
     case 'open-bundle-in-flow':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
     case 'expand-review':

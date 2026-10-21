@@ -4,7 +4,9 @@ export type {
   Executor,
   ExecutorOutcome,
   ExecutorProgress,
+  ExecutorReport,
   ExecutorRunRequest,
+  ExecutorUsage,
   RunKind,
 } from './executor';
 export type {

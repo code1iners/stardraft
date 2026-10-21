@@ -658,7 +658,7 @@ describe('작동 확인을 다시 도는 때', () => {
     const { runner, connection, cliPath } = await setupConnected();
     runner.respondWhen(isRunRequest(cliPath), exited(0, claudeSuccessStream({ requirement: '가짜 요구' })));
 
-    const outcome = await connection.executor.run(draftRun());
+    const { outcome } = await connection.executor.run(draftRun());
 
     expect(outcome).toEqual({ type: 'completed', output: { requirement: '가짜 요구' } });
     expect(runner.requests.at(-1)).toMatchObject({ command: cliPath, cwd: home, env: { PATH: SHELL_PATH, HOME: home, LANG: 'ko_KR.UTF-8' } });

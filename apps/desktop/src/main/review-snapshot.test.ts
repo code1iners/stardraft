@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BundledMention, MentionBundle } from '../core/bundles/mention-bundle';
+import type { RunRecord } from '../core/drafts/draft';
 import type { BundleContext } from '../core/flow/bundle-context';
 import { bundleSnapshot, flowUrlOf } from './review-snapshot';
 
@@ -37,6 +38,29 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     createdAt: 1_000,
     processedAt: null,
     context: null,
+    repoCheck: null,
+    draft: null,
+    failure: null,
+    runs: [],
+    ...overrides,
+  };
+}
+
+/** 가짜 실행 기록. 기본은 2분 14초 걸려 성공한 초안 실행이다. */
+function run(overrides: Partial<RunRecord> = {}): RunRecord {
+  return {
+    kind: 'draft',
+    agent: 'claude-code',
+    cliVersion: '2.1.305',
+    model: 'sonnet',
+    startedAt: 10_000,
+    finishedAt: 144_000,
+    result: 'succeeded',
+    detail: null,
+    lastStep: '파일 읽는 중: config.yml',
+    fixes: [],
+    omittedContextItems: 0,
+    usage: { costUsd: 0.5, inputTokens: 100, outputTokens: 20 },
     ...overrides,
   };
 }
@@ -80,6 +104,11 @@ describe('묶음 스냅숏', () => {
       canRestore: false,
       canOpenInFlow: true,
       thread: [],
+      draft: null,
+      run: null,
+      generation: null,
+      failure: null,
+      repoCheck: null,
     });
     expect(snapshot.mentions[0]?.text).toEqual([
       { text: '@테스트 사용자', mention: true },
@@ -193,6 +222,81 @@ describe('묶음 스냅숏: 스레드 보기', () => {
       ['comment', '동료', false],
       ['reply', '동료', false],
     ]);
+  });
+});
+
+describe('묶음 스냅숏: 초안 실행', () => {
+  it('준비됨 묶음은 요구, 문장마다 근거 번호가 붙은 초안, 저장소 이름이 붙은 근거, 쓴 저장소와, 초안을 만든 실행의 실행 줄을 넘긴다. 비용은 넘기지 않는다', () => {
+    /** 스냅숏. */
+    const snapshot = bundleSnapshot(
+      bundle({
+        status: 'ready',
+        draft: {
+          requirement: { text: '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.', summary: '재시도 횟수' },
+          paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }, { text: '시험 환경은 세 번으로 보입니다.', evidence: [] }] }],
+          evidence: [
+            { id: 1, explanation: '운영 설정에서 횟수를 5로 정합니다.', repository: '/fake/work/billing-api', path: 'src/main/resources/application-prod.yml', startLine: 88, endLine: 90 },
+          ],
+          repositories: ['/fake/work/billing-api', '/fake/work/billing-web'],
+          createdAt: 144_000,
+        },
+        runs: [run({ result: 'invalid-output', startedAt: 1_000, finishedAt: 9_000 }), run({ omittedContextItems: 3 })],
+      }),
+      () => PROJECT,
+    );
+
+    expect(snapshot).toMatchObject({ status: 'ready', group: 'awaiting-review', generation: null, failure: null, repoCheck: null });
+    expect(snapshot.draft).toEqual({
+      requirement: { text: '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.', summary: '재시도 횟수' },
+      paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }, { text: '시험 환경은 세 번으로 보입니다.', evidence: [] }] }],
+      evidence: [
+        {
+          id: 1,
+          explanation: '운영 설정에서 횟수를 5로 정합니다.',
+          repositoryName: 'billing-api',
+          path: 'src/main/resources/application-prod.yml',
+          startLine: 88,
+          endLine: 90,
+        },
+      ],
+      repositories: [
+        { name: 'billing-api', path: '/fake/work/billing-api' },
+        { name: 'billing-web', path: '/fake/work/billing-web' },
+      ],
+    });
+    expect(snapshot.run).toEqual({ agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
+    expect(JSON.stringify(snapshot)).not.toContain('costUsd');
+  });
+
+  it('생성 중 묶음은 대기열의 진행을 넘기고, 대기열이 아직 모르면 기다리는 것으로 넘긴다', () => {
+    /** 실행 중인 묶음의 진행. */
+    const running = { status: 'running' as const, step: '파일 읽는 중: RetryConfig.kt', filesRead: 2 };
+
+    expect(bundleSnapshot(bundle({ status: 'generating' }), () => null, () => running)).toMatchObject({ group: 'generating', generation: running, run: null });
+    expect(bundleSnapshot(bundle({ status: 'generating' }), () => null, () => null).generation).toEqual({ status: 'waiting' });
+    expect(bundleSnapshot(bundle({ status: 'ready' }), () => null, () => running).generation).toBeNull();
+  });
+
+  it('실패 묶음은 사유·오류 원문·마지막 단계와 실패한 실행의 실행 줄을 넘기고, 저장소 확인 필요 묶음은 찾을 수 없는 폴더를 넘긴다', () => {
+    /** 실패 묶음의 스냅숏. */
+    const failed = bundleSnapshot(
+      bundle({
+        status: 'failed',
+        failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
+        runs: [run({ result: 'timed-out', startedAt: 0, finishedAt: 600_000 })],
+      }),
+      () => null,
+    );
+    /** 저장소 확인 필요 묶음의 스냅숏. */
+    const repoCheck = bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null);
+
+    expect(failed).toMatchObject({
+      group: 'failed',
+      failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
+      run: { agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
+      draft: null,
+    });
+    expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'] });
   });
 });
 

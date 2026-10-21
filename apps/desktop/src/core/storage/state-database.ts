@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
-import { compareMentions, type BundleStatus, type MentionBundle, type UnsavedBundle } from '../bundles/mention-bundle';
+import { compareMentions, type BundleStatus, type MentionBundle, type RepoCheck, type UnsavedBundle } from '../bundles/mention-bundle';
+import type { Draft, DraftFailure, RunRecord } from '../drafts/draft';
 import type { BundleContext } from '../flow/bundle-context';
 import type { MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
@@ -103,6 +104,14 @@ export const STATE_MIGRATIONS: readonly string[] = [
   // 5: 묶음마다 마지막으로 조회한 맥락(비교 기준). JSON 한 덩어리로 둔다. 이미 있던 묶음은 조회한 적이 없어 비워 둔다.
   `
   ALTER TABLE mention_bundle ADD COLUMN context TEXT;
+  `,
+  // 6: 초안 실행의 결과. 저장소 확인 필요의 사유, 초안(요구·문단·근거·쓴 저장소), 실패 사유, 실행 기록을 맥락처럼 JSON으로 둔다.
+  // 모두 묶음의 전체 기록이라 보관 기간이 지나면 묶음 줄에서 함께 지운다. 이미 있던 묶음은 초안을 만든 적이 없어 비워 둔다.
+  `
+  ALTER TABLE mention_bundle ADD COLUMN repo_check TEXT;
+  ALTER TABLE mention_bundle ADD COLUMN draft TEXT;
+  ALTER TABLE mention_bundle ADD COLUMN failure TEXT;
+  ALTER TABLE mention_bundle ADD COLUMN runs TEXT NOT NULL DEFAULT '[]';
   `,
 ];
 
@@ -299,7 +308,11 @@ export class SqliteStateStore implements StateStore {
       newMentionCount: row.new_mention_count,
       createdAt: row.created_at,
       processedAt: row.processed_at,
-      context: readContext(row.context),
+      context: readJson<BundleContext>(row.context),
+      repoCheck: readJson<RepoCheck>(row.repo_check),
+      draft: readJson<Draft>(row.draft),
+      failure: readJson<DraftFailure>(row.failure),
+      runs: readJson<RunRecord[]>(row.runs) ?? [],
     }));
   }
 
@@ -332,7 +345,11 @@ export class SqliteStateStore implements StateStore {
       newMentionCount: bundle.newMentionCount,
       createdAt: bundle.createdAt,
       processedAt: bundle.processedAt,
-      context: bundle.context === null ? null : JSON.stringify(bundle.context),
+      context: jsonOrNull(bundle.context),
+      repoCheck: jsonOrNull(bundle.repoCheck),
+      draft: jsonOrNull(bundle.draft),
+      failure: jsonOrNull(bundle.failure),
+      runs: JSON.stringify(bundle.runs),
     };
     /** 묶음 ID. */
     let id = bundle.id;
@@ -340,8 +357,10 @@ export class SqliteStateStore implements StateStore {
       id = Number(
         this.db
           .prepare(
-            `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at, context)
-             VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt, @context)`,
+            `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
+               context, repo_check, draft, failure, runs)
+             VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
+               @context, @repoCheck, @draft, @failure, @runs)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -351,7 +370,7 @@ export class SqliteStateStore implements StateStore {
         .prepare(
           `UPDATE mention_bundle SET post_id = @postId, remark_id = @remarkId, project_id = @projectId, status = @status, post_title = @postTitle,
              connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt,
-             context = @context
+             context = @context, repo_check = @repoCheck, draft = @draft, failure = @failure, runs = @runs
            WHERE id = @id`,
         )
         .run({ ...values, id });
@@ -386,14 +405,22 @@ export class SqliteStateStore implements StateStore {
   }
 }
 
-/** 저장한 맥락 JSON을 읽는다. 없거나 읽을 수 없으면 조회하지 않은 것으로 본다. 다음 조회가 새로 채운다. */
-function readContext(json: string | null): BundleContext | null {
+/**
+ * 묶음 줄에 JSON으로 둔 값을 읽는다. 없거나 읽을 수 없으면 `null`이다.
+ * 맥락은 조회하지 않은 것으로, 초안·실패 사유는 없는 것으로 보고 다음 조회와 실행이 새로 채운다.
+ */
+function readJson<T>(json: string | null): T | null {
   if (json === null) return null;
   try {
-    return JSON.parse(json) as BundleContext;
+    return JSON.parse(json) as T;
   } catch {
     return null;
   }
+}
+
+/** 값을 JSON으로 쓴다. `null`이면 열을 비운다. */
+function jsonOrNull(value: unknown): string | null {
+  return value === null ? null : JSON.stringify(value);
 }
 
 /** 묶음 ID마다 줄을 모은다. 줄 순서는 그대로다. */
@@ -428,6 +455,14 @@ interface BundleRow {
   processed_at: number | null;
   /** 마지막으로 조회한 맥락의 JSON. 조회하지 않았으면 `null`. */
   context: string | null;
+  /** 저장소 확인 필요 사유의 JSON. 사유가 없으면 `null`. */
+  repo_check: string | null;
+  /** 초안의 JSON. 아직 없으면 `null`. */
+  draft: string | null;
+  /** 생성이 실패한 까닭의 JSON. 실패가 아니면 `null`. */
+  failure: string | null;
+  /** 실행 기록 배열의 JSON. */
+  runs: string;
 }
 
 /** `bundle_answer` 표의 한 줄. */

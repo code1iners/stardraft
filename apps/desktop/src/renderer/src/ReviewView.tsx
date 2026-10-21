@@ -1,5 +1,5 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleSections, IgnoreToast, OpenInFlowButton, StatusTag } from './BundleDetail';
+import { BundleFooter, BundleSections, IgnoreToast, OpenInFlowButton, RunLine, StatusTag } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
 import { BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatMentionTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
 import { useBundleActions, useBundleSelection } from './useReview';
@@ -38,8 +38,8 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음. */
   const { selected, select } = selection;
-  /** [무시]·[되돌리기]와 무시 토스트. */
-  const { toast, ignore, restore } = useBundleActions(selection);
+  /** [무시]·[되돌리기]·[취소]·[다시 시도]와 무시 토스트. */
+  const { toast, ignore, restore, cancel, retry } = useBundleActions(selection);
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {
@@ -67,6 +67,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                     </p>
                     <OpenInFlowButton bundle={selected} />
                   </div>
+                  <RunLine bundle={selected} />
                 </div>
                 <StatusTag status={selected.status} />
                 <button type="button" className="btn sm" onClick={handleCollapse}>
@@ -76,7 +77,13 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
               <main className="detail-body">
                 <BundleSections bundle={selected} windowKind="expanded" sections={sections} />
               </main>
-              <BundleFooter bundle={selected} onIgnore={() => ignore(selected)} onRestore={() => restore(selected.id)} />
+              <BundleFooter
+                bundle={selected}
+                onIgnore={() => ignore(selected)}
+                onRestore={() => restore(selected.id)}
+                onCancel={() => cancel(selected.id)}
+                onRetry={() => retry(selected.id)}
+              />
             </>
           ) : (
             <>
@@ -106,7 +113,10 @@ interface BundleListProps {
   onSelect: (bundleId: number) => void;
 }
 
-/** 펼친 창 왼쪽 목록. 비어 있지 않은 목록 묶음만 이름과 개수를 달아 보이고, 처리됨 아래에 보관 안내를 둔다. */
+/**
+ * 펼친 창 왼쪽 목록. 비어 있지 않은 목록 묶음만 이름과 개수를 달아 보이고, 처리됨 아래에 보관 안내를 둔다.
+ * 행에는 송신자, 시각, 요구 요약(초안이 없으면 게시물), 상태를 보인다.
+ */
 function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
   return (
     <aside className="review-list">
@@ -131,7 +141,7 @@ function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
                   <strong>{senderLine(bundle.senderNames)}</strong>
                   <span className="small muted">{formatMentionTime(bundle.lastMentionAt)}</span>
                 </span>
-                <span className="list-row-sub">{postLine(bundle)}</span>
+                <span className="list-row-sub">{bundle.draft?.requirement.summary || postLine(bundle)}</span>
                 <StatusTag status={bundle.status} />
               </button>
             ))}

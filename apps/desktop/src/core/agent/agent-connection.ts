@@ -508,7 +508,7 @@ export class AgentConnection {
     const settings = await this.options.settingsStore.load();
     await mkdir(this.options.checkDir, { recursive: true });
     /** 점검 실행 결과. */
-    const outcome = await this.executor.run({
+    const { outcome } = await this.executor.run({
       kind: 'check',
       instructions: CHECK_RUN_INSTRUCTIONS,
       input: CHECK_RUN_INPUT,

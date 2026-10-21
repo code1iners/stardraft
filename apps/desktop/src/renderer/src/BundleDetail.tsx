@@ -2,6 +2,10 @@ import { useState, type ReactNode } from 'react';
 import type {
   BundleSnapshot,
   BundleStatusSnapshot,
+  DraftSnapshot,
+  FailureSnapshot,
+  GenerationSnapshot,
+  RepoCheckSnapshot,
   ReviewSection,
   ReviewSnapshot,
   ReviewWindow,
@@ -11,15 +15,21 @@ import type {
 import {
   BUNDLE_PLACE_LABELS,
   BUNDLE_STATUS_TAGS,
+  circledNumber,
+  evidenceLocation,
+  FAILURE_REASON_TEXT,
   formatMentionTime,
+  generationStepText,
   MENTION_PLACE_LABELS,
+  MISSING_FOLDERS_TEXT,
   postLine,
   PROCESSED_NOTES,
+  runLineText,
   senderLine,
 } from './review-text';
 import type { IgnoreToastState } from './useReview';
 
-/** 저장소 확인 필요 묶음의 저장소 영역 안내. 저장소를 고르는 창이 생기면 사유·후보·[저장소를 골라 만들기]가 들어간다. */
+/** 저장소 매핑이 없는 저장소 확인 필요 묶음의 저장소 영역 안내. 저장소를 고르는 창이 생기면 사유·후보·[저장소를 골라 만들기]가 들어간다. */
 const NO_REPOSITORY_NOTE = '아직 이 묶음에 쓸 저장소를 정하지 않았습니다.';
 
 /** 상태 태그에 넘기는 값. */
@@ -56,7 +66,13 @@ export function OpenInFlowButton({ bundle }: BundleProps) {
   );
 }
 
-/** 작은 창 상세 머리. 첫 줄은 송신자·멘션 자리·시각, 둘째 줄은 게시물과 "Flow에서 열기"다. */
+/** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"이다. 보일 실행이 없으면 그리지 않는다. */
+export function RunLine({ bundle }: BundleProps) {
+  if (!bundle.run) return null;
+  return <p className="run-line">{runLineText(bundle.run)}</p>;
+}
+
+/** 작은 창 상세 머리. 첫 줄은 송신자·멘션 자리·시각, 둘째 줄은 게시물과 "Flow에서 열기", 셋째 줄은 실행 줄이다. */
 export function BundleMeta({ bundle }: BundleProps) {
   return (
     <div className="bundle-meta">
@@ -69,6 +85,7 @@ export function BundleMeta({ bundle }: BundleProps) {
         <span>{postLine(bundle)}</span>
         <OpenInFlowButton bundle={bundle} />
       </p>
+      <RunLine bundle={bundle} />
     </div>
   );
 }
@@ -197,6 +214,139 @@ function OriginalBody({ bundle, threadOpen, onToggleThread }: OriginalBodyProps)
   );
 }
 
+/** 초안 영역 내용에 넘기는 값. */
+interface DraftProps {
+  /** 그릴 초안. */
+  draft: DraftSnapshot;
+}
+
+/**
+ * 초안. 문단마다 문장을 잇고, 문장마다 근거 번호(①②)를, 근거 없는 문장에는 "근거 없음"을 붙인다.
+ * 에이전트가 같은 번호를 거듭 낼 수 있으므로 번호와 근거는 위치로 구분한다.
+ */
+function DraftBody({ draft }: DraftProps) {
+  return (
+    <div className="draft-text">
+      {draft.paragraphs.map((paragraph, paragraphIndex) => (
+        <p key={paragraphIndex}>
+          {paragraph.sentences.map((sentence, sentenceIndex) => (
+            <span key={sentenceIndex}>
+              {sentenceIndex > 0 && ' '}
+              <span className={sentence.evidence.length > 0 ? 'sentence' : 'sentence no-evidence'}>{sentence.text}</span>
+              {sentence.evidence.length > 0 ? (
+                sentence.evidence.map((id, citeIndex) => (
+                  <span key={citeIndex} className="cite">
+                    {circledNumber(id)}
+                  </span>
+                ))
+              ) : (
+                <span className="cite none" title="이 문장을 뒷받침하는 근거가 없습니다">
+                  근거 없음
+                </span>
+              )}
+            </span>
+          ))}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** 근거 영역 내용. 근거마다 자연어 설명과, 그 아래 작게 저장소·파일·줄 위치를 보인다. 전체 경로는 위치에 마우스를 올리면 보인다. */
+function EvidenceList({ draft }: DraftProps) {
+  if (draft.evidence.length === 0) return <p className="small muted">근거가 없습니다. 초안이 저장소 코드를 근거로 하지 않았습니다.</p>;
+  return (
+    <ol className="evidence-list">
+      {draft.evidence.map((evidence, evidenceIndex) => (
+        <li key={evidenceIndex} className="evidence-item">
+          <p>
+            <span className="evidence-number">{circledNumber(evidence.id)}</span> {evidence.explanation}
+          </p>
+          <p className="evidence-location" title={evidence.path}>
+            {evidenceLocation(evidence)}
+          </p>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** 쓴 저장소 목록에 넘기는 값. */
+interface RepositoryListProps {
+  /** 쓴 저장소. */
+  repositories: DraftSnapshot['repositories'];
+}
+
+/** 저장소 영역 내용. 초안을 만들 때 읽은 저장소의 폴더 이름과 경로다. */
+function RepositoryList({ repositories }: RepositoryListProps) {
+  return (
+    <ul className="repository-list">
+      {repositories.map((repository) => (
+        <li key={repository.path}>
+          <strong>{repository.name}</strong>
+          <span className="small muted">{repository.path}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** 저장소 확인 필요 사유에 넘기는 값. */
+interface RepoCheckBodyProps {
+  /** 사유. 저장소 매핑이 없어서면 `null`. */
+  repoCheck: RepoCheckSnapshot | null;
+}
+
+/** 저장소 확인 필요 묶음의 저장소 영역 내용. 매핑된 폴더가 사라졌으면 사유와 그 폴더를, 매핑이 없으면 안내를 보인다. */
+function RepoCheckBody({ repoCheck }: RepoCheckBodyProps) {
+  if (!repoCheck) return <p className="small muted">{NO_REPOSITORY_NOTE}</p>;
+  return (
+    <>
+      <p className="warning-text">{MISSING_FOLDERS_TEXT}</p>
+      <ul className="repository-list">
+        {repoCheck.paths.map((path) => (
+          <li key={path}>
+            <span className="small muted">{path}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/** 진행 영역에 넘기는 값. */
+interface GenerationBodyProps {
+  /** 생성 중 묶음의 진행. */
+  generation: GenerationSnapshot;
+}
+
+/** 생성 중 묶음의 진행 영역 내용. 마지막 진행 단계 한 줄과 읽은 파일 수다. */
+function GenerationBody({ generation }: GenerationBodyProps) {
+  return (
+    <div className="progress-line" role="status">
+      <span>{generationStepText(generation)}</span>
+      {generation.status === 'running' && <span className="small muted">읽은 파일 {generation.filesRead}개</span>}
+    </div>
+  );
+}
+
+/** 오류 영역에 넘기는 값. */
+interface FailureBodyProps {
+  /** 생성이 실패한 까닭. */
+  failure: FailureSnapshot;
+}
+
+/** 실패 묶음의 오류 영역 내용. 쉬운 말 오류, 에이전트가 알려 준 오류 원문, 마지막 단계다. */
+function FailureBody({ failure }: FailureBodyProps) {
+  return (
+    <div className="failure-box">
+      <strong>{FAILURE_REASON_TEXT[failure.reason]}</strong>
+      {failure.detail && <p className="failure-detail">{failure.detail}</p>}
+      {failure.lastStep && <p className="failure-detail">마지막 단계: {failure.lastStep}</p>}
+    </div>
+  );
+}
+
 /** 상세 영역에 넘기는 값. */
 interface BundleSectionsProps extends BundleProps {
   /** 영역이 있는 창. */
@@ -205,7 +355,11 @@ interface BundleSectionsProps extends BundleProps {
   sections: ReviewSnapshot['sections'];
 }
 
-/** 묶음 상세의 알림 줄과 영역. 원문 → 저장소 순서이고, 저장소 영역은 저장소 확인 필요 묶음에만 있다. */
+/**
+ * 묶음 상세의 알림 줄과 영역. 늘 원문이 먼저다.
+ * 초안이 있으면 작은 창은 요구 → 초안 → 근거 → 저장소, 펼친 창은 요구 → 저장소 → 초안 → 근거 순이다.
+ * 생성 중이면 진행, 실패면 오류, 저장소 확인 필요면 저장소 영역에 사유를 둔다.
+ */
 export function BundleSections({ bundle, windowKind, sections }: BundleSectionsProps) {
   /** 이 창의 영역 펼침 상태. */
   const open = sections[windowKind];
@@ -214,6 +368,14 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
   const [threadBundleId, setThreadBundleId] = useState<number | null>(null);
   /** "스레드 보기"를 펼치거나 접는다. */
   const handleToggleThread = () => setThreadBundleId((current) => (current === bundle.id ? null : bundle.id));
+  /** 초안. 생성 중이면 새로 만들고 있으므로 보이지 않는다. */
+  const draft = bundle.status === 'generating' ? null : bundle.draft;
+  /** 저장소 영역. 초안을 만들 때 쓴 저장소나 저장소 확인 필요 사유를 보인다. */
+  const repository = (draft || bundle.status === 'repo-check-needed') && (
+    <ReviewSectionBlock windowKind={windowKind} section="repository" open={open.repository} title="저장소">
+      {draft ? <RepositoryList repositories={draft.repositories} /> : <RepoCheckBody repoCheck={bundle.repoCheck} />}
+    </ReviewSectionBlock>
+  );
 
   return (
     <>
@@ -221,11 +383,33 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
       <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={`멘션 ${bundle.mentions.length}건`}>
         <OriginalBody bundle={bundle} threadOpen={threadBundleId === bundle.id} onToggleThread={handleToggleThread} />
       </ReviewSectionBlock>
-      {bundle.status === 'repo-check-needed' && (
-        <ReviewSectionBlock windowKind={windowKind} section="repository" open={open.repository} title="저장소">
-          <p className="small muted">{NO_REPOSITORY_NOTE}</p>
+      {bundle.generation && (
+        <ReviewSectionBlock windowKind={windowKind} section="progress" open={open.progress} title="진행">
+          <GenerationBody generation={bundle.generation} />
         </ReviewSectionBlock>
       )}
+      {bundle.status === 'failed' && bundle.failure && (
+        <ReviewSectionBlock windowKind={windowKind} section="progress" open={open.progress} title="오류">
+          <FailureBody failure={bundle.failure} />
+        </ReviewSectionBlock>
+      )}
+      {draft && (
+        <ReviewSectionBlock windowKind={windowKind} section="requirement" open={open.requirement} title="에이전트가 이해한 요구">
+          <p className="requirement-text">{draft.requirement.text}</p>
+        </ReviewSectionBlock>
+      )}
+      {windowKind === 'expanded' && repository}
+      {draft && (
+        <>
+          <ReviewSectionBlock windowKind={windowKind} section="draft" open={open.draft} title="초안">
+            <DraftBody draft={draft} />
+          </ReviewSectionBlock>
+          <ReviewSectionBlock windowKind={windowKind} section="evidence" open={open.evidence} title={`근거 ${draft.evidence.length}개`}>
+            <EvidenceList draft={draft} />
+          </ReviewSectionBlock>
+        </>
+      )}
+      {windowKind === 'compact' && repository}
     </>
   );
 }
@@ -236,10 +420,28 @@ interface BundleFooterProps extends BundleProps {
   onIgnore: () => void;
   /** [되돌리기]를 눌렀다. */
   onRestore: () => void;
+  /** 생성 중 묶음의 [취소]를 눌렀다. */
+  onCancel: () => void;
+  /** 실패 묶음의 [다시 시도]를 눌렀다. */
+  onRetry: () => void;
 }
 
-/** 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다. */
-export function BundleFooter({ bundle, onIgnore, onRestore }: BundleFooterProps) {
+/**
+ * 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다.
+ * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가 있다.
+ */
+export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }: BundleFooterProps) {
+  if (bundle.status === 'generating') {
+    return (
+      <footer className="review-foot">
+        <span className="small muted">초안을 만드는 중입니다.</span>
+        <span className="spacer" />
+        <button type="button" className="btn" onClick={onCancel}>
+          취소
+        </button>
+      </footer>
+    );
+  }
   if (bundle.group === 'processed') {
     return (
       <footer className="review-foot">
@@ -259,6 +461,11 @@ export function BundleFooter({ bundle, onIgnore, onRestore }: BundleFooterProps)
         무시
       </button>
       <span className="spacer" />
+      {bundle.status === 'failed' && (
+        <button type="button" className="btn primary" onClick={onRetry}>
+          다시 시도
+        </button>
+      )}
     </footer>
   );
 }

@@ -1,16 +1,23 @@
 import type { BundleContext } from '../flow/bundle-context';
-import type { Mention, MentionLocation } from '../detection/mention';
+import { mentionLocationKey, type Mention, type MentionLocation } from '../detection/mention';
+import type { Draft, DraftFailure, RunRecord } from '../drafts/draft';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { MyAnswer } from '../flow/mention-judgement';
 
 /**
- * 멘션 묶음의 상태. 생성 중·준비됨·게시 중·실패 같은 상태는 초안을 만들고 게시하는 기능이 더한다.
- * 초안 실행이 생기기 전까지 감지한 묶음은 모두 "저장소 확인 필요"로 올라온다.
+ * 멘션 묶음의 상태. 게시 중·게시 실패·게시됨·원문 사라짐은 게시와 변화 감시 기능이 더한다.
+ * 저장소 매핑이 없는 묶음은 자동 선택이 생기기 전까지 "저장소 확인 필요"로 올라온다.
  */
 export type BundleStatus =
+  /** 생성 중. 초안 실행이 대기열에 있거나 돌고 있다. */
+  | 'generating'
+  /** 준비됨. 초안이 있고 사용자 행동을 기다린다. */
+  | 'ready'
   /** 저장소 확인 필요. 초안 없이 저장소를 골라 달라고 기다린다. */
   | 'repo-check-needed'
+  /** 실패. 생성이 실패했다(시간 초과, 취소함, 빈 초안, 구조 실패 등). */
+  | 'failed'
   /** 무시함. 사용자가 무시했다. */
   | 'ignored'
   /** 이미 답함. Flow에 내 답이 있어 자동으로 옮겨졌다. */
@@ -22,8 +29,13 @@ export type BundleListGroup = 'awaiting-review' | 'generating' | 'failed' | 'pro
 /** 멘션 묶음이 상태에 따라 펼친 창의 어느 목록 묶음에 드는지 돌려준다. */
 export function listGroupOf(status: BundleStatus): BundleListGroup {
   switch (status) {
+    case 'generating':
+      return 'generating';
+    case 'ready':
     case 'repo-check-needed':
       return 'awaiting-review';
+    case 'failed':
+      return 'failed';
     case 'ignored':
     case 'already-answered':
       return 'processed';
@@ -42,7 +54,15 @@ export function isRestorable(status: BundleStatus): boolean {
 
 /** 트레이 숫자에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. */
 export function countsForReview(status: BundleStatus): boolean {
-  return status === 'repo-check-needed';
+  return status === 'ready' || status === 'repo-check-needed';
+}
+
+/** 저장소 확인 필요의 사유. 저장소 매핑이 없어서 확인이 필요한 묶음은 사유가 없다(`null`). */
+export interface RepoCheck {
+  /** 저장소 매핑에 연결된 폴더 가운데 없는 것이 있다. 화면 사유는 "연결된 저장소 폴더를 찾을 수 없음"이다. */
+  kind: 'missing-folders';
+  /** 찾을 수 없는 폴더의 절대 경로. */
+  paths: string[];
 }
 
 /** 묶음에 든 멘션. */
@@ -82,7 +102,10 @@ export interface MentionBundle extends BundlePlace {
   mentions: BundledMention[];
   /** 묶음 자리에서 찾은 내 답 가운데 멘션보다 나중에 쓴 것과, 되돌릴 때 기록한 것. */
   answers: RecordedAnswer[];
-  /** 저장소 확인 필요 묶음에 합쳐진 새 멘션 수. 작은 창에 "새 멘션 1건"으로 보인다. */
+  /**
+   * 지금 초안이나 상태를 만든 뒤에 합쳐진 새 멘션 수. 작은 창에 "새 멘션 1건"으로 보인다.
+   * 생성 중 묶음에 합친 멘션은 이번 초안에 들어가므로 세지 않는다.
+   */
   newMentionCount: number;
   /** 묶음을 만든 시각(Unix epoch 밀리초). */
   createdAt: number;
@@ -93,6 +116,14 @@ export interface MentionBundle extends BundlePlace {
    * 원문 영역의 "스레드 보기"도 이것을 보인다. 아직 조회하지 못했으면 `null`.
    */
   context: BundleContext | null;
+  /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나 저장소 매핑이 없어서면 `null`. */
+  repoCheck: RepoCheck | null;
+  /** 초안 실행이 만든 초안(원래 초안). 아직 없으면 `null`. */
+  draft: Draft | null;
+  /** 생성이 실패한 까닭. 실패가 아니면 `null`. */
+  failure: DraftFailure | null;
+  /** 실행 기록. 실행한 순서다. */
+  runs: RunRecord[];
 }
 
 /** 아직 저장하지 않아 ID가 없을 수 있는 묶음. 새 묶음은 저장할 때 ID를 받는다. */
@@ -101,6 +132,14 @@ export type UnsavedBundle = Omit<MentionBundle, 'id'> & { id: number | null };
 /** 묶음 자리를 한 문자열로 나타낸다. 같은 자리를 가려낼 때 쓴다. */
 export function bundlePlaceKey({ postId, remarkId }: BundlePlace): string {
   return JSON.stringify([postId, remarkId]);
+}
+
+/**
+ * 묶음에 든 멘션 위치 전부를 한 문자열로 나타낸다. 이미 답함으로 빠진 멘션도 넣어, 판정이 바뀌어도 같은 값이다.
+ * 초안 실행을 시작한 뒤 새 멘션이 합쳐졌는지 가려낼 때 쓴다.
+ */
+export function mentionSetKey(bundle: Pick<MentionBundle, 'mentions'>): string {
+  return bundle.mentions.map(mentionLocationKey).sort().join('\n');
 }
 
 /** 두 멘션을 알림 시각, 같으면 `alarmId` 크기로 비교한다. */

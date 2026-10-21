@@ -91,7 +91,7 @@ describe('맥락 수집: 본문 묶음', () => {
       });
     }
 
-    const result = await collectBundleContext(flow, bundle('-1', [mention()]), NOW);
+    const result = await collectBundleContext(flow, bundle('-1', [mention()]), NOW, [ME]);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -151,7 +151,7 @@ describe('맥락 수집: 댓글 스레드 묶음', () => {
       mention({ remarkId: '900000102', replyId: '9000220', alarmId: '102', registeredDateTime: at(24) }),
     ];
 
-    const result = await collectBundleContext(flow, bundle('900000102', mentions), NOW);
+    const result = await collectBundleContext(flow, bundle('900000102', mentions), NOW, [ME]);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -177,28 +177,48 @@ describe('맥락 수집: 댓글 스레드 묶음', () => {
       mention({ remarkId: '900000102', replyId: '9000220', alarmId: '102', registeredDateTime: at(24) }),
     ];
 
-    const result = await collectBundleContext(flow, bundle('900000102', mentions), NOW);
+    const result = await collectBundleContext(flow, bundle('900000102', mentions), NOW, [ME]);
 
     expect(result.ok && result.context.targetThread?.mention).toBe(false);
   });
 
   it('머리 댓글이 목록에 없으면 대상 댓글 스레드가 사라졌다고, 조회가 실패하면 그 실패를 돌려준다', async () => {
     const flow = threadFlow();
-    await expect(collectBundleContext(flow, bundle('900000999', [mention({ remarkId: '900000999' })]), NOW)).resolves.toEqual({
+    await expect(collectBundleContext(flow, bundle('900000999', [mention({ remarkId: '900000999' })]), NOW, [ME])).resolves.toEqual({
       ok: false,
       failure: { kind: 'thread-gone' },
     });
 
     flow.failOn(`GET /user/comments/${POST_ID}/replies/900000102`, { kind: 'network' }, 1);
-    await expect(collectBundleContext(flow, bundle('900000102', [mention({ remarkId: '900000102' })]), NOW)).resolves.toEqual({
+    await expect(collectBundleContext(flow, bundle('900000102', [mention({ remarkId: '900000102' })]), NOW, [ME])).resolves.toEqual({
       ok: false,
       failure: { kind: 'network' },
     });
 
-    await expect(collectBundleContext(new FakeFlowApi(), bundle('-1', [mention()]), NOW)).resolves.toEqual({
+    await expect(collectBundleContext(new FakeFlowApi(), bundle('-1', [mention()]), NOW, [ME])).resolves.toEqual({
       ok: false,
       failure: { kind: 'http', status: 404 },
     });
+  });
+});
+
+describe('맥락 수집: 같은 조회에서 찾는 내 답', () => {
+  it('본문 묶음이면 게시물에 쓴 내 댓글을, 댓글 스레드 묶음이면 그 스레드의 내 대댓글을 돌려준다. 시스템 댓글과 다른 사람의 글은 내 답이 아니다', async () => {
+    const flow = new FakeFlowApi();
+    flow.addPost({ postId: POST_ID, title: '오류 문의', textComponents: [{ contents: '본문', mentions: [] }] });
+    flow.addComment(POST_ID, { commentId: '900000101', contents: '내 댓글', registerId: ME, registeredDateTime: at(10) });
+    flow.addComment(POST_ID, { commentId: '900000102', contents: '상태 변경', registerId: ME, systemCode: 'S13', registeredDateTime: at(11) });
+    flow.addComment(POST_ID, { commentId: '900000103', contents: `${MY_MARKUP} 질문`, registerId: SENDER, registeredDateTime: at(12) });
+    flow.addReply(POST_ID, '900000103', { replyId: '9000301', contents: '내 대댓글', registerId: ME, registeredDateTime: at(13) });
+    flow.addReply(POST_ID, '900000103', { replyId: '9000302', contents: '동료 대댓글', registerId: SENDER, registeredDateTime: at(14) });
+
+    /** 본문 묶음의 결과. */
+    const post = await collectBundleContext(flow, bundle('-1', [mention()]), NOW, [ME]);
+    /** 댓글 스레드 묶음의 결과. */
+    const thread = await collectBundleContext(flow, bundle('900000103', [mention({ remarkId: '900000103' })]), NOW, [ME]);
+
+    expect(post.ok && post.myAnswers).toEqual([{ answerId: '900000101', registeredDateTime: at(10) }]);
+    expect(thread.ok && thread.myAnswers).toEqual([{ answerId: '9000301', registeredDateTime: at(13) }]);
   });
 });
 

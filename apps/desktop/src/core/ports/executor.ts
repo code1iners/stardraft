@@ -66,6 +66,28 @@ export type ExecutorFailureReason =
   /** 그 밖에 에이전트가 오류로 끝냈다(사용량 한도, 모델 없음 등). */
   | 'agent-error';
 
+/** 에이전트가 알려 준 사용량. 알려 주지 않은 값은 `null`이다. */
+export interface ExecutorUsage {
+  /** 비용(미국 달러). */
+  costUsd: number | null;
+  /** 입력 토큰 수. 캐시에 쓰거나 캐시에서 읽은 토큰도 더한다. */
+  inputTokens: number | null;
+  /** 출력 토큰 수. */
+  outputTokens: number | null;
+}
+
+/** 실행 하나가 끝났을 때 실행기가 알려 주는 것. 실행 기록에 남긴다. */
+export interface ExecutorReport {
+  /** 실행 결과. */
+  outcome: ExecutorOutcome;
+  /** 실행에서 본 CLI 버전. 알기 전에 끝났으면 `null`. */
+  cliVersion: string | null;
+  /** 에이전트가 이 실행에 쓴 모델. 알기 전에 끝났으면 `null`. */
+  model: string | null;
+  /** 에이전트가 알려 준 사용량. 결과를 알리지 않고 끝났으면 `null`. */
+  usage: ExecutorUsage | null;
+}
+
 /**
  * 실행기 포트.
  * 에이전트마다 하나씩 두며, 에이전트 실행 계약을 지키는 한 교체할 수 있다.
@@ -73,6 +95,6 @@ export type ExecutorFailureReason =
 export interface Executor {
   /** 이 실행기가 부르는 에이전트. */
   readonly agent: AgentId;
-  /** 에이전트를 한 번 실행한다. */
-  run(request: ExecutorRunRequest): Promise<ExecutorOutcome>;
+  /** 에이전트를 한 번 실행한다. 실패도 실행 보고로 돌려준다. */
+  run(request: ExecutorRunRequest): Promise<ExecutorReport>;
 }

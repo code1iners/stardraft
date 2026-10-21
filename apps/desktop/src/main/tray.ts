@@ -4,7 +4,7 @@ import trayTemplateIcon from '../../resources/trayTemplate.png?asset';
 import type { TrayIndicator } from '../core/tray-indicator';
 import type { GlobalProblemText } from '../shared/global-problem-text';
 import type { SettingsSection } from '../shared/ipc';
-import { countBadgeLabel, drawAlertBadge, drawCountBadge, drawSetupDot } from './tray-badge';
+import { countBadgeLabel, drawAlertBadge, drawCountBadge, drawFailureDot, drawGeneratingDots, drawSetupDot } from './tray-badge';
 
 /** 트레이 아이콘과 메뉴가 부르는 동작. */
 export interface TrayActions {
@@ -30,6 +30,10 @@ interface WindowsBadge {
 
 /** macOS 메뉴 막대 제목에 쓰는 노란 점. 제목 글자는 ANSI 색을 받는다. */
 const MAC_SETUP_DOT = '\x1b[33m●\x1b[0m';
+/** macOS 메뉴 막대 제목에 쓰는 빨간 점(실패 있음). */
+const MAC_FAILURE_DOT = '\x1b[31m●\x1b[0m';
+/** macOS 메뉴 막대 제목에 쓰는 점 세 개(생성 중). */
+const MAC_GENERATING_DOTS = '⋯';
 
 /** Windows 아이콘에 그려 넣을 표시. 덧붙일 표시가 없으면 `null`. */
 function windowsBadgeOf(indicator: TrayIndicator): WindowsBadge | null {
@@ -40,6 +44,10 @@ function windowsBadgeOf(indicator: TrayIndicator): WindowsBadge | null {
       return { key: 'setup-needed', draw: drawSetupDot };
     case 'review-count':
       return { key: `count-${countBadgeLabel(indicator.count)}`, draw: (bitmap, size) => drawCountBadge(bitmap, size, indicator.count) };
+    case 'failure':
+      return { key: 'failure', draw: drawFailureDot };
+    case 'generating':
+      return { key: 'generating', draw: drawGeneratingDots };
     case 'none':
       return null;
   }
@@ -61,6 +69,8 @@ function tooltipNote({ indicator, problem }: TrayView): string | null {
   if (indicator.kind === 'setup-needed') return '설정 필요';
   // Windows 숫자 배지는 10건부터 "9+"이므로 툴팁으로 정확한 수를 알린다.
   if (indicator.kind === 'review-count') return `검토 대기 ${indicator.count}건`;
+  if (indicator.kind === 'failure') return '실패 있음';
+  if (indicator.kind === 'generating') return '초안 생성 중';
   return null;
 }
 
@@ -110,7 +120,7 @@ export class AppTray {
     this.tray.setImage(badge ? this.windowsBadgedIcon(badge) : trayIcon);
   }
 
-  /** 색 아이콘의 오른쪽 아래에 빨간 "!" 배지, 노란 점, 숫자 배지를 그린 아이콘. 고해상도 화면용 2배 이미지에도 그린다. */
+  /** 색 아이콘의 오른쪽 아래에 빨간 "!" 배지, 노란 점, 숫자 배지, 빨간 점, 점 세 개를 그린 아이콘. 고해상도 화면용 2배 이미지에도 그린다. */
   private windowsBadgedIcon({ key, draw }: WindowsBadge): NativeImage {
     /** 이미 만든 아이콘. */
     const cached = this.badgedIcons.get(key);
@@ -164,6 +174,10 @@ function macTitle(indicator: TrayIndicator): string {
       return String(indicator.count);
     case 'setup-needed':
       return MAC_SETUP_DOT;
+    case 'failure':
+      return MAC_FAILURE_DOT;
+    case 'generating':
+      return MAC_GENERATING_DOTS;
     case 'none':
       return '';
   }

@@ -1,9 +1,11 @@
 import type { ReviewSection, ReviewSnapshot, ReviewWindow } from '../shared/ipc';
 
-/** 창마다 영역의 처음 펼침 상태. 작은 창은 원문을 펴고 저장소를 접어 두며, 펼친 창은 모두 편다. */
+/**
+ * 창마다 영역의 처음 펼침 상태. 작은 창은 원문 → 요구 → 초안과 진행을 펴고 근거와 저장소를 접어 두며, 펼친 창은 모두 편다.
+ */
 const INITIAL_SECTIONS: ReviewSnapshot['sections'] = {
-  compact: { original: true, repository: false },
-  expanded: { original: true, repository: true },
+  compact: { original: true, requirement: true, draft: true, evidence: false, repository: false, progress: true },
+  expanded: { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true },
 };
 
 /**

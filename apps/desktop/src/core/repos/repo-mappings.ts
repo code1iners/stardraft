@@ -50,6 +50,15 @@ export interface RepoMappingsState {
   projects: ParticipantProjectsState;
 }
 
+/** Flow 프로젝트의 저장소 매핑을 지금 폴더 상태로 확인한 결과. 초안 실행에 넘길 읽기 범위를 정한다. */
+export type RepoResolution =
+  /** 저장소 매핑이 없다. */
+  | { kind: 'unmapped' }
+  /** 연결된 폴더 가운데 없는 것이 있다. 자동 선택으로 넘어가지 않고 저장소 확인 필요로 올린다. `paths`는 없는 폴더다. */
+  | { kind: 'missing-folders'; paths: string[] }
+  /** 연결된 폴더가 모두 있다. 연결한 순서이고 첫 저장소가 초안 실행의 cwd가 된다. */
+  | { kind: 'mapped'; repos: string[] };
+
 /** 저장소 매핑에 필요한 것. */
 export interface RepoMappingsOptions {
   /** 매핑을 두는 설정 저장소. */
@@ -126,6 +135,33 @@ export class RepoMappings {
   /** 연결된 폴더가 있는지 다시 확인하고 참여 Flow 프로젝트 목록을 다시 받는다. */
   async refresh(): Promise<void> {
     await Promise.all([...this.allPaths()].map((path) => this.check(path)).concat(this.loadProjects()));
+  }
+
+  /** Flow 프로젝트에 연결된 저장소를 지금 폴더 상태로 확인한다. 멘션 묶음을 감지할 때와 초안 실행 직전에 쓴다. */
+  async resolve(projectId: string): Promise<RepoResolution> {
+    /** 연결된 폴더. */
+    const paths = this.mappings[projectId] ?? [];
+    if (paths.length === 0) return { kind: 'unmapped' };
+    /** 폴더마다 있는지 여부. */
+    const found = await Promise.all(paths.map((path) => isFolder(path)));
+    /** 없는 폴더. */
+    const missing = paths.filter((_, index) => !found[index]);
+    return missing.length > 0 ? { kind: 'missing-folders', paths: missing } : { kind: 'mapped', repos: [...paths] };
+  }
+
+  /**
+   * 참여 목록에서 Flow 프로젝트 이름을 찾는다. 초안 실행의 입력 문서에 넣는다.
+   * 목록을 아직 받지 않았거나 받지 못했으면 지금 받아 본다. 받지 못했거나 목록에 없으면 `null`.
+   */
+  async projectTitle(projectId: string): Promise<string | null> {
+    if (this.projects.status !== 'loaded') await this.loadProjects();
+    return this.loadedProjectTitle(projectId);
+  }
+
+  /** 받은 참여 목록에서 Flow 프로젝트 이름을 찾는다. 이름이 비어 있으면 모르는 것으로 본다. */
+  private loadedProjectTitle(projectId: string): string | null {
+    if (this.projects.status !== 'loaded') return null;
+    return this.projects.projects.find((project) => project.projectId === projectId)?.title || null;
   }
 
   /**

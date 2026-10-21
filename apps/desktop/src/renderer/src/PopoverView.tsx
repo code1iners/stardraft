@@ -68,8 +68,8 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음과 대기열. */
   const { queue, selected, select } = selection;
-  /** [무시]·[되돌리기]와 무시 토스트. */
-  const { toast, ignore, restore } = useBundleActions(selection);
+  /** [무시]·[되돌리기]·[취소]·[다시 시도]와 무시 토스트. */
+  const { toast, ignore, restore, cancel, retry } = useBundleActions(selection);
 
   /** 펼친 창을 연다. 작은 창은 main이 닫는다. */
   const handleExpand = () => {
@@ -85,7 +85,13 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
             <BundleMeta bundle={selected} />
             <BundleSections bundle={selected} windowKind="compact" sections={sections} />
           </main>
-          <BundleFooter bundle={selected} onIgnore={() => ignore(selected)} onRestore={() => restore(selected.id)} />
+          <BundleFooter
+            bundle={selected}
+            onIgnore={() => ignore(selected)}
+            onRestore={() => restore(selected.id)}
+            onCancel={() => cancel(selected.id)}
+            onRetry={() => retry(selected.id)}
+          />
         </>
       ) : (
         <>

@@ -234,9 +234,9 @@ export class MentionBundles {
 
       /** 이 PC가 게시한 글마다 그 글이 답한 멘션 위치. */
       const ranges = this.postedRanges();
-      /** 저장할 묶음. 자리마다 조회한 결과로 "이미 답함"을 판정한다. */
       /** 이번에 바뀌는 묶음과 새로 넣은 멘션. `updated`와 같은 순서다. */
       const entries = [...touched.values()];
+      /** 저장할 묶음. 자리마다 조회한 결과로 "이미 답함"을 판정한다. */
       const updated = [...touched].map(([place, { bundle, added }]) => {
         return applyDetection(bundle, added, lookups.get(place), now, ranges);
       });
@@ -698,12 +698,12 @@ export class MentionBundles {
       }
 
       /** 조회한 내용을 반영한 묶음. 아직 게시 중이다. */
-      const checked = applyWatch(latest, observed, this.options.clock.now(), this.postedRanges());
+      const checkedBundle = applyWatch(latest, observed, this.options.clock.now(), this.postedRanges());
       /** 누를 때 화면에 없던 변화. */
-      const unseen = unseenChanges(latest, checked);
+      const unseen = unseenChanges(latest, checkedBundle);
       /** 게시를 멈춘 까닭. 멈추지 않으면 `null`. */
       let stop: PostStop | null = null;
-      if (checked.status === 'already-answered' || checked.status === 'source-gone') stop = { kind: checked.status };
+      if (checkedBundle.status === 'already-answered' || checkedBundle.status === 'source-gone') stop = { kind: checkedBundle.status };
       else if (unseen.newWritings.length > 0 || unseen.editedWritings.length > 0 || unseen.goneMentions > 0) {
         stop = {
           kind: 'changed',
@@ -714,13 +714,14 @@ export class MentionBundles {
         };
       }
       if (!stop) {
-        check.answeredMentions = activeMentions(checked).map(mentionLocationOf);
+        // 알림 줄에 새 글로 떠 있던, 아직 알림이 오지 않은 나를 멘션한 글도 사용자가 보고 누른 것이라 범위에 넣는다.
+        check.answeredMentions = uniqueLocations([...activeMentions(checkedBundle).map(mentionLocationOf), ...(result?.ok ? result.myMentions : [])]);
         this.options.logger.info('bundle.post-check-passed', { bundleId });
         return 'passed';
       }
 
       /** 게시를 멈춘 묶음. 화면에 없던 변화면 준비됨으로 돌려 알림 줄을 붙인다. */
-      const next: MentionBundle = stop.kind === 'changed' ? { ...checked, status: 'ready' } : checked;
+      const next: MentionBundle = stop.kind === 'changed' ? { ...checkedBundle, status: 'ready' } : checkedBundle;
       await this.options.stateStore.saveBundle(next);
       this.bundles = this.bundles.map((item) => (item.id === bundleId ? next : item));
       this.postChecks.delete(bundleId);
@@ -763,7 +764,7 @@ export class MentionBundles {
    */
   async recordPostRequest(bundleId: number): Promise<string | null> {
     /** 게시를 누를 때 조회한 내용에 있던 멘션. 조회하지 못했으면 `null`. */
-    const checked = this.postChecks.get(bundleId)?.answeredMentions ?? null;
+    const checkedMentions = this.postChecks.get(bundleId)?.answeredMentions ?? null;
     /** 게시 기록을 저장한 묶음. */
     const changed = await this.change(
       bundleId,
@@ -775,7 +776,7 @@ export class MentionBundles {
         if (body === null) return { ...bundle, status: 'ready' };
         // 조회하지 못했으면, 확인이 끝나기 전의 새 멘션은 게시를 멈추므로 지금 남은 멘션이 곧 [게시]를 누를 때 본 멘션이다.
         /** 이 글이 답한 멘션 위치. */
-        const answeredMentions = checked ? structuredClone(checked) : activeMentions(bundle).map(mentionLocationOf);
+        const answeredMentions = checkedMentions ? structuredClone(checkedMentions) : activeMentions(bundle).map(mentionLocationOf);
         return { ...bundle, posting: { body, sentAt: this.options.clock.now(), postedId: null, failure: null, answeredMentions } };
       },
       () => this.postChecks.delete(bundleId),
@@ -862,13 +863,13 @@ export class MentionBundles {
 
   /**
    * 묶음 하나를 `update`로 바꿔 저장한다. `update`가 `null`을 돌려주면 바꾸지 않는다. 바꾼 묶음을 돌려주고, 바꾸지 않았거나 없는 묶음이면 `null`.
-   * `saved`는 바꿔 저장했을 때 같은 줄 안에서 듣는 쪽에 알리기 전에 한다. 메모리에만 두는 값을 저장한 묶음과 함께 바꿀 때 쓴다.
+   * `onSaved`는 바꿔 저장했을 때 같은 줄 안에서 듣는 쪽에 알리기 전에 한다. 메모리에만 두는 값을 저장한 묶음과 함께 바꿀 때 쓴다.
    */
   private change(
     bundleId: number,
     event: string,
     update: (bundle: MentionBundle) => MentionBundle | null,
-    saved?: () => void,
+    onSaved?: () => void,
   ): Promise<MentionBundle | null> {
     return this.lane.run(async () => {
       /** 바꿀 묶음. */
@@ -879,7 +880,7 @@ export class MentionBundles {
 
       await this.options.stateStore.saveBundle(next);
       this.bundles = this.bundles.map((item) => (item.id === bundleId ? next : item));
-      saved?.();
+      onSaved?.();
       this.options.logger.info(event, { bundleId, status: next.status });
       this.emit();
       return structuredClone(next);
@@ -1181,6 +1182,19 @@ function mergeAnswers(recorded: readonly RecordedAnswer[], fetched: readonly MyA
   /** 빼기로 기록한 답의 ID. */
   const excludedIds = new Set(excluded.map((answer) => answer.answerId));
   return [...excluded, ...fetched.filter((answer) => !excludedIds.has(answer.answerId)).map((answer) => ({ ...answer, excluded: false }))];
+}
+
+/** 같은 멘션 위치를 한 번씩만 남긴다. 처음 나온 순서다. */
+function uniqueLocations(locations: readonly MentionLocation[]): MentionLocation[] {
+  /** 이미 넣은 위치. */
+  const seen = new Set<string>();
+  return locations.filter((location) => {
+    /** 멘션 위치. */
+    const key = mentionLocationKey(location);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** 사라진 멘션을 사라짐 판정에서 빼기로 기록한다. 기록한 멘션은 다시 묶음에 든다. */

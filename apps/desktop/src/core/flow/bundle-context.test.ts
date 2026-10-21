@@ -228,6 +228,32 @@ describe('맥락 수집: 같은 조회에서 찾는 내 답', () => {
   });
 });
 
+describe('맥락 수집: 묶음 자리에서 나를 지목한 글', () => {
+  it('본문 묶음이면 본문이 나를 지목할 때 본문 멘션 위치를, 댓글 스레드 묶음이면 나를 지목한 머리 댓글과 대댓글의 위치를 돌려준다. 묶음에 아직 없는 글도 든다', async () => {
+    const flow = new FakeFlowApi();
+    flow.addPost({ postId: POST_ID, title: '오류 문의', textComponents: [{ contents: `${MY_MARKUP} 본문`, mentions: [ME] }] });
+    flow.addComment(POST_ID, { commentId: '900000103', contents: `${MY_MARKUP} 질문`, registerId: SENDER, registeredDateTime: at(12) });
+    flow.addReply(POST_ID, '900000103', { replyId: '9000301', contents: '멘션 없는 대댓글', registerId: SENDER, registeredDateTime: at(13) });
+    flow.addReply(POST_ID, '900000103', { replyId: '9000302', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registeredDateTime: at(14) });
+
+    /** 본문 묶음의 결과. */
+    const post = await collectBundleContext(flow, bundle('-1', [mention()]), NOW, [ME]);
+    /** 댓글 스레드 묶음의 결과. 묶음에는 머리 댓글 멘션만 있다. */
+    const thread = await collectBundleContext(flow, bundle('900000103', [mention({ remarkId: '900000103' })]), NOW, [ME]);
+
+    expect(post.ok && post.myMentions).toEqual([{ postId: POST_ID, remarkId: '-1', replyId: '-1' }]);
+    expect(thread.ok && thread.myMentions).toEqual([
+      { postId: POST_ID, remarkId: '900000103', replyId: '-1' },
+      { postId: POST_ID, remarkId: '900000103', replyId: '9000302' },
+    ]);
+
+    flow.editPost(POST_ID, [{ contents: '본문', mentions: [] }]);
+    /** 본문의 표기를 지운 뒤의 결과. */
+    const edited = await collectBundleContext(flow, bundle('-1', [mention()]), NOW, [ME]);
+    expect(edited.ok && edited.myMentions).toEqual([]);
+  });
+});
+
 /** 맥락의 글 하나. 기본은 멘션이 아닌 짧은 글이다. */
 function remark(id: string, contents: string, overrides: Partial<ContextRemark> = {}): ContextRemark {
   return { id, authorId: 'colleague@example.test', authorName: '동료', registeredDateTime: '20261020081000', contents, attachments: [], mention: false, ...overrides };

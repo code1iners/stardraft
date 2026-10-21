@@ -70,7 +70,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음과 대기열. */
   const { queue, selected, select, movedWhileViewing } = selection;
-  /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패 토스트. */
+  /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
   const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 연다. 작은 창은 main이 닫는다. */

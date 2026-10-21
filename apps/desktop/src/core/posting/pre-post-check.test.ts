@@ -483,6 +483,28 @@ describe('게시를 누를 때의 확인: 그사이 들어온 멘션', () => {
     expect((await stateStore.listBundles()).find((bundle) => bundle.id === bundleId)?.posting?.answeredMentions).toEqual([THREAD_MENTION]);
   });
 
+  it('알림 줄에 "새 글"로 떠 있던 나를 멘션한 글을 보고 게시하면, 그 멘션도 답한 범위에 들어 나중에 온 그 알림은 이미 답함이 된다', async () => {
+    const { clock, flow, stateStore, bundles, posting, bundleId, stops, poll, postCount } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더요`, registerId: COLLEAGUE, registerName: '이영희', registeredDateTime: '20261020085800' });
+    // 알림은 아직 오지 않았고, 변화 감시가 알림 줄에 새 글로 띄운다.
+    await poll();
+    expect(bundleChanges(bundles.get(bundleId)!).newWritings).toEqual(['reply:801']);
+
+    await posting.post(bundleId);
+    await settle();
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    expect(postCount()).toBe(1);
+    expect(stops).toEqual([]);
+    expect((await stateStore.listBundles()).find((bundle) => bundle.id === bundleId)?.posting?.answeredMentions).toEqual([
+      THREAD_MENTION,
+      { postId: POST_ID, remarkId: '700', replyId: '801' },
+    ]);
+
+    await poll(alarm('102', { replyId: '801', registerId: COLLEAGUE, registerName: '이영희', registeredDateTime: '20261020085800' }));
+    expect(bundles.state().find((bundle) => bundle.id !== bundleId)?.status).toBe('already-answered');
+  });
+
   it('조회하지 못하고 게시했으면 게시 요청을 보낼 때 묶음에 남은 멘션을 답한 범위로 저장한다', async () => {
     const { clock, flow, stateStore, posting, bundleId, postCount } = await setup();
     flow.failOn(THREAD_COMMENTS, { kind: 'http', status: 503 }, 1);

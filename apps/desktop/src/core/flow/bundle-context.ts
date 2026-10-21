@@ -98,9 +98,11 @@ export function mentionWritingOf(context: BundleContext, mention: MentionLocatio
  * 맥락을 모은 결과. 같은 조회에서 찾은 묶음 자리의 내 답도 함께 돌려준다. 초안을 만들기 직전과 준비된 뒤의 "이미 답함" 판정에 쓴다.
  * 내 답은 본문 묶음이면 게시물에 쓴 내 댓글, 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다. 시스템 댓글은 들지 않는다.
  * `goneMentions`는 묶음의 멘션 가운데 지금 Flow에서 사라진 것(글이 지워짐, 수정되어 나를 지목하지 않음)이다. 준비된 뒤의 변화 감시가 쓴다.
+ * `myMentions`는 묶음 자리에서 지금 나를 지목한 글의 멘션 위치다. 아직 알림이 오지 않은 글도 든다. 본문 묶음이면 게시물 본문,
+ * 댓글 스레드 묶음이면 머리 댓글과 대댓글이다. 게시를 누를 때의 확인이 이 PC가 게시할 글이 답한 범위로 쓴다.
  */
 export type BundleContextResult =
-  | { ok: true; context: BundleContext; myAnswers: MyAnswer[]; goneMentions: MentionLocation[] }
+  | { ok: true; context: BundleContext; myAnswers: MyAnswer[]; goneMentions: MentionLocation[]; myMentions: MentionLocation[] }
   | { ok: false; failure: BundleContextFailure };
 
 /** 맥락을 모을 묶음. 자리와 멘션만 본다. */
@@ -140,6 +142,8 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   /** 멘션이 일어난 글이 지금도 나를 지목하는지 보는 함수. 본문 묶음이면 게시물 본문이다. */
   let stillMentions = (mention: MentionLocation): boolean =>
     mentionPlaceOf(mention) === 'post' && myIds.some((id) => postBodyMentions(post.value.textComponents, id));
+  /** 묶음 자리에서 지금 나를 지목한 글의 멘션 위치. 본문 묶음이면 게시물 본문이다. */
+  let myMentions: MentionLocation[] = [{ postId: bundle.postId, remarkId: '-1', replyId: '-1' }].filter((location) => postBody && stillMentions(location));
   if (!postBody) {
     /** 대상 댓글 스레드의 머리 댓글. */
     const head = comments.find((comment) => comment.commentId === bundle.remarkId);
@@ -164,6 +168,12 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
           return false;
       }
     };
+    myMentions = [
+      ...(mentionsAnyOf(head.contents, myIds) ? [{ postId: bundle.postId, remarkId: head.commentId, replyId: '-1' }] : []),
+      ...humanReplies
+        .filter((reply) => mentionsAnyOf(reply.contents, myIds))
+        .map((reply) => ({ postId: bundle.postId, remarkId: head.commentId, replyId: reply.replyId })),
+    ];
   }
 
   /** 멘션 표시를 하기 전의 맥락. */
@@ -195,6 +205,7 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     context: markContextMentions(context, bundle),
     myAnswers,
     goneMentions: bundle.mentions.filter((mention) => !stillMentions(mention)).map(mentionLocationOf),
+    myMentions,
   };
 }
 

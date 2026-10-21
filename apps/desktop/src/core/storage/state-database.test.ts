@@ -24,7 +24,7 @@ const OLD_ACCOUNT: FlowEmployee = { userId: 'old@example.test', name: '옛 사�
 /** 새로 연결한 가짜 계정. */
 const NEW_ACCOUNT: FlowEmployee = { userId: 'new@example.test', name: '새 사용자', division: '새 팀', email: 'new@example.test' };
 
-// 상태 저장소 포트에는 아직 행을 지우는 동작이 없어서, 연 DB에 지울 행을 직접 만들어 검사한다.
+// 포트를 거치지 않고 연결 설정만 보려고, 연 DB에 지울 행을 직접 만들어 검사한다.
 // 한 줄짜리 값을 덮어쓰는 것만으로는 secure_delete를 꺼도 흔적이 남지 않아 구분되지 않는다.
 describe('state.db 연결', () => {
   it('지운 행의 내용이 state.db 파일에 남지 않는다(secure_delete)', () => {
@@ -742,5 +742,119 @@ describe('멘션 묶음', () => {
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
     expect((await store.listBundles()).map(({ status, posting }) => ({ status, posting }))).toEqual([{ status: 'ready', posting: null }]);
+  });
+});
+
+describe('최소 기록', () => {
+  /** 게시됨 본문 묶음의 최소 기록. 올린 글은 본문 멘션과, 게시를 누를 때 조회한 내용에 있던 댓글 멘션에 답했다. */
+  const POSTED_RECORD = {
+    bundleId: 1,
+    postId: '90000011',
+    remarkId: '-1',
+    mentions: [{ postId: '90000011', remarkId: '-1', replyId: '-1' }],
+    status: 'posted' as const,
+    processedAt: 6_000,
+    postedId: '950000001',
+    answeredMentions: [
+      { postId: '90000011', remarkId: '-1', replyId: '-1' },
+      { postId: '90000011', remarkId: '701', replyId: '-1' },
+    ],
+  };
+
+  it('묶음을 최소 기록으로 바꾸면 묶음·멘션·내 답은 지우고, 다시 열어도 최소 기록과 그 멘션 위치는 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles(
+      [
+        bundle([mention('101')], {
+          status: 'posted',
+          processedAt: 6_000,
+          answers: [{ answerId: '950000001', registeredDateTime: '20261020090000', excluded: false }],
+          posting: { body: '가짜 답', sentAt: 5_000, postedId: '950000001', failure: null, answeredMentions: POSTED_RECORD.answeredMentions },
+        }),
+        bundle([mention('102', { postId: '90000012' })], { status: 'ready' }),
+      ],
+      '102',
+    );
+
+    await store.archiveBundles([POSTED_RECORD]);
+
+    /** 다시 연 저장소. */
+    const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    expect((await reopened.listBundles()).map(({ id, postId }) => ({ id, postId }))).toEqual([{ id: 2, postId: '90000012' }]);
+    await expect(reopened.listMinimalRecords()).resolves.toEqual([POSTED_RECORD]);
+    await expect(reopened.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(true);
+    await expect(reopened.hasMentionLocation({ postId: '90000011', remarkId: '701', replyId: '-1' })).resolves.toBe(false);
+  });
+
+  it('최소 기록으로 바꾼 묶음의 Flow 원문·송신자 이름·초안·게시 본문은 state.db와 WAL 어디에도 남지 않는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const store = new SqliteStateStore(db);
+    /** 지울 글. 파일에서 찾기 쉽게 길게 둔다. */
+    const secret = (label: string) => `${label} ${'q'.repeat(40)}`;
+    await store.saveDetectedBundles(
+      [
+        bundle([mention('101', { text: secret('가짜 원문'), senderName: secret('가짜 송신자') })], {
+          status: 'ignored',
+          processedAt: 6_000,
+          editedText: secret('가짜 편집본'),
+          directives: [secret('가짜 지시')],
+        }),
+      ],
+      '101',
+    );
+
+    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', postedId: null, answeredMentions: [] }]);
+
+    for (const label of ['가짜 원문', '가짜 송신자', '가짜 편집본', '가짜 지시']) {
+      expect(readFileSync(path).includes(Buffer.from(label))).toBe(false);
+      expect(readFileSync(`${path}-wal`).includes(Buffer.from(label))).toBe(false);
+    }
+    db.close();
+  });
+
+  it('지운 묶음의 ID는 최소 기록으로 바꾼 뒤에도 다시 쓰지 않는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 6_000 })], '101');
+    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', postedId: null, answeredMentions: [] }]);
+
+    /** 새로 저장한 묶음. */
+    const [saved] = await store.saveDetectedBundles([bundle([mention('102', { postId: '90000012' })])], '102');
+
+    expect(saved?.id).toBe(2);
+  });
+
+  it('다른 계정으로 처음부터 시작하면 최소 기록도 지운다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 6_000 })], '101');
+    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', postedId: null, answeredMentions: [] }]);
+
+    await store.resetForAccount(NEW_ACCOUNT);
+
+    await expect(store.listMinimalRecords()).resolves.toEqual([]);
+    await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
+  });
+
+  it('형식 13에서 올리면 최소 기록 없이 이미 있던 묶음이 그대로 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 13으로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 13), '0.0.13');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'ignored', '가짜 게시물', NULL, 0, 1000, 6000)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ status, processedAt }) => ({ status, processedAt }))).toEqual([{ status: 'ignored', processedAt: 6_000 }]);
+    await expect(store.listMinimalRecords()).resolves.toEqual([]);
   });
 });

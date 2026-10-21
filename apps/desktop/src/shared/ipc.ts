@@ -331,16 +331,23 @@ export interface OnboardingSnapshot {
   start: DetectionStartSnapshot;
 }
 
-/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시됨, 무시함, 이미 답함이다. */
+/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시 실패, 게시됨, 무시함, 이미 답함이다. */
 export type BundleStatusSnapshot =
   | 'generating'
   | 'ready'
   | 'repo-check-needed'
   | 'posting'
   | 'failed'
+  | 'post-failed'
   | 'posted'
   | 'ignored'
   | 'already-answered';
+
+/**
+ * 게시 실패의 사유. 권한 없음(`403`), 지워짐(`404`, `412`), 받지 않음(`400`, `422` 등), 요청 한도 초과(`429` 두 번),
+ * 응답 없음(응답이 없거나 `5xx`였고 다시 조회해도 올라간 글이 없음)이다.
+ */
+export type PostFailureSnapshot = 'forbidden' | 'gone' | 'rejected' | 'rate-limited' | 'no-response';
 
 /** 게시 중 묶음의 단계. */
 export type PostingSnapshot =
@@ -463,8 +470,10 @@ export interface DraftSnapshot {
   editorText: string;
   /** 편집했는지 여부. 참이면 근거 번호를 감추고 "원래 초안으로 되돌리기"를 보인다. */
   edited: boolean;
-  /** 편집기를 고치고 받는 사람을 뺄 수 있는지 여부. 준비됨 묶음만 참이다. */
+  /** 편집기를 고치고 받는 사람을 뺄 수 있는지 여부. 준비됨과 게시 실패 묶음만 참이다. */
   canEdit: boolean;
+  /** 요구를 고쳐 다시 만들 수 있는지 여부(망치 아이콘). 준비됨 묶음만 참이다. */
+  canRegenerate: boolean;
   /** 받는 사람. 처음 멘션한 순서다. 사용자 ID는 main이 가지고 있다. */
   recipients: RecipientSnapshot[];
   /**
@@ -472,7 +481,7 @@ export interface DraftSnapshot {
    * 글자 수는 이 값에 앞뒤 공백을 뗀 편집기 텍스트의 길이를 더한 것이다.
    */
   postBodyPrefixLength: number;
-  /** [게시]를 켤지 여부. 준비됨 묶음이고, 편집기 텍스트가 비지 않았고, 게시 본문이 4,000자를 넘지 않을 때만 참이다. */
+  /** [게시]·[다시 게시]를 켤지 여부. 준비됨이나 게시 실패 묶음이고, 편집기 텍스트가 비지 않았고, 게시 본문이 4,000자를 넘지 않을 때만 참이다. */
   canPost: boolean;
 }
 
@@ -625,6 +634,8 @@ export interface BundleSnapshot {
   repoCheck: RepoCheckSnapshot | null;
   /** 게시 중 묶음의 단계. 게시 중이 아니면 `null`. */
   posting: PostingSnapshot | null;
+  /** 게시 실패의 사유. 상세 머리에 한 줄로 보인다. 게시 실패가 아니면 `null`. */
+  postFailure: PostFailureSnapshot | null;
 }
 
 /** 묶음을 보는 창. 작은 창(`compact`)과 펼친 창(`expanded`)이다. */
@@ -727,7 +738,9 @@ export type AppEvent =
   /** 멘션 묶음이나 영역 펼침 상태가 바뀌었다. */
   | { type: 'review-changed'; review: ReviewSnapshot }
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
-  | { type: 'review-bundle-requested'; bundleId: number };
+  | { type: 'review-bundle-requested'; bundleId: number }
+  /** 묶음의 게시가 실패했다. 다른 묶음을 보고 있어도 토스트를 한 번 띄운다. */
+  | { type: 'post-failed'; bundleId: number };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =

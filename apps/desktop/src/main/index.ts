@@ -214,7 +214,13 @@ function start(): void {
     });
     mentionBundles.onChange(() => repoPicker.bundlesChanged());
     /** [게시]. 5초 카운트다운 뒤 지금 키로 묶음 자리에 댓글이나 대댓글을 단다. */
-    const bundlePosting = new Posting({ bundles: mentionBundles, connectFlow: connectCurrentFlow, clock: systemClock, logger });
+    const bundlePosting = new Posting({
+      bundles: mentionBundles,
+      connectFlow: connectCurrentFlow,
+      myUserId: () => flowAccount.state().account?.userId ?? null,
+      clock: systemClock,
+      logger,
+    });
     posting = bundlePosting;
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
     // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.
@@ -327,13 +333,13 @@ function start(): void {
       quit: () => app.quit(),
     });
     tray = appTray;
-    /** 전역 문제, 감지 시작 여부, 묶음 상태(검토 대기 수, 실패, 생성 중)에 맞춰 트레이 표시를 바꾼다. */
+    /** 전역 문제, 감지 시작 여부, 묶음 상태(검토 대기 수, 실패·게시 실패, 생성 중)에 맞춰 트레이 표시를 바꾼다. */
     const refreshTray = () =>
       appTray.show(
         trayView(globalProblems.current(), {
           setupNeeded: !onboarding.state().detectionStarted,
           reviewCount: mentionBundles.reviewCount(),
-          hasFailure: mentionBundles.idsWithStatus('failed').length > 0,
+          hasFailure: mentionBundles.hasFailure(),
           generating: mentionBundles.idsWithStatus('generating').length > 0,
         }),
       );

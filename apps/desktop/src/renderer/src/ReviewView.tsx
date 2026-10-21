@@ -1,5 +1,5 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleSections, OpenInFlowButton, RunLine, StatusTag, ToastStack } from './BundleDetail';
+import { BundleFooter, BundleSections, OpenInFlowButton, PostFailureLine, RunLine, StatusTag, ToastStack } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
@@ -40,8 +40,8 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음. */
   const { selected, select } = selection;
-  /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]와 무시 토스트. */
-  const { toast, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
+  /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패 토스트. */
+  const { toast, failedToasts, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {
@@ -70,6 +70,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                     <OpenInFlowButton bundle={selected} />
                   </div>
                   <RunLine bundle={selected} />
+                  <PostFailureLine bundle={selected} />
                 </div>
                 <StatusTag status={selected.status} />
                 <button type="button" className="btn sm" onClick={handleCollapse}>
@@ -102,7 +103,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
           )}
         </section>
       </div>
-      <ToastStack bundles={bundles} ignoreToast={toast} onRestore={restore} onCancelPost={cancelPost} />
+      <ToastStack bundles={bundles} ignoreToast={toast} failedToasts={failedToasts} onRestore={restore} onCancelPost={cancelPost} />
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
     </div>

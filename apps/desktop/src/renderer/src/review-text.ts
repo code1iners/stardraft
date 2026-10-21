@@ -9,6 +9,7 @@ import {
   type GenerationSnapshot,
   type MappingMatchSnapshot,
   type MentionPlaceSnapshot,
+  type PostFailureSnapshot,
   type RepoCheckSnapshot,
   type RepoChoiceGroupSnapshot,
   type RunLineSnapshot,
@@ -22,6 +23,7 @@ export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; c
   'repo-check-needed': { label: '저장소 확인 필요', className: 'warn' },
   posting: { label: '게시 중', className: 'generating' },
   failed: { label: '실패', className: 'failed' },
+  'post-failed': { label: '게시 실패', className: 'failed' },
   posted: { label: '게시됨', className: 'done' },
   ignored: { label: '무시함', className: 'done' },
   'already-answered': { label: '이미 답함', className: 'done' },
@@ -106,6 +108,20 @@ export function postingFooterText(secondsLeft: number | null): string {
 /** 카운트다운 토스트 문구. 예: 5초 뒤 게시합니다: 김철수님 멘션 */
 export function countdownToastText(bundle: BundleSnapshot, secondsLeft: number): string {
   return `${countdownText(secondsLeft)}: ${senderLine(bundle.senderNames)}님 멘션`;
+}
+
+/** 게시 실패의 사유마다 상세 머리에 보일 쉬운 말 한 줄. */
+export const POST_FAILURE_TEXT: Record<PostFailureSnapshot, string> = {
+  forbidden: '이 글에 댓글을 쓸 권한이 없습니다',
+  gone: '글이나 댓글이 지워졌습니다',
+  rejected: 'Flow가 글을 받지 않았습니다(길이 등)',
+  'rate-limited': 'Flow 요청 한도를 넘었습니다',
+  'no-response': 'Flow가 응답하지 않았습니다',
+};
+
+/** 게시 실패 토스트 문구. 예: 게시하지 못했습니다: 김철수님 멘션 */
+export function postFailedToastText(bundle: BundleSnapshot): string {
+  return `게시하지 못했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
 }
 
 /**

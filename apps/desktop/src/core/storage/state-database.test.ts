@@ -599,27 +599,48 @@ describe('멘션 묶음', () => {
     ]);
   });
 
-  it('게시 기록(보내기 전 기록과 올라간 글의 ID)을 다시 열어도 그대로 읽는다', async () => {
+  it('게시 기록(보내기 전 기록, 올라간 글의 ID, 게시 실패의 사유)을 다시 열어도 그대로 읽는다', async () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
     await store.saveDetectedBundles(
       [
-        bundle([mention('101')], { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null } }),
-        bundle([mention('102', { postId: '90000012' })], { status: 'posted', processedAt: 6_000, posting: { body: '답', sentAt: 6_000, postedId: '950000001' } }),
+        bundle([mention('101')], { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null, failure: null } }),
+        bundle([mention('102', { postId: '90000012' })], { status: 'posted', processedAt: 6_000, posting: { body: '답', sentAt: 6_000, postedId: '950000001', failure: null } }),
         bundle([mention('103', { postId: '90000013' })], { status: 'ready' }),
+        bundle([mention('104', { postId: '90000014' })], { status: 'post-failed', posting: { body: '답', sentAt: 7_000, postedId: null, failure: 'no-response' } }),
       ],
-      '103',
+      '104',
     );
 
     /** 다시 연 저장소에서 읽은 묶음. */
     const reopened = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
 
     expect(reopened.map(({ status, posting }) => ({ status, posting }))).toEqual([
-      { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null } },
-      { status: 'posted', posting: { body: '답', sentAt: 6_000, postedId: '950000001' } },
+      { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null, failure: null } },
+      { status: 'posted', posting: { body: '답', sentAt: 6_000, postedId: '950000001', failure: null } },
       { status: 'ready', posting: null },
+      { status: 'post-failed', posting: { body: '답', sentAt: 7_000, postedId: null, failure: 'no-response' } },
     ]);
+  });
+
+  it('게시 실패의 사유가 생기기 전에 적은 게시 기록은 사유 없이 읽는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 12로 만든 DB. 게시 기록에 사유가 없다. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 12), '0.0.12');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at, posting)
+         VALUES ('90000011', '-1', '900001', 'posting', '가짜 게시물', NULL, 0, 1000, NULL, '{"body":"답","sentAt":5000,"postedId":null}')`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 연 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ posting }) => posting)).toEqual([{ body: '답', sentAt: 5_000, postedId: null, failure: null }]);
   });
 
   it('형식 11에서 올리면 이미 있던 묶음은 게시 기록 없이 남는다', async () => {

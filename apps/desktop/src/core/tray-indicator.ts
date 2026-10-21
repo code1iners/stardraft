@@ -8,7 +8,7 @@ export type TrayIndicator =
   | { kind: 'review-count'; count: number }
   /** 노란 점("설정 필요"). 감지를 시작하기 전이다. */
   | { kind: 'setup-needed' }
-  /** 빨간 점. 실패한 묶음이 있다. */
+  /** 빨간 점. 실패나 게시 실패 묶음이 있다. */
   | { kind: 'failure' }
   /** 점 세 개. 생성 중인 묶음이 있다. */
   | { kind: 'generating' };
@@ -21,7 +21,7 @@ export interface TrayIndicatorInput {
   reviewCount: number;
   /** 감지를 시작하기 전인지 여부. */
   setupNeeded: boolean;
-  /** 실패한 묶음이 있는지 여부. */
+  /** 실패나 게시 실패 묶음이 있는지 여부. */
   hasFailure: boolean;
   /** 생성 중인 묶음이 있는지 여부. */
   generating: boolean;

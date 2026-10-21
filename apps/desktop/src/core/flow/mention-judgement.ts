@@ -29,6 +29,20 @@ export interface MyAnswer {
   registeredDateTime: string;
 }
 
+/** 묶음 자리에서 찾은 내 글과 그 내용. 게시 결과를 모를 때 게시 본문과 견준다. */
+export interface MyWriting {
+  /** 댓글이면 `commentId`, 대댓글이면 `replyId`. */
+  answerId: string;
+  /** 글. Flow는 보낸 문자열을 그대로 저장한다. */
+  contents: string;
+}
+
+/** 묶음 자리의 내 글을 조회한 결과. 자리가 지워졌거나(`gone`) 볼 수 없으면(`forbidden`) `dropped`, 조회하지 못했으면 `undecided`다. */
+export type MyWritingsLookup =
+  | { kind: 'found'; writings: MyWriting[] }
+  | { kind: 'dropped'; reason: MentionDropReason }
+  | { kind: 'undecided'; failure: FlowApiFailure };
+
 /** 감지할 때 묶음 자리를 Flow에서 조회한 결과. 조회하지 못한 값은 `null`이다. */
 export interface PlaceLookup {
   /** 게시물 제목과 "Flow에서 열기" 주소. */
@@ -98,14 +112,31 @@ export class MentionJudge {
    * `myIds`는 내 사용자 ID들이다. 조회하지 못하면(머리 댓글이 지워진 경우 포함) `null`이다.
    */
   async myAnswers(place: RemarkPlace, myIds: readonly string[]): Promise<MyAnswer[] | null> {
-    if (isPostBody(place)) {
-      /** 게시물의 댓글. */
-      const comments = await this.comments(place.postId);
-      return comments.kind === 'found' ? myAnswersAmong([...comments.value.values()], myIds) : null;
-    }
-    /** 댓글 스레드의 대댓글 전부. */
-    const replies = await this.threadReplies(place.postId, place.remarkId);
-    return replies.kind === 'found' ? myAnswersAmong(replies.value, myIds) : null;
+    /** 묶음 자리의 글. */
+    const remarks = await this.placeRemarks(place);
+    return remarks.kind === 'found' ? myAnswersAmong(remarks.value, myIds) : null;
+  }
+
+  /**
+   * 묶음 자리에 내가 쓴 글을 내용과 함께 조회한다. 본문 묶음이면 게시물의 내 댓글(대댓글 제외), 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다.
+   * 게시 요청의 응답을 받지 못했을 때 실제로 올라갔는지 확인하는 데 쓴다. `myIds`는 내 사용자 ID들이다.
+   */
+  async myWritings(place: RemarkPlace, myIds: readonly string[]): Promise<MyWritingsLookup> {
+    /** 묶음 자리의 글. */
+    const remarks = await this.placeRemarks(place);
+    if (remarks.kind !== 'found') return remarks;
+    return {
+      kind: 'found',
+      writings: remarks.value.filter((remark) => isMine(remark, myIds)).map((remark) => ({ answerId: remarkIdOf(remark), contents: remark.contents })),
+    };
+  }
+
+  /** 묶음 자리의 글. 본문 묶음이면 게시물의 댓글, 댓글 스레드 묶음이면 그 스레드의 대댓글 전부다. */
+  private async placeRemarks(place: RemarkPlace): Promise<Fetched<(FlowComment | FlowReply)[]>> {
+    if (!isPostBody(place)) return this.threadReplies(place.postId, place.remarkId);
+    /** 게시물의 댓글. */
+    const comments = await this.comments(place.postId);
+    return comments.kind === 'found' ? found([...comments.value.values()]) : comments;
   }
 
   /** 멘션 위치의 글을 조회해, 그 내용과 누구를 지목했는지 보는 함수를 돌려준다. */
@@ -217,8 +248,18 @@ function markupText(contents: string): { text: string; mentions: (userId: string
  */
 export function myAnswersAmong(remarks: readonly (FlowComment | FlowReply)[], myIds: readonly string[]): MyAnswer[] {
   return remarks
-    .filter((remark) => remark.systemCode === '' && myIds.some((id) => isSameFlowUser(remark.registerId, id)))
-    .map((remark) => ({ answerId: 'replyId' in remark ? remark.replyId : remark.commentId, registeredDateTime: remark.registeredDateTime }));
+    .filter((remark) => isMine(remark, myIds))
+    .map((remark) => ({ answerId: remarkIdOf(remark), registeredDateTime: remark.registeredDateTime }));
+}
+
+/** 내가 쓴 글인지 본다. 시스템 댓글은 행동한 사람 명의로 오므로, 내 명의라도 내 글로 보지 않는다. */
+function isMine(remark: FlowComment | FlowReply, myIds: readonly string[]): boolean {
+  return remark.systemCode === '' && myIds.some((id) => isSameFlowUser(remark.registerId, id));
+}
+
+/** 댓글이면 `commentId`, 대댓글이면 `replyId`. */
+function remarkIdOf(remark: FlowComment | FlowReply): string {
+  return 'replyId' in remark ? remark.replyId : remark.commentId;
 }
 
 /** 조회한 값. */

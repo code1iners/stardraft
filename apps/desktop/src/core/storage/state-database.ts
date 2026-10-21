@@ -356,7 +356,7 @@ export class SqliteStateStore implements StateStore {
       regeneration: readJson<Regeneration>(row.regeneration),
       failure: readJson<DraftFailure>(row.failure),
       runs: readJson<RunRecord[]>(row.runs) ?? [],
-      posting: readJson<PostingRecord>(row.posting),
+      posting: postingRecordOf(readJson<PostingRecord>(row.posting)),
     }));
   }
 
@@ -456,6 +456,11 @@ export class SqliteStateStore implements StateStore {
       )
       .run(alarmId);
   }
+}
+
+/** 저장한 게시 기록. 게시 실패의 사유가 생기기 전에 적은 기록은 사유가 없으므로 `null`로 채운다. */
+function postingRecordOf(record: PostingRecord | null): PostingRecord | null {
+  return record && { ...record, failure: record.failure ?? null };
 }
 
 /**

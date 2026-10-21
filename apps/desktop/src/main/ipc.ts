@@ -121,6 +121,8 @@ export function registerIpc(services: IpcServices): void {
   services.bundles.onChange(broadcastReview);
   services.drafts.onChange(broadcastReview);
   services.posting.onChange(broadcastReview);
+  // 게시 실패는 그 순간 한 번만 토스트로 알린다. 묶음 상태에는 남지만 토스트는 다시 띄우지 않는다.
+  services.posting.onFailed((bundleId) => services.windows.broadcast({ type: 'post-failed', bundleId }));
   services.reviewSections.onChange(broadcastReview);
   services.repoMappings.onChange(broadcastReview);
   services.repoPicker.onChange(broadcastReview);

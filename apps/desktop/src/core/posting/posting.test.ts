@@ -96,7 +96,7 @@ async function setup(place: 'post' | 'thread') {
   /** 지금 키로 부르는 가짜 Flow. */
   const connectFlow = () => ({ api: flow, reportKeyRejected: () => (keyRejections.count += 1) });
   const detection = new MentionDetection({ stateStore, bundles, clock, logger, connectFlow });
-  const posting = new Posting({ bundles, connectFlow, clock, logger });
+  const posting = new Posting({ bundles, connectFlow, myUserId: () => ME, clock, logger });
 
   flow.addPost({
     postId: POST_ID,
@@ -234,14 +234,14 @@ describe('게시: 보내기 전 기록과 성공 기록', () => {
     await settle();
 
     expect(await atRequest).toEqual([
-      expect.objectContaining({ id: bundleId, status: 'posting', posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, sentAt, postedId: null } }),
+      expect.objectContaining({ id: bundleId, status: 'posting', posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, sentAt, postedId: null, failure: null } }),
     ]);
     expect(await stateStore.listBundles()).toEqual([
       expect.objectContaining({
         id: bundleId,
         status: 'posted',
         processedAt: sentAt,
-        posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, sentAt, postedId: '950000001' },
+        posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, sentAt, postedId: '950000001', failure: null },
       }),
     ]);
   });
@@ -359,8 +359,8 @@ describe('게시: 게시 중에 들어온 새 멘션', () => {
   });
 });
 
-describe('게시: 게시하지 못했을 때', () => {
-  it('Flow가 게시 요청을 거절하면 준비됨으로 돌아가고 게시 기록을 지우며 초안·편집본은 그대로 둔다', async () => {
+describe('게시 실패: 응답별 처리', () => {
+  it('403이면 게시 실패가 되고 사유는 권한 없음이다. 게시 기록과 초안·편집본은 그대로 남는다', async () => {
     const { clock, flow, bundles, posting, bundleId } = await setup('post');
     await bundles.editDraft(bundleId, '고친 답입니다.');
     flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'http', status: 403 }, 1);
@@ -369,39 +369,96 @@ describe('게시: 게시하지 못했을 때', () => {
     clock.advance(COUNTDOWN_MS);
     await settle();
 
-    expect(bundles.get(bundleId)).toMatchObject({ status: 'ready', posting: null, editedText: '고친 답입니다.', draft: DRAFT });
+    expect(bundles.get(bundleId)).toMatchObject({
+      status: 'post-failed',
+      editedText: '고친 답입니다.',
+      draft: DRAFT,
+      posting: { body: `@[김철수](${SENDER}) 고친 답입니다.`, postedId: null, failure: 'forbidden' },
+    });
     expect(flow.writes).toEqual([]);
   });
 
-  it('응답이 없거나 5xx이거나 앱이 모르는 응답이면 올라갔는지 알 수 없으므로, 보내기 전 기록을 둔 채 게시 중으로 남겨 다시 게시하지 못하게 한다', async () => {
-    for (const failure of [{ kind: 'network' as const }, { kind: 'http' as const, status: 503 }, { kind: 'unexpected-response' as const }]) {
-      const { clock, flow, bundles, posting, bundleId } = await setup('post');
-      flow.failOn(`POST /user/comments/${POST_ID}`, failure, 1);
+  it('404·412는 지워짐, 400·422와 그 밖의 거절은 받지 않음으로 게시 실패가 된다', async () => {
+    for (const [status, reason] of [
+      [404, 'gone'],
+      [412, 'gone'],
+      [400, 'rejected'],
+      [422, 'rejected'],
+      [409, 'rejected'],
+    ] as const) {
+      const { clock, flow, bundles, posting, bundleId } = await setup('thread');
+      flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'http', status }, 1);
 
       await posting.post(bundleId);
       clock.advance(COUNTDOWN_MS);
       await settle();
-      await posting.post(bundleId);
-      clock.advance(COUNTDOWN_MS);
-      await settle();
 
-      expect(bundles.get(bundleId)).toMatchObject({ status: 'posting', posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, postedId: null } });
-      expect(flow.requests.filter((request) => request.startsWith('POST'))).toHaveLength(1);
+      expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { failure: reason } });
     }
   });
 
-  it('요청 한도(429)는 처리되지 않은 것이 확실하므로 준비됨으로 돌린다', async () => {
+  it('429면 Retry-After만큼 기다렸다가 한 번 더 보내고, 그때 올라가면 게시됨이다. 기다리는 동안은 게시 결과 확인 중으로 남는다', async () => {
     const { clock, flow, bundles, posting, bundleId } = await setup('post');
-    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: 1_000 }, 1);
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: 3_000 }, 1);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posting', posting: { postedId: null, failure: null } });
+
+    clock.advance(2_999);
+    await settle();
+    expect(flow.requests.filter((request) => request.startsWith('POST'))).toHaveLength(1);
+
+    clock.advance(1);
+    await settle();
+    expect(flow.writes).toEqual([{ request: `POST /user/comments/${POST_ID}`, contents: `@[김철수](${SENDER}) ${DRAFT_TEXT}` }]);
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posted', posting: { postedId: '950000001' } });
+  });
+
+  it('다시 보낸 요청도 429면 더 보내지 않고 게시 실패가 되며 사유는 요청 한도 초과다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: 1_000 }, 3);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    clock.advance(60_000);
+    await settle();
+
+    expect(flow.requests.filter((request) => request.startsWith('POST'))).toHaveLength(2);
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { failure: 'rate-limited' } });
+  });
+
+  it('429에 Retry-After가 없으면 10초를 기다렸다가 한 번 더 보낸다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: null }, 1);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    clock.advance(9_999);
+    await settle();
+    expect(flow.writes).toEqual([]);
+
+    clock.advance(1);
+    await settle();
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posted', posting: { postedId: '950000001' } });
+  });
+
+  it('429의 Retry-After가 60초를 넘으면 기다리지 않고 바로 게시 실패(요청 한도 초과)가 된다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: 60_001 }, 1);
 
     await posting.post(bundleId);
     clock.advance(COUNTDOWN_MS);
     await settle();
 
-    expect(bundles.get(bundleId)).toMatchObject({ status: 'ready', posting: null });
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { failure: 'rate-limited' } });
+    expect(flow.requests.filter((request) => request.startsWith('POST'))).toHaveLength(1);
   });
 
-  it('Flow가 키를 거부하면(401) "키 확인 필요"를 알리고 묶음은 준비됨으로 둔다', async () => {
+  it('Flow가 키를 거부하면(401) 묶음의 실패가 아니라 "키 확인 필요"를 알리고 묶음은 준비됨으로 둔다', async () => {
     const { clock, flow, bundles, posting, bundleId, keyRejections } = await setup('thread');
     flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'unauthorized' }, 1);
 
@@ -412,8 +469,152 @@ describe('게시: 게시하지 못했을 때', () => {
     expect(keyRejections.count).toBe(1);
     expect(bundles.get(bundleId)).toMatchObject({ status: 'ready', posting: null });
   });
+});
 
-  it('게시 요청이 예외로 끝나면 로그에 남기고, 올라갔는지 알 수 없으므로 보내기 전 기록을 둔 채 게시 중으로 둔다. 로그에 게시 본문은 남기지 않는다', async () => {
+describe('게시 실패: 올라갔는지 알 수 없을 때의 확인', () => {
+  it('응답을 받지 못했지만 Flow에 올라갔으면, 그 자리를 다시 조회해 게시 본문과 똑같은 내 글을 찾아 그 ID로 게시됨이 된다. 다시 보내지 않는다', async () => {
+    for (const failure of [{ kind: 'network' as const }, { kind: 'http' as const, status: 502 }, { kind: 'unexpected-response' as const }]) {
+      const { clock, flow, bundles, posting, bundleId } = await setup('thread');
+      // 같은 스레드에 내가 앞서 쓴 다른 글이 있다.
+      flow.addReply(POST_ID, '700', { replyId: '710', contents: '다른 내용의 내 글', registerId: ME, registeredDateTime: '20261020085900' });
+      flow.loseResponseOn(`POST /user/comments/${POST_ID}/replies/700`, failure);
+
+      await posting.post(bundleId);
+      clock.advance(COUNTDOWN_MS);
+      await settle();
+
+      expect(flow.writes).toHaveLength(1);
+      expect(bundles.get(bundleId)).toMatchObject({ status: 'posted', posting: { postedId: '950000001', failure: null } });
+      expect(flow.requests.filter((request) => request.startsWith('POST'))).toHaveLength(1);
+    }
+  });
+
+  it('본문 묶음은 게시물의 댓글에서 찾는다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.loseResponseOn(`POST /user/comments/${POST_ID}`, { kind: 'network' });
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posted', posting: { postedId: '950000001' } });
+  });
+
+  it('다시 조회해도 똑같은 글이 없으면 그대로 다시 보내지 않고 게시 실패("Flow가 응답하지 않았습니다")가 된다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'http', status: 503 }, 1);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { failure: 'no-response' } });
+    expect(flow.requests.filter((request) => request.startsWith('POST'))).toHaveLength(1);
+  });
+
+  it('내용이 한 글자라도 다르거나 남이 쓴 글이면 올라간 글로 보지 않는다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('thread');
+    /** 게시 본문. */
+    const body = `@[김철수](${SENDER}) ${DRAFT_TEXT}`;
+    flow.addReply(POST_ID, '700', { replyId: '711', contents: `${body} `, registerId: ME, registeredDateTime: '20261020085900' });
+    flow.addReply(POST_ID, '700', { replyId: '712', contents: body, registerId: SENDER, registeredDateTime: '20261020085900' });
+    flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'network' }, 1);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { failure: 'no-response' } });
+  });
+
+  it('이 PC의 다른 묶음이 이미 기록한 글은 본문이 같아도 올라간 글로 보지 않는다', async () => {
+    const { clock, flow, bundles, posting, bundleId, poll } = await setup('thread');
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    // 같은 스레드에 새 멘션이 와 새 묶음이 되고, 같은 초안과 같은 받는 사람이라 게시 본문도 같다.
+    flow.addReply(POST_ID, '700', { replyId: '802', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registerName: '김철수', registeredDateTime: '20261020090008' });
+    await poll(alarm('103', { remarkId: '700', replyId: '802', registeredDateTime: '20261020090008' }));
+    /** 새 묶음. */
+    const created = bundles.state().find((item) => item.id !== bundleId)!;
+    await bundles.regenerateWithRepos(created.id, ['/fake/work/repo']);
+    await bundles.prepareRun(created.id);
+    await bundles.saveDraft(created.id, DRAFT, [], mentionSetKey(bundles.get(created.id)!));
+    flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'network' }, 1);
+
+    await posting.post(created.id);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    expect(bundles.get(bundleId)?.posting?.body).toBe(bundles.get(created.id)?.posting?.body);
+    expect(bundles.get(created.id)).toMatchObject({ status: 'post-failed', posting: { failure: 'no-response' } });
+  });
+
+  it('다시 조회하지 못하면 게시 결과 확인 중으로 둔 채 60초 뒤 다시 확인해 정한다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.loseResponseOn(`POST /user/comments/${POST_ID}`, { kind: 'network' });
+    flow.failOn(`GET /user/comments/${POST_ID}`, { kind: 'network' }, 1);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posting', posting: { postedId: null, failure: null } });
+
+    clock.advance(59_999);
+    await settle();
+    expect(bundles.get(bundleId)?.status).toBe('posting');
+
+    clock.advance(1);
+    await settle();
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posted', posting: { postedId: '950000001' } });
+    expect(flow.writes).toHaveLength(1);
+  });
+
+  it('다시 조회할 때 머리 댓글이 지워졌으면 게시 실패(지워짐)가 된다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('thread');
+    flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'network' }, 1);
+    flow.whenRequested(`POST /user/comments/${POST_ID}/replies/700`, () => flow.removeComment(POST_ID, '700'));
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { failure: 'gone' } });
+  });
+
+  it('다시 조회할 때 게시물을 볼 수 없게 되었으면(403) 게시 실패(권한 없음)가 된다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'network' }, 1);
+    flow.failOn(`GET /user/comments/${POST_ID}`, { kind: 'http', status: 403 }, 1);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { failure: 'forbidden' } });
+  });
+
+  it('다시 조회가 예외로 끝나도 게시 중으로 둔 채 60초 뒤 다시 확인한다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.loseResponseOn(`POST /user/comments/${POST_ID}`, { kind: 'network' });
+    /** 원래 댓글 목록 조회. */
+    const listComments = flow.listComments.bind(flow);
+    flow.listComments = async () => {
+      flow.listComments = listComments;
+      throw new Error('연결이 끊김');
+    };
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    expect(bundles.get(bundleId)?.status).toBe('posting');
+
+    clock.advance(60_000);
+    await settle();
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posted', posting: { postedId: '950000001' } });
+  });
+
+  it('게시 요청이 예외로 끝나면 응답을 받지 못한 것으로 보고 확인을 거친다. 로그에 게시 본문은 남기지 않는다', async () => {
     const { clock, flow, bundles, posting, bundleId, logLines } = await setup('post');
     flow.createComment = async () => {
       throw new Error('연결이 끊김');
@@ -423,8 +624,66 @@ describe('게시: 게시하지 못했을 때', () => {
     clock.advance(COUNTDOWN_MS);
     await settle();
 
-    expect(bundles.get(bundleId)).toMatchObject({ status: 'posting', posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, postedId: null } });
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, failure: 'no-response' } });
     expect(logLines.some((line) => line.includes('posting.crashed'))).toBe(true);
     expect(logLines.join('\n')).not.toContain('재시도는 5번입니다');
+  });
+});
+
+
+describe('게시 실패 상태', () => {
+  it('게시 실패가 되는 순간 실패를 한 번 알리고, 실패 목록에 들며 빨간 점의 대상이 된다. 트레이 숫자에는 세지 않는다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    /** 실패를 알린 묶음. */
+    const failed: number[] = [];
+    posting.onFailed((id) => failed.push(id));
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'http', status: 400 }, 1);
+    expect(bundles.hasFailure()).toBe(false);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    clock.advance(POLL_MS);
+    await settle();
+
+    expect(failed).toEqual([bundleId]);
+    expect(bundles.hasFailure()).toBe(true);
+    expect(bundles.reviewCount()).toBe(0);
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['post-failed']);
+  });
+
+  it('게시 실패 묶음은 편집하고 받는 사람을 뺀 뒤 [다시 게시]할 수 있고, 다시 5초를 센 뒤 고친 게시 본문을 올린다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'http', status: 422 }, 1);
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    await bundles.editDraft(bundleId, '짧게 고친 답입니다.');
+    await bundles.removeRecipient(bundleId, 0, '김철수');
+    await posting.post(bundleId);
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posting', posting: null });
+    clock.advance(COUNTDOWN_MS - 1);
+    await settle();
+    expect(flow.writes).toEqual([]);
+    clock.advance(1);
+    await settle();
+
+    expect(flow.writes.map((write) => write.contents)).toEqual(['짧게 고친 답입니다.']);
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'posted', posting: { postedId: '950000001', failure: null } });
+  });
+
+  it('게시 실패 묶음은 무시할 수 있지만 다시 만들 수는 없다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'http', status: 403 }, 1);
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    await bundles.regenerate(bundleId, { path: 'again' });
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', draft: DRAFT });
+
+    await bundles.ignore(bundleId);
+    expect(bundles.get(bundleId)?.status).toBe('ignored');
   });
 });

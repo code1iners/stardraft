@@ -9,15 +9,17 @@ const GROUP_ORDER: readonly RepoChoiceGroupSnapshot[] = ['current', 'work-folder
 interface RepoPickerSheetProps {
   /** 열린 저장소 선택 창. */
   picker: RepoPickerSnapshot;
-  /** 창을 연 묶음. 만들기 버튼 문구를 정한다. 목록에 없으면 `null`. */
-  bundle: BundleSnapshot | null;
+  /** 묶음 전부. 창을 연 묶음을 찾아 만들기 버튼 문구를 정한다. */
+  bundles: readonly BundleSnapshot[];
 }
 
 /**
  * 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓰는 시트로, 창 위쪽에 붙어 창 전체를 덮는다.
  * 후보를 무리별로 체크 상자와 함께 보이고, 고른 구성으로 초안을 만들거나 저장소 매핑을 덮어쓴다. 체크 상태는 main이 가진다.
  */
-export function RepoPickerSheet({ picker, bundle }: RepoPickerSheetProps) {
+export function RepoPickerSheet({ picker, bundles }: RepoPickerSheetProps) {
+  /** 창을 연 묶음. */
+  const bundle = bundles.find((item) => item.id === picker.bundleId);
   /** 고른 후보. */
   const checked = picker.status === 'ready' ? picker.choices.filter((choice) => choice.checked) : [];
   /** 만들기 버튼 문구. 초안이 있던 묶음이면 다시 만드는 것이다. */

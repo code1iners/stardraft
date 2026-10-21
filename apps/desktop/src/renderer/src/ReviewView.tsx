@@ -100,7 +100,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
         </section>
       </div>
       {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
-      {repoPicker && <RepoPickerSheet picker={repoPicker} bundle={bundles.find((bundle) => bundle.id === repoPicker.bundleId) ?? null} />}
+      {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
     </div>
   );
 }

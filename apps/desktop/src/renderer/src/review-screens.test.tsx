@@ -385,7 +385,7 @@ describe('작은 창: 초안 실행', () => {
 
   it('매핑된 폴더가 없어 저장소 확인 필요가 된 묶음은 저장소 영역에 사유와 찾을 수 없는 폴더를 보인다', () => {
     /** 폴더가 사라진 묶음. */
-    const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } });
+    const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false } });
     /** 저장소를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
     const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
@@ -393,6 +393,17 @@ describe('작은 창: 초안 실행', () => {
     expect(text).toContain('연결된 저장소 폴더를 찾을 수 없음');
     expect(text).toContain('/fake/work/gone');
     expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+  });
+
+  it('저장소 선택 창에서 고른 폴더가 사라진 묶음은 "고른 저장소 폴더를 찾을 수 없음"을 보인다', () => {
+    /** 고른 폴더가 사라진 묶음. */
+    const missing = bundle(10, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true } });
+    /** 저장소를 편 작은 창. */
+    const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
+    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
+
+    expect(text).toContain('고른 저장소 폴더를 찾을 수 없음');
+    expect(text).not.toContain('연결된 저장소 폴더를 찾을 수 없음');
   });
 });
 

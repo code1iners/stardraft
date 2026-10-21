@@ -507,8 +507,11 @@ export interface FailureSnapshot {
 
 /** 저장소 확인 필요의 사유. */
 export type RepoCheckSnapshot =
-  /** 연결된 저장소 폴더를 찾을 수 없음. `paths`는 찾을 수 없는 폴더의 절대 경로다. */
-  | { kind: 'missing-folders'; paths: string[] }
+  /**
+   * 연결된 저장소 폴더를 찾을 수 없음. `paths`는 찾을 수 없는 폴더의 절대 경로다.
+   * `chosenByUser`면 저장소 매핑이 아니라 저장소 선택 창에서 고른 구성의 폴더라 "고른 저장소 폴더를 찾을 수 없음"으로 보인다.
+   */
+  | { kind: 'missing-folders'; paths: string[]; chosenByUser: boolean }
   /** 자동 선택을 하려 했지만 작업 폴더에서 저장소를 찾지 못함. */
   | { kind: 'no-candidates' }
   /**

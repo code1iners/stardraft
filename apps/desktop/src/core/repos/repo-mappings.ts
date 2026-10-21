@@ -149,10 +149,8 @@ export class RepoMappings {
     /** 연결된 폴더. */
     const paths = this.mappings[projectId] ?? [];
     if (paths.length === 0) return { kind: 'unmapped' };
-    /** 폴더마다 있는지 여부. */
-    const found = await Promise.all(paths.map((path) => isFolder(path)));
     /** 없는 폴더. */
-    const missing = paths.filter((_, index) => !found[index]);
+    const missing = await missingFolders(paths);
     return missing.length > 0 ? { kind: 'missing-folders', paths: missing } : { kind: 'mapped', repos: [...paths] };
   }
 
@@ -327,6 +325,13 @@ export async function isFolder(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** 폴더 가운데 지금 없는 것. 준 순서다. */
+export async function missingFolders(paths: readonly string[]): Promise<string[]> {
+  /** 폴더마다 있는지 여부. */
+  const found = await Promise.all(paths.map((path) => isFolder(path)));
+  return paths.filter((_, index) => !found[index]);
 }
 
 /** `settings.json`의 매핑을 읽는다. 문자열 경로가 하나도 없는 매핑과 형식이 맞지 않는 값은 건너뛴다. */

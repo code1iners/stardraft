@@ -100,7 +100,7 @@ export function bundleSnapshot(
     run: runLine(bundle),
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
     failure: bundle.failure && { ...bundle.failure },
-    repoCheck: bundle.repoCheck && repoCheckSnapshot(bundle.repoCheck),
+    repoCheck: bundle.repoCheck && repoCheckSnapshot(bundle.repoCheck, bundle.userRepos !== null),
   };
 }
 
@@ -130,11 +130,12 @@ function draftSnapshot(draft: Draft, mapping: MappingMatch): DraftSnapshot {
 /**
  * 저장소 확인 필요의 사유를 렌더러에 넘길 모양으로 바꾼다.
  * 선택 실행의 후보는 에이전트가 짚은 것(짚은 순서)과 나머지(작업 폴더에서 찾은 순서)로 나눈다.
+ * `chosenByUser`는 묶음에 고른 구성이 있는지다. 있으면 실행 직전에 매핑 대신 그 구성을 확인했으므로 사라진 폴더도 그 구성의 것이다.
  */
-function repoCheckSnapshot(repoCheck: RepoCheck): RepoCheckSnapshot {
+function repoCheckSnapshot(repoCheck: RepoCheck, chosenByUser: boolean): RepoCheckSnapshot {
   switch (repoCheck.kind) {
     case 'missing-folders':
-      return { kind: repoCheck.kind, paths: [...repoCheck.paths] };
+      return { kind: repoCheck.kind, paths: [...repoCheck.paths], chosenByUser };
     case 'no-candidates':
       return { kind: repoCheck.kind };
     case 'unsure':

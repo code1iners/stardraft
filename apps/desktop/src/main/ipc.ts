@@ -261,7 +261,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       await openBundleInFlow(services, command.bundleId);
       return;
     case 'link-bundle-repos':
-      await linkBundleRepos(services, command.bundleId);
+      await repoPicker.linkBundle(command.bundleId);
       return;
     case 'open-repo-picker':
       await repoPicker.open(command.bundleId);
@@ -308,20 +308,6 @@ async function openBundleInFlow({ bundles, repoMappings, logger }: IpcServices, 
   } catch (error) {
     logger.warn('flow.open-failed', { bundleId, ...errorFields(error) });
   }
-}
-
-/**
- * 준비됨 묶음의 저장소 영역 연결 버튼. 그 초안을 만든 구성으로 Flow 프로젝트의 저장소 매핑을 덮어쓴다.
- * 렌더러가 보낸 경로는 받지 않고 main이 가진 묶음에서 구성을 읽는다. 초안이 없으면 아무것도 하지 않는다.
- */
-async function linkBundleRepos({ bundles, repoMappings, logger }: IpcServices, bundleId: number): Promise<void> {
-  /** 연결할 묶음. */
-  const bundle = bundles.get(bundleId);
-  if (!bundle?.draft) {
-    logger.warn('repo-mappings.link-skipped', { bundleId });
-    return;
-  }
-  await repoMappings.replaceRepos(bundle.projectId, bundle.draft.repositories);
 }
 
 /** 저장소 선택 창의 "폴더 직접 고르기". 폴더 선택 창으로 받은 폴더를 체크한 후보로 더한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */

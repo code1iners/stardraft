@@ -504,9 +504,9 @@ export class DraftQueue {
 
     // 기다리는 사이에 매핑된 폴더가 사라졌으면 멘션 묶음이 저장소 확인 필요로 올린다.
     /** 읽을 저장소(고른 구성이나 저장소 매핑)를 확인한 결과. 저장소 확인 필요가 되었으면 `null`. */
-    const mapping = await this.options.bundles.reposForRun(entry.bundleId);
+    const runRepos = await this.options.bundles.reposForRun(entry.bundleId);
     if (entry.interruption) return this.afterInterruption(entry, []);
-    if (!mapping) return;
+    if (!runRepos) return;
 
     // 맥락을 새로 조회하고, 그 사이 Flow에 내 답이 생겼으면 실행하지 않는다.
     /** 맥락을 조회하기 전까지 받은 Flow 키 변경 알림 수. */
@@ -533,7 +533,7 @@ export class DraftQueue {
     const generation: Generation = { entry, mentionSet, runs: [], ...(await this.runData(prepared)) };
     /** 초안 실행에 넘길 저장소와 자동 선택의 내력. 고른 구성도 매핑도 없으면 자동 선택으로 정하고, 정하지 못했으면 `null`이다. */
     const selected: SelectedRepos | null =
-      mapping.kind === 'unmapped' ? await this.selectRepos(generation, agent) : { repositories: mapping.repos, autoSelection: null };
+      runRepos.kind === 'unmapped' ? await this.selectRepos(generation, agent) : { repositories: runRepos.repos, autoSelection: null };
     if (!selected) return;
     /** 초안 실행에 넘길 저장소. 첫 저장소가 cwd가 된다. */
     const { repositories } = selected;

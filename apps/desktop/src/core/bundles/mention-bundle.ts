@@ -50,6 +50,11 @@ export function isRestorable(status: BundleStatus): boolean {
   return status === 'ignored' || status === 'already-answered';
 }
 
+/** 저장소 선택 창으로 고른 구성으로 만들 수 있는 상태인지 본다. 준비됨(다른 저장소로 다시 만들기)과 저장소 확인 필요(저장소를 골라 만들기)다. */
+export function canPickRepos(status: BundleStatus): boolean {
+  return status === 'ready' || status === 'repo-check-needed';
+}
+
 /** 트레이 숫자에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. */
 export function countsForReview(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';

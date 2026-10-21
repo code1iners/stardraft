@@ -165,6 +165,23 @@ describe('저장소 선택 창의 후보', () => {
     expect(picker.state()).toMatchObject({ choices: [{ name: 'api', path: api, group: 'current', checked: true }], mapping: 'different' });
   });
 
+  it('"다른 매핑에 쓰인 저장소"에는 다른 Flow 프로젝트의 매핑만 넣는다', async () => {
+    const [api, own, other] = [await repo('work/api'), await repo('work/own'), await repo('other/tool')];
+    const { picker } = await setup({
+      bundle: bundle({ status: 'ready', draft: draft([api]) }),
+      repoMappings: { [PROJECT_ID]: [own], [OTHER_PROJECT_ID]: [other] },
+    });
+
+    await picker.open(7);
+
+    expect(picker.state()).toMatchObject({
+      choices: [
+        { path: api, group: 'current' },
+        { path: other, group: 'mapping' },
+      ],
+    });
+  });
+
   it('생성 중이거나 처리됨 묶음은 열지 않는다', async () => {
     const { picker, current } = await setup({ bundle: bundle({ status: 'generating' }) });
 
@@ -266,6 +283,23 @@ describe('저장소 선택 창의 연결 버튼', () => {
     await picker.link();
 
     expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [api] });
+  });
+});
+
+describe('저장소 영역의 연결 버튼', () => {
+  it('준비됨 묶음의 초안을 만든 구성으로 저장소 매핑을 덮어쓴다. 초안이 없으면 아무것도 하지 않는다', async () => {
+    const [api, web, old] = [await repo('work/api'), await repo('work/web'), await repo('work/old')];
+    const { picker, settingsStore, current } = await setup({
+      bundle: bundle({ status: 'ready', draft: draft([web, api]) }),
+      repoMappings: { [PROJECT_ID]: [old], [OTHER_PROJECT_ID]: [old] },
+    });
+
+    await picker.linkBundle(7);
+    expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [web, api], [OTHER_PROJECT_ID]: [old] });
+
+    current.bundle = bundle({ repoCheck: { kind: 'no-candidates' } });
+    await picker.linkBundle(7);
+    expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [web, api], [OTHER_PROJECT_ID]: [old] });
   });
 });
 

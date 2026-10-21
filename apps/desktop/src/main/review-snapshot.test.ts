@@ -311,7 +311,11 @@ describe('묶음 스냅숏: 초안 실행', () => {
       run: { agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
       draft: null,
     });
-    expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'] });
+    expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false });
+    // 저장소 선택 창에서 고른 구성의 폴더가 사라졌으면 연결(매핑)된 폴더가 아니라고 넘긴다.
+    expect(
+      bundleSnapshot(bundle({ userRepos: ['/fake/work/gone'], repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).repoCheck,
+    ).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true });
   });
 });
 

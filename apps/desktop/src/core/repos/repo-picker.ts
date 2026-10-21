@@ -1,11 +1,11 @@
 import { basename, resolve } from 'node:path';
-import type { MentionBundle } from '../bundles/mention-bundle';
+import { canPickRepos, type MentionBundle } from '../bundles/mention-bundle';
 import type { RepoCandidate } from './repo-candidates';
 import type { MappingMatch, RepoMappings } from './repo-mappings';
 
 /**
  * 저장소 선택 창의 후보가 든 무리. 화면에 이 순서로 보인다.
- * `current`는 지금 쓰는 저장소, `work-folder`는 작업 폴더에서 찾은 저장소, `mapping`은 저장소 매핑에 쓰인 저장소, `added`는 "폴더 직접 고르기"로 더한 폴더다.
+ * `current`는 지금 쓰는 저장소, `work-folder`는 작업 폴더에서 찾은 저장소, `mapping`은 다른 Flow 프로젝트의 저장소 매핑에 쓰인 저장소, `added`는 "폴더 직접 고르기"로 더한 폴더다.
  */
 export type RepoChoiceGroup = 'current' | 'work-folder' | 'mapping' | 'added';
 
@@ -32,7 +32,7 @@ export type RepoPickerState =
 export interface RepoPickerOptions {
   /** 묶음 하나. 없으면 `null`. */
   bundle: (bundleId: number) => MentionBundle | null;
-  /** 매핑에 쓰인 저장소를 후보로 보이고, 연결 버튼으로 덮어쓸 저장소 매핑. */
+  /** 다른 매핑에 쓰인 저장소를 후보로 보이고, 연결 버튼으로 덮어쓸 저장소 매핑. */
   mappings: Pick<RepoMappings, 'state' | 'replaceRepos' | 'matchOf'>;
   /** 지금 설정의 작업 폴더를 훑어 찾은 저장소. 창을 열 때마다 새로 훑는다. */
   findWorkFolderRepos: () => Promise<RepoCandidate[]>;
@@ -45,7 +45,7 @@ type OpenPicker = { bundleId: number; status: 'loading' } | { bundleId: number; 
 
 /**
  * 저장소 선택 창. "저장소를 골라 만들기"(저장소 확인 필요)와 "다른 저장소로 다시 만들기"(준비됨)가 같이 쓴다. 한 번에 하나만 연다.
- * 처음에는 지금 쓰는 저장소를 체크해 두고, 작업 폴더에서 찾은 저장소와 매핑에 쓰인 저장소를 후보로 보인다. 여러 개를 고를 수 있다.
+ * 처음에는 지금 쓰는 저장소를 체크해 두고, 작업 폴더에서 찾은 저장소와 다른 매핑에 쓰인 저장소를 후보로 보인다. 여러 개를 고를 수 있다.
  * 고른 구성으로 초안을 다시 만들거나, 그 구성으로 저장소 매핑을 덮어쓴다(연결 버튼). 고른 구성을 저절로 매핑으로 저장하지는 않는다.
  */
 export class RepoPicker {
@@ -60,6 +60,7 @@ export class RepoPicker {
 
   /** 지금 상태. 닫혀 있으면 `null`. 연결 버튼 문구가 매핑에 따라 바뀌므로 매핑은 읽을 때마다 견준다. */
   state(): RepoPickerState | null {
+    /** 열린 창. */
     const current = this.current;
     if (!current || current.status === 'loading') return current && { ...current };
     /** 창을 연 묶음. */
@@ -84,7 +85,7 @@ export class RepoPicker {
   async open(bundleId: number): Promise<void> {
     /** 열 묶음. */
     const bundle = this.options.bundle(bundleId);
-    if (!bundle || !isPickable(bundle)) return;
+    if (!bundle || !canPickRepos(bundle.status)) return;
     /** 이번에 연 번호. */
     const id = (this.openId += 1);
     this.set({ bundleId, status: 'loading' });
@@ -116,6 +117,7 @@ export class RepoPicker {
 
   /** 고른 구성으로 묶음을 다시 만들고 창을 닫는다. 고른 것이 없으면 아무것도 하지 않는다. */
   async generate(): Promise<void> {
+    /** 열린 창. */
     const current = this.current;
     if (current?.status !== 'ready') return;
     /** 고른 구성. 후보 순서대로이고 첫 저장소가 cwd가 된다. */
@@ -127,6 +129,7 @@ export class RepoPicker {
 
   /** 창의 연결 버튼. 고른 구성으로 그 묶음 Flow 프로젝트의 저장소 매핑을 덮어쓴다. 창은 그대로 둔다. */
   async link(): Promise<void> {
+    /** 열린 창. */
     const current = this.current;
     if (current?.status !== 'ready') return;
     /** 창을 연 묶음. */
@@ -136,6 +139,17 @@ export class RepoPicker {
     if (!bundle || repos.length === 0) return;
     await this.options.mappings.replaceRepos(bundle.projectId, repos);
     this.emit();
+  }
+
+  /**
+   * 준비됨 묶음 저장소 영역의 연결 버튼. 그 초안을 만든 구성으로 Flow 프로젝트의 저장소 매핑을 덮어쓴다.
+   * 구성은 렌더러가 아니라 묶음에서 읽는다. 초안이 없으면 아무것도 하지 않는다.
+   */
+  async linkBundle(bundleId: number): Promise<void> {
+    /** 연결할 묶음. */
+    const bundle = this.options.bundle(bundleId);
+    if (!bundle?.draft) return;
+    await this.options.mappings.replaceRepos(bundle.projectId, bundle.draft.repositories);
   }
 
   /** 창을 닫는다. */
@@ -150,12 +164,12 @@ export class RepoPicker {
     if (!this.current) return;
     /** 창을 연 묶음. */
     const bundle = this.options.bundle(this.current.bundleId);
-    if (!bundle || !isPickable(bundle)) this.close();
+    if (!bundle || !canPickRepos(bundle.status)) this.close();
   }
 
   /**
-   * 묶음의 후보를 만든다. 지금 쓰는 저장소(체크함), 작업 폴더에서 찾은 저장소, 매핑에 쓰인 저장소 순서이고 같은 저장소는 한 번만 든다.
-   * 폴더를 찾을 수 없는 매핑 저장소는 넣지 않는다.
+   * 묶음의 후보를 만든다. 지금 쓰는 저장소(체크함), 작업 폴더에서 찾은 저장소, 다른 Flow 프로젝트의 매핑에 쓰인 저장소 순서이고
+   * 같은 저장소는 한 번만 든다. 폴더를 찾을 수 없는 매핑 저장소는 넣지 않는다.
    */
   private choicesFor(bundle: MentionBundle, found: readonly RepoCandidate[]): RepoChoice[] {
     /** 저장소 매핑. */
@@ -172,12 +186,16 @@ export class RepoPicker {
       add(path, 'current');
     }
     for (const candidate of found) add(candidate.path, 'work-folder');
-    for (const mapping of mappings) for (const repo of mapping.repos) if (repo.status !== 'missing') add(repo.path, 'mapping');
+    for (const mapping of mappings) {
+      if (mapping.projectId === bundle.projectId) continue;
+      for (const repo of mapping.repos) if (repo.status !== 'missing') add(repo.path, 'mapping');
+    }
     return [...choices.values()];
   }
 
   /** 열린 창의 후보를 `update`로 바꾼다. `null`을 돌려주면 바꾸지 않는다. */
   private updateChoices(update: (choices: RepoChoice[]) => RepoChoice[] | null): void {
+    /** 열린 창. */
     const current = this.current;
     if (current?.status !== 'ready') return;
     /** 바꾼 후보. */
@@ -195,11 +213,6 @@ export class RepoPicker {
   private emit(): void {
     for (const listener of this.listeners) listener();
   }
-}
-
-/** 저장소 선택 창을 열 수 있는 묶음인지 본다. 준비됨(다른 저장소로 다시 만들기)과 저장소 확인 필요(저장소를 골라 만들기)다. */
-function isPickable(bundle: MentionBundle): boolean {
-  return bundle.status === 'ready' || bundle.status === 'repo-check-needed';
 }
 
 /**

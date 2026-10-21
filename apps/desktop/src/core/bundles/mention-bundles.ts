@@ -6,11 +6,12 @@ import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
-import { isFolder, type RepoResolution } from '../repos/repo-mappings';
+import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
 import {
   activeMentions,
   bundlePlaceKey,
+  canPickRepos,
   compareBundles,
   compareMentions,
   countsForReview,
@@ -419,7 +420,7 @@ export class MentionBundles {
   async regenerateWithRepos(bundleId: number, repos: readonly string[]): Promise<void> {
     if (repos.length === 0) return;
     await this.change(bundleId, 'bundle.regenerated-with-repos', (bundle) =>
-      bundle.status === 'ready' || bundle.status === 'repo-check-needed'
+      canPickRepos(bundle.status)
         ? { ...bundle, status: 'generating', userRepos: [...repos], draft: null, repoCheck: null, failure: null, newMentionCount: 0 }
         : null,
     );
@@ -536,10 +537,8 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
 
 /** 사용자가 고른 구성의 폴더가 지금 모두 있는지 본다. 매핑과 같은 모양으로 돌려준다. */
 async function resolveUserRepos(repos: readonly string[]): Promise<RunRepos | Extract<RepoResolution, { kind: 'missing-folders' }>> {
-  /** 폴더마다 있는지 여부. */
-  const found = await Promise.all(repos.map((path) => isFolder(path)));
   /** 없는 폴더. */
-  const missing = repos.filter((_, index) => !found[index]);
+  const missing = await missingFolders(repos);
   return missing.length > 0 ? { kind: 'missing-folders', paths: missing } : { kind: 'user', repos: [...repos] };
 }
 

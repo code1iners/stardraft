@@ -27,7 +27,7 @@ import {
   postLine,
   PROCESSED_NOTES,
   reasonText,
-  REPO_CHECK_TEXT,
+  repoCheckText,
   runLineText,
   senderLine,
 } from './review-text';
@@ -366,20 +366,16 @@ function ReasonText({ reason }: ReasonTextProps) {
   return <p className={reason === '' ? 'muted' : undefined}>{reasonText(reason)}</p>;
 }
 
-/** 저장소 확인 필요 사유에 넘기는 값. */
+/** 저장소 확인 필요 묶음의 저장소 영역 내용에 넘기는 값. */
 interface RepoCheckBodyProps {
+  /** 묶음 ID. 저장소 선택 창을 열 때 실어 보낸다. */
+  bundleId: number;
   /** 사유. 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
   repoCheck: RepoCheckSnapshot | null;
 }
 
-/** 저장소 확인 필요 묶음의 저장소 영역 내용에 넘기는 값. */
-interface RepoCheckActionsProps extends RepoCheckBodyProps {
-  /** 묶음 ID. 저장소 선택 창을 열 때 실어 보낸다. */
-  bundleId: number;
-}
-
 /** 저장소 확인 필요 묶음의 저장소 영역 내용. 사유와 그 내용 아래에 저장소 선택 창을 여는 [저장소를 골라 만들기]를 둔다. */
-function RepoCheckBody({ bundleId, repoCheck }: RepoCheckActionsProps) {
+function RepoCheckBody({ bundleId, repoCheck }: RepoCheckBodyProps) {
   /** 저장소 선택 창을 연다. */
   const handleOpenPicker = () => {
     void window.stardraft.send({ type: 'open-repo-picker', bundleId });
@@ -404,11 +400,11 @@ interface RepoCheckReasonProps {
 }
 
 /** 저장소 확인 필요의 사유. 첫 줄에 사유를 쓰고 그 아래에 사유마다 내용을 둔다. 사유가 없는 옛 묶음은 안내만 보인다. */
-function RepoCheckReason({ repoCheck }: RepoCheckBodyProps) {
+function RepoCheckReason({ repoCheck }: Pick<RepoCheckBodyProps, 'repoCheck'>) {
   if (!repoCheck) return <p className="small muted">{NO_REPOSITORY_NOTE}</p>;
   return (
     <>
-      <p className="warning-text">{REPO_CHECK_TEXT[repoCheck.kind]}</p>
+      <p className="warning-text">{repoCheckText(repoCheck)}</p>
       <RepoCheckDetail repoCheck={repoCheck} />
     </>
   );

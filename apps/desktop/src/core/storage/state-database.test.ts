@@ -939,6 +939,30 @@ describe('다시 켜기', () => {
     db.close();
   });
 
+  it('시험 묶음은 기준점을 옮기지 않고 저장하며, 같은 멘션 위치의 실제 묶음과 함께 둘 수 있고 다시 감지하지 않을 위치로 세지 않는다', async () => {
+    const db = openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0');
+    const store = new SqliteStateStore(db);
+    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ready' })], '101');
+
+    /** 저장한 시험 묶음. 실제 묶음과 같은 멘션 위치다. */
+    const trial = await store.addTrialBundle({ ...bundle([mention('101')], { status: 'generating' }), id: null });
+    expect(trial).toMatchObject({ id: 2, trial: true, mentions: [expect.objectContaining({ alarmId: '101' })] });
+    await store.saveBundle({ ...trial, status: 'ready' });
+
+    expect((await store.listBundles()).map(({ id, trial: isTrial, status, mentions }) => [id, isTrial, status, mentions.length])).toEqual([
+      [1, false, 'ready', 1],
+      [2, true, 'ready', 1],
+    ]);
+    await expect(store.getBaselineAlarmId()).resolves.toBe('101');
+
+    // 실제 묶음을 최소 기록으로 옮긴 뒤에도 시험 묶음의 멘션은 다시 감지하지 않을 위치가 아니다.
+    await store.deleteBundles([1]);
+    await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
+    await store.deleteBundles([2]);
+    await expect(store.listBundles()).resolves.toEqual([]);
+    db.close();
+  });
+
   it('저장하지 않은 묶음이 하나라도 있으면 지우지 못하고 아무것도 바꾸지 않는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
     await store.saveDetectedBundles([bundle([mention('101')], { status: 'ready', trial: true })], '101');

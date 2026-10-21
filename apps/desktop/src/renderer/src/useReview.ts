@@ -161,8 +161,10 @@ export interface BundleActions {
   stoppedToasts: StoppedToastState[];
   /** 멈춘 게시 토스트의 [되돌리기]나 [보기]를 눌렀다. 토스트를 닫고 그 묶음을 되돌리거나 보인다. */
   followStopped: (toast: StoppedToastState) => void;
-  /** 묶음을 무시하고 다음 묶음으로 넘어가며, 되돌릴 수 있는 토스트를 띄운다. */
+  /** 묶음을 무시하고 다음 묶음으로 넘어가며, 되돌릴 수 있는 토스트를 띄운다. 시험 묶음은 지워져 되돌릴 수 없으므로 토스트를 띄우지 않는다. */
   ignore: (bundle: BundleSnapshot) => void;
+  /** [시험 끝내기]. 시험 묶음을 지우고 다음 묶음으로 넘어간다. */
+  endTrial: (bundleId: number) => void;
   /** 처리됨 묶음을 되돌리고 그 묶음을 보인다. */
   restore: (bundleId: number) => void;
   /** 생성 중 묶음의 초안 실행을 취소한다. 묶음은 "취소함" 실패가 되어 그대로 보인다. */
@@ -204,8 +206,12 @@ export function useBundleActions({ select, leave }: Pick<BundleSelection, 'selec
     },
     ignore: (bundle) => {
       leave(bundle.id);
-      setToast({ bundleId: bundle.id, text: ignoredText(bundle) });
+      if (!bundle.trial) setToast({ bundleId: bundle.id, text: ignoredText(bundle) });
       void window.stardraft.send({ type: 'ignore-bundle', bundleId: bundle.id });
+    },
+    endTrial: (bundleId) => {
+      leave(bundleId);
+      void window.stardraft.send({ type: 'end-trial', bundleId });
     },
     restore,
     cancel: (bundleId) => {

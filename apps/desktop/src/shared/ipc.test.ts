@@ -286,6 +286,19 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'set-editor', choice: { kind: 'shell', command: 'rm' } })).toBeNull();
   });
 
+  it('최근 멘션으로 시험 명령은 아는 창, 숫자 알림 ID, 묶음 ID만 받는다', () => {
+    expect(parseAppCommand({ type: 'open-trial-picker', window: 'popover' })).toEqual({ type: 'open-trial-picker', window: 'popover' });
+    expect(parseAppCommand({ type: 'open-trial-picker', window: 'settings' })).toEqual({ type: 'open-trial-picker', window: 'settings' });
+    expect(parseAppCommand({ type: 'open-trial-picker', window: 'expanded' })).toBeNull();
+    expect(parseAppCommand({ type: 'reload-trial-picker' })).toEqual({ type: 'reload-trial-picker' });
+    expect(parseAppCommand({ type: 'close-trial-picker' })).toEqual({ type: 'close-trial-picker' });
+    expect(parseAppCommand({ type: 'start-trial', alarmId: '1234567890', extra: 1 })).toEqual({ type: 'start-trial', alarmId: '1234567890' });
+    expect(parseAppCommand({ type: 'start-trial', alarmId: '12a' })).toBeNull();
+    expect(parseAppCommand({ type: 'start-trial', alarmId: 12 })).toBeNull();
+    expect(parseAppCommand({ type: 'end-trial', bundleId: 3 })).toEqual({ type: 'end-trial', bundleId: 3 });
+    expect(parseAppCommand({ type: 'end-trial', bundleId: '3' })).toBeNull();
+  });
+
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {
     expect(parseAppCommand({ type: 'open-settings', section: '../../etc' })).toBeNull();
     expect(parseAppCommand({ type: 'run-shell', command: 'rm -rf /' })).toBeNull();

@@ -967,6 +967,18 @@ p.setup-tray-hint {
   color: var(--danger);
 }
 
+.tag.trial {
+  border: 1px solid var(--warn-dot);
+  color: var(--warn);
+}
+
+/* 시험 묶음의 안내 줄. 상세 머리에서 게시 상태 줄과 같은 크기다. */
+p.trial-line {
+  margin: 0;
+  font-size: 12px;
+  color: var(--warn);
+}
+
 /* 작은 창: 대기열 위치, ‹ › 이동, 상태 태그, 펼쳐 보기. */
 .review-head {
   flex: none;
@@ -1824,4 +1836,49 @@ p.list-empty {
 p.detail-empty {
   margin: 24px 20px;
   text-align: center;
+}
+
+/* 멘션 고르기 목록: 최근 멘션을 한 줄에 하나씩 두고, 목록은 창 높이 안에서 스크롤한다. */
+.sheet.trial-picker {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - 24px);
+}
+
+.trial-choices {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.trial-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trial-choice:hover {
+  background: var(--surface-2);
+}
+
+.trial-choice .list-row-top {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+/* 펼친 창 목록 행의 태그 줄. 시험 묶음이면 "시험" 표시가 상태 태그 앞에 붙는다. */
+.list-row-tags {
+  display: flex;
+  gap: 4px;
 }

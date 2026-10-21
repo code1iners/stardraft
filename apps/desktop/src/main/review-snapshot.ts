@@ -5,13 +5,14 @@ import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
 import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
-import { splitMentionMarkup } from '../core/flow/mention-markup';
+import { namedMentionText, splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
 import { mentionWritingOf, type BundleContext, type ContextWriting } from '../core/flow/bundle-context';
 import { commentKey, mentionWritingKey, POST_WRITING_KEY, replyKey } from '../core/flow/context-changes';
 import type { RepoCandidate } from '../core/repos/repo-candidates';
 import type { MappingMatch } from '../core/repos/repo-mappings';
 import type { RepoPickerState } from '../core/repos/repo-picker';
+import type { TrialCandidate, TrialRunState } from '../core/trial/trial-run';
 import type {
   BundleMentionSnapshot,
   BundleSnapshot,
@@ -25,6 +26,8 @@ import type {
   ReviewSnapshot,
   RunLineSnapshot,
   ThreadEntrySnapshot,
+  TrialCandidateSnapshot,
+  TrialSnapshot,
   WritingChangeSnapshot,
 } from '../shared/ipc';
 
@@ -62,6 +65,39 @@ export function reviewSnapshot(
     bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf)),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
     repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
+  };
+}
+
+/**
+ * 최근 멘션으로 시험의 상태를 렌더러에 넘길 모양으로 바꾼다. 감지를 시작했고 시험 묶음이 없어야 시작할 수 있다.
+ * 멘션은 송신자, Flow 프로젝트, 첫 줄, 시각만 넘기고 Flow 사용자 ID는 넘기지 않는다.
+ */
+export function trialSnapshot(state: TrialRunState, trialBundleId: number | null, detectionStarted: boolean): TrialSnapshot {
+  /** 열린 멘션 고르기 목록. */
+  const picker = state.picker;
+  return {
+    canStart: detectionStarted && trialBundleId === null,
+    bundleId: trialBundleId,
+    picker:
+      picker === null ? null : picker.status === 'loaded' ? { window: picker.window, status: 'loaded', candidates: picker.candidates.map(trialCandidateSnapshot) } : { ...picker },
+  };
+}
+
+/** 멘션 고르기 목록의 멘션 하나. 첫 줄은 비어 있지 않은 첫 줄이고 멘션 표기는 `@이름`으로 바꾼다. */
+function trialCandidateSnapshot({ mention, projectTitle, answered }: TrialCandidate): TrialCandidateSnapshot {
+  /** 멘션 글의 첫 줄. */
+  const firstLine =
+    namedMentionText(mention.text)
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line !== '') ?? '';
+  return {
+    alarmId: mention.alarmId,
+    senderName: mention.senderName,
+    projectTitle,
+    firstLine,
+    at: flowTimeToEpochMs(mention.registeredDateTime) ?? mention.detectedAt,
+    answered,
   };
 }
 
@@ -123,6 +159,7 @@ export function bundleSnapshot(
     // 그 뒤 게시 중이 되었거나 처리한 묶음에는 보이지 않는다.
     quitDuringCountdown: bundle.status === 'ready' && bundle.quitDuringCountdown,
     changes: { newWritingCount: changes.newWritings.length, edited: changes.editedWritings.length > 0, goneMentionCount: changes.goneMentions },
+    trial: bundle.trial,
   };
 }
 

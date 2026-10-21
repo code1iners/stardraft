@@ -23,6 +23,7 @@ import { RepoMappings } from '../core/repos/repo-mappings';
 import { RepoPicker } from '../core/repos/repo-picker';
 import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
+import { TrialRun } from '../core/trial/trial-run';
 import { openAppData, type AppData } from '../core/storage/app-data';
 import { trayIndicator, type TrayIndicatorInput } from '../core/tray-indicator';
 import { globalProblemText, type GlobalProblemText } from '../shared/global-problem-text';
@@ -290,6 +291,16 @@ function start(): void {
     globalProblems.onChange(refreshOnboarding);
     agentConnection.onChange(refreshOnboarding);
     workFolders.onChange(refreshOnboarding);
+    /** 최근 멘션으로 시험. 감지를 시작한 뒤 지금 키로 최근 멘션을 불러오고, 고른 멘션으로 시험 묶음을 만든다. */
+    const trialRun = new TrialRun({
+      bundles: mentionBundles,
+      connectFlow: connectCurrentFlow,
+      myUserId: () => flowAccount.state().account?.userId ?? null,
+      detectionStarted: () => onboarding.state().detectionStarted,
+      projectTitle: (projectId) => repoMappings.projectTitle(projectId),
+      clock: systemClock,
+      logger,
+    });
     registerIpc({
       windows: appWindows,
       logger,
@@ -307,6 +318,7 @@ function start(): void {
       repoPicker,
       reviewSections: new ReviewSections(),
       editorOpener,
+      trialRun,
     });
     /**
      * 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣고,

@@ -1,9 +1,10 @@
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleMeta, BundleSections, StatusTag, ToastStack } from './BundleDetail';
+import { BundleFooter, BundleMeta, BundleSections, StatusTag, ToastStack, TrialTag } from './BundleDetail';
 import { SetupChecklist, WindowsTrayHint } from './Onboarding';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
+import { TrialButton, TrialPickerSheet } from './TrialPicker';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
 
@@ -71,7 +72,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   /** 보이는 묶음과 대기열. */
   const { queue, selected, select, movedWhileViewing } = selection;
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
-  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
+  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost, endTrial } = useBundleActions(selection);
 
   /** 펼친 창을 연다. 작은 창은 main이 닫는다. */
   const handleExpand = () => {
@@ -95,6 +96,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
             onRetry={() => retry(selected.id)}
             onPost={() => post(selected)}
             onCancelPost={() => cancelPost(selected.id)}
+            onEndTrial={() => endTrial(selected.id)}
           />
         </>
       ) : (
@@ -122,6 +124,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
       />
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
+      {snapshot.trial.picker?.window === 'popover' && <TrialPickerSheet picker={snapshot.trial.picker} />}
     </>
   );
 }
@@ -155,6 +158,7 @@ function QueueHead({ queue, selected, onSelect, onExpand }: QueueHeadProps) {
       </button>
       <span className="queue-pos">{index >= 0 ? `${index + 1} / ${queue.length}` : '처리한 묶음'}</span>
       <span className="spacer" />
+      <TrialTag bundle={selected} />
       <StatusTag status={selected.status} />
       <button type="button" className="btn sm" onClick={onExpand}>
         펼쳐 보기
@@ -169,7 +173,7 @@ interface EmptyDetectionProps {
   snapshot: AppSnapshot;
 }
 
-/** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션으로 시험]은 시험 기능을 더하는 티켓이 연결한다. */
+/** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션으로 시험]을 누르면 이 창에 멘션 고르기 목록을 연다. */
 function EmptyDetection({ snapshot }: EmptyDetectionProps) {
   /** 설정 창을 연다. 작은 창은 main이 닫는다. */
   const handleOpenSettings = () => {
@@ -183,9 +187,7 @@ function EmptyDetection({ snapshot }: EmptyDetectionProps) {
           <strong>아직 멘션이 없습니다.</strong>
         </p>
         <p className="small muted">새 멘션이 오면 초안을 만들어 여기에 보여 드립니다.</p>
-        <button type="button" className="btn" disabled>
-          최근 멘션으로 시험
-        </button>
+        <TrialButton trial={snapshot.trial} window="popover" />
         <p className="small muted">지난 멘션 하나로 앱이 동작하는지 확인합니다. Flow에는 아무것도 올리지 않습니다.</p>
         <WindowsTrayHint snapshot={snapshot} />
       </main>

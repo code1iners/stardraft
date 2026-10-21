@@ -23,7 +23,7 @@ export interface StateStore {
   setBaselineAlarmId(alarmId: string): Promise<void>;
   /**
    * 이 멘션 위치를 이미 기록해 두었는지 본다. 같은 멘션 위치에서 다시 온 알림은 글이 수정됐더라도 다시 감지하지 않는다.
-   * 묶음에 든 멘션과 처리됨 목록에서 빠진 묶음의 최소 기록을 함께 본다.
+   * 묶음에 든 멘션과 처리됨 목록에서 빠진 묶음의 최소 기록을 함께 본다. 시험 묶음의 멘션은 보지 않는다.
    */
   hasMentionLocation(location: MentionLocation): Promise<boolean>;
   /** 저장한 멘션 묶음 전부. 묶음마다 멘션은 알림 시각 순서다. */
@@ -34,6 +34,11 @@ export interface StateStore {
    * 한 멘션 위치는 한 묶음에만 든다. 다른 묶음에 이미 든 멘션 위치를 주면 실패하고 아무것도 바꾸지 않는다.
    */
   saveDetectedBundles(bundles: readonly UnsavedBundle[], baselineAlarmId: string): Promise<MentionBundle[]>;
+  /**
+   * 새 시험 묶음 하나를 저장하고 ID를 받는다. 기준점은 옮기지 않는다. 저장한 묶음을 돌려준다.
+   * 시험 묶음의 멘션 위치는 실제 묶음·최소 기록의 멘션 위치와 따로 두어, 같은 위치가 있어도 실패하지 않고 `hasMentionLocation`에도 세지 않는다.
+   */
+  addTrialBundle(bundle: UnsavedBundle): Promise<MentionBundle>;
   /** 이미 저장한 묶음 하나를 주어진 값으로 맞춘다. 무시·되돌리기처럼 상태를 바꿀 때 쓴다. */
   saveBundle(bundle: MentionBundle): Promise<void>;
   /** 처리됨 목록에서 빠져 최소 기록만 남은 묶음 전부. 묶음 ID 순서다. */

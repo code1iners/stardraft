@@ -160,6 +160,9 @@ export const POST_CHECKING_TEXT = '게시 결과 확인 중';
 /** 카운트다운 중에 앱이 꺼져 게시하지 않고 준비됨으로 돌아온 묶음의 상세 머리 한 줄. */
 export const QUIT_DURING_COUNTDOWN_TEXT = '앱이 꺼져서 게시하지 않았습니다';
 
+/** 시험 묶음의 상세 머리 한 줄. 시험 묶음은 게시하지 않는다. */
+export const TRIAL_NOTE = 'Flow에는 아무것도 올라가지 않습니다';
+
 /** 게시 실패 토스트 문구. 예: 게시하지 못했습니다: 김철수님 멘션 */
 export function postFailedToastText(bundle: BundleSnapshot): string {
   return `게시하지 못했습니다: ${senderLine(bundle.senderNames)}님 멘션`;

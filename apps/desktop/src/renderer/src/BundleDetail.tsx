@@ -43,6 +43,7 @@ import {
   repoCheckText,
   runLineText,
   senderLine,
+  TRIAL_NOTE,
   WRITING_CHANGE_LABELS,
 } from './review-text';
 import { useSecondsLeft, type FailedToastState, type IgnoreToastState, type StoppedToastState } from './useReview';
@@ -70,6 +71,18 @@ export function StatusTag({ status }: StatusTagProps) {
 interface BundleProps {
   /** 그릴 묶음. */
   bundle: BundleSnapshot;
+}
+
+/** 시험 묶음에 상태 태그와 함께 붙이는 "시험" 표시. 시험 묶음이 아니면 그리지 않는다. */
+export function TrialTag({ bundle }: BundleProps) {
+  if (!bundle.trial) return null;
+  return <span className="tag trial">시험</span>;
+}
+
+/** 시험 묶음의 상세 머리에 더하는 안내 한 줄. 시험 묶음이 아니면 그리지 않는다. */
+export function TrialLine({ bundle }: BundleProps) {
+  if (!bundle.trial) return null;
+  return <p className="trial-line">{TRIAL_NOTE}</p>;
 }
 
 /** "Flow에서 열기". 열 주소가 없으면 보이지 않는다. 주소는 main이 정한다. */
@@ -119,6 +132,7 @@ export function BundleMeta({ bundle }: BundleProps) {
       </p>
       <RunLine bundle={bundle} />
       <PostStatusLine bundle={bundle} />
+      <TrialLine bundle={bundle} />
     </div>
   );
 }
@@ -863,16 +877,19 @@ interface BundleFooterProps extends BundleProps {
   onPost: () => void;
   /** 카운트다운 중인 게시의 [취소]를 눌렀다. */
   onCancelPost: () => void;
+  /** 시험 묶음의 [시험 끝내기]를 눌렀다. */
+  onEndTrial: () => void;
 }
 
 /**
  * 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다.
  * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가, 준비됨 묶음은 오른쪽에 재생성 메뉴와 [게시]가 있다.
  * 게시 실패 묶음은 오른쪽에 [다시 게시]만 있다. 편집해 다시 게시할 수는 있지만 다시 만들지는 않는다.
+ * 시험 묶음은 Flow에 올리지 않으므로 준비됨이어도 [게시] 대신 [시험 끝내기]가 있다.
  * 게시 중 묶음은 카운트다운 중이면 남은 초와 [취소]만, 게시 요청을 보냈으면 결과를 기다린다는 말과 꺼진 [게시]만 있다.
  * 재생성 메뉴에서 지시를 덧붙이기로 하면 바닥 줄이 지시를 쓰는 칸이 되고, 편집한 초안이 있으면 다시 만들기 전에 바닥 줄에서 버릴지 묻는다.
  */
-export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, onPost, onCancelPost }: BundleFooterProps) {
+export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, onPost, onCancelPost, onEndTrial }: BundleFooterProps) {
   // 바닥 줄의 칸은 보고 있는 묶음에만 연다. 다른 묶음으로 넘어가거나 준비됨이 아니게 되면 닫힌다.
   /** 바닥 줄에 연 칸과 그 묶음 ID. 지시를 쓰는 칸이거나, 그 경로로 다시 만들기 전에 편집본을 버릴지 묻는 칸이다. 열지 않았으면 `null`. */
   const [pane, setPane] = useState<{ bundleId: number; kind: RegenerateChoice } | null>(null);
@@ -953,9 +970,15 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
       {bundle.status === 'ready' && (
         <>
           <RegenerateMenu onPick={handlePick} />
-          <button type="button" className="btn primary" disabled={!bundle.draft?.canPost} onClick={onPost}>
-            게시
-          </button>
+          {bundle.trial ? (
+            <button type="button" className="btn primary" onClick={onEndTrial}>
+              시험 끝내기
+            </button>
+          ) : (
+            <button type="button" className="btn primary" disabled={!bundle.draft?.canPost} onClick={onPost}>
+              게시
+            </button>
+          )}
         </>
       )}
     </footer>

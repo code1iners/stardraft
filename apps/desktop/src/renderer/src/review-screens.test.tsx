@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppSnapshot, BundleSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
+import type { AppSnapshot, BundleSnapshot, PostStopSnapshot, ReviewSnapshot, TrialCandidateSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
+import { DraftsSection } from './DraftsSection';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
 import { nextBundleAfter, resolveSelection } from './useReview';
@@ -57,6 +58,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     postFailure: null,
     quitDuringCountdown: false,
     changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
+    trial: false,
     ...overrides,
   };
 }
@@ -106,6 +108,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     launchAtLogin: true,
     editor: { choice: null, installed: [], picker: null },
     review: { bundles, sections: SECTIONS, repoPicker: null },
+    trial: { canStart: true, bundleId: null, picker: null },
     ...overrides,
   };
 }
@@ -1216,5 +1219,101 @@ describe('준비된 뒤의 변화', () => {
     /** 처리됨 목록에서 연 이미 답함 묶음. */
     const answered: BundleSnapshot = { ...READY, status: 'already-answered', group: 'processed', canRestore: true };
     expect(resolveSelection([bundle(5), answered], { id: 4, skip: null, shown: null, moved: null }).movedWhileViewing).toBe(false);
+  });
+});
+
+describe('최근 멘션으로 시험', () => {
+  /** 준비된 가짜 시험 묶음. */
+  const TRIAL: BundleSnapshot = { ...READY, id: 9, trial: true };
+  /** 멘션 고르기 목록의 가짜 멘션. 둘째는 이미 답한 멘션이다. */
+  const CANDIDATES: TrialCandidateSnapshot[] = [
+    { alarmId: '102', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), answered: false },
+    { alarmId: '101', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), answered: true },
+  ];
+
+  /** 그린 HTML에서 [최근 멘션으로 시험] 버튼. */
+  function trialButton(html: string): string | undefined {
+    return html.match(/<button[^>]*>최근 멘션으로 시험<\/button>/)?.[0];
+  }
+
+  it('감지 중 묶음이 없는 작은 창의 [최근 멘션으로 시험]은 시작할 수 있을 때만 켠다', () => {
+    expect(trialButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([])} />))).not.toContain('disabled');
+    expect(
+      trialButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { trial: { canStart: false, bundleId: null, picker: null } })} />)),
+    ).toContain('disabled');
+  });
+
+  it('멘션 고르기 목록은 송신자·Flow 프로젝트·첫 줄·시각을 보이고, 이미 답한 멘션에 "답함"을 붙이되 고를 수 있다. 연 창에만 뜬다', () => {
+    /** 작은 창에 연 목록. */
+    const trial: AppSnapshot['trial'] = { canStart: true, bundleId: null, picker: { window: 'popover', status: 'loaded', candidates: CANDIDATES } };
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { trial })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([], { trial })} />);
+
+    expect(text).toContain('시험할 멘션 고르기');
+    expect(text).toContain('보낸 사람');
+    expect(text).toContain('가짜 프로젝트');
+    expect(text).toContain('@테스트 사용자 배포 언제 되나요?');
+    expect(text).toContain('프로젝트 이름 모름');
+    expect(text.match(/답함/g)).toHaveLength(1);
+    // 고르기 전에는 자동으로 고르지 않고, 이미 답한 멘션도 누를 수 있다.
+    expect(html.match(/class="trial-choice"/g)).toHaveLength(2);
+    expect(html).not.toMatch(/class="trial-choice"[^>]*disabled/);
+    // 설정 창에서 연 목록은 작은 창에 뜨지 않는다.
+    expect(
+      textOf(<PopoverContent snapshot={snapshot([], { trial: { ...trial, picker: { ...trial.picker!, window: 'settings' } } })} />),
+    ).not.toContain('시험할 멘션 고르기');
+  });
+
+  it('불러오는 중, 불러오지 못함, 멘션 없음을 보인다', () => {
+    /** 목록 상태마다 그린 글자. */
+    const textWith = (picker: AppSnapshot['trial']['picker']) => textOf(<PopoverContent snapshot={snapshot([], { trial: { canStart: true, bundleId: null, picker } })} />);
+
+    expect(textWith({ window: 'popover', status: 'loading' })).toContain('최근 멘션을 불러오는 중입니다.');
+    expect(textWith({ window: 'popover', status: 'failed', reason: 'network' })).toContain('Flow에 연결하지 못했습니다');
+    expect(textWith({ window: 'popover', status: 'failed', reason: 'network' })).toContain('다시 불러오기');
+    expect(textWith({ window: 'popover', status: 'loaded', candidates: [] })).toContain('시험할 수 있는 최근 멘션이 없습니다.');
+  });
+
+  it('시험 묶음은 "시험" 표시와 "Flow에는 아무것도 올라가지 않습니다"를 보이고, [게시] 대신 [시험 끝내기]를 둔다. 재생성 메뉴와 [무시]는 그대로다', () => {
+    /** 작은 창 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([TRIAL])} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([TRIAL])} />);
+
+    expect(html).toContain('<span class="tag trial">시험</span>');
+    expect(text).toContain('Flow에는 아무것도 올라가지 않습니다');
+    expect(text).toContain('시험 끝내기');
+    expect(text).toContain('다시 만들기 ▾');
+    expect(text).toContain('무시');
+    expect(html).not.toMatch(/<button[^>]*>게시<\/button>/);
+
+    /** 펼친 창 HTML. */
+    const expanded = renderToStaticMarkup(<ReviewContent snapshot={snapshot([TRIAL, READY])} initialBundleId={9} />);
+    expect(expanded.match(/<span class="tag trial">시험<\/span>/g)).toHaveLength(2);
+    expect(expanded).toContain('Flow에는 아무것도 올라가지 않습니다');
+    expect(expanded).toContain('시험 끝내기');
+
+    // 실제 묶음에는 붙이지 않는다.
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('tag trial');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('Flow에는 아무것도 올라가지 않습니다');
+  });
+
+  it('설정 "초안" 칸에 [최근 멘션으로 시험]을 두고, 감지 전이거나 시험 중이면 끄고 그 까닭을 보인다', () => {
+    /** 감지를 시작한 스냅숏. */
+    const started = snapshot([]);
+
+    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={started} />))).not.toContain('disabled');
+    /** 감지 전. */
+    const before = snapshot([], { onboarding: { ...started.onboarding, detectionStarted: false }, trial: { canStart: false, bundleId: null, picker: null } });
+    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={before} />))).toContain('disabled');
+    expect(textOf(<DraftsSection snapshot={before} />)).toContain('멘션 감지를 시작한 뒤에 쓸 수 있습니다.');
+    /** 시험 중. */
+    const running = snapshot([TRIAL], { trial: { canStart: false, bundleId: 9, picker: null } });
+    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={running} />))).toContain('disabled');
+    expect(textOf(<DraftsSection snapshot={running} />)).toContain('시험 중인 묶음이 있습니다.');
+    // 설정에서 연 목록은 설정 칸에 뜬다.
+    expect(
+      textOf(<DraftsSection snapshot={snapshot([], { trial: { canStart: true, bundleId: null, picker: { window: 'settings', status: 'loading' } } })} />),
+    ).toContain('시험할 멘션 고르기');
   });
 });

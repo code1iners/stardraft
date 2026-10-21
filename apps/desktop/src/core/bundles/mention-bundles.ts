@@ -10,6 +10,7 @@ import { bundleRecipients, draftEditorText, isPostable, postableBody } from '../
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
+import type { RecentMention } from '../trial/recent-mentions';
 import { unseenChanges } from './bundle-changes';
 import { isExpired, minimalRecordOf } from './retention';
 import {
@@ -208,6 +209,11 @@ export class MentionBundles {
       .map((bundle) => bundle.id);
   }
 
+  /** 지금 있는 시험 묶음의 ID. 시험은 한 번에 하나만 하므로 많아야 하나다. 없으면 `null`. */
+  trialId(): number | null {
+    return this.bundles.find((bundle) => bundle.trial)?.id ?? null;
+  }
+
   /** 트레이 숫자. 검토 대기 가운데 준비됨과 저장소 확인 필요 묶음 수다. */
   reviewCount(): number {
     return this.bundles.filter((bundle) => countsForReview(bundle.status)).length;
@@ -255,8 +261,13 @@ export class MentionBundles {
       const now = this.options.clock.now();
       /** 이번에 바뀌는 묶음과 새로 넣은 멘션. 자리마다 하나다. */
       const touched = new Map<string, { bundle: UnsavedBundle; added: Set<string> }>();
-      /** 이미 묶음이나 최소 기록에 든 멘션 위치. 같은 위치는 한 묶음에만 넣고, 최소 기록의 위치는 다시 감지하지 않는다. */
-      const known = new Set([...this.bundles, ...this.minimalRecords].flatMap((item) => item.mentions.map(mentionLocationKey)));
+      /**
+       * 이미 묶음이나 최소 기록에 든 멘션 위치. 같은 위치는 한 묶음에만 넣고, 최소 기록의 위치는 다시 감지하지 않는다.
+       * 시험 묶음의 멘션은 시험을 끝내면 지워지므로 세지 않는다. 같은 위치의 알림도 실제 묶음이 된다.
+       */
+      const known = new Set(
+        [...this.bundles.filter((bundle) => !bundle.trial), ...this.minimalRecords].flatMap((item) => item.mentions.map(mentionLocationKey)),
+      );
 
       for (const mention of [...mentions].sort(compareMentions)) {
         /** 멘션 위치. */
@@ -389,9 +400,9 @@ export class MentionBundles {
    * 쓸 키가 없거나 Flow에 닿지 못하면(키 거부, 연결 실패, 요청 한도) 다른 묶음도 같으므로 이번 감시를 멈춘다.
    */
   async watchWaiting(): Promise<void> {
-    /** 감시할 묶음. 대기열 순서다. */
+    /** 감시할 묶음. 대기열 순서다. 시험 묶음은 감시하지 않는다. */
     const ids = this.bundles
-      .filter((bundle) => isWatched(bundle.status))
+      .filter((bundle) => isWatched(bundle.status) && !bundle.trial)
       .sort(compareBundles)
       .map((bundle) => bundle.id);
     for (const bundleId of ids) {
@@ -457,7 +468,7 @@ export class MentionBundles {
    * 초안 실행 직전에 맥락을 Flow에서 새로 조회해 비교 기준으로 저장하고, 같은 조회에서 찾은 내 답으로 "이미 답함"을 다시 판정한다(감지 때와 같은 규칙).
    * 내가 마지막으로 답한 글보다 앞선 멘션은 묶음에서 빼고, 모두 빠지면 초안 없이 처리됨의 "이미 답함"으로 옮긴다.
    * 쓸 키가 없거나 Flow가 키를 거부했거나 지금 Flow에 닿지 못하면(네트워크 오류, 요청 한도) 묶음을 바꾸지 않고 그렇게 알린다.
-   * 생성 중이 아닌 묶음은 바꾸지 않는다.
+   * 생성 중이 아닌 묶음은 바꾸지 않는다. 시험 묶음은 맥락만 저장하고 "이미 답함"은 판정하지 않는다.
    */
   async prepareRun(bundleId: number): Promise<RunPreparation> {
     /** 준비할 묶음. */
@@ -493,10 +504,11 @@ export class MentionBundles {
       /** 지금 묶음. */
       const latest = this.bundles.find((item) => item.id === bundleId);
       if (!latest || latest.status !== 'generating') return { kind: 'skipped' };
+      // 시험 묶음은 이미 답한 멘션으로도 시험할 수 있게 "이미 답함"을 판정하지 않는다.
       /** 새로 찾은 내 답을 더한 기록. 이 PC가 게시한 글은 판정할 때 그 글이 답한 범위로만 센다. */
-      const answers = mergeAnswers(latest.answers, result.myAnswers);
+      const answers = latest.trial ? latest.answers : mergeAnswers(latest.answers, result.myAnswers);
       /** 다시 판정한 멘션. */
-      const mentions = judgeAnswered(latest.mentions, answers, this.postedRanges());
+      const mentions = latest.trial ? latest.mentions : judgeAnswered(latest.mentions, answers, this.postedRanges());
       /** 모든 멘션이 빠졌는지 여부. */
       const answered = activeMentions({ mentions }).length === 0;
       /** 맥락과 판정을 반영한 묶음. 맥락의 멘션 표시는 묶음에 남은 멘션으로 다시 한다. */
@@ -701,11 +713,12 @@ export class MentionBundles {
   /**
    * 준비됨이나 게시 실패 묶음의 게시를 시작해 게시 중(카운트다운)으로 둔다. 게시 중 묶음은 검토 대기에 남지만 트레이 숫자에서는 빠진다.
    * 게시 실패의 직전 게시 기록은 지운다. 준비됨·게시 실패가 아니거나 게시할 수 없는 글(빈 편집기 텍스트, 상한을 넘는 게시 본문)이면 바꾸지 않는다. 시작했으면 참이다.
+   * 시험 묶음은 Flow에 아무것도 올리지 않으므로 게시하지 않는다.
    */
   async startPosting(bundleId: number): Promise<boolean> {
     /** 게시 중이 된 묶음. */
     const changed = await this.change(bundleId, 'bundle.posting-started', (bundle) =>
-      isPostable(bundle) ? { ...bundle, status: 'posting', posting: null, quitDuringCountdown: false } : null,
+      isPostable(bundle) && !bundle.trial ? { ...bundle, status: 'posting', posting: null, quitDuringCountdown: false } : null,
       // 게시 중이 되는 줄 안에서 확인을 함께 둬야, 바로 뒤에 들어온 멘션도 확인이 끝나기 전의 멘션으로 합쳐진다.
       () => this.postChecks.set(bundleId, { finished: false, answeredMentions: null }),
     );
@@ -863,8 +876,15 @@ export class MentionBundles {
     );
   }
 
-  /** 묶음을 무시한다. 처리됨의 "무시함"이 되고, 7일 안에 되돌릴 수 있다. 이미 처리됨이거나 게시 중이면 아무것도 하지 않는다. */
+  /**
+   * 묶음을 무시한다. 처리됨의 "무시함"이 되고, 7일 안에 되돌릴 수 있다. 이미 처리됨이거나 게시 중이면 아무것도 하지 않는다.
+   * 시험 묶음은 [시험 끝내기]처럼 지운다.
+   */
   async ignore(bundleId: number): Promise<void> {
+    if (this.bundles.find((bundle) => bundle.id === bundleId)?.trial) {
+      await this.endTrial(bundleId);
+      return;
+    }
     await this.change(bundleId, 'bundle.ignored', (bundle) => {
       if (isProcessed(bundle.status) || bundle.status === 'posting') return null;
       return { ...bundle, status: 'ignored', processedAt: this.options.clock.now() };
@@ -910,6 +930,56 @@ export class MentionBundles {
     });
     // 초안 없이 기다리게 되면 원문 영역에 보일 맥락을 새로 조회한다. 생성 중이면 초안 실행 직전에 조회한다.
     if (restored && showsContextWithoutDraft(restored)) await this.refreshContexts([bundleId]);
+  }
+
+  /**
+   * 최근 멘션 하나로 시험 묶음을 만든다. 실제 묶음과 같은 상태로 돌아(저장소 매핑을 확인해 생성 중이나 저장소 확인 필요),
+   * 초안 대기열이 감지해서 기다리는 묶음보다 앞에 넣는다. 기준점은 옮기지 않고, 같은 멘션 위치의 실제 묶음이 있어도 따로 둔다.
+   * 시험은 한 번에 하나만 하므로 시험 묶음이 이미 있으면 만들지 않고 `null`을, 만들었으면 그 ID를 돌려준다.
+   * 저장소 확인 필요가 되면 "[시험] …" OS 알림을 띄우고 원문 영역에 보일 맥락을 조회한다.
+   */
+  async startTrial({ mention, postTitle, connectUrl }: RecentMention): Promise<number | null> {
+    if (this.trialId() !== null) return null;
+    /** 초안 없는 묶음이 갈 상태를 정할 저장소 매핑. 확인하다 예외가 나면 매핑이 없는 것으로 본다. */
+    const resolution = await this.options.resolveRepos(mention.projectId).catch((): RepoResolution => ({ kind: 'unmapped' }));
+    /** 만든 시험 묶음. 확인하는 사이에 다른 시험이 시작됐으면 `null`. */
+    const created = await this.lane.run(async (): Promise<MentionBundle | null> => {
+      if (this.trialId() !== null) return null;
+      /** 저장할 시험 묶음. 시험은 "이미 답함"을 판정하지 않으므로 답은 기록하지 않는다. */
+      const bundle: UnsavedBundle = {
+        ...newBundle(mention, this.options.clock.now(), resolution),
+        postTitle,
+        connectUrl,
+        mentions: [{ ...mention, answered: false, gone: false, goneExcluded: false }],
+        trial: true,
+      };
+      /** 저장한 시험 묶음. */
+      const saved = await this.options.stateStore.addTrialBundle(bundle);
+      this.bundles = [...this.bundles, saved];
+      this.options.logger.info('bundle.trial-started', { bundleId: saved.id, status: saved.status });
+      this.emit();
+      return saved;
+    });
+    if (!created) return null;
+    if (countsForReview(created.status)) this.options.notifier.notify(repoCheckNotification([created]));
+    if (showsContextWithoutDraft(created)) await this.refreshContexts([created.id]);
+    return created.id;
+  }
+
+  /**
+   * 시험을 끝낸다. 시험 묶음과 그 실행 기록을 지우고 처리됨·최소 기록에 남기지 않는다. 생성 중이면 초안 대기열이 실행을 멈춘다.
+   * 지웠으면 참이고, 시험 묶음이 아니면 거짓이다.
+   */
+  endTrial(bundleId: number): Promise<boolean> {
+    return this.lane.run(async () => {
+      if (!this.bundles.some((bundle) => bundle.id === bundleId && bundle.trial)) return false;
+      await this.options.stateStore.deleteBundles([bundleId]);
+      this.bundles = this.bundles.filter((bundle) => bundle.id !== bundleId);
+      this.contextRequests.delete(bundleId);
+      this.options.logger.info('bundle.trial-ended', { bundleId });
+      this.emit();
+      return true;
+    });
   }
 
   /**
@@ -1001,12 +1071,15 @@ export class MentionBundles {
   }
 
   /**
-   * 자리의 새 멘션을 합칠 묶음. 처리되지 않은 묶음이고, 되돌린 묶음과 새 묶음이 함께 있으면 가장 최근에 만든 묶음이다.
+   * 자리의 새 멘션을 합칠 묶음. 처리되지 않은 실제 묶음이고, 되돌린 묶음과 새 묶음이 함께 있으면 가장 최근에 만든 묶음이다. 시험 묶음에는 합치지 않는다.
    * 게시 중 묶음에는 게시를 누를 때의 확인이 끝나기 전에만 합친다(합치면 게시를 멈춘다). 확인이 끝난 뒤에는 게시를 그대로 진행하고 새 멘션은 새 묶음이 된다.
    */
   private openBundleAt(place: string): MentionBundle | undefined {
     return this.bundles
-      .filter((bundle) => !isProcessed(bundle.status) && (bundle.status !== 'posting' || this.isCheckingPost(bundle)) && bundlePlaceKey(bundle) === place)
+      .filter(
+        (bundle) =>
+          !bundle.trial && !isProcessed(bundle.status) && (bundle.status !== 'posting' || this.isCheckingPost(bundle)) && bundlePlaceKey(bundle) === place,
+      )
       .sort((a, b) => b.id - a.id)[0];
   }
 
@@ -1302,7 +1375,18 @@ function latestSenderName(bundle: MentionBundle): string {
   return activeMentions(bundle).at(-1)?.senderName ?? '';
 }
 
-/** 새로 저장소 확인 필요가 된 묶음의 OS 알림. 송신자 이름만 넣고 Flow 글 본문은 넣지 않는다. 누르면 첫 묶음을 연다. */
+/** 시험 묶음의 OS 알림 제목에 붙이는 머리. */
+const TRIAL_TITLE_PREFIX = '[시험] ';
+
+/** 묶음의 OS 알림 제목. 시험 묶음이면 "[시험] "을 앞에 붙인다. */
+function notificationTitle(bundle: MentionBundle, title: string): string {
+  return bundle.trial ? `${TRIAL_TITLE_PREFIX}${title}` : title;
+}
+
+/**
+ * 새로 저장소 확인 필요가 된 묶음의 OS 알림. 송신자 이름만 넣고 Flow 글 본문은 넣지 않는다. 누르면 첫 묶음을 연다.
+ * 시험 묶음은 따로 만들어 늘 하나씩 알린다.
+ */
 function repoCheckNotification(waiting: readonly MentionBundle[]): AppNotification {
   /** 대기열에서 가장 앞의 묶음. */
   const first = waiting[0]!;
@@ -1310,7 +1394,7 @@ function repoCheckNotification(waiting: readonly MentionBundle[]): AppNotificati
   const sender = latestSenderName(first);
   if (waiting.length === 1) {
     return {
-      title: '저장소 확인 필요',
+      title: notificationTitle(first, '저장소 확인 필요'),
       body: sender ? `${sender}님이 나를 멘션했습니다.` : '나를 지목한 멘션이 왔습니다.',
       bundleId: first.id,
     };
@@ -1327,7 +1411,7 @@ function draftReadyNotification(bundle: MentionBundle): AppNotification {
   /** 답할 멘션의 송신자 이름. */
   const sender = latestSenderName(bundle);
   return {
-    title: '초안 준비됨',
+    title: notificationTitle(bundle, '초안 준비됨'),
     body: sender ? `${sender}님 멘션에 답할 초안이 준비됐습니다.` : '나를 지목한 멘션에 답할 초안이 준비됐습니다.',
     bundleId: bundle.id,
   };

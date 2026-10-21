@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { isSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from '../../shared/ipc';
 import { AccountSwitchSheet } from './AccountSwitchSheet';
 import { AgentSection } from './AgentSection';
+import { DraftsSection } from './DraftsSection';
 import { FlowAccountSection } from './FlowAccountSection';
 import { GeneralSection } from './GeneralSection';
 import { sectionNeedsSetup, SetupBand } from './Onboarding';
@@ -74,6 +75,7 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
               <AgentSection agentConnection={snapshot.agentConnection} agentPreferences={snapshot.agentPreferences} platform={snapshot.platform} />
             )}
             {section === 'repositories' && snapshot && <RepositoriesSection workFolders={snapshot.workFolders} repoMappings={snapshot.repoMappings} />}
+            {section === 'drafts' && snapshot && <DraftsSection snapshot={snapshot} />}
             {section === 'general' && <GeneralSection snapshot={snapshot} />}
           </main>
         </div>

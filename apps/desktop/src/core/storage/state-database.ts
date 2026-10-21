@@ -207,6 +207,28 @@ export const STATE_MIGRATIONS: readonly string[] = [
     priority TEXT NOT NULL CHECK (priority IN ('resume', 'user', 'auto'))
   ) STRICT;
   `,
+  // 16: 최근 멘션으로 시험. 시험 묶음의 멘션은 실제 묶음의 멘션(`mention`)과 다른 표에 둔다.
+  // 시험은 이미 감지한 멘션으로도 하므로 같은 멘션 위치가 실제 묶음에 있어도 들어가야 하고, 감지가 다시 감지하지 않을 위치(`hasMentionLocation`)로 세면 안 된다.
+  // 이미 있던 시험 묶음은 없다(시험을 만드는 기능이 이 형식과 함께 생긴다).
+  `
+  CREATE TABLE trial_mention (
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    reply_id TEXT NOT NULL,
+    bundle_id INTEGER NOT NULL REFERENCES mention_bundle (id),
+    project_id TEXT NOT NULL,
+    alarm_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_name TEXT NOT NULL,
+    registered_date_time TEXT NOT NULL,
+    detected_at INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    answered INTEGER NOT NULL,
+    gone INTEGER NOT NULL,
+    gone_excluded INTEGER NOT NULL,
+    PRIMARY KEY (bundle_id, post_id, remark_id, reply_id)
+  ) STRICT;
+  `,
 ];
 
 /** 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록이다. */
@@ -371,9 +393,15 @@ export class SqliteStateStore implements StateStore {
     const mentions = groupBy(
       this.db
         .prepare(
-          `SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
-             gone, gone_excluded
-           FROM mention ORDER BY bundle_id, registered_date_time, length(alarm_id), alarm_id`,
+          `SELECT * FROM (
+             SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
+               gone, gone_excluded
+             FROM mention
+             UNION ALL
+             SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
+               gone, gone_excluded
+             FROM trial_mention
+           ) ORDER BY bundle_id, registered_date_time, length(alarm_id), alarm_id`,
         )
         .all() as MentionRow[],
     );
@@ -441,13 +469,17 @@ export class SqliteStateStore implements StateStore {
     })();
   }
 
+  async addTrialBundle(bundle: UnsavedBundle): Promise<MentionBundle> {
+    return this.db.transaction(() => this.writeBundle({ ...bundle, id: null, trial: true }))();
+  }
+
   async saveBundle(bundle: MentionBundle): Promise<void> {
     this.db.transaction(() => this.writeBundle(bundle))();
   }
 
   /**
    * 묶음 한 줄을 넣거나 바꾸고, 그 묶음의 멘션과 내 답을 주어진 값으로 맞춘다. 새 묶음은 ID를 받는다.
-   * 다른 묶음에 이미 든 멘션 위치는 기본 키가 막아 실패한다. 트랜잭션 안에서만 부른다.
+   * 다른 묶음에 이미 든 멘션 위치는 기본 키가 막아 실패한다. 시험 묶음의 멘션은 따로 둬 실제 묶음과 견주지 않는다. 트랜잭션 안에서만 부른다.
    */
   private writeBundle(bundle: UnsavedBundle): MentionBundle {
     /** 묶음 줄의 값. */
@@ -508,10 +540,12 @@ export class SqliteStateStore implements StateStore {
       if (changes === 0) throw new Error(`저장하지 않은 묶음 ${id}입니다.`);
     }
 
-    this.db.prepare('DELETE FROM mention WHERE bundle_id = ?').run(id);
+    /** 묶음의 멘션을 두는 표. */
+    const mentionTable = bundle.trial ? 'trial_mention' : 'mention';
+    this.db.prepare(`DELETE FROM ${mentionTable} WHERE bundle_id = ?`).run(id);
     /** 멘션 하나를 넣는 문장. */
     const insertMention = this.db.prepare(
-      `INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
+      `INSERT INTO ${mentionTable} (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
          gone, gone_excluded)
        VALUES (@postId, @remarkId, @replyId, @bundleId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt, @text, @answered,
          @gone, @goneExcluded)`,
@@ -609,6 +643,8 @@ export class SqliteStateStore implements StateStore {
     if (bundleIds.length === 0) return;
     /** 묶음의 멘션을 지우는 문장. */
     const deleteMentions = this.db.prepare('DELETE FROM mention WHERE bundle_id = ?');
+    /** 시험 묶음의 멘션을 지우는 문장. */
+    const deleteTrialMentions = this.db.prepare('DELETE FROM trial_mention WHERE bundle_id = ?');
     /** 묶음에 기록한 내 답을 지우는 문장. */
     const deleteAnswers = this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id = ?');
     /** 묶음 줄을 지우는 문장. */
@@ -618,6 +654,7 @@ export class SqliteStateStore implements StateStore {
     this.db.transaction(() => {
       for (const bundleId of bundleIds) {
         deleteMentions.run(bundleId);
+        deleteTrialMentions.run(bundleId);
         deleteAnswers.run(bundleId);
         /** 지운 묶음 줄 수. */
         const { changes } = deleteBundle.run(bundleId);

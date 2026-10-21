@@ -263,9 +263,10 @@ export class DraftQueue {
         continue;
       }
       /** 출력 검증까지 마친 결과와 실행 기록. */
-      const { verdict, record } = await checked(ran, repositories, request.secretPatterns);
-      runs.push(record);
-      if (entry.interruption) return this.afterInterruption(entry, [...runs.slice(0, -1), { ...record, result: runResultOf(entry.interruption, verdict) }]);
+      const { verdict, record } = await checkVerdict(ran, repositories, request.secretPatterns);
+      // 검증하는 사이에 [취소]나 새 멘션으로 멈췄을 수 있으므로 기록의 결과는 검증 뒤에 정한다.
+      runs.push({ ...record, result: runResultOf(entry.interruption, verdict) });
+      if (entry.interruption) return this.afterInterruption(entry, runs);
 
       // 실행이 끝난 뒤 저장하기 전에도 새 멘션이 합쳐질 수 있으므로, 멘션 묶음이 저장하는 순간 멘션 위치를 다시 본다.
       /** 결과를 저장했는지 여부. */
@@ -449,11 +450,11 @@ function readVerdict(outcome: ExecutorOutcome): RunVerdict {
 }
 
 /**
- * 받은 초안에 출력 검증을 한다. 내용 불일치는 고친 초안으로 바꾸고 고친 내용을 실행 기록에 남긴다.
+ * 받은 초안에 출력 검증을 한다. 내용 불일치는 고친 초안으로 바꾸고 고친 내용을 실행 기록에 남긴다. 기록의 결과는 부르는 쪽이 정한다.
  * 근거가 비밀 파일이면 결과 전체를 버리고 "비밀 파일을 근거로 듦" 실패로 바꾼다. 다시 실행하지 않는다.
  * 초안이 아닌 결과는 그대로 돌려준다.
  */
-async function checked(
+async function checkVerdict(
   ran: { verdict: RunVerdict; record: RunRecord },
   repositories: readonly string[],
   extraSecretPatterns: readonly string[],
@@ -466,7 +467,7 @@ async function checked(
     fixedRequirement: null,
   });
   if (check.kind === 'secret-evidence') {
-    return { verdict: { kind: 'failed', reason: 'secret-evidence', detail: null, retry: false }, record: { ...ran.record, result: 'secret-evidence', fixes: check.fixes } };
+    return { verdict: { kind: 'failed', reason: 'secret-evidence', detail: null, retry: false }, record: { ...ran.record, fixes: check.fixes } };
   }
   return { verdict: { kind: 'draft', output: check.output }, record: { ...ran.record, fixes: check.fixes } };
 }

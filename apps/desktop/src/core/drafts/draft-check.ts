@@ -1,4 +1,5 @@
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import { matchesSecretPattern } from '../agent/secret-patterns';
 import type { AgentEvidence, Draft, DraftEvidence, DraftOutput, DraftParagraph } from './draft';
@@ -32,8 +33,17 @@ export type DraftCheck =
  * 근거 설명이 실제 코드와 맞는지는 보지 않는다(사람의 몫). 문장이 0개인 초안("빈 초안")은 이 검증 전에 걸러진다.
  */
 export async function checkDraftOutput(output: DraftOutput, options: DraftCheckOptions): Promise<DraftCheck> {
+  /** 근거 파일이 실제로 가리키는 파일. 비밀 파일 판정과 위치 검증이 같은 저장소·경로를 한 번만 푼다. */
+  const targets = new Map<string, Promise<EvidenceTarget>>();
+  /** 근거 하나의 실제 파일. */
+  const targetOf: TargetOf = (item) => {
+    /** 저장소와 경로로 만든 열쇠. */
+    const key = `${item.repository}\0${item.path}`;
+    if (!targets.has(key)) targets.set(key, evidenceTarget(item, options.repositories));
+    return targets.get(key) as Promise<EvidenceTarget>;
+  };
   /** 비밀 파일 패턴에 맞는 근거. */
-  const secret = await firstSecretEvidence(output.evidence, options);
+  const secret = await firstSecretEvidence(output.evidence, options.secretPatterns, targetOf);
   if (secret) return { kind: 'secret-evidence', fixes: [`비밀 파일 패턴에 맞는 근거: ${secret.id}번(${secret.path})`] };
 
   /** 고친 내용 불일치. */
@@ -51,7 +61,7 @@ export async function checkDraftOutput(output: DraftOutput, options: DraftCheckO
   const evidence: DraftEvidence[] = [];
   for (const item of numbered.evidence) {
     /** 위치를 찾지 못한 까닭. 찾았으면 `null`. */
-    const problem = await locationProblem(item, options.repositories);
+    const problem = await locationProblem(item, options.repositories, targetOf);
     if (problem) fixes.push(`위치를 찾을 수 없는 근거: ${item.id}번(${problem})`);
     evidence.push({ ...item, located: problem === null });
   }
@@ -110,27 +120,29 @@ function renumber(output: DraftOutput, fixes: string[]): { paragraphs: DraftPara
 
 /**
  * 근거 경로가 비밀 파일 패턴에 맞는 첫 근거. 없으면 `null`.
- * 에이전트가 적은 경로와, 저장소 안에서 실제로 가리키는 파일(심볼릭 링크를 푼 경로)을 모두 본다. 저장소나 파일이 맞지 않아도 경로만으로 본다.
+ * 에이전트가 적은 경로와, 근거 파일이 실제로 가리키는 파일(심볼릭 링크를 푼 경로)을 모두 본다.
+ * 실제 파일이 저장소 안이면 저장소 기준 경로로, 밖이면 절대 경로로 맞춘다. 저장소나 파일이 맞지 않아도 적은 경로만으로 본다.
  */
-async function firstSecretEvidence(evidence: readonly AgentEvidence[], options: DraftCheckOptions): Promise<AgentEvidence | null> {
+async function firstSecretEvidence(evidence: readonly AgentEvidence[], secretPatterns: readonly string[], targetOf: TargetOf): Promise<AgentEvidence | null> {
   for (const item of evidence) {
-    if (matchesSecretPattern(normalizedPath(item.path), options.secretPatterns)) return item;
-    /** 저장소 안에서 실제로 가리키는 파일의 저장소 기준 경로. 찾지 못하면 `null`. */
-    const real = await realPathInRepository(item, options.repositories);
-    if (real !== null && matchesSecretPattern(real, options.secretPatterns)) return item;
+    if (matchesSecretPattern(normalizedPath(item.path), secretPatterns)) return item;
+    /** 근거 파일이 실제로 가리키는 파일. */
+    const target = await targetOf(item);
+    /** 패턴과 맞춰 볼 실제 경로. */
+    const realPath = target.kind === 'inside' ? target.relativePath : target.kind === 'outside' ? normalizedPath(target.absolutePath) : null;
+    if (realPath !== null && matchesSecretPattern(realPath, secretPatterns)) return item;
   }
   return null;
 }
 
 /** 근거 위치를 찾지 못한 까닭. 넘긴 저장소 안의 파일이고 줄 범위가 파일 길이 안이면 `null`이다. */
-async function locationProblem(item: AgentEvidence, repositories: readonly string[]): Promise<string | null> {
+async function locationProblem(item: AgentEvidence, repositories: readonly string[], targetOf: TargetOf): Promise<string | null> {
   if (!passedRepository(item.repository, repositories)) return '넘기지 않은 저장소';
   if (!isRelativeInside(item.path)) return '저장소 밖 경로';
-  /** 심볼릭 링크를 푼 파일의 저장소 기준 경로. */
-  const real = await realPathInRepository(item, repositories);
-  if (real === null) return '파일 없음 또는 저장소 밖을 가리킴';
-  /** 줄 수. 파일이 아니면 `null`. */
-  const lines = await lineCount(join(await realpath(item.repository), real));
+  /** 근거 파일이 실제로 가리키는 파일. */
+  const target = await targetOf(item);
+  /** 줄 수. 저장소 안의 일반 파일이 아니면 `null`. */
+  const lines = target.kind === 'inside' ? await lineCount(target.absolutePath) : null;
   if (lines === null) return '파일 없음 또는 저장소 밖을 가리킴';
   if (item.startLine < 1 || item.endLine < item.startLine || item.endLine > lines) return `줄 범위가 파일 길이(${lines}줄)를 넘음`;
   return null;
@@ -147,37 +159,49 @@ function isRelativeInside(path: string): boolean {
   return !path.split(/[\\/]/).includes('..');
 }
 
-/**
- * 근거가 저장소 안에서 실제로 가리키는 파일의 저장소 기준 경로(`/` 구분). 심볼릭 링크를 모두 푼다.
- * 넘긴 저장소가 아니거나, 상대 경로가 아니거나, 파일이 없거나, 푼 경로가 저장소 밖이면 `null`.
- */
-async function realPathInRepository(item: AgentEvidence, repositories: readonly string[]): Promise<string | null> {
-  if (!passedRepository(item.repository, repositories) || !isRelativeInside(item.path)) return null;
+/** 근거 파일이 실제로 가리키는 파일. 심볼릭 링크를 모두 푼 경로다. */
+type EvidenceTarget =
+  /** 저장소 안의 파일이다. `relativePath`는 저장소 기준 경로(`/` 구분)다. */
+  | { kind: 'inside'; absolutePath: string; relativePath: string }
+  /** 링크를 풀면 저장소 밖이다. */
+  | { kind: 'outside'; absolutePath: string }
+  /** 넘긴 저장소가 아니거나, 저장소 기준 상대 경로가 아니거나, 파일이 없다. */
+  | { kind: 'unresolved' };
+
+/** 근거 하나가 실제로 가리키는 파일을 돌려주는 함수. 한 번의 검사 안에서 결과를 다시 쓴다. */
+type TargetOf = (item: AgentEvidence) => Promise<EvidenceTarget>;
+
+/** 근거 파일이 실제로 가리키는 파일을 찾는다. 저장소 루트와 근거 파일의 심볼릭 링크를 모두 풀어 비교한다. */
+async function evidenceTarget(item: AgentEvidence, repositories: readonly string[]): Promise<EvidenceTarget> {
+  if (!passedRepository(item.repository, repositories) || !isRelativeInside(item.path)) return { kind: 'unresolved' };
   try {
     /** 저장소 루트의 실제 경로. */
     const root = await realpath(item.repository);
     /** 근거 파일의 실제 경로. */
-    const file = await realpath(join(item.repository, item.path));
+    const absolutePath = await realpath(join(item.repository, item.path));
     /** 루트 기준 경로. */
-    const inside = relative(root, file);
-    if (inside === '' || isAbsolute(inside) || inside.split(sep).includes('..')) return null;
-    return inside.split(sep).join('/');
+    const inside = relative(root, absolutePath);
+    if (inside === '' || isAbsolute(inside) || inside.split(sep).includes('..')) return { kind: 'outside', absolutePath };
+    return { kind: 'inside', absolutePath, relativePath: inside.split(sep).join('/') };
   } catch {
-    return null;
+    return { kind: 'unresolved' };
   }
 }
 
-/** 파일의 줄 수. 마지막 줄 끝의 줄바꿈은 줄로 세지 않는다. 일반 파일이 아니거나 읽지 못하면 `null`. */
+/** 파일의 줄 수. 마지막 줄 끝의 줄바꿈은 줄로 세지 않는다. 큰 파일도 메모리에 다 올리지 않게 나눠 읽는다. 일반 파일이 아니거나 읽지 못하면 `null`. */
 async function lineCount(path: string): Promise<number | null> {
   try {
     if (!(await stat(path)).isFile()) return null;
-    /** 파일 내용. */
-    const content = await readFile(path);
-    if (content.length === 0) return 0;
     /** 줄바꿈 수. */
     let newlines = 0;
-    for (const byte of content) if (byte === 0x0a) newlines += 1;
-    return content.at(-1) === 0x0a ? newlines : newlines + 1;
+    /** 마지막으로 읽은 바이트. 빈 파일이면 `null`. */
+    let lastByte: number | null = null;
+    for await (const chunk of createReadStream(path) as AsyncIterable<Buffer>) {
+      for (const byte of chunk) if (byte === 0x0a) newlines += 1;
+      if (chunk.length > 0) lastByte = chunk.at(-1) ?? null;
+    }
+    if (lastByte === null) return 0;
+    return lastByte === 0x0a ? newlines : newlines + 1;
   } catch {
     return null;
   }

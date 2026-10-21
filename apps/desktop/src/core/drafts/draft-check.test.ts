@@ -250,11 +250,23 @@ describe('출력 검증: 비밀 파일 근거', () => {
     expect(result).toEqual({ kind: 'secret-evidence', fixes: ['비밀 파일 패턴에 맞는 근거: 1번(src/settings.ts)'] });
   });
 
-  it('사용자가 추가한 패턴도 적용한다', async () => {
-    const result = await checkDraftOutput(
-      output([[1]], [evidence(1, { path: 'config/db.secret.yml' })]),
-      options({ secretPatterns: [...DEFAULT_SECRET_PATTERNS, '*.secret.yml'] }),
-    );
+  it('저장소 밖의 비밀 파일을 가리키는 심볼릭 링크를 근거로 들어도 결과 전체를 버린다', async () => {
+    writeLines(join(workDir, 'home/.ssh/id_rsa'), 2);
+    symlinkSync(join(workDir, 'home/.ssh/id_rsa'), join(repos.a, 'src/notes.txt'));
+
+    const result = await checkDraftOutput(output([[1]], [evidence(1, { path: 'src/notes.txt', startLine: 1, endLine: 1 })]), options());
+
+    expect(result.kind).toBe('secret-evidence');
+  });
+
+  it.each([
+    ['*.secret.yml', 'config/db.secret.yml'],
+    ['credentials', 'config/credentials/db.txt'],
+    ['credentials/', 'credentials/db.txt'],
+    ['deploy/**/vault.yml', 'deploy/vault.yml'],
+    ['deploy/**/vault.yml', 'deploy/prod/eu/vault.yml'],
+  ])('사용자가 추가한 패턴(%s)도 적용한다. 근거 경로 %s는 비밀 파일이다(폴더 패턴은 그 안의 파일 전부)', async (pattern, path) => {
+    const result = await checkDraftOutput(output([[1]], [evidence(1, { path })]), options({ secretPatterns: [...DEFAULT_SECRET_PATTERNS, pattern] }));
 
     expect(result.kind).toBe('secret-evidence');
   });

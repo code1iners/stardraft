@@ -124,6 +124,8 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     failure: null,
     runs: [],
     posting: null,
+    quitDuringCountdown: false,
+    trial: false,
     ...overrides,
   };
 }
@@ -858,5 +860,122 @@ describe('최소 기록', () => {
 
     expect((await store.listBundles()).map(({ status, processedAt }) => ({ status, processedAt }))).toEqual([{ status: 'ignored', processedAt: 6_000 }]);
     await expect(store.listMinimalRecords()).resolves.toEqual([]);
+  });
+});
+
+describe('다시 켜기', () => {
+  it('카운트다운 중에 앱이 꺼져 준비됨으로 돌린 표시와 시험 묶음 표시를 다시 열어도 그대로 읽는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles(
+      [bundle([mention('101')], { status: 'ready', quitDuringCountdown: true }), bundle([mention('102', { postId: '90000012' })], { status: 'generating', trial: true })],
+      '102',
+    );
+
+    /** 다시 연 저장소. */
+    const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await reopened.listBundles()).map(({ status, quitDuringCountdown, trial }) => ({ status, quitDuringCountdown, trial }))).toEqual([
+      { status: 'ready', quitDuringCountdown: true, trial: false },
+      { status: 'generating', quitDuringCountdown: false, trial: true },
+    ]);
+  });
+
+  it('앱을 끌 때 남긴 초안 대기열을 다시 열어도 순서와 자리 그대로 읽고, 다시 남기면 앞서 남긴 것을 바꾼다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await expect(store.getDraftQueue()).resolves.toEqual([]);
+
+    await store.setDraftQueue([
+      { bundleId: 3, priority: 'resume' },
+      { bundleId: 1, priority: 'user' },
+      { bundleId: 2, priority: 'auto' },
+    ]);
+    /** 다시 연 저장소. */
+    const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await expect(reopened.getDraftQueue()).resolves.toEqual([
+      { bundleId: 3, priority: 'resume' },
+      { bundleId: 1, priority: 'user' },
+      { bundleId: 2, priority: 'auto' },
+    ]);
+
+    await reopened.setDraftQueue([{ bundleId: 2, priority: 'auto' }]);
+    await expect(reopened.getDraftQueue()).resolves.toEqual([{ bundleId: 2, priority: 'auto' }]);
+    await reopened.setDraftQueue([]);
+    await expect(reopened.getDraftQueue()).resolves.toEqual([]);
+  });
+
+  it('묶음을 지우면 묶음·멘션·내 답을 지우고 최소 기록도 남기지 않으며, 지운 글은 state.db와 WAL 어디에도 남지 않는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const store = new SqliteStateStore(db);
+    /** 지울 글. 파일에서 찾기 쉽게 길게 둔다. */
+    const secret = (label: string) => `${label} ${'q'.repeat(40)}`;
+    await store.saveDetectedBundles(
+      [
+        bundle([mention('101', { text: secret('가짜 시험 원문'), senderName: secret('가짜 시험 송신자') })], {
+          status: 'ready',
+          trial: true,
+          editedText: secret('가짜 시험 편집본'),
+          answers: [{ answerId: '950000001', registeredDateTime: '20261020090000', excluded: false }],
+        }),
+        bundle([mention('102', { postId: '90000012' })], { status: 'ready' }),
+      ],
+      '102',
+    );
+
+    await store.deleteBundles([1]);
+
+    expect((await store.listBundles()).map(({ id }) => id)).toEqual([2]);
+    await expect(store.listMinimalRecords()).resolves.toEqual([]);
+    await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
+    for (const label of ['가짜 시험 원문', '가짜 시험 송신자', '가짜 시험 편집본']) {
+      expect(readFileSync(path).includes(Buffer.from(label))).toBe(false);
+      expect(readFileSync(`${path}-wal`).includes(Buffer.from(label))).toBe(false);
+    }
+    db.close();
+  });
+
+  it('저장하지 않은 묶음이 하나라도 있으면 지우지 못하고 아무것도 바꾸지 않는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ready', trial: true })], '101');
+
+    await expect(store.deleteBundles([1, 9])).rejects.toThrow();
+
+    expect((await store.listBundles()).map(({ id }) => id)).toEqual([1]);
+  });
+
+  it('다른 계정으로 처음부터 시작하면 남긴 초안 대기열도 지운다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setDraftQueue([{ bundleId: 1, priority: 'resume' }]);
+
+    await store.resetForAccount(NEW_ACCOUNT);
+
+    await expect(store.getDraftQueue()).resolves.toEqual([]);
+  });
+
+  it('형식 14에서 올리면 이미 있던 묶음은 시험 묶음이 아니고 카운트다운 중 종료 표시도 없으며, 남긴 대기열은 없다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 14로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 14), '0.0.14');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'posting', '가짜 게시물', NULL, 0, 1000, NULL)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ status, quitDuringCountdown, trial }) => ({ status, quitDuringCountdown, trial }))).toEqual([
+      { status: 'posting', quitDuringCountdown: false, trial: false },
+    ]);
+    await expect(store.getDraftQueue()).resolves.toEqual([]);
   });
 });

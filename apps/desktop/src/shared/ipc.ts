@@ -346,9 +346,9 @@ export type BundleStatusSnapshot =
 
 /**
  * 게시 실패의 사유. 권한 없음(`403`), 지워짐(`404`, `412`), 받지 않음(`400`, `422` 등), 요청 한도 초과(`429` 두 번),
- * 응답 없음(응답이 없거나 `5xx`였고 다시 조회해도 올라간 글이 없음)이다.
+ * 응답 없음(응답이 없거나 `5xx`였고 다시 조회해도 올라간 글이 없음), 앱 종료(응답을 받기 전에 앱이 꺼졌고 다시 켜 조회해도 올라간 글이 없음)다.
  */
-export type PostFailureSnapshot = 'forbidden' | 'gone' | 'rejected' | 'rate-limited' | 'no-response';
+export type PostFailureSnapshot = 'forbidden' | 'gone' | 'rejected' | 'rate-limited' | 'no-response' | 'app-quit';
 
 /**
  * 게시를 누를 때의 확인이 게시를 멈춘 까닭. 이미 답함, 원문 사라짐, 또는 [게시]를 누를 때 화면에 없던 변화다.
@@ -664,6 +664,8 @@ export interface BundleSnapshot {
   posting: PostingSnapshot | null;
   /** 게시 실패의 사유. 상세 머리에 한 줄로 보인다. 게시 실패가 아니면 `null`. */
   postFailure: PostFailureSnapshot | null;
+  /** 카운트다운 중에 앱이 꺼져 게시하지 않고 준비됨으로 돌아왔는지 여부. 참이면 상세 머리에 "앱이 꺼져서 게시하지 않았습니다"를 보인다. */
+  quitDuringCountdown: boolean;
   /** 준비된 뒤의 변화 감시가 찾은 변화. 변화가 없으면 모두 0과 거짓이다. */
   changes: BundleChangesSnapshot;
 }

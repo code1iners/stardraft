@@ -134,9 +134,9 @@ function countdownText(secondsLeft: number): string {
   return `${secondsLeft}초 뒤 게시합니다`;
 }
 
-/** 게시 중 묶음의 바닥 줄 문구. 카운트다운 중이면 남은 초, 게시 요청을 보냈으면 결과를 확인하는 중이라는 말이다. */
-export function postingFooterText(secondsLeft: number | null): string {
-  return secondsLeft === null ? '게시 결과 확인 중입니다.' : `${countdownText(secondsLeft)}.`;
+/** 카운트다운 중인 게시 중 묶음의 바닥 줄 문구. 남은 초다. 게시 요청을 보낸 뒤에는 상세 머리가 "게시 결과 확인 중"을 보인다. */
+export function postingFooterText(secondsLeft: number): string {
+  return `${countdownText(secondsLeft)}.`;
 }
 
 /** 카운트다운 토스트 문구. 예: 5초 뒤 게시합니다: 김철수님 멘션 */
@@ -151,7 +151,14 @@ export const POST_FAILURE_TEXT: Record<PostFailureSnapshot, string> = {
   rejected: 'Flow가 글을 받지 않았습니다(길이 등)',
   'rate-limited': 'Flow 요청 한도를 넘었습니다',
   'no-response': 'Flow가 응답하지 않았습니다',
+  'app-quit': '앱이 꺼져서 게시하지 못했습니다',
 };
+
+/** 게시 요청을 보내고 결과를 기다리는 게시 중 묶음의 상세 머리 한 줄. 다시 켠 뒤 올라갔는지 확인하는 동안에도 보인다. */
+export const POST_CHECKING_TEXT = '게시 결과 확인 중';
+
+/** 카운트다운 중에 앱이 꺼져 게시하지 않고 준비됨으로 돌아온 묶음의 상세 머리 한 줄. */
+export const QUIT_DURING_COUNTDOWN_TEXT = '앱이 꺼져서 게시하지 않았습니다';
 
 /** 게시 실패 토스트 문구. 예: 게시하지 못했습니다: 김철수님 멘션 */
 export function postFailedToastText(bundle: BundleSnapshot): string {

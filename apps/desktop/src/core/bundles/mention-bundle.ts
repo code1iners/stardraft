@@ -167,7 +167,9 @@ export type PostFailureReason =
   /** `429`가 `Retry-After`만큼 기다려 다시 보낸 뒤에도 왔다. */
   | 'rate-limited'
   /** 응답이 없거나 `5xx`였고, 그 자리를 다시 조회해도 게시 본문과 같은 내 글이 없었다. */
-  | 'no-response';
+  | 'no-response'
+  /** 게시 요청의 응답을 받기 전에 앱이 꺼졌고, 다시 켠 뒤 그 자리를 조회해도 게시 본문과 같은 내 글이 없었다. */
+  | 'app-quit';
 
 /**
  * 게시 기록. 게시 요청을 보내기 직전에 게시 본문과 보낸 시각을 먼저 적고, 성공하면 올라간 글의 ID를, 실패하면 사유를 더한다.
@@ -273,6 +275,13 @@ export interface MentionBundle extends BundlePlace {
   runs: RunRecord[];
   /** 게시 기록. 게시 요청을 보내기 전이거나(카운트다운 중 포함) 게시하지 않았으면 `null`. */
   posting: PostingRecord | null;
+  /**
+   * 카운트다운 중에 앱이 꺼져, 다시 켤 때 게시하지 않고 준비됨으로 돌렸는지 여부. 참이면 상세 머리에 "앱이 꺼져서 게시하지 않았습니다"를 보인다.
+   * 다시 [게시]하거나, 다시 만들거나, 처리됨에서 되돌리면 지운다.
+   */
+  quitDuringCountdown: boolean;
+  /** 최근 멘션으로 시험하는 시험 묶음인지 여부. 시험 묶음은 처리됨에 남기지 않고, 앱을 다시 켤 때 진행 중이던 것을 지운다. */
+  trial: boolean;
 }
 
 /**

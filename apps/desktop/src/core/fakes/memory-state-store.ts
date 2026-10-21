@@ -1,5 +1,6 @@
 import { compareMentions, type MentionBundle, type MinimalRecord, type UnsavedBundle } from '../bundles/mention-bundle';
 import { mentionLocationKey, type MentionLocation } from '../detection/mention';
+import type { QueuedDraft } from '../drafts/draft-queue';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
 
@@ -15,6 +16,8 @@ export class MemoryStateStore implements StateStore {
   private readonly records = new Map<number, MinimalRecord>();
   /** 다음에 줄 묶음 ID. 지운 ID를 다시 쓰지 않는다. */
   private nextBundleId = 1;
+  /** 앱을 끌 때 남긴 초안 대기열. */
+  private draftQueue: QueuedDraft[] = [];
 
   async getAccount(): Promise<FlowEmployee | null> {
     return this.account && { ...this.account };
@@ -28,6 +31,7 @@ export class MemoryStateStore implements StateStore {
     this.baselineAlarmId = null;
     this.bundles.clear();
     this.records.clear();
+    this.draftQueue = [];
     this.account = { ...account };
   }
 
@@ -81,6 +85,22 @@ export class MemoryStateStore implements StateStore {
       this.bundles.delete(record.bundleId);
       this.records.set(record.bundleId, structuredClone(record));
     }
+  }
+
+  async deleteBundles(bundleIds: readonly number[]): Promise<void> {
+    // SQLite 저장소처럼, 저장하지 않은 묶음이 하나라도 있으면 아무것도 지우지 않고 실패한다.
+    for (const bundleId of bundleIds) {
+      if (!this.bundles.has(bundleId)) throw new Error(`저장하지 않은 묶음 ${bundleId}입니다.`);
+    }
+    for (const bundleId of bundleIds) this.bundles.delete(bundleId);
+  }
+
+  async getDraftQueue(): Promise<QueuedDraft[]> {
+    return structuredClone(this.draftQueue);
+  }
+
+  async setDraftQueue(queue: readonly QueuedDraft[]): Promise<void> {
+    this.draftQueue = structuredClone([...queue]);
   }
 
   /** 묶음의 멘션 위치가 다른 묶음에 이미 들어 있으면 실패한다. */

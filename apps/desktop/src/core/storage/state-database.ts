@@ -11,6 +11,7 @@ import {
   type UnsavedBundle,
 } from '../bundles/mention-bundle';
 import type { Draft, DraftFailure, Regeneration, RunRecord } from '../drafts/draft';
+import type { QueuePriority, QueuedDraft } from '../drafts/draft-queue';
 import type { BundleContext } from '../flow/bundle-context';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
@@ -192,6 +193,18 @@ export const STATE_MIGRATIONS: readonly string[] = [
     remark_id TEXT NOT NULL,
     reply_id TEXT NOT NULL,
     PRIMARY KEY (bundle_id, post_id, remark_id, reply_id)
+  ) STRICT;
+  `,
+  // 15: 다시 켜기. 묶음마다 카운트다운 중에 앱이 꺼져 준비됨으로 돌렸는지와 시험 묶음인지를 두고,
+  // 앱을 끌 때 남긴 초안 대기열(실행할 순서, 묶음, 대기열 자리)을 둔다. 대기열은 다시 켤 때 읽고 비우므로 묶음과 외래 키로 묶지 않는다.
+  // 이미 있던 묶음은 시험 묶음이 아니고 카운트다운 중에 꺼진 적이 없으며, 남긴 대기열은 없다.
+  `
+  ALTER TABLE mention_bundle ADD COLUMN quit_during_countdown INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE mention_bundle ADD COLUMN trial INTEGER NOT NULL DEFAULT 0;
+  CREATE TABLE draft_queue (
+    position INTEGER PRIMARY KEY,
+    bundle_id INTEGER NOT NULL,
+    priority TEXT NOT NULL CHECK (priority IN ('resume', 'user', 'auto'))
   ) STRICT;
   `,
 ];
@@ -414,6 +427,8 @@ export class SqliteStateStore implements StateStore {
       failure: readJson<DraftFailure>(row.failure),
       runs: readJson<RunRecord[]>(row.runs) ?? [],
       posting: postingRecordOf(readJson<PostingRecord>(row.posting), mentions.get(row.id) ?? []),
+      quitDuringCountdown: row.quit_during_countdown === 1,
+      trial: row.trial === 1,
     }));
   }
 
@@ -459,6 +474,8 @@ export class SqliteStateStore implements StateStore {
       failure: jsonOrNull(bundle.failure),
       runs: JSON.stringify(bundle.runs),
       posting: jsonOrNull(bundle.posting),
+      quitDuringCountdown: bundle.quitDuringCountdown ? 1 : 0,
+      trial: bundle.trial ? 1 : 0,
     };
     /** 묶음 ID. */
     let id = bundle.id;
@@ -467,9 +484,11 @@ export class SqliteStateStore implements StateStore {
         this.db
           .prepare(
             `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
-               context, watched_context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting)
+               context, watched_context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting,
+               quit_during_countdown, trial)
              VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
-               @context, @watchedContext, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting)`,
+               @context, @watchedContext, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting,
+               @quitDuringCountdown, @trial)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -481,7 +500,8 @@ export class SqliteStateStore implements StateStore {
              connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt,
              context = @context, watched_context = @watchedContext, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, edited_text = @editedText,
              removed_recipients = @removedRecipients, directives = @directives, fixed_requirement = @fixedRequirement,
-             regeneration = @regeneration, failure = @failure, runs = @runs, posting = @posting
+             regeneration = @regeneration, failure = @failure, runs = @runs, posting = @posting,
+             quit_during_countdown = @quitDuringCountdown, trial = @trial
            WHERE id = @id`,
         )
         .run({ ...values, id });
@@ -583,6 +603,44 @@ export class SqliteStateStore implements StateStore {
     })();
 
     this.clearWal();
+  }
+
+  async deleteBundles(bundleIds: readonly number[]): Promise<void> {
+    if (bundleIds.length === 0) return;
+    /** 묶음의 멘션을 지우는 문장. */
+    const deleteMentions = this.db.prepare('DELETE FROM mention WHERE bundle_id = ?');
+    /** 묶음에 기록한 내 답을 지우는 문장. */
+    const deleteAnswers = this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id = ?');
+    /** 묶음 줄을 지우는 문장. */
+    const deleteBundle = this.db.prepare('DELETE FROM mention_bundle WHERE id = ?');
+
+    // 하나라도 실패하면 아무것도 지우지 않는다.
+    this.db.transaction(() => {
+      for (const bundleId of bundleIds) {
+        deleteMentions.run(bundleId);
+        deleteAnswers.run(bundleId);
+        /** 지운 묶음 줄 수. */
+        const { changes } = deleteBundle.run(bundleId);
+        if (changes === 0) throw new Error(`저장하지 않은 묶음 ${bundleId}입니다.`);
+      }
+    })();
+
+    this.clearWal();
+  }
+
+  async getDraftQueue(): Promise<QueuedDraft[]> {
+    /** 남긴 대기열의 줄. 실행할 순서다. */
+    const rows = this.db.prepare('SELECT bundle_id, priority FROM draft_queue ORDER BY position').all() as { bundle_id: number; priority: string }[];
+    return rows.map((row) => ({ bundleId: row.bundle_id, priority: row.priority as QueuePriority }));
+  }
+
+  async setDraftQueue(queue: readonly QueuedDraft[]): Promise<void> {
+    /** 대기열 한 줄을 넣는 문장. */
+    const insert = this.db.prepare('INSERT INTO draft_queue (position, bundle_id, priority) VALUES (?, ?, ?)');
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM draft_queue').run();
+      queue.forEach(({ bundleId, priority }, position) => insert.run(position, bundleId, priority));
+    })();
   }
 
   /** 기준점 한 줄을 넣거나 바꾼다. */
@@ -688,6 +746,10 @@ interface BundleRow {
   runs: string;
   /** 게시 기록의 JSON. 게시 요청을 보내기 전이면 `null`. */
   posting: string | null;
+  /** 카운트다운 중에 앱이 꺼져 준비됨으로 돌렸으면 1. */
+  quit_during_countdown: number;
+  /** 시험 묶음이면 1. */
+  trial: number;
 }
 
 /** `bundle_answer` 표의 한 줄. */

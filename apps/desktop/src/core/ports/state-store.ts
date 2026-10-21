@@ -1,5 +1,6 @@
 import type { MentionBundle, MinimalRecord, UnsavedBundle } from '../bundles/mention-bundle';
 import type { MentionLocation } from '../detection/mention';
+import type { QueuedDraft } from '../drafts/draft-queue';
 import type { FlowEmployee } from './flow-api';
 
 /**
@@ -42,4 +43,13 @@ export interface StateStore {
    * 지운 Flow 글과 초안이 파일에 남지 않게 한다. 최소 기록의 `bundleId`가 지울 묶음이다.
    */
   archiveBundles(records: readonly MinimalRecord[]): Promise<void>;
+  /**
+   * 묶음의 전체 기록(묶음, 멘션, 내 답)을 지우고 최소 기록도 남기지 않는다. 한 트랜잭션으로 한다. 시험 묶음을 지울 때 쓴다.
+   * 지운 Flow 글과 초안이 파일에 남지 않게 한다. 저장하지 않은 묶음이 하나라도 있으면 실패하고 아무것도 지우지 않는다.
+   */
+  deleteBundles(bundleIds: readonly number[]): Promise<void>;
+  /** 앱을 끌 때 남긴 초안 대기열. 앞에서부터 실행할 순서다. 남긴 것이 없으면 빈 배열이다. */
+  getDraftQueue(): Promise<QueuedDraft[]>;
+  /** 초안 대기열을 남긴다. 앞서 남긴 것은 지운다. 앱을 끌 때 남기고, 다시 켜서 읽은 뒤에는 비운다. */
+  setDraftQueue(queue: readonly QueuedDraft[]): Promise<void>;
 }

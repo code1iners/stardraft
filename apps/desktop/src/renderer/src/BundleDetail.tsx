@@ -30,6 +30,7 @@ import {
   noticeText,
   postBodyLength,
   postBodyLengthText,
+  POST_CHECKING_TEXT,
   POST_FAILURE_TEXT,
   postFailedToastText,
   postStoppedAction,
@@ -37,6 +38,7 @@ import {
   postLine,
   postingFooterText,
   PROCESSED_NOTES,
+  QUIT_DURING_COUNTDOWN_TEXT,
   reasonText,
   repoCheckText,
   runLineText,
@@ -91,13 +93,18 @@ export function RunLine({ bundle }: BundleProps) {
   return <p className="run-line">{runLineText(bundle.run)}</p>;
 }
 
-/** 상세 머리에 더하는 게시 실패 사유 한 줄. 게시 실패가 아니면 그리지 않는다. */
-export function PostFailureLine({ bundle }: BundleProps) {
-  if (!bundle.postFailure) return null;
-  return <p className="post-failure-line">{POST_FAILURE_TEXT[bundle.postFailure]}</p>;
+/**
+ * 상세 머리에 더하는 게시 상태 한 줄. 게시 실패면 쉬운 말 사유, 게시 요청을 보내고 결과를 기다리면 "게시 결과 확인 중",
+ * 카운트다운 중에 앱이 꺼져 준비됨으로 돌아왔으면 "앱이 꺼져서 게시하지 않았습니다"다. 셋 다 아니면 그리지 않는다.
+ */
+export function PostStatusLine({ bundle }: BundleProps) {
+  if (bundle.postFailure) return <p className="post-status-line failure">{POST_FAILURE_TEXT[bundle.postFailure]}</p>;
+  if (bundle.posting?.phase === 'sending') return <p className="post-status-line">{POST_CHECKING_TEXT}</p>;
+  if (bundle.quitDuringCountdown) return <p className="post-status-line warning">{QUIT_DURING_COUNTDOWN_TEXT}</p>;
+  return null;
 }
 
-/** 작은 창 상세 머리. 첫 줄은 송신자·멘션 자리·시각, 둘째 줄은 게시물과 "Flow에서 열기", 셋째 줄은 실행 줄이고, 게시 실패면 사유 한 줄을 더한다. */
+/** 작은 창 상세 머리. 첫 줄은 송신자·멘션 자리·시각, 둘째 줄은 게시물과 "Flow에서 열기", 셋째 줄은 실행 줄이고, 게시 상태가 있으면 한 줄을 더한다. */
 export function BundleMeta({ bundle }: BundleProps) {
   return (
     <div className="bundle-meta">
@@ -111,7 +118,7 @@ export function BundleMeta({ bundle }: BundleProps) {
         <OpenInFlowButton bundle={bundle} />
       </p>
       <RunLine bundle={bundle} />
-      <PostFailureLine bundle={bundle} />
+      <PostStatusLine bundle={bundle} />
     </div>
   );
 }
@@ -965,7 +972,7 @@ interface PostingFooterProps {
 
 /**
  * 게시 중 묶음의 바닥 줄. 카운트다운 중이면 남은 초와 [취소]만 둔다(무시·재생성 없음).
- * 게시 요청을 보낸 뒤에는 결과를 기다린다는 말과 꺼진 [게시]만 둔다.
+ * 게시 요청을 보낸 뒤에는 꺼진 [게시]만 둔다. 결과를 기다린다는 말은 상세 머리에 있다.
  */
 function PostingFooter({ posting, onCancel }: PostingFooterProps) {
   /** 카운트다운의 남은 초. 게시 요청을 보냈으면 `null`. */
@@ -973,7 +980,7 @@ function PostingFooter({ posting, onCancel }: PostingFooterProps) {
 
   return (
     <footer className="review-foot">
-      <span className="small muted">{postingFooterText(secondsLeft)}</span>
+      {secondsLeft !== null && <span className="small muted">{postingFooterText(secondsLeft)}</span>}
       <span className="spacer" />
       {posting.phase === 'countdown' ? (
         <button type="button" className="btn" onClick={onCancel}>

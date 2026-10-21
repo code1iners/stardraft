@@ -120,6 +120,7 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     regeneration: null,
     failure: null,
     runs: [],
+    posting: null,
     ...overrides,
   };
 }
@@ -596,5 +597,47 @@ describe('멘션 묶음', () => {
     expect((await store.listBundles()).map(({ directives, fixedRequirement, regeneration }) => ({ directives, fixedRequirement, regeneration }))).toEqual([
       { directives: [], fixedRequirement: null, regeneration: null },
     ]);
+  });
+
+  it('게시 기록(보내기 전 기록과 올라간 글의 ID)을 다시 열어도 그대로 읽는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles(
+      [
+        bundle([mention('101')], { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null } }),
+        bundle([mention('102', { postId: '90000012' })], { status: 'posted', processedAt: 6_000, posting: { body: '답', sentAt: 6_000, postedId: '950000001' } }),
+        bundle([mention('103', { postId: '90000013' })], { status: 'ready' }),
+      ],
+      '103',
+    );
+
+    /** 다시 연 저장소에서 읽은 묶음. */
+    const reopened = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
+
+    expect(reopened.map(({ status, posting }) => ({ status, posting }))).toEqual([
+      { status: 'posting', posting: { body: '@[보낸 사람](sender@example.test) 답\n\n둘째 문단', sentAt: 5_000, postedId: null } },
+      { status: 'posted', posting: { body: '답', sentAt: 6_000, postedId: '950000001' } },
+      { status: 'ready', posting: null },
+    ]);
+  });
+
+  it('형식 11에서 올리면 이미 있던 묶음은 게시 기록 없이 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 11로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 11), '0.0.11');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'ready', '가짜 게시물', NULL, 0, 1000, NULL)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ status, posting }) => ({ status, posting }))).toEqual([{ status: 'ready', posting: null }]);
   });
 });

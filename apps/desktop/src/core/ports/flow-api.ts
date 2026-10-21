@@ -133,6 +133,20 @@ export interface FlowReplyPage {
   nextCursor: string | null;
 }
 
+/** 게시로 만든 댓글. `POST /user/comments/{postId}` 응답에서 앱이 쓰는 값이다. */
+export interface FlowCreatedComment {
+  /** 만든 댓글의 ID. */
+  commentId: string;
+}
+
+/** 게시로 만든 대댓글. `POST /user/comments/{postId}/replies/{commentId}` 응답에서 앱이 쓰는 값이다. */
+export interface FlowCreatedReply {
+  /** 부모 댓글의 ID. */
+  commentId: string;
+  /** 만든 대댓글의 ID. */
+  replyId: string;
+}
+
 /** Flow API 호출이 실패한 이유. */
 export type FlowApiFailure =
   /** `401`. 키가 맞지 않거나 삭제·변경됐다. */
@@ -151,7 +165,7 @@ export type FlowApiResult<T> = { ok: true; value: T } | { ok: false; failure: Fl
 
 /**
  * Flow API 포트.
- * Flow 전용 코드는 이 포트의 어댑터 한 곳에 모은다. 알림 조회, 맥락 조회, 게시는 이 포트에 차례로 더한다.
+ * Flow 전용 코드는 이 포트의 어댑터 한 곳에 모은다. 알림 조회, 맥락 조회, 게시가 이 포트를 거친다.
  */
 export interface FlowApi {
   /** 키 소유자 본인의 구성원 정보를 조회한다. 키 확인에 쓴다. */
@@ -169,6 +183,10 @@ export interface FlowApi {
   listComments(postId: string, cursor: string | null): Promise<FlowApiResult<FlowCommentPage>>;
   /** 댓글 하나의 대댓글 목록 한 쪽을 `replyId` 오름차순으로 조회한다. `cursor`가 `null`이면 첫 쪽이다. */
   listReplies(postId: string, commentId: string, cursor: string | null): Promise<FlowApiResult<FlowReplyPage>>;
+  /** 게시물에 키 소유자 명의로 새 댓글을 단다. `contents`는 게시 본문이고 Flow가 그대로 저장한다. */
+  createComment(postId: string, contents: string): Promise<FlowApiResult<FlowCreatedComment>>;
+  /** 댓글에 키 소유자 명의로 대댓글을 단다. Flow 댓글은 2단 구조라 `commentId`는 댓글이어야 한다. */
+  createReply(postId: string, commentId: string, contents: string): Promise<FlowApiResult<FlowCreatedReply>>;
 }
 
 /** 지금 키로 부르는 Flow. 키를 바꾸면 새로 만든다. */

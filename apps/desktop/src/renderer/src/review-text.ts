@@ -15,12 +15,14 @@ import {
 } from '../../shared/ipc';
 import { AGENT_NAMES } from './AgentSection';
 
-/** 상태 태그의 이름과 색. 준비됨은 파랑, 생성 중은 회색, 실패는 빨강, 확인이 필요한 상태는 노랑, 처리됨은 옅은 회색이다. */
+/** 상태 태그의 이름과 색. 준비됨은 파랑, 생성 중·게시 중은 회색, 실패는 빨강, 확인이 필요한 상태는 노랑, 처리됨은 옅은 회색이다. */
 export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; className: string }> = {
   generating: { label: '생성 중', className: 'generating' },
   ready: { label: '준비됨', className: 'ready' },
   'repo-check-needed': { label: '저장소 확인 필요', className: 'warn' },
+  posting: { label: '게시 중', className: 'generating' },
   failed: { label: '실패', className: 'failed' },
+  posted: { label: '게시됨', className: 'done' },
   ignored: { label: '무시함', className: 'done' },
   'already-answered': { label: '이미 답함', className: 'done' },
 };
@@ -48,6 +50,7 @@ export const MENTION_PLACE_LABELS: Record<MentionPlaceSnapshot, string> = {
 
 /** 처리됨 묶음의 바닥 줄 안내. */
 export const PROCESSED_NOTES: Partial<Record<BundleStatusSnapshot, string>> = {
+  posted: '게시한 묶음입니다. 되돌릴 수 없습니다.',
   ignored: '무시한 묶음입니다.',
   'already-answered': 'Flow에 이미 내 답이 있어 처리했습니다.',
 };
@@ -88,6 +91,18 @@ export function postLine(bundle: BundleSnapshot): string {
 /** 무시 토스트 문구. */
 export function ignoredText(bundle: BundleSnapshot): string {
   return `무시했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
+}
+
+/** 게시 중 묶음의 바닥 줄 문구. 카운트다운 중이면 남은 초, 게시 요청을 보냈으면 결과를 기다린다는 말이다. */
+export function postingFooterText(secondsLeft: number | null): string {
+  return secondsLeft === null ? '게시 결과를 기다리는 중입니다.' : `${secondsLeft}초 뒤 게시합니다.`;
+}
+
+/** 게시 토스트 문구. 카운트다운 중이면 남은 초, 게시 요청을 보냈으면 게시하는 중이라는 말이다. */
+export function postingToastText(bundle: BundleSnapshot, secondsLeft: number | null): string {
+  /** 어느 멘션에 답하는지. */
+  const target = `${senderLine(bundle.senderNames)}님 멘션`;
+  return secondsLeft === null ? `게시하는 중입니다: ${target}` : `${secondsLeft}초 뒤 게시합니다: ${target}`;
 }
 
 /**

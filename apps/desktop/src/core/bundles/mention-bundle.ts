@@ -6,7 +6,7 @@ import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { MyAnswer } from '../flow/mention-judgement';
 import type { RepoCandidate } from '../repos/repo-candidates';
 
-/** 멘션 묶음의 상태. 게시 중·게시 실패·게시됨·원문 사라짐은 게시와 변화 감시 기능이 더한다. */
+/** 멘션 묶음의 상태. 게시 실패·원문 사라짐은 게시 실패 처리와 변화 감시 기능이 더한다. */
 export type BundleStatus =
   /** 생성 중. 선택 실행이나 초안 실행이 대기열에 있거나 돌고 있다. */
   | 'generating'
@@ -14,8 +14,12 @@ export type BundleStatus =
   | 'ready'
   /** 저장소 확인 필요. 초안 없이 저장소를 골라 달라고 기다린다. */
   | 'repo-check-needed'
+  /** 게시 중. 게시 취소 카운트다운(5초)이나 게시 요청 중이다. 게시 기록이 없으면 카운트다운 중이다. */
+  | 'posting'
   /** 실패. 생성이 실패했다(시간 초과, 취소함, 빈 초안, 구조 실패 등). */
   | 'failed'
+  /** 게시됨. 이 PC가 게시했고 올라간 글의 ID가 게시 기록에 있다. 되돌릴 수 없다. */
+  | 'posted'
   /** 무시함. 사용자가 무시했다. */
   | 'ignored'
   /** 이미 답함. Flow에 내 답이 있어 자동으로 옮겨졌다. */
@@ -31,9 +35,11 @@ export function listGroupOf(status: BundleStatus): BundleListGroup {
       return 'generating';
     case 'ready':
     case 'repo-check-needed':
+    case 'posting':
       return 'awaiting-review';
     case 'failed':
       return 'failed';
+    case 'posted':
     case 'ignored':
     case 'already-answered':
       return 'processed';
@@ -60,6 +66,11 @@ export function canEditDraft(status: BundleStatus): boolean {
   return status === 'ready';
 }
 
+/** [게시]로 게시를 시작할 수 있는 상태인지 본다. 준비됨이다. 게시 중이면 이미 게시하고 있다. */
+export function canPost(status: BundleStatus): boolean {
+  return status === 'ready';
+}
+
 /**
  * 사용자가 초안·요구·지시 가운데 하나라도 손댔는지 본다. 편집본이 있거나, 요구를 고쳤거나, 지시를 덧붙였으면 손댄 것이다.
  * 받는 사람을 뺀 것은 손댐이 아니다. 받는 사람은 초안 텍스트 밖에 있어 다시 만들어도 덮어쓰지 않기 때문이다.
@@ -68,7 +79,7 @@ export function isDraftTouched(bundle: Pick<MentionBundle, 'editedText' | 'fixed
   return bundle.editedText !== null || bundle.fixedRequirement !== null || bundle.directives.length > 0;
 }
 
-/** 트레이 숫자에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. */
+/** 트레이 숫자에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. 게시 중은 검토 대기에 남지만 세지 않는다. */
 export function countsForReview(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
 }
@@ -109,6 +120,19 @@ export interface BundledMention extends Mention {
 export interface RecordedAnswer extends MyAnswer {
   /** 묶음을 되돌릴 때 기록해, 이후 "이미 답함" 판정에서 빼는 답인지 여부. 같은 답으로 다시 처리됨이 되지 않게 한다. */
   excluded: boolean;
+}
+
+/**
+ * 게시 기록. 게시 요청을 보내기 직전에 게시 본문과 보낸 시각을 먼저 적고, 성공하면 올라간 글의 ID를 더한다.
+ * 결과(`postedId`)가 없는 기록은 요청을 보냈지만 올라갔는지 아직 모르는 것이다.
+ */
+export interface PostingRecord {
+  /** 게시 본문. Flow에 보낸 문자열 그대로다. */
+  body: string;
+  /** 게시 요청을 보낸 시각(Unix epoch 밀리초). 요청을 보내기 직전에 적는다. */
+  sentAt: number;
+  /** 올라간 글의 ID. 본문 묶음이면 새 댓글의 `commentId`, 댓글 스레드 묶음이면 대댓글의 `replyId`다. 결과를 받기 전이면 `null`. */
+  postedId: string | null;
 }
 
 /** 멘션 묶음 자리. 같은 댓글 스레드(`remarkId`가 댓글)나 같은 게시물 본문(`remarkId`가 `"-1"`)이다. */
@@ -173,6 +197,8 @@ export interface MentionBundle extends BundlePlace {
   failure: DraftFailure | null;
   /** 실행 기록. 실행한 순서다. */
   runs: RunRecord[];
+  /** 게시 기록. 게시 요청을 보내기 전이거나(카운트다운 중 포함) 게시하지 않았으면 `null`. */
+  posting: PostingRecord | null;
 }
 
 /** 아직 저장하지 않아 ID가 없을 수 있는 묶음. 새 묶음은 저장할 때 ID를 받는다. */

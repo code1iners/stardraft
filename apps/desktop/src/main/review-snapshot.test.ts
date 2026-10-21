@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { BundledMention, MentionBundle } from '../core/bundles/mention-bundle';
 import type { RunRecord } from '../core/drafts/draft';
 import type { BundleContext } from '../core/flow/bundle-context';
+import { POST_BODY_CHAR_LIMIT as CORE_POST_BODY_CHAR_LIMIT } from '../core/drafts/post-body';
+import { POST_BODY_CHAR_LIMIT } from '../shared/ipc';
 import { bundleSnapshot, flowUrlOf, reviewSnapshot } from './review-snapshot';
 
 /** 가짜 멘션. 실제 사람이나 글이 아니다. 기본은 08:50(한국 표준시)에 온 댓글 멘션이다. */
@@ -48,6 +50,7 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     regeneration: null,
     failure: null,
     runs: [],
+    posting: null,
     ...overrides,
   };
 }
@@ -117,6 +120,7 @@ describe('묶음 스냅숏', () => {
       generation: null,
       failure: null,
       repoCheck: null,
+      posting: null,
     });
     expect(snapshot.mentions[0]?.text).toEqual([
       { text: '@테스트 사용자', mention: true },
@@ -301,6 +305,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
       recipients: [{ name: '보낸 사람' }],
       // `@[보낸 사람](sender@example.test)` 29자와 공백 하나.
       postBodyPrefixLength: 30,
+      canPost: true,
     });
     expect(snapshot.run).toEqual({ agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
     expect(JSON.stringify(snapshot)).not.toContain('costUsd');
@@ -523,6 +528,64 @@ describe('초안 편집기와 받는 사람', () => {
     const snapshot = bundleSnapshot(bundle({ status: 'ignored', processedAt: 2_000, draft, mentions, editedText: '고친 초안입니다.' }), () => null).draft;
 
     expect(snapshot).toMatchObject({ editorText: '고친 초안입니다.', edited: true, canEdit: false });
+  });
+});
+
+describe('게시', () => {
+  /** 한 문단짜리 초안. */
+  const draft = {
+    requirement: { text: '요구', summary: '요약' },
+    paragraphs: [{ sentences: [{ text: '답입니다.', evidence: [] }] }],
+    evidence: [],
+    repositories: ['/fake/work/web'],
+    autoSelection: null,
+    createdAt: 144_000,
+  };
+  /** 송신자 한 명의 멘션. 받는 사람 표기 `@[보낸 사람](sender@example.test)`는 29자다. */
+  const mentions = [mention('101')];
+
+  it('준비됨 묶음은 게시할 수 있고, 편집기 텍스트가 비었거나 받는 사람 표기를 포함한 게시 본문이 4,000자를 넘으면 게시할 수 없다', () => {
+    /** 편집본으로 만든 준비됨 묶음의 초안. */
+    const draftOf = (editedText: string | null) => bundleSnapshot(bundle({ status: 'ready', draft, mentions, editedText }), () => null).draft;
+
+    expect(draftOf(null)?.canPost).toBe(true);
+    expect(draftOf('  \n ')?.canPost).toBe(false);
+    // 받는 사람 표기 29자와 공백 1자 뒤의 편집기 텍스트 3,970자가 꼭 4,000자다.
+    expect(draftOf('가'.repeat(3_970))?.canPost).toBe(true);
+    expect(draftOf('가'.repeat(3_971))?.canPost).toBe(false);
+  });
+
+  it('카운트다운 중인 게시 중 묶음은 게시 요청을 보낼 시각을 넘기고, 검토 대기에 남으며 고치거나 다시 게시할 수 없다', () => {
+    /** 카운트다운 중인 묶음의 스냅숏. */
+    const snapshot = bundleSnapshot(bundle({ id: 7, status: 'posting', draft, mentions }), () => null, undefined, undefined, (bundleId) =>
+      bundleId === 7 ? 15_000 : null,
+    );
+
+    expect(snapshot).toMatchObject({ status: 'posting', group: 'awaiting-review', posting: { phase: 'countdown', endsAt: 15_000 } });
+    expect(snapshot.draft).toMatchObject({ canEdit: false, canPost: false });
+  });
+
+  it('게시 요청을 보낸 게시 중 묶음은 결과를 기다린다고 넘긴다', () => {
+    /** 게시 요청을 보낸 묶음의 스냅숏. */
+    const snapshot = bundleSnapshot(bundle({ status: 'posting', draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null } }), () => null);
+
+    expect(snapshot.posting).toEqual({ phase: 'sending' });
+  });
+
+  it('게시됨 묶음은 처리됨이고 되돌릴 수 없으며, 게시 중이 아니면 게시 단계가 없다', () => {
+    /** 게시됨 묶음의 스냅숏. */
+    const snapshot = bundleSnapshot(
+      bundle({ status: 'posted', processedAt: 20_000, draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: '950000001' } }),
+      () => null,
+    );
+
+    expect(snapshot).toMatchObject({ status: 'posted', group: 'processed', canRestore: false, posting: null });
+    expect(snapshot.draft?.canPost).toBe(false);
+  });
+
+  it('렌더러가 쓰는 게시 본문 상한은 core의 상한과 같다', () => {
+    expect(POST_BODY_CHAR_LIMIT).toBe(4_000);
+    expect(CORE_POST_BODY_CHAR_LIMIT).toBe(4_000);
   });
 });
 

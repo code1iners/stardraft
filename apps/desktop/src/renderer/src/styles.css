@@ -1652,22 +1652,33 @@ textarea.regen-input {
   gap: 8px;
 }
 
-/* 무시한 직후 창 아래에 뜨는 토스트. */
-.toast {
+/* 창 아래 토스트 자리. 게시 토스트와 무시 토스트를 위에서 아래로 쌓는다. */
+.toast-stack {
   position: fixed;
   left: 50%;
   bottom: 60px;
   z-index: 5;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 24px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* 게시 카운트다운과 무시 직후에 뜨는 토스트. */
+.toast {
+  display: flex;
   align-items: center;
   gap: 14px;
-  max-width: calc(100% - 24px);
+  max-width: 100%;
   padding: 8px 14px;
   border-radius: 8px;
   background: #2a2d32;
   color: #fff;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  transform: translateX(-50%);
+  pointer-events: auto;
 }
 
 .toast span {

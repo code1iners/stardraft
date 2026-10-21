@@ -421,8 +421,16 @@ function RecipientLine({ bundleId, draft }: RecipientLineProps) {
 
 /** 근거 영역 내용에 넘기는 값. */
 interface EvidenceListProps extends RecipientLineProps {
-  /** 초안의 근거 번호를 눌러 강조할 근거 번호. 없으면 `null`. */
-  highlightedId: number | null;
+  /** 초안의 근거 번호를 눌러 강조할 근거. 누르지 않았으면 `null`. */
+  highlight: EvidenceHighlight | null;
+}
+
+/** 초안의 근거 번호를 눌러 강조한 근거. */
+interface EvidenceHighlight {
+  /** 강조할 근거 번호. */
+  evidenceId: number;
+  /** 누른 횟수. 같은 번호를 다시 눌러도 그 근거까지 다시 내리려고 센다. */
+  count: number;
 }
 
 /**
@@ -430,18 +438,18 @@ interface EvidenceListProps extends RecipientLineProps {
  * 위치를 찾지 못한 근거는 위치 대신 "위치를 찾을 수 없음"을 보이고 "에디터에서 열기"를 끈다. 에이전트가 적은 경로는 마우스를 올리면 보인다.
  * 초안의 근거 번호를 눌러 고른 근거는 강조한다.
  */
-function EvidenceList({ bundleId, draft, highlightedId }: EvidenceListProps) {
+function EvidenceList({ bundleId, draft, highlight }: EvidenceListProps) {
   /** 강조한 근거의 항목. */
   const highlightedRef = useRef<HTMLLIElement>(null);
 
   // 초안의 근거 번호를 누르면 근거가 목록 아래쪽에 있어도 보이게 그 근거까지 내린다.
   useEffect(() => {
     highlightedRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [highlightedId]);
+  }, [highlight]);
 
   if (draft.evidence.length === 0) return <p className="small muted">근거가 없습니다. 초안이 저장소 코드를 근거로 하지 않았습니다.</p>;
   /** 강조할 근거의 위치. 같은 번호가 거듭 나와도 처음 것만 강조한다. */
-  const highlightedIndex = highlightedId === null ? -1 : draft.evidence.findIndex((evidence) => evidence.id === highlightedId);
+  const highlightedIndex = highlight ? draft.evidence.findIndex((evidence) => evidence.id === highlight.evidenceId) : -1;
   return (
     <ol className="evidence-list">
       {draft.evidence.map((evidence, evidenceIndex) => {
@@ -705,13 +713,13 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
   const [requirementBundleId, setRequirementBundleId] = useState<number | null>(null);
   // 근거 강조도 보고 있는 묶음에만 둔다. 다른 묶음으로 넘어가면 강조가 사라진다.
   /** 초안의 근거 번호를 눌러 강조한 근거. 누르지 않았으면 `null`. */
-  const [highlight, setHighlight] = useState<{ bundleId: number; evidenceId: number } | null>(null);
+  const [highlight, setHighlight] = useState<(EvidenceHighlight & { bundleId: number }) | null>(null);
   /** 초안. 생성 중이면 새로 만들고 있으므로 보이지 않는다. */
   const draft = bundle.status === 'generating' ? null : bundle.draft;
   /** 근거 번호를 눌렀다. 근거 영역이 접혀 있으면 펼치고 그 근거를 강조한다. */
   const handleCite = (evidenceId: number) => {
     if (!open.evidence) void window.stardraft.send({ type: 'set-review-section', window: windowKind, section: 'evidence', open: true });
-    setHighlight({ bundleId: bundle.id, evidenceId });
+    setHighlight((current) => ({ bundleId: bundle.id, evidenceId, count: (current?.count ?? 0) + 1 }));
   };
   /** 요구를 고치는 칸을 보일지 여부. 초안을 고칠 수 있는 묶음에서만 연다. */
   const editingRequirement = requirementBundleId === bundle.id && draft?.canEdit === true;
@@ -771,7 +779,7 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
             <DraftEditor key={bundle.id} bundleId={bundle.id} draft={draft} onCite={handleCite} />
           </ReviewSectionBlock>
           <ReviewSectionBlock windowKind={windowKind} section="evidence" open={open.evidence} title={`근거 ${draft.evidence.length}개`}>
-            <EvidenceList bundleId={bundle.id} draft={draft} highlightedId={highlight?.bundleId === bundle.id ? highlight.evidenceId : null} />
+            <EvidenceList bundleId={bundle.id} draft={draft} highlight={highlight?.bundleId === bundle.id ? highlight : null} />
           </ReviewSectionBlock>
         </>
       )}

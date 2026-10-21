@@ -17,7 +17,10 @@ export interface EditorSystem {
   listDir(path: string): Promise<string[]>;
   /** URL 스킴 주소를 OS에 넘겨 연다. 실패하면 던진다. */
   openUrl(url: string): Promise<void>;
-  /** 셸 없이 명령을 실행하고 기다리지 않는다. 실행하지 못하면 던진다. */
+  /**
+   * 셸 없이 명령을 실행하고 기다리지 않는다. 실행하지 못하면 던진다.
+   * 직접 지정한 명령도 이것으로 실행하므로, 설정 "일반"에 적은 명령은 사용자가 고른 프로그램을 그대로 띄운다.
+   */
   spawn(command: string, args: string[]): Promise<void>;
   /** 파일을 OS 기본 앱으로 연다. 실패하면 던진다. */
   openPath(path: string): Promise<void>;
@@ -127,15 +130,19 @@ export class EditorOpener {
     if (choice?.kind === 'command') {
       /** 직접 지정한 명령의 조각. */
       const argv = parseEditorCommand(choice.command);
-      if (argv) await this.launch({ kind: 'process', ...fillCommand(argv, target) }, target);
-      else await this.openWithDefaultApp(target);
+      if (argv) {
+        await this.launch({ kind: 'process', ...fillCommand(argv, target) }, target);
+      } else {
+        this.options.logger.warn('editor.command-invalid', {});
+        await this.openWithDefaultApp(target);
+      }
       this.update({ choice });
       return;
     }
     /** 찾은 에디터. */
     const found = await this.discover();
     this.update({ choice, installed: found.map(installedOf) });
-    /** 기억한 에디터. */
+    /** 기억한 에디터가 이 PC에 있으면 그 에디터. */
     const chosen = choice && found.find((editor) => editor.appId === choice.appId);
     if (chosen) {
       await this.launch(chosen.launch(target), target);
@@ -244,10 +251,10 @@ async function discoverOnMac(system: EditorSystem): Promise<FoundEditor[]> {
 
   /** VS Code. */
   const vscode = await appPath('Visual Studio Code.app');
-  if (vscode) found.push({ appId: 'vscode', name: 'VS Code', launch: (target) => urlLaunch('vscode', target) });
+  if (vscode) found.push(urlSchemeEditor('vscode', 'VS Code'));
   /** Cursor. */
   const cursor = await appPath('Cursor.app');
-  if (cursor) found.push({ appId: 'cursor', name: 'Cursor', launch: (target) => urlLaunch('cursor', target) });
+  if (cursor) found.push(urlSchemeEditor('cursor', 'Cursor'));
   for (const folder of folders) {
     for (const entry of await system.listDir(folder)) {
       /** 앱 이름. */
@@ -287,10 +294,10 @@ async function discoverOnWindows(system: EditorSystem): Promise<FoundEditor[]> {
 
   // VS Code와 Cursor는 설치할 때 URL 스킴을 등록한다.
   if (await firstExisting([under(userPrograms, 'Microsoft VS Code', 'Code.exe'), under(programFiles, 'Microsoft VS Code', 'Code.exe')])) {
-    found.push({ appId: 'vscode', name: 'VS Code', launch: (target) => urlLaunch('vscode', target) });
+    found.push(urlSchemeEditor('vscode', 'VS Code'));
   }
   if (await firstExisting([under(userPrograms, 'cursor', 'Cursor.exe'), under(programFiles, 'Cursor', 'Cursor.exe')])) {
-    found.push({ appId: 'cursor', name: 'Cursor', launch: (target) => urlLaunch('cursor', target) });
+    found.push(urlSchemeEditor('cursor', 'Cursor'));
   }
   // 설치 프로그램은 `JetBrains\WebStorm 2026.2`에, Toolbox는 사용자별 설치 폴더에 IDE마다 폴더를 만든다.
   for (const folder of [under(programFiles, 'JetBrains'), userPrograms]) {
@@ -311,6 +318,11 @@ async function discoverOnWindows(system: EditorSystem): Promise<FoundEditor[]> {
   const sublime = await firstExisting([under(programFiles, 'Sublime Text', 'subl.exe'), under(programFiles, 'Sublime Text 3', 'subl.exe')]);
   if (sublime) found.push(lineSuffixEditor('sublime', 'Sublime Text', sublime));
   return found;
+}
+
+/** VS Code 계열 에디터. 에디터 ID가 곧 URL 스킴이다. */
+function urlSchemeEditor(appId: string, name: string): FoundEditor {
+  return { appId, name, launch: (target) => urlLaunch(appId, target) };
 }
 
 /** JetBrains IDE. 실행 파일이 `--line 줄 파일`을 받아 열린 IDE에 넘긴다. */
@@ -344,7 +356,7 @@ function installedOf({ appId, name }: FoundEditor): InstalledEditor {
 
 /**
  * 직접 지정한 명령 한 줄을 조각으로 나눈다. 공백으로 나누고, 큰따옴표나 작은따옴표로 묶은 부분은 한 조각이다.
- * 셸로 실행하지 않으므로 파일 경로에 든 문자가 명령으로 읽히지 않는다. 비었거나, 따옴표가 닫히지 않았거나, `{file}` 자리가 없으면 `null`.
+ * 셸로 실행하지 않으므로 파일 경로에 든 문자가 명령으로 읽히지 않는다. 비었거나, 따옴표가 닫히지 않았거나, `{file}`이나 `{line}` 자리가 없으면 `null`.
  */
 export function parseEditorCommand(command: string): string[] | null {
   /** 나눈 조각. */
@@ -369,7 +381,7 @@ export function parseEditorCommand(command: string): string[] | null {
   }
   if (quote) return null;
   if (token !== null) argv.push(token);
-  if (argv.length === 0 || !argv.some((arg) => arg.includes('{file}'))) return null;
+  if (!argv.some((arg) => arg.includes('{file}')) || !argv.some((arg) => arg.includes('{line}'))) return null;
   return argv;
 }
 

@@ -1,3 +1,5 @@
+import type { MentionBundle } from '../bundles/mention-bundle';
+import type { ContextWriting } from '../flow/bundle-context';
 import { namedMentionText } from '../flow/mention-markup';
 
 /** 백틱으로 감싼 말. 닫는 백틱이 없으면 백틱 하나만 짚는다. */
@@ -24,11 +26,11 @@ const SNAKE_CASE = /^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+$/;
 /** camelCase. 소문자로 시작해 중간에 대문자가 있다. */
 const CAMEL_CASE = /^[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*$/;
 
-/** 문체 검사에서 뺄 단어. 멘션 원문과 스레드에 나온 말이다. */
+/** 문체 검사에서 뺄 단어. 멘션 원문과 맥락에 나온 말이다. */
 export type SourceWords = ReadonlySet<string>;
 
 /**
- * 멘션 원문과 스레드에서 문체 검사가 뺄 단어를 모은다. 송신자가 직접 쓴 용어는 초안에 그대로 써도 된다.
+ * 글에서 문체 검사가 뺄 단어를 모은다. 송신자가 직접 쓴 용어는 초안에 그대로 써도 된다.
  * 멘션 표기의 사용자 ID는 글에 보이지 않으므로 뺄 단어에 넣지 않는다.
  */
 export function sourceWords(texts: readonly string[]): SourceWords {
@@ -42,6 +44,27 @@ export function sourceWords(texts: readonly string[]): SourceWords {
     for (const run of asciiRuns(named)) words.add(run);
   }
   return words;
+}
+
+/**
+ * 묶음에서 문체 검사가 뺄 단어. 묶인 멘션 전부(빠진 멘션 포함), 게시물 제목, 맥락의 게시물 본문과 댓글·대댓글에 나온 말이다.
+ * 맥락을 조회하지 않았으면 멘션과 게시물 제목만 쓴다.
+ */
+export function bundleSourceWords(bundle: Pick<MentionBundle, 'postTitle' | 'mentions' | 'context'>): SourceWords {
+  /** 맥락의 글. */
+  const writings: ContextWriting[] = [];
+  if (bundle.context) {
+    /** 게시물, 대상 댓글 스레드, 다른 댓글. */
+    const { post, targetThread, otherComments } = bundle.context;
+    writings.push(post);
+    for (const comment of [...(targetThread ? [targetThread] : []), ...otherComments]) writings.push(comment, ...comment.replies);
+  }
+  return sourceWords([
+    bundle.postTitle,
+    ...(bundle.context ? [bundle.context.post.title] : []),
+    ...bundle.mentions.map((mention) => mention.text),
+    ...writings.map((writing) => writing.contents),
+  ]);
 }
 
 /**

@@ -220,9 +220,11 @@ describe('에디터에서 열기', () => {
 });
 
 describe('직접 지정 명령', () => {
-  it('따옴표로 묶은 조각을 하나로 읽고, {file} 자리가 없거나 따옴표가 닫히지 않으면 받지 않는다', () => {
+  it('따옴표로 묶은 조각을 하나로 읽고, {file}이나 {line} 자리가 없거나 따옴표가 닫히지 않으면 받지 않는다', () => {
     expect(parseEditorCommand(`code --goto '{file}:{line}'`)).toEqual(['code', '--goto', '{file}:{line}']);
+    expect(parseEditorCommand('idea --line {line} {file}')).toEqual(['idea', '--line', '{line}', '{file}']);
     expect(parseEditorCommand('code --goto')).toBeNull();
+    expect(parseEditorCommand('code {file}')).toBeNull();
     expect(parseEditorCommand('"code {file}')).toBeNull();
     expect(parseEditorCommand('   ')).toBeNull();
   });

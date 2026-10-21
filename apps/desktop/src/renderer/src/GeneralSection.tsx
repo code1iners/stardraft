@@ -34,7 +34,7 @@ interface EditorFieldProps {
  * 직접 지정은 `{file}`, `{line}` 자리를 넣은 명령 한 줄이고, 칸을 벗어나거나 Enter를 칠 때 저장한다. 읽을 수 없는 명령은 main이 저장하지 않는다.
  */
 export function EditorField({ editor, platform }: EditorFieldProps) {
-  /** 기억한 에디터. */
+  /** 기억한 에디터와 이 PC에서 찾은 에디터. */
   const { choice, installed } = editor;
   /** 저장한 명령. 직접 지정하지 않았으면 빈 문자열이다. */
   const savedCommand = choice?.kind === 'command' ? choice.command : '';
@@ -105,7 +105,9 @@ export function EditorField({ editor, platform }: EditorFieldProps) {
             {'{file}'} 자리에 파일 경로, {'{line}'} 자리에 줄 번호가 들어갑니다. 셸 없이 실행하므로 명령은 전체 경로로 적습니다.
             {savedCommand !== '' && command === savedCommand && ' 저장됨'}
           </p>
-          {command.trim() !== '' && !command.includes('{file}') && <p className="field-note danger-text">명령에 {'{file}'} 자리가 있어야 합니다.</p>}
+          {command.trim() !== '' && !(command.includes('{file}') && command.includes('{line}')) && (
+            <p className="field-note danger-text">명령에 {'{file}'}과 {'{line}'} 자리가 있어야 저장됩니다.</p>
+          )}
         </>
       )}
     </div>

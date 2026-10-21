@@ -348,6 +348,22 @@ export interface BundleMentionSnapshot {
   text: TextPartSnapshot[];
 }
 
+/** 원문 영역의 "스레드 보기"로 펼치는 글 하나. 맥락에서 읽는다. */
+export interface ThreadEntrySnapshot {
+  /** 쓴 사람 이름. 비어 있을 수 있다. */
+  authorName: string;
+  /** 글의 종류. 게시물 본문, 댓글, 대댓글이다. */
+  place: MentionPlaceSnapshot;
+  /** 쓴 시각(Unix epoch 밀리초). 모르면 `null`. */
+  at: number | null;
+  /** 글. */
+  text: TextPartSnapshot[];
+  /** 첨부 파일 이름. */
+  attachments: string[];
+  /** 묶음의 멘션인지 여부. 화면이 표시한다. */
+  mention: boolean;
+}
+
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
   /** 묶음 ID. 명령에 실어 보낸다. */
@@ -376,6 +392,11 @@ export interface BundleSnapshot {
   canRestore: boolean;
   /** "Flow에서 열기"로 열 주소가 있는지 여부. 주소는 main이 가지고 있다. */
   canOpenInFlow: boolean;
+  /**
+   * "스레드 보기"로 펼칠 글. 시간순이고 묶음의 멘션도 들어 있다. 맥락을 아직 조회하지 않았으면 비어 있다.
+   * 댓글 스레드 묶음은 게시물 본문과 대상 댓글 스레드, 본문 묶음은 본문과 다른 댓글(대댓글 포함)이다.
+   */
+  thread: ThreadEntrySnapshot[];
 }
 
 /** 묶음을 보는 창. 작은 창(`compact`)과 펼친 창(`expanded`)이다. */

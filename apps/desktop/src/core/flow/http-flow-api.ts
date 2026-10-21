@@ -274,25 +274,34 @@ function readAlarmPage(data: unknown): FlowAlarmPage | null {
 }
 
 /**
- * 게시물 data에서 본문의 TEXT 컴포넌트를 읽는다. 본문을 읽을 수 없으면 `null`.
+ * 게시물 data에서 제목·작성자와 본문의 TEXT 컴포넌트, 첨부 파일 이름을 읽는다. 본문을 읽을 수 없으면 `null`.
  * `contentJsonYn`이 `"Y"`가 아니면 본문 전체를 글 조각 하나로 본다. 멘션 표기 판정은 그 글에서 한다.
  */
 function readPost(data: unknown, requestedPostId: string): FlowPost | null {
   if (!isRecord(data)) return null;
   /** 게시물 ID. 응답에 없으면 요청한 ID다. */
   const postId = idString(data.postId) || requestedPostId;
-  /** 제목과 "Flow에서 열기" 주소. */
-  const heading = { title: trimmedString(data.title), connectUrl: trimmedString(data.connectUrl) || null };
-  if (data.contentJsonYn !== 'Y') return { postId, ...heading, textComponents: [{ contents: rawString(data.content), mentions: [] }] };
+  /** 제목, "Flow에서 열기" 주소, 작성자. */
+  const heading = {
+    title: trimmedString(data.title),
+    connectUrl: trimmedString(data.connectUrl) || null,
+    registerName: trimmedString(data.registerName),
+    registeredDateTime: idString(data.registeredDateTime),
+  };
+  if (data.contentJsonYn !== 'Y') {
+    return { postId, ...heading, textComponents: [{ contents: rawString(data.content), mentions: [] }], attachments: postAttachments(data, []) };
+  }
 
   /** 본문 JSON. 문자열로 오지만 이미 객체로 와도 읽는다. */
   const content = typeof data.content === 'string' ? parseJson(data.content) : data.content;
   if (!isRecord(content) || !Array.isArray(content.COMPS)) return null;
+  /** 본문의 컴포넌트. */
+  const components = content.COMPS.filter(isRecord);
   return {
     postId,
     ...heading,
-    textComponents: content.COMPS.flatMap((component): FlowTextComponent[] => {
-      if (!isRecord(component) || component.COMP_TYPE !== 'TEXT' || !isRecord(component.COMP_DETAIL)) return [];
+    textComponents: components.flatMap((component): FlowTextComponent[] => {
+      if (component.COMP_TYPE !== 'TEXT' || !isRecord(component.COMP_DETAIL)) return [];
       /** TEXT 컴포넌트의 내용. */
       const detail = component.COMP_DETAIL;
       return [
@@ -302,7 +311,29 @@ function readPost(data: unknown, requestedPostId: string): FlowPost | null {
         },
       ];
     }),
+    attachments: postAttachments(data, components),
   };
+}
+
+/**
+ * 게시물의 첨부 파일 이름. 본문의 FILE 컴포넌트와 `attachments[]`에서 읽고, 같은 이름은 한 번만 둔다.
+ * 실호출에서 이미지는 IMAGE 컴포넌트와 `imageAttachments[]`로 따로 와서 둘 다 읽지 않는다. 파일 항목의 이름 필드는 응답마다 달라 셋을 본다.
+ */
+function postAttachments(data: Record<string, unknown>, components: readonly Record<string, unknown>[]): string[] {
+  /** FILE 컴포넌트의 내용. */
+  const fileComponents = components.filter((component) => component.COMP_TYPE === 'FILE').map((component) => component.COMP_DETAIL);
+  return [...new Set([...fileComponents, ...(Array.isArray(data.attachments) ? data.attachments : [])].map(fileNameOf).filter(Boolean))];
+}
+
+/** 첨부 항목의 파일 이름. 댓글은 `fileName`, 게시물은 `ORCP_FILE_NM`이나 `FILE_NM`으로 온다. 없으면 빈 문자열. */
+function fileNameOf(item: unknown): string {
+  if (!isRecord(item)) return '';
+  return trimmedString(item.fileName) || trimmedString(item.ORCP_FILE_NM) || trimmedString(item.FILE_NM);
+}
+
+/** 댓글이나 대댓글의 첨부 파일 이름. */
+function remarkAttachments(item: Record<string, unknown>): string[] {
+  return Array.isArray(item.attachments) ? item.attachments.map(fileNameOf).filter(Boolean) : [];
 }
 
 /** 댓글 목록 한 쪽을 읽는다. `data.comments` 배열이 없으면 `null`. */
@@ -319,6 +350,7 @@ function readCommentPage(data: unknown): FlowCommentPage | null {
           commentId,
           contents: rawString(item.contents),
           ...readAuthorship(item),
+          attachments: remarkAttachments(item),
           replies: Array.isArray(item.replies) ? readReplies(item.replies) : [],
           replyHasNext: item.replyHasNext === true || item.replyHasNext === 'Y',
         },
@@ -347,14 +379,15 @@ function readReplies(items: unknown[]): FlowReply[] {
     if (!isRecord(item)) return [];
     /** 대댓글 ID. */
     const replyId = idString(item.replyId);
-    return replyId ? [{ replyId, contents: rawString(item.contents), ...readAuthorship(item) }] : [];
+    return replyId ? [{ replyId, contents: rawString(item.contents), ...readAuthorship(item), attachments: remarkAttachments(item) }] : [];
   });
 }
 
-/** 댓글이나 대댓글을 쓴 사람, 시각, 시스템 댓글 종류를 읽는다. 시각은 숫자로 와도 Flow 형식 문자열로 맞춘다. */
+/** 댓글이나 대댓글을 쓴 사람(ID와 이름), 시각, 시스템 댓글 종류를 읽는다. 시각은 숫자로 와도 Flow 형식 문자열로 맞춘다. */
 function readAuthorship(item: Record<string, unknown>): FlowRemarkAuthorship {
   return {
     registerId: trimmedString(item.registerId),
+    registerName: trimmedString(item.registerName),
     registeredDateTime: idString(item.registeredDateTime),
     systemCode: trimmedString(item.systemCode),
   };

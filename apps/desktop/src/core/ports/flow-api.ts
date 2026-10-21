@@ -69,14 +69,22 @@ export interface FlowPost {
   title: string;
   /** "Flow에서 열기" 주소. 게시물을 바로 연다. 없으면 `null`. */
   connectUrl: string | null;
+  /** 작성자 이름. 없으면 빈 문자열. */
+  registerName: string;
+  /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. 없으면 빈 문자열. */
+  registeredDateTime: string;
   /** 본문의 TEXT 컴포넌트. 본문이 JSON이 아니면 본문 전체를 글 조각 하나로 담는다. */
   textComponents: FlowTextComponent[];
+  /** 첨부 파일 이름. 이미지는 넣지 않는다. */
+  attachments: string[];
 }
 
-/** 댓글과 대댓글이 함께 갖는, 누가 언제 썼는지에 관한 값. "이미 답함" 판정에 쓴다. */
+/** 댓글과 대댓글이 함께 갖는, 누가 언제 썼는지에 관한 값. "이미 답함" 판정과 맥락 수집에 쓴다. */
 export interface FlowRemarkAuthorship {
   /** 쓴 사람의 사용자 ID. 시스템 댓글이면 그 행동을 한 사람이다. 없으면 빈 문자열. */
   registerId: string;
+  /** 쓴 사람의 이름. 없으면 빈 문자열. */
+  registerName: string;
   /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. 없으면 빈 문자열. */
   registeredDateTime: string;
   /** 시스템 댓글(제목 변경, 업무 상태 변경 등)의 종류. 사람이 쓴 글이면 빈 문자열이다. */
@@ -89,6 +97,8 @@ export interface FlowReply extends FlowRemarkAuthorship {
   replyId: string;
   /** 글. 멘션 표기가 그대로 들어 있다. */
   contents: string;
+  /** 첨부 파일 이름. */
+  attachments: string[];
 }
 
 /** 댓글 하나. `GET /user/comments/{postId}?replyYn=Y` 응답에서 앱이 쓰는 값이다. */
@@ -97,6 +107,8 @@ export interface FlowComment extends FlowRemarkAuthorship {
   commentId: string;
   /** 글. 멘션 표기가 그대로 들어 있다. */
   contents: string;
+  /** 첨부 파일 이름. */
+  attachments: string[];
   /** 댓글과 함께 받은 대댓글. Flow는 처음 10개까지만 준다(`replyId` 오름차순). */
   replies: FlowReply[];
   /** 함께 받은 대댓글 뒤에 대댓글이 더 있는지 여부. 있으면 대댓글 목록 API로 넘겨 받는다. */

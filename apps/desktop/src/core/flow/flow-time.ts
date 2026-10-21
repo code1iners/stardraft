@@ -24,3 +24,10 @@ export function flowTimeToEpochMs(value: string): number | null {
   }
   return asUtc - FLOW_UTC_OFFSET_MS;
 }
+
+/** Flow 시각(`yyyyMMddHHmmss`)을 시간대를 바꾸지 않고 `yyyy-MM-dd HH:mm`으로 쓴다. 형식이 다르면 빈 문자열. */
+export function readableFlowTime(value: string): string {
+  /** 형식에 맞춰 읽은 결과. */
+  const match = FLOW_TIME.exec(value);
+  return match ? `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}` : '';
+}

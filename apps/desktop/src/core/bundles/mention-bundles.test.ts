@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { collectBundleContext } from '../flow/bundle-context';
 import { MentionDetection } from '../detection/mention-detection';
 import { FakeClock } from '../fakes/fake-clock';
 import { FAKE_ME, FakeFlowApi } from '../fakes/fake-flow-api';
@@ -75,6 +76,7 @@ async function setup() {
     clock,
     logger,
     findMyAnswers: async (place) => (answersLookup.fails ? null : new MentionJudge(flow, ME).myAnswers(place, [ME])),
+    collectContext: (bundle) => collectBundleContext(flow, bundle, clock.now()),
   });
   await bundles.load();
   const detection = new MentionDetection({
@@ -178,6 +180,70 @@ describe('멘션 묶음: 합치기', () => {
       [first.id + 1, { place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['102', '103'], answered: [] }],
     ]);
     expect(bundles.reviewCount()).toBe(2);
+  });
+});
+
+describe('멘션 묶음: 맥락', () => {
+  it('감지한 묶음은 맥락을 Flow에서 조회해 비교 기준으로 저장하고, 새 멘션이 합쳐지면 다시 새로 조회한다', async () => {
+    const { clock, flow, stateStore, bundles, poll } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '800', contents: '앞선 대댓글', registerName: '동료', registeredDateTime: '20261020085030' });
+    await poll(alarm('101', { remarkId: '700' }));
+
+    /** 처음 저장한 맥락. */
+    const first = bundles.state()[0]!.context!;
+    expect(first.fetchedAt).toBe(NOW);
+    expect(first.post.title).toBe('가짜 게시물');
+    expect(first.targetThread?.mention).toBe(true);
+    expect(first.targetThread?.replies.map((reply) => [reply.contents, reply.mention])).toEqual([['앞선 대댓글', false]]);
+    expect((await stateStore.listBundles())[0]?.context).toEqual(first);
+
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: OTHER_SENDER, registeredDateTime: '20261020085500' });
+    await poll(alarm('102', { remarkId: '700', replyId: '801', registerId: OTHER_SENDER, registeredDateTime: '20261020085500' }));
+
+    /** 합친 뒤 다시 조회한 맥락. */
+    const merged = bundles.state()[0]!.context!;
+    expect(merged.fetchedAt).toBe(clock.now());
+    expect(merged.targetThread?.replies.map((reply) => [reply.id, reply.mention])).toEqual([
+      ['800', false],
+      ['801', true],
+    ]);
+  });
+
+  it('맥락을 조회하지 못하면 전에 저장한 맥락을 그대로 두고, 이미 답함이 된 묶음은 조회하지 않는다', async () => {
+    const { flow, bundles, poll } = await setup();
+    await poll(alarm('101', { remarkId: '700' }));
+    /** 처음 저장한 맥락. */
+    const first = bundles.state()[0]!.context;
+
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registeredDateTime: '20261020085500' });
+    // 감지가 판정에 쓰는 조회는 통과하고, 그 뒤 맥락 조회의 댓글 조회만 실패한다.
+    flow.whenRequested(`GET /user/posts/${POST_ID}`, () => flow.failOn(`GET /user/comments/${POST_ID}`, { kind: 'network' }, 1));
+    await poll(alarm('102', { remarkId: '700', replyId: '801', registeredDateTime: '20261020085500' }));
+
+    expect(bundles.state()[0]?.mentions).toHaveLength(2);
+    expect(bundles.state()[0]?.context).toEqual(first);
+
+    flow.addComment(POST_ID, { commentId: '720', contents: `${MY_MARKUP} 질문`, registerId: SENDER });
+    flow.addReply(POST_ID, '720', { replyId: '890', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085900' });
+    /** 이미 답함이 될 묶음을 감지하기 전의 요청 수. */
+    const before = flow.requests.length;
+    await poll(alarm('103', { remarkId: '720', registeredDateTime: '20261020085800' }));
+
+    expect(bundles.state().find((bundle) => bundle.remarkId === '720')).toMatchObject({ status: 'already-answered', context: null });
+    expect(flow.requests.slice(before).filter((request) => request.startsWith(`GET /user/posts/`))).toHaveLength(1);
+  });
+
+  it('되돌리면 맥락을 새로 조회한다', async () => {
+    const { clock, bundles, poll } = await setup();
+    await poll(alarm('101', { remarkId: '700' }));
+    /** 묶음. */
+    const bundle = bundles.state()[0]!;
+    await bundles.ignore(bundle.id);
+    clock.advance(5_000);
+
+    await bundles.restore(bundle.id);
+
+    expect(bundles.get(bundle.id)?.context?.fetchedAt).toBe(NOW + 5_000);
   });
 });
 
@@ -390,7 +456,14 @@ describe('멘션 묶음: 무시와 되돌리기', () => {
     await bundles.ignore(bundles.state()[0]!.id);
 
     /** 같은 저장소를 다시 읽은 멘션 묶음. */
-    const reloaded = new MentionBundles({ stateStore, notifier, clock, logger: createLogger([], clock), findMyAnswers: async () => null });
+    const reloaded = new MentionBundles({
+      stateStore,
+      notifier,
+      clock,
+      logger: createLogger([], clock),
+      findMyAnswers: async () => null,
+      collectContext: async () => null,
+    });
     await reloaded.load();
 
     expect(reloaded.state()).toEqual(bundles.state());
@@ -439,6 +512,7 @@ describe('멘션 묶음: 대기열과 트레이 숫자', () => {
     const first = bundles.state()[0]!;
     expect(first.remarkId).toBe('700');
     expect(notifier.sent).toEqual([{ title: '저장소 확인 필요 2건', body: '보낸 사람님 외 1건의 멘션이 왔습니다.', bundleId: first.id }]);
-    expect(changes).toBe(1);
+    // 멘션을 넣을 때 한 번, 두 묶음의 맥락을 저장할 때 한 번 알린다.
+    expect(changes).toBe(2);
   });
 });

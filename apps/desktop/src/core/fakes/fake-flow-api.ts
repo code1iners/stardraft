@@ -24,11 +24,12 @@ export const FAKE_ME: FlowEmployee = {
 /** 댓글과 함께 주는 대댓글 수. Flow의 `replyYn=Y`와 같다. */
 const REPLIES_WITH_COMMENT = 10;
 
-/** 가짜 Flow API가 들고 있는 게시물. 제목과 "Flow에서 열기" 주소는 주지 않으면 비어 있다. */
-export type FakeFlowPost = Pick<FlowPost, 'postId' | 'textComponents'> & Partial<Pick<FlowPost, 'title' | 'connectUrl'>>;
+/** 가짜 Flow API가 들고 있는 게시물. 제목·"Flow에서 열기" 주소·작성자·첨부는 주지 않으면 비어 있다. */
+export type FakeFlowPost = Pick<FlowPost, 'postId' | 'textComponents'> &
+  Partial<Pick<FlowPost, 'title' | 'connectUrl' | 'registerName' | 'registeredDateTime' | 'attachments'>>;
 
-/** 가짜 Flow API가 들고 있는 대댓글. 쓴 사람·시각·시스템 댓글 종류는 주지 않으면 비어 있다. */
-export type FakeFlowCommentReply = Pick<FlowReply, 'replyId' | 'contents'> & Partial<FlowRemarkAuthorship>;
+/** 가짜 Flow API가 들고 있는 대댓글. 쓴 사람·시각·시스템 댓글 종류·첨부는 주지 않으면 비어 있다. */
+export type FakeFlowCommentReply = Pick<FlowReply, 'replyId' | 'contents'> & Partial<FlowRemarkAuthorship> & { attachments?: string[] };
 
 /** 가짜 Flow API가 들고 있는 댓글. 대댓글은 모두 들고 있다가 Flow처럼 처음 10개만 댓글과 함께 준다. */
 export interface FakeFlowComment extends Partial<FlowRemarkAuthorship> {
@@ -36,6 +37,8 @@ export interface FakeFlowComment extends Partial<FlowRemarkAuthorship> {
   commentId: string;
   /** 글. */
   contents: string;
+  /** 첨부 파일 이름. */
+  attachments?: string[];
   /** 대댓글 전부. `replyId` 오름차순으로 둔다. */
   replies?: FakeFlowCommentReply[];
 }
@@ -105,8 +108,8 @@ export class FakeFlowApi implements FlowApi {
   }
 
   /** 게시물을 둔다. 두지 않은 게시물은 지워진 것으로 보고 `404`로 답한다. */
-  addPost({ title = '', connectUrl = null, ...post }: FakeFlowPost): void {
-    this.posts.set(post.postId, { ...post, title, connectUrl });
+  addPost({ title = '', connectUrl = null, registerName = '', registeredDateTime = '', attachments = [], ...post }: FakeFlowPost): void {
+    this.posts.set(post.postId, { ...post, title, connectUrl, registerName, registeredDateTime, attachments });
   }
 
   /** 게시물에 댓글을 단다. 댓글은 단 순서대로 온다. */
@@ -164,10 +167,11 @@ export class FakeFlowApi implements FlowApi {
       /** 이 쪽. */
       const page = pageOf(this.comments.get(postId) ?? [], cursor, this.commentPageSize);
       return {
-        comments: page.items.map(({ commentId, contents, replies = [], ...authorship }) => ({
+        comments: page.items.map(({ commentId, contents, replies = [], attachments = [], ...authorship }) => ({
           commentId,
           contents,
           ...authorshipOf(authorship),
+          attachments: [...attachments],
           replies: replies.slice(0, REPLIES_WITH_COMMENT).map(replyOf),
           replyHasNext: replies.length > REPLIES_WITH_COMMENT,
         })),
@@ -212,13 +216,18 @@ export class FakeFlowApi implements FlowApi {
 }
 
 /** 주지 않은 쓴 사람·시각·시스템 댓글 종류를 빈 값으로 채운다. */
-function authorshipOf({ registerId = '', registeredDateTime = '', systemCode = '' }: Partial<FlowRemarkAuthorship>): FlowRemarkAuthorship {
-  return { registerId, registeredDateTime, systemCode };
+function authorshipOf({
+  registerId = '',
+  registerName = '',
+  registeredDateTime = '',
+  systemCode = '',
+}: Partial<FlowRemarkAuthorship>): FlowRemarkAuthorship {
+  return { registerId, registerName, registeredDateTime, systemCode };
 }
 
 /** 응답으로 줄 대댓글. */
-function replyOf({ replyId, contents, ...authorship }: FakeFlowCommentReply): FlowReply {
-  return { replyId, contents, ...authorshipOf(authorship) };
+function replyOf({ replyId, contents, attachments = [], ...authorship }: FakeFlowCommentReply): FlowReply {
+  return { replyId, contents, ...authorshipOf(authorship), attachments: [...attachments] };
 }
 
 /** 없는 글을 조회했다는 표시. */

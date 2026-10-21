@@ -2,7 +2,8 @@ import { activeMentions, isRestorable, listGroupOf, type MentionBundle } from '.
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
-import type { BundleMentionSnapshot, BundleSnapshot, ReviewSnapshot } from '../shared/ipc';
+import type { BundleContext, ContextWriting } from '../core/flow/bundle-context';
+import type { BundleMentionSnapshot, BundleSnapshot, MentionPlaceSnapshot, ReviewSnapshot, ThreadEntrySnapshot } from '../shared/ipc';
 
 /** 참여 목록에서 찾은 Flow 프로젝트. */
 export interface FlowProjectInfo {
@@ -55,6 +56,34 @@ export function bundleSnapshot(bundle: MentionBundle, projectOf: ProjectLookup):
     processedAt: bundle.processedAt,
     canRestore: isRestorable(bundle.status),
     canOpenInFlow: flowUrlOf(bundle, projectOf) !== null,
+    thread: bundle.context ? threadEntries(bundle.context) : [],
+  };
+}
+
+/**
+ * "스레드 보기"로 펼칠 글. 맥락의 게시물 본문 뒤에, 댓글 스레드 묶음이면 대상 댓글 스레드를, 본문 묶음이면 다른 댓글을 잇는다.
+ * 댓글 스레드 묶음에서 다른 댓글 스레드는 넣지 않는다. 멘션 표기는 이름만 넘기고 사용자 ID는 넘기지 않는다.
+ */
+function threadEntries(context: BundleContext): ThreadEntrySnapshot[] {
+  /** 게시물, 대상 댓글 스레드, 다른 댓글. */
+  const { post, targetThread, otherComments } = context;
+  /** 이어 붙일 댓글. */
+  const comments = targetThread ? [targetThread] : otherComments;
+  return [
+    entryOf(post, 'post'),
+    ...comments.flatMap((comment) => [entryOf(comment, 'comment'), ...comment.replies.map((reply) => entryOf(reply, 'reply'))]),
+  ];
+}
+
+/** 맥락의 글 하나를 "스레드 보기"의 글로 바꾼다. */
+function entryOf(writing: ContextWriting, place: MentionPlaceSnapshot): ThreadEntrySnapshot {
+  return {
+    authorName: writing.authorName,
+    place,
+    at: flowTimeToEpochMs(writing.registeredDateTime),
+    text: splitMentionMarkup(writing.contents),
+    attachments: [...writing.attachments],
+    mention: writing.mention,
   };
 }
 

@@ -1,5 +1,13 @@
-import type { ReactNode } from 'react';
-import type { BundleSnapshot, BundleStatusSnapshot, ReviewSection, ReviewSnapshot, ReviewWindow } from '../../shared/ipc';
+import { useState, type ReactNode } from 'react';
+import type {
+  BundleSnapshot,
+  BundleStatusSnapshot,
+  ReviewSection,
+  ReviewSnapshot,
+  ReviewWindow,
+  TextPartSnapshot,
+  ThreadEntrySnapshot,
+} from '../../shared/ipc';
 import {
   BUNDLE_PLACE_LABELS,
   BUNDLE_STATUS_TAGS,
@@ -102,7 +110,26 @@ function ReviewSectionBlock({ windowKind, section, open, title, detail, children
   );
 }
 
-/** 원문 영역 내용. 묶인 멘션 전부를 시간순으로 보인다. 글은 HTML이 아니라 글자로 그린다. */
+/** 글 조각에 넘기는 값. */
+interface PartsTextProps {
+  /** 글 조각. */
+  parts: TextPartSnapshot[];
+}
+
+/** Flow 글. 멘션 표기(`@이름`)는 강조하고, HTML이 아니라 글자로 그린다. */
+function PartsText({ parts }: PartsTextProps) {
+  return (
+    <p className="mention-text">
+      {parts.map((part, index) => (
+        <span key={index} className={part.mention ? 'mention-at' : undefined}>
+          {part.text}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+/** 원문 영역 내용. 묶인 멘션 전부를 시간순으로 보인다. */
 function MentionList({ bundle }: BundleProps) {
   return (
     <ol className="mention-list">
@@ -113,16 +140,60 @@ function MentionList({ bundle }: BundleProps) {
             <span>{MENTION_PLACE_LABELS[mention.place]}</span>
             <span>{formatMentionTime(mention.at)}</span>
           </div>
-          <p className="mention-text">
-            {mention.text.map((part, partIndex) => (
-              <span key={partIndex} className={part.mention ? 'mention-at' : undefined}>
-                {part.text}
-              </span>
-            ))}
-          </p>
+          <PartsText parts={mention.text} />
         </li>
       ))}
     </ol>
+  );
+}
+
+/** 스레드 보기에 넘기는 값. */
+interface ThreadListProps {
+  /** 시간순으로 보일 글. */
+  entries: ThreadEntrySnapshot[];
+}
+
+/** "스레드 보기"로 펼친 글. 앞선 글과 묶음의 멘션을 시간순으로 보이고, 멘션에는 태그를 붙인다. 대댓글은 들여 쓴다. */
+export function ThreadList({ entries }: ThreadListProps) {
+  return (
+    <ol className="mention-list">
+      {entries.map((entry, index) => (
+        <li key={index} className={`mention-item thread-item${entry.place === 'reply' ? ' is-reply' : ''}${entry.mention ? ' is-mention' : ''}`}>
+          <div className="mention-meta">
+            <strong>{entry.authorName || '이름 없음'}</strong>
+            <span>{MENTION_PLACE_LABELS[entry.place]}</span>
+            {entry.at !== null && <span>{formatMentionTime(entry.at)}</span>}
+            {entry.mention && <span className="tag warn">멘션</span>}
+          </div>
+          <PartsText parts={entry.text} />
+          {entry.attachments.length > 0 && <p className="small muted">첨부 있음({entry.attachments.join(', ')})</p>}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** 원문 영역 내용에 넘기는 값. */
+interface OriginalBodyProps extends BundleProps {
+  /** "스레드 보기"로 펼쳤는지 여부. */
+  threadOpen: boolean;
+  /** "스레드 보기"나 "멘션만 보기"를 눌렀다. */
+  onToggleThread: () => void;
+}
+
+/** 원문 영역 내용. 처음에는 멘션만 보이고, 맥락을 조회한 묶음은 "스레드 보기"로 앞선 글까지 펼친다. */
+function OriginalBody({ bundle, threadOpen, onToggleThread }: OriginalBodyProps) {
+  /** 펼칠 앞선 글이 있는지 여부. */
+  const hasThread = bundle.thread.some((entry) => !entry.mention);
+  return (
+    <>
+      {threadOpen && hasThread ? <ThreadList entries={bundle.thread} /> : <MentionList bundle={bundle} />}
+      {hasThread && (
+        <button type="button" className="btn link thread-toggle" aria-expanded={threadOpen} onClick={onToggleThread}>
+          {threadOpen ? '멘션만 보기' : '스레드 보기'}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -138,12 +209,17 @@ interface BundleSectionsProps extends BundleProps {
 export function BundleSections({ bundle, windowKind, sections }: BundleSectionsProps) {
   /** 이 창의 영역 펼침 상태. */
   const open = sections[windowKind];
+  // "스레드 보기"는 보고 있는 묶음에만 펼친다. 다른 묶음으로 넘어가면 다시 멘션만 보인다.
+  /** "스레드 보기"로 펼친 묶음 ID. 펼치지 않았으면 `null`. */
+  const [threadBundleId, setThreadBundleId] = useState<number | null>(null);
+  /** "스레드 보기"를 펼치거나 접는다. */
+  const handleToggleThread = () => setThreadBundleId((current) => (current === bundle.id ? null : bundle.id));
 
   return (
     <>
       {bundle.newMentionCount > 0 && <p className="notice-line">새 멘션 {bundle.newMentionCount}건</p>}
       <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={`멘션 ${bundle.mentions.length}건`}>
-        <MentionList bundle={bundle} />
+        <OriginalBody bundle={bundle} threadOpen={threadBundleId === bundle.id} onToggleThread={handleToggleThread} />
       </ReviewSectionBlock>
       {bundle.status === 'repo-check-needed' && (
         <ReviewSectionBlock windowKind={windowKind} section="repository" open={open.repository} title="저장소">

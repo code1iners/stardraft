@@ -97,6 +97,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
       start: { status: 'idle' },
     },
     launchAtLogin: true,
+    editor: { choice: null, installed: [], picker: null },
     review: { bundles, sections: SECTIONS, repoPicker: null },
     ...overrides,
   };
@@ -244,8 +245,13 @@ const READY = bundle(4, {
   draft: {
     requirement: { text: '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.', summary: '재시도 횟수' },
     paragraphs: [
-      { sentences: [{ text: '실제 서비스에서는 다섯 번까지 다시 시도합니다.', evidence: [1] }, { text: '시험 환경은 세 번으로 보입니다.', evidence: [] }] },
-      { sentences: [{ text: '설정을 바꾸면 다음 배포부터 적용됩니다.', evidence: [1, 2] }] },
+      {
+        sentences: [
+          { text: '실제 서비스에서는 다섯 번까지 다시 시도합니다.', evidence: [1], developerTerms: [] },
+          { text: '시험 환경은 세 번으로 보입니다.', evidence: [], developerTerms: [] },
+        ],
+      },
+      { sentences: [{ text: '설정을 바꾸면 다음 배포부터 적용됩니다.', evidence: [1, 2], developerTerms: [] }] },
     ],
     evidence: [
       {
@@ -256,8 +262,18 @@ const READY = bundle(4, {
         startLine: 88,
         endLine: 88,
         located: true,
+        developerTerms: [],
       },
-      { id: 2, explanation: '배포할 때 설정을 새로 읽습니다.', repositoryName: 'billing-api', path: 'deploy/run.sh', startLine: 10, endLine: 14, located: true },
+      {
+        id: 2,
+        explanation: '배포할 때 설정을 새로 읽습니다.',
+        repositoryName: 'billing-api',
+        path: 'deploy/run.sh',
+        startLine: 10,
+        endLine: 14,
+        located: true,
+        developerTerms: [],
+      },
     ],
     repositories: [
       { name: 'billing-api', path: '/fake/work/billing-api' },
@@ -773,5 +789,80 @@ describe('재생성', () => {
     expect(textIn(edited)).toContain('편집한 초안은 버리고 다시 만듭니다.');
     expect(textIn(edited)).toContain('편집본을 버리고 이 요구로 재생성');
     expect(textIn(edited)).not.toContain('덧붙인 지시');
+  });
+});
+
+describe('근거와 에디터에서 열기', () => {
+  /** 근거를 편 작은 창. */
+  const evidenceOpen = { ...SECTIONS, compact: { ...SECTIONS.compact, evidence: true } };
+
+  it('초안의 근거 번호는 근거를 펼쳐 보는 버튼이다. 근거 없는 문장은 "근거 없음"이다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />);
+
+    expect(html).toContain('aria-label="근거 ① 보기"');
+    expect(html).toContain('aria-label="근거 ② 보기"');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('시험 환경은 세 번으로 보입니다. 근거 없음');
+  });
+
+  it('위치를 찾은 근거마다 "에디터에서 열기"를 두고, 위치를 찾을 수 없는 근거는 끈다', () => {
+    /** 둘째 근거의 위치를 찾지 못한 묶음. */
+    const unlocated = bundle(10, {
+      ...READY,
+      draft: { ...READY.draft!, evidence: [READY.draft!.evidence[0]!, { ...READY.draft!.evidence[1]!, located: false }] },
+    });
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], sections: evidenceOpen, repoPicker: null } })} />);
+
+    expect(html.match(/에디터에서 열기/g)).toHaveLength(2);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>에디터에서 열기<\/button>/);
+  });
+
+  it('문체 검사에 걸린 초안 문장과 근거 설명 옆에 "개발자 용어가 있을 수 있음"을 작게 보인다', () => {
+    /** 첫 문장과 첫 근거 설명이 걸린 묶음. */
+    const flagged = bundle(11, {
+      ...READY,
+      draft: {
+        ...READY.draft!,
+        paragraphs: [{ sentences: [{ text: 'retryCount로 정합니다.', evidence: [1], developerTerms: ['retryCount'] }] }],
+        evidence: [{ ...READY.draft!.evidence[0]!, explanation: 'application-prod.yml에서 정합니다.', developerTerms: ['application-prod.yml'] }],
+      },
+    });
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([flagged], { review: { bundles: [flagged], sections: evidenceOpen, repoPicker: null } })} />);
+
+    expect(html.match(/개발자 용어가 있을 수 있음/g)).toHaveLength(2);
+    expect(html).toContain('title="retryCount"');
+    expect(html).toContain('title="application-prod.yml"');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections: evidenceOpen, repoPicker: null } })} />)).not.toContain(
+      '개발자 용어가 있을 수 있음',
+    );
+  });
+
+  it('처음 열 때는 찾은 에디터를 고르는 창을 작은 창과 펼친 창에 띄운다', () => {
+    /** 에디터 고르기 창이 열린 상태. */
+    const editor = {
+      choice: null,
+      installed: [
+        { appId: 'vscode', name: 'VS Code' },
+        { appId: 'jetbrains:IntelliJ IDEA', name: 'IntelliJ IDEA' },
+      ],
+      picker: {
+        editors: [
+          { appId: 'vscode', name: 'VS Code' },
+          { appId: 'jetbrains:IntelliJ IDEA', name: 'IntelliJ IDEA' },
+        ],
+      },
+    };
+
+    for (const text of [
+      textOf(<PopoverContent snapshot={snapshot([READY], { editor })} />),
+      textOf(<ReviewContent snapshot={snapshot([READY], { editor })} initialBundleId={READY.id} />),
+    ]) {
+      expect(text).toContain('근거를 열 에디터 고르기');
+      expect(text).toContain('VS Code');
+      expect(text).toContain('IntelliJ IDEA');
+      expect(text).toContain('다음부터는 바로 열고');
+    }
   });
 });

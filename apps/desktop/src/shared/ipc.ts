@@ -47,6 +47,12 @@ export const FLOW_PROJECT_ID_MAX_LENGTH = 64;
 /** 초안 편집 명령이 받는 편집기 텍스트의 최대 길이. 게시 본문 상한(4,000)을 넘긴 텍스트도 저장해 안내를 보여야 하므로 그보다 넉넉하다. */
 export const DRAFT_TEXT_MAX_LENGTH = 100_000;
 
+/** 에디터 직접 지정 명령이 받는 명령 한 줄의 최대 길이. */
+export const EDITOR_COMMAND_MAX_LENGTH = 2_000;
+
+/** 에디터 고르기 명령이 받는 에디터 ID의 최대 길이. JetBrains IDE는 ID에 앱 이름이 든다. */
+export const EDITOR_APP_ID_MAX_LENGTH = 200;
+
 /** 받는 사람 빼기 명령이 받는 이름의 최대 길이. */
 export const RECIPIENT_NAME_MAX_LENGTH = 200;
 
@@ -379,6 +385,8 @@ export interface DraftSentenceSnapshot {
   text: string;
   /** 이 문장을 뒷받침하는 근거 번호. 비어 있으면 "근거 없음"이다. */
   evidence: number[];
+  /** 문체 검사에 걸린 말. 나온 순서다. 있으면 문장 옆에 "개발자 용어가 있을 수 있음"을 작게 보인다. */
+  developerTerms: string[];
 }
 
 /** 초안 문단 하나. */
@@ -403,6 +411,8 @@ export interface EvidenceSnapshot {
   endLine: number;
   /** 근거 위치를 찾았는지 여부. 거짓이면 위치 대신 "위치를 찾을 수 없음"을 보이고 "에디터에서 열기"를 끈다. */
   located: boolean;
+  /** 근거 설명에서 문체 검사에 걸린 말. 나온 순서다. 있으면 설명 옆에 "개발자 용어가 있을 수 있음"을 작게 보인다. */
+  developerTerms: string[];
 }
 
 /** 초안을 만들 때 읽기 범위로 넘긴 저장소 하나. */
@@ -620,6 +630,27 @@ export interface ReviewSnapshot {
   repoPicker: RepoPickerSnapshot | null;
 }
 
+/** 에디터에서 열기에 쓸 에디터. 찾은 에디터를 고르거나, `{file}`·`{line}` 자리를 넣은 명령 한 줄을 직접 지정한다. */
+export type EditorChoiceSnapshot = { kind: 'app'; appId: string } | { kind: 'command'; command: string };
+
+/** 이 PC에서 찾은 에디터 하나. */
+export interface InstalledEditorSnapshot {
+  /** 고를 때 보내는 ID. */
+  appId: string;
+  /** 화면에 보일 이름. */
+  name: string;
+}
+
+/** 에디터에서 열기의 상태. 설정 "일반"의 에디터 칸과 처음 열 때의 에디터 고르기 창이 그린다. */
+export interface EditorSnapshot {
+  /** 기억한 에디터. 아직 고르지 않았으면 `null`이고, 처음 열 때 고르게 한다. */
+  choice: EditorChoiceSnapshot | null;
+  /** 이 PC에서 찾은 에디터. VS Code, Cursor, JetBrains IDE, Zed, Sublime Text 순서다. */
+  installed: InstalledEditorSnapshot[];
+  /** 열린 에디터 고르기 창. 닫혀 있으면 `null`. */
+  picker: { editors: InstalledEditorSnapshot[] } | null;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -644,6 +675,8 @@ export interface AppSnapshot {
   onboarding: OnboardingSnapshot;
   /** 로그인 시 자동 시작이 켜져 있는지 여부. */
   launchAtLogin: boolean;
+  /** 에디터에서 열기에 쓸 에디터와 에디터 고르기 창. */
+  editor: EditorSnapshot;
   /** 멘션 묶음과 창마다 영역 펼침 상태. */
   review: ReviewSnapshot;
 }
@@ -670,6 +703,8 @@ export type AppEvent =
   | { type: 'onboarding-changed'; onboarding: OnboardingSnapshot }
   /** 로그인 시 자동 시작이 켜지거나 꺼졌다. */
   | { type: 'launch-at-login-changed'; launchAtLogin: boolean }
+  /** 기억한 에디터, 찾은 에디터, 에디터 고르기 창이 바뀌었다. */
+  | { type: 'editor-changed'; editor: EditorSnapshot }
   /** 멘션 묶음이나 영역 펼침 상태가 바뀌었다. */
   | { type: 'review-changed'; review: ReviewSnapshot }
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
@@ -763,7 +798,15 @@ export type AppCommand =
   /** 펼친 창을 닫고 작은 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
   | { type: 'collapse-review'; bundleId: number | null }
   /** 창의 영역을 접거나 편다. */
-  | { type: 'set-review-section'; window: ReviewWindow; section: ReviewSection; open: boolean };
+  | { type: 'set-review-section'; window: ReviewWindow; section: ReviewSection; open: boolean }
+  /** 근거의 "에디터에서 열기". 근거는 초안 근거 목록의 위치로 가리키고, 파일 경로는 main이 정한다. */
+  | { type: 'open-evidence-in-editor'; bundleId: number; evidenceIndex: number }
+  /** 에디터 고르기 창에서 에디터를 골랐다. 기억하고 그 파일을 연다. */
+  | { type: 'choose-editor'; appId: string }
+  /** 에디터 고르기 창을 고르지 않고 닫는다. */
+  | { type: 'close-editor-picker' }
+  /** 설정 "일반"에서 에디터를 고르거나 명령을 직접 지정한다. `null`이면 다음에 열 때 다시 고른다. */
+  | { type: 'set-editor'; choice: EditorChoiceSnapshot | null };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -823,6 +866,21 @@ function isRecipientNameInput(value: unknown): value is string {
 /** 지시나 고친 요구로 실을 수 있는 글인지 확인한다. 공백만 있는 글은 받지 않는다. */
 function isRegenerationTextInput(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '' && value.length <= REGENERATION_TEXT_MAX_LENGTH;
+}
+
+/** 에디터 고르기 명령에 실을 수 있는 에디터 ID인지 확인한다. 찾은 에디터인지는 main이 본다. */
+function isEditorAppIdInput(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= EDITOR_APP_ID_MAX_LENGTH;
+}
+
+/** 에디터 직접 지정 명령에 실을 수 있는 값인지 확인한다. `{file}` 자리가 있는지와 따옴표는 main이 본다. */
+function isEditorChoiceInput(value: unknown): value is EditorChoiceSnapshot | null {
+  if (value === null) return true;
+  if (typeof value !== 'object') return false;
+  /** 필드를 읽기 위해 객체로 본 값. */
+  const choice = value as Record<string, unknown>;
+  if (choice.kind === 'app') return isEditorAppIdInput(choice.appId);
+  return choice.kind === 'command' && typeof choice.command === 'string' && choice.command.trim() !== '' && choice.command.length <= EDITOR_COMMAND_MAX_LENGTH;
 }
 
 /** 묶음을 보는 창 이름인지 확인한다. */
@@ -911,6 +969,22 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isReviewWindow(candidate.window) && isReviewSection(candidate.section) && typeof candidate.open === 'boolean'
         ? { type: 'set-review-section', window: candidate.window, section: candidate.section, open: candidate.open }
         : null;
+    case 'open-evidence-in-editor':
+      return isBundleIdInput(candidate.bundleId) && Number.isSafeInteger(candidate.evidenceIndex) && (candidate.evidenceIndex as number) >= 0
+        ? { type: 'open-evidence-in-editor', bundleId: candidate.bundleId, evidenceIndex: candidate.evidenceIndex as number }
+        : null;
+    case 'choose-editor':
+      return isEditorAppIdInput(candidate.appId) ? { type: 'choose-editor', appId: candidate.appId } : null;
+    case 'set-editor': {
+      if (!isEditorChoiceInput(candidate.choice)) return null;
+      /** 받은 에디터. 렌더러가 덧붙인 다른 필드는 버린다. */
+      const choice = candidate.choice;
+      return {
+        type: 'set-editor',
+        choice: choice === null ? null : choice.kind === 'app' ? { kind: 'app', appId: choice.appId } : { kind: 'command', command: choice.command },
+      };
+    }
+    case 'close-editor-picker':
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
     case 'check-agent':

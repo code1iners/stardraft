@@ -1,6 +1,7 @@
 import { app, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 import { mkdir } from 'node:fs/promises';
 import type { MentionBundles } from '../core/bundles/mention-bundles';
+import { evidenceFileOf, type EditorOpener, type EditorOpenerState } from '../core/editors/editor-opener';
 import type { DraftQueue } from '../core/drafts/draft-queue';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
@@ -22,6 +23,7 @@ import {
   type AppCommand,
   type AppFolder,
   type AppSnapshot,
+  type EditorSnapshot,
   type FlowAccountProfile,
   type FlowAccountSnapshot,
   type GlobalProblemSnapshot,
@@ -65,6 +67,8 @@ export interface IpcServices {
   repoPicker: RepoPicker;
   /** 작은 창과 펼친 창의 영역 펼침 상태. */
   reviewSections: ReviewSections;
+  /** 근거의 "에디터에서 열기"와 설정 "일반"의 에디터. */
+  editorOpener: EditorOpener;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -107,6 +111,7 @@ export function registerIpc(services: IpcServices): void {
   );
   services.onboarding.onChange((state) => services.windows.broadcast({ type: 'onboarding-changed', onboarding: onboardingSnapshot(state) }));
   services.launchAtLogin.onChange((enabled) => services.windows.broadcast({ type: 'launch-at-login-changed', launchAtLogin: enabled }));
+  services.editorOpener.onChange(() => services.windows.broadcast({ type: 'editor-changed', editor: editorSnapshot(services.editorOpener.state()) }));
   // 묶음이나 생성 중 묶음의 진행이 바뀌거나 영역을 접고 펼 때, 그리고 참여 Flow 프로젝트 목록(프로젝트 이름과 주소)이 바뀔 때 묶음 상태를 다시 보낸다.
   /** 묶음 상태를 열린 창에 알린다. */
   const broadcastReview = () => services.windows.broadcast({ type: 'review-changed', review: currentReviewSnapshot(services) });
@@ -158,6 +163,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     repoMappings: repoMappingsSnapshot(repoMappings.state()),
     onboarding: onboardingSnapshot(onboarding.state()),
     launchAtLogin: launchAtLogin.enabled(),
+    editor: editorSnapshot(services.editorOpener.state()),
     review: currentReviewSnapshot(services),
   };
 }
@@ -179,6 +185,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     drafts,
     repoPicker,
     reviewSections,
+    editorOpener,
   } = services;
   switch (command.type) {
     case 'open-settings':
@@ -309,7 +316,41 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'set-review-section':
       reviewSections.set(command.window, command.section, command.open);
       return;
+    case 'open-evidence-in-editor':
+      await openEvidenceInEditor(services, command.bundleId, command.evidenceIndex);
+      return;
+    case 'choose-editor':
+      await editorOpener.choose(command.appId);
+      return;
+    case 'close-editor-picker':
+      editorOpener.closePicker();
+      return;
+    case 'set-editor':
+      await editorOpener.setChoice(command.choice);
+      return;
   }
+}
+
+/** 초안 근거의 파일을 에디터에서 연다. 위치를 찾지 못한 근거나 저장소 밖 경로는 열지 않고 로그만 남긴다. 경로는 로그에 남기지 않는다. */
+async function openEvidenceInEditor({ bundles, editorOpener, logger }: IpcServices, bundleId: number, evidenceIndex: number): Promise<void> {
+  /** 근거가 든 초안. */
+  const draft = bundles.get(bundleId)?.draft;
+  /** 열 파일과 줄. */
+  const target = draft && evidenceFileOf(draft, evidenceIndex);
+  if (!target) {
+    logger.warn('editor.open-skipped', { bundleId, evidenceIndex });
+    return;
+  }
+  await editorOpener.open(target);
+}
+
+/** core의 에디터 열기 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function editorSnapshot(state: EditorOpenerState): EditorSnapshot {
+  return {
+    choice: state.choice && { ...state.choice },
+    installed: state.installed.map((editor) => ({ ...editor })),
+    picker: state.picker && { editors: state.picker.editors.map((editor) => ({ ...editor })) },
+  };
 }
 
 /** 묶음의 게시물을 기본 브라우저로 Flow에서 연다. 열 주소가 없거나 열지 못하면 로그만 남긴다. 주소는 로그에 남기지 않는다. */

@@ -47,6 +47,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
     repoMappings: { mappings: [], projects: { status: 'idle' } },
     onboarding,
     launchAtLogin: false,
+    editor: { choice: null, installed: [], picker: null },
     review: {
       bundles: [],
       sections: {

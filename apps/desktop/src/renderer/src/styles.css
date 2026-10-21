@@ -859,6 +859,14 @@ p.setup-tray-hint {
   min-width: 280px;
 }
 
+/* 에디터 직접 지정: 선택 상자 아래에 명령 한 줄. */
+.editor-command {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  font-family: var(--mono);
+}
+
 /* 저장소 칸: 작업 폴더와 "이 PC에서 찾은 폴더" 목록. */
 .folder-list {
   margin: 0 0 10px;
@@ -1323,6 +1331,17 @@ textarea.draft-editor {
   vertical-align: super;
 }
 
+/* 근거 번호는 근거 영역의 그 근거로 가는 버튼이다. */
+button.cite {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.cite:hover {
+  text-decoration: underline;
+}
+
 .cite.none {
   background: var(--warn-bg);
   color: var(--warn);
@@ -1345,6 +1364,48 @@ textarea.draft-editor {
 
 .evidence-item + .evidence-item {
   margin-top: 6px;
+}
+
+/* 초안의 근거 번호를 눌러 고른 근거. */
+.evidence-item.highlighted {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+/* 근거 위치 줄: 왼쪽에 저장소 · 파일 · 줄, 오른쪽에 "에디터에서 열기". */
+.evidence-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.evidence-foot .evidence-location {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.evidence-foot .btn.link {
+  flex: none;
+}
+
+/* 문체 검사에 걸린 문장과 근거 설명 옆의 작은 표시. */
+.style-note {
+  margin-left: 6px;
+  color: var(--warn);
+  font-size: 11px;
+  cursor: help;
+}
+
+/* 에디터 고르기 창: 찾은 에디터를 한 줄에 하나씩 둔다. */
+.editor-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.editor-choices .btn {
+  justify-content: flex-start;
 }
 
 .evidence-number {

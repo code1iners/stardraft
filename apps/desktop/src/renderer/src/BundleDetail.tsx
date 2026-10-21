@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import type {
   AutoSelectionSnapshot,
   BundleSnapshot,
@@ -34,6 +34,9 @@ import {
   senderLine,
 } from './review-text';
 import type { IgnoreToastState } from './useReview';
+
+/** 문체 검사에 걸린 문장과 근거 설명 옆에 작게 붙이는 말. */
+const DEVELOPER_TERMS_NOTE = '개발자 용어가 있을 수 있음';
 
 /** 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 된 묶음의 저장소 영역 안내. */
 const NO_REPOSITORY_NOTE = '아직 이 묶음에 쓸 저장소를 정하지 않았습니다.';
@@ -231,11 +234,34 @@ interface DraftProps {
   draft: DraftSnapshot;
 }
 
+/** 근거 번호를 누르면 할 일을 받는 값. */
+interface CiteProps {
+  /** 근거 번호를 눌렀다. 근거 영역을 펼치고 그 근거를 강조한다. */
+  onCite: (evidenceId: number) => void;
+}
+
+/** 문체 검사 표시에 넘기는 값. */
+interface DeveloperTermsNoteProps {
+  /** 문체 검사에 걸린 말. 비어 있으면 그리지 않는다. */
+  terms: string[];
+}
+
+/** 문체 검사에 걸린 곳 옆의 작은 표시. 걸린 말은 마우스를 올리면 보인다. 자동으로 다시 만들지는 않는다. */
+function DeveloperTermsNote({ terms }: DeveloperTermsNoteProps) {
+  if (terms.length === 0) return null;
+  return (
+    <span className="style-note" title={terms.join(', ')}>
+      {DEVELOPER_TERMS_NOTE}
+    </span>
+  );
+}
+
 /**
  * 초안. 문단마다 문장을 잇고, 문장마다 근거 번호(①②)를, 근거 없는 문장에는 "근거 없음"을 붙인다.
+ * 근거 번호를 누르면 근거 영역에서 그 근거를 펼쳐 강조한다. 문체 검사에 걸린 문장 옆에는 "개발자 용어가 있을 수 있음"을 작게 붙인다.
  * 에이전트가 같은 번호를 거듭 낼 수 있으므로 번호와 근거는 위치로 구분한다.
  */
-function DraftBody({ draft }: DraftProps) {
+function DraftBody({ draft, onCite }: DraftProps & CiteProps) {
   return (
     <div className="draft-text">
       {draft.paragraphs.map((paragraph, paragraphIndex) => (
@@ -246,15 +272,27 @@ function DraftBody({ draft }: DraftProps) {
               <span className={sentence.evidence.length > 0 ? 'sentence' : 'sentence no-evidence'}>{sentence.text}</span>
               {sentence.evidence.length > 0 ? (
                 sentence.evidence.map((id, citeIndex) => (
-                  <span key={citeIndex} className="cite">
+                  <button
+                    key={citeIndex}
+                    type="button"
+                    className="cite"
+                    aria-label={`근거 ${circledNumber(id)} 보기`}
+                    // 초안 글을 누르면 편집기가 열리므로, 번호를 누른 것은 글까지 올려 보내지 않는다.
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onCite(id);
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
                     {circledNumber(id)}
-                  </span>
+                  </button>
                 ))
               ) : (
                 <span className="cite none" title="이 문장을 뒷받침하는 근거가 없습니다">
                   근거 없음
                 </span>
               )}
+              <DeveloperTermsNote terms={sentence.developerTerms} />
             </span>
           ))}
         </p>
@@ -263,18 +301,21 @@ function DraftBody({ draft }: DraftProps) {
   );
 }
 
-/** 초안 편집기에 넘기는 값. */
-interface DraftEditorProps extends DraftProps {
-  /** 초안이 있는 묶음 ID. 편집·되돌리기·받는 사람 빼기 명령에 실어 보낸다. */
+/** 받는 사람 줄에 넘기는 값. */
+interface RecipientLineProps extends DraftProps {
+  /** 초안이 있는 묶음 ID. 받는 사람 빼기 명령에 실어 보낸다. */
   bundleId: number;
 }
+
+/** 초안 편집기에 넘기는 값. */
+interface DraftEditorProps extends RecipientLineProps, CiteProps {}
 
 /**
  * 초안 영역 내용. 머리 바로 아래에 받는 사람 줄, 그 아래 편집기, 편집기 아래에 글자 수를 둔다.
  * 고치지 않은 초안은 근거 번호가 붙은 글로 보이고, 누르거나 Enter를 치면 같은 자리에 편집기가 열린다. 고치면 근거 번호가 사라지고 "원래 초안으로 되돌리기"가 생긴다.
  * 고칠 수 없는 묶음(처리됨 등)은 글로만 보인다.
  */
-function DraftEditor({ bundleId, draft }: DraftEditorProps) {
+function DraftEditor({ bundleId, draft, onCite }: DraftEditorProps) {
   /** 근거 번호가 붙은 글 대신 편집기를 열었는지 여부. 고치지 않고 벗어나면 다시 닫는다. */
   const [editing, setEditing] = useState(false);
   // 고칠 때마다 main에 저장하고 새 스냅숏을 받는다. 받기 전에 다음 글자를 쳐도 앞선 값으로 덮이지 않게 마지막으로 친 텍스트를 쓴다.
@@ -323,12 +364,12 @@ function DraftEditor({ bundleId, draft }: DraftEditorProps) {
       ) : draft.canEdit ? (
         // 포커스만으로는 열지 않는다. 탭으로 지나가거나 근거 번호를 볼 때 번호가 사라지지 않게, 누르거나 Enter를 칠 때만 편집기를 연다.
         <div className="draft-editor annotated" role="textbox" tabIndex={0} aria-label="초안" aria-multiline="true" onClick={handleOpen} onKeyDown={handleOpenKey}>
-          <DraftBody draft={draft} />
+          <DraftBody draft={draft} onCite={onCite} />
         </div>
       ) : draft.edited ? (
         <div className="draft-text plain">{text}</div>
       ) : (
-        <DraftBody draft={draft} />
+        <DraftBody draft={draft} onCite={onCite} />
       )}
       {draft.canEdit && (
         <div className="draft-foot">
@@ -351,7 +392,7 @@ function DraftEditor({ bundleId, draft }: DraftEditorProps) {
  * 받는 사람 줄. 테두리만 있는 작은 항목을 처음 멘션한 순서로 보이고, 고칠 수 있으면 항목마다 ×로 뺀다. 더하는 기능은 없다.
  * 모두 빼면 멘션 없이 올린다고 알린다.
  */
-function RecipientLine({ bundleId, draft }: DraftEditorProps) {
+function RecipientLine({ bundleId, draft }: RecipientLineProps) {
   return (
     <div className="recipient-line">
       <span className="small muted">받는 사람</span>
@@ -378,30 +419,61 @@ function RecipientLine({ bundleId, draft }: DraftEditorProps) {
   );
 }
 
+/** 근거 영역 내용에 넘기는 값. */
+interface EvidenceListProps extends RecipientLineProps {
+  /** 초안의 근거 번호를 눌러 강조할 근거 번호. 없으면 `null`. */
+  highlightedId: number | null;
+}
+
 /**
- * 근거 영역 내용. 근거마다 자연어 설명과, 그 아래 작게 저장소·파일·줄 위치를 보인다. 전체 경로는 위치에 마우스를 올리면 보인다.
- * 위치를 찾지 못한 근거는 위치 대신 "위치를 찾을 수 없음"을 보이고, 에이전트가 적은 경로는 마우스를 올리면 보인다.
+ * 근거 영역 내용. 근거마다 자연어 설명과, 그 아래 작게 저장소·파일·줄 위치와 "에디터에서 열기"를 보인다. 전체 경로는 위치에 마우스를 올리면 보인다.
+ * 위치를 찾지 못한 근거는 위치 대신 "위치를 찾을 수 없음"을 보이고 "에디터에서 열기"를 끈다. 에이전트가 적은 경로는 마우스를 올리면 보인다.
+ * 초안의 근거 번호를 눌러 고른 근거는 강조한다.
  */
-function EvidenceList({ draft }: DraftProps) {
+function EvidenceList({ bundleId, draft, highlightedId }: EvidenceListProps) {
+  /** 강조한 근거의 항목. */
+  const highlightedRef = useRef<HTMLLIElement>(null);
+
+  // 초안의 근거 번호를 누르면 근거가 목록 아래쪽에 있어도 보이게 그 근거까지 내린다.
+  useEffect(() => {
+    highlightedRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [highlightedId]);
+
   if (draft.evidence.length === 0) return <p className="small muted">근거가 없습니다. 초안이 저장소 코드를 근거로 하지 않았습니다.</p>;
+  /** 강조할 근거의 위치. 같은 번호가 거듭 나와도 처음 것만 강조한다. */
+  const highlightedIndex = highlightedId === null ? -1 : draft.evidence.findIndex((evidence) => evidence.id === highlightedId);
   return (
     <ol className="evidence-list">
-      {draft.evidence.map((evidence, evidenceIndex) => (
-        <li key={evidenceIndex} className="evidence-item">
-          <p>
-            <span className="evidence-number">{circledNumber(evidence.id)}</span> {evidence.explanation}
-          </p>
-          {evidence.located ? (
-            <p className="evidence-location" title={evidence.path}>
-              {evidenceLocation(evidence)}
+      {draft.evidence.map((evidence, evidenceIndex) => {
+        /** 이 근거를 강조하는지 여부. */
+        const highlighted = evidenceIndex === highlightedIndex;
+        /** 근거의 파일을 에디터에서 연다. 경로는 main이 근거 위치로 찾는다. */
+        const handleOpen = () => {
+          void window.stardraft.send({ type: 'open-evidence-in-editor', bundleId, evidenceIndex });
+        };
+        return (
+          <li key={evidenceIndex} ref={highlighted ? highlightedRef : undefined} className={highlighted ? 'evidence-item highlighted' : 'evidence-item'}>
+            <p>
+              <span className="evidence-number">{circledNumber(evidence.id)}</span> {evidence.explanation}
+              <DeveloperTermsNote terms={evidence.developerTerms} />
             </p>
-          ) : (
-            <p className="evidence-location not-found" title={evidence.path}>
-              위치를 찾을 수 없음
-            </p>
-          )}
-        </li>
-      ))}
+            <div className="evidence-foot">
+              {evidence.located ? (
+                <p className="evidence-location" title={evidence.path}>
+                  {evidenceLocation(evidence)}
+                </p>
+              ) : (
+                <p className="evidence-location not-found" title={evidence.path}>
+                  위치를 찾을 수 없음
+                </p>
+              )}
+              <button type="button" className="btn link sm" disabled={!evidence.located} onClick={handleOpen}>
+                에디터에서 열기
+              </button>
+            </div>
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -631,8 +703,16 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
   // 요구를 고치는 칸도 보고 있는 묶음에만 연다. 다른 묶음으로 넘어가면 닫힌다.
   /** 요구를 고치는 칸을 연 묶음 ID. 열지 않았으면 `null`. */
   const [requirementBundleId, setRequirementBundleId] = useState<number | null>(null);
+  // 근거 강조도 보고 있는 묶음에만 둔다. 다른 묶음으로 넘어가면 강조가 사라진다.
+  /** 초안의 근거 번호를 눌러 강조한 근거. 누르지 않았으면 `null`. */
+  const [highlight, setHighlight] = useState<{ bundleId: number; evidenceId: number } | null>(null);
   /** 초안. 생성 중이면 새로 만들고 있으므로 보이지 않는다. */
   const draft = bundle.status === 'generating' ? null : bundle.draft;
+  /** 근거 번호를 눌렀다. 근거 영역이 접혀 있으면 펼치고 그 근거를 강조한다. */
+  const handleCite = (evidenceId: number) => {
+    if (!open.evidence) void window.stardraft.send({ type: 'set-review-section', window: windowKind, section: 'evidence', open: true });
+    setHighlight({ bundleId: bundle.id, evidenceId });
+  };
   /** 요구를 고치는 칸을 보일지 여부. 초안을 고칠 수 있는 묶음에서만 연다. */
   const editingRequirement = requirementBundleId === bundle.id && draft?.canEdit === true;
   /** 망치 버튼을 눌렀다. 요구 영역이 접혀 있으면 펼치고 요구를 고치는 칸을 연다. */
@@ -688,10 +768,10 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
       {draft && (
         <>
           <ReviewSectionBlock windowKind={windowKind} section="draft" open={open.draft} title="초안">
-            <DraftEditor key={bundle.id} bundleId={bundle.id} draft={draft} />
+            <DraftEditor key={bundle.id} bundleId={bundle.id} draft={draft} onCite={handleCite} />
           </ReviewSectionBlock>
           <ReviewSectionBlock windowKind={windowKind} section="evidence" open={open.evidence} title={`근거 ${draft.evidence.length}개`}>
-            <EvidenceList draft={draft} />
+            <EvidenceList bundleId={bundle.id} draft={draft} highlightedId={highlight?.bundleId === bundle.id ? highlight.evidenceId : null} />
           </ReviewSectionBlock>
         </>
       )}

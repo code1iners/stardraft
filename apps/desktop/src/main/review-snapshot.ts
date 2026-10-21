@@ -2,6 +2,7 @@ import { basename } from 'node:path';
 import { activeMentions, canEditDraft, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, postBody } from '../core/drafts/post-body';
+import { developerTerms, sourceWords, type SourceWords } from '../core/drafts/style-check';
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
@@ -113,9 +114,13 @@ export function bundleSnapshot(
 function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatch): DraftSnapshot {
   /** 받는 사람. */
   const recipients = bundleRecipients(bundle);
+  /** 문체 검사에서 뺄 단어. */
+  const source = styleSourceWords(bundle);
   return {
     requirement: { ...draft.requirement },
-    paragraphs: draft.paragraphs.map((paragraph) => ({ sentences: paragraph.sentences.map((sentence) => ({ ...sentence, evidence: [...sentence.evidence] })) })),
+    paragraphs: draft.paragraphs.map((paragraph) => ({
+      sentences: paragraph.sentences.map((sentence) => ({ ...sentence, evidence: [...sentence.evidence], developerTerms: developerTerms(sentence.text, source) })),
+    })),
     evidence: draft.evidence.map(({ id, explanation, repository, path, startLine, endLine, located }) => ({
       id,
       explanation,
@@ -124,6 +129,7 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
       startLine,
       endLine,
       located,
+      developerTerms: developerTerms(explanation, source),
     })),
     repositories: draft.repositories.map((path) => ({ name: basename(path), path })),
     autoSelection: draft.autoSelection && { ...draft.autoSelection },
@@ -135,6 +141,27 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
     // 빈 편집기 텍스트의 게시 본문이 곧 받는 사람 표기와 이어 붙이는 공백이다.
     postBodyPrefixLength: postBody(recipients, '').length,
   };
+}
+
+/**
+ * 문체 검사에서 뺄 단어. 묶인 멘션 전부(빠진 멘션 포함), 게시물 제목, 맥락의 게시물 본문과 댓글·대댓글에 나온 말이다.
+ * 맥락을 조회하지 않았으면 멘션과 게시물 제목만 쓴다.
+ */
+function styleSourceWords(bundle: MentionBundle): SourceWords {
+  /** 맥락의 글. */
+  const writings: ContextWriting[] = [];
+  if (bundle.context) {
+    /** 게시물, 대상 댓글 스레드, 다른 댓글. */
+    const { post, targetThread, otherComments } = bundle.context;
+    writings.push(post);
+    for (const comment of [...(targetThread ? [targetThread] : []), ...otherComments]) writings.push(comment, ...comment.replies);
+  }
+  return sourceWords([
+    bundle.postTitle,
+    ...(bundle.context ? [bundle.context.post.title] : []),
+    ...bundle.mentions.map((mention) => mention.text),
+    ...writings.map((writing) => writing.contents),
+  ]);
 }
 
 /**

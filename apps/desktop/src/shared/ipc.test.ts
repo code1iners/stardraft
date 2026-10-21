@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_MODEL_MAX_LENGTH,
   DRAFT_TEXT_MAX_LENGTH,
+  EDITOR_COMMAND_MAX_LENGTH,
   FLOW_API_KEY_MAX_LENGTH,
   FLOW_PROJECT_ID_MAX_LENGTH,
   parseAppCommand,
@@ -247,6 +248,34 @@ describe('렌더러가 보낸 명령 검사', () => {
     }
     expect(parseAppCommand({ type: 'set-review-section', window: 'expanded', section: 'code', open: true })).toBeNull();
     expect(parseAppCommand({ type: 'set-review-section', window: 'expanded', section: 'original', open: 'yes' })).toBeNull();
+  });
+
+  it('에디터에서 열기 명령은 묶음 ID와 근거 위치만 받고, 렌더러가 실은 파일 경로는 버린다', () => {
+    expect(parseAppCommand({ type: 'open-evidence-in-editor', bundleId: 3, evidenceIndex: 0, path: '/etc/passwd' })).toEqual({
+      type: 'open-evidence-in-editor',
+      bundleId: 3,
+      evidenceIndex: 0,
+    });
+    expect(parseAppCommand({ type: 'open-evidence-in-editor', bundleId: 3, evidenceIndex: -1 })).toBeNull();
+    expect(parseAppCommand({ type: 'open-evidence-in-editor', bundleId: 3, evidenceIndex: 0.5 })).toBeNull();
+  });
+
+  it('에디터 고르기와 고르기 창 닫기 명령을 받는다', () => {
+    expect(parseAppCommand({ type: 'choose-editor', appId: 'jetbrains:WebStorm' })).toEqual({ type: 'choose-editor', appId: 'jetbrains:WebStorm' });
+    expect(parseAppCommand({ type: 'choose-editor', appId: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'close-editor-picker' })).toEqual({ type: 'close-editor-picker' });
+  });
+
+  it('에디터 설정 명령은 찾은 에디터, 직접 지정한 명령, 다시 고르기(null)를 받고 다른 필드는 버린다', () => {
+    expect(parseAppCommand({ type: 'set-editor', choice: { kind: 'app', appId: 'vscode', extra: 1 } })).toEqual({ type: 'set-editor', choice: { kind: 'app', appId: 'vscode' } });
+    expect(parseAppCommand({ type: 'set-editor', choice: { kind: 'command', command: 'subl {file}:{line}' } })).toEqual({
+      type: 'set-editor',
+      choice: { kind: 'command', command: 'subl {file}:{line}' },
+    });
+    expect(parseAppCommand({ type: 'set-editor', choice: null })).toEqual({ type: 'set-editor', choice: null });
+    expect(parseAppCommand({ type: 'set-editor', choice: { kind: 'command', command: ' ' } })).toBeNull();
+    expect(parseAppCommand({ type: 'set-editor', choice: { kind: 'command', command: 'x'.repeat(EDITOR_COMMAND_MAX_LENGTH + 1) } })).toBeNull();
+    expect(parseAppCommand({ type: 'set-editor', choice: { kind: 'shell', command: 'rm' } })).toBeNull();
   });
 
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {

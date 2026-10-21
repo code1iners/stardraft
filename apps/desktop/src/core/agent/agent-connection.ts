@@ -242,20 +242,24 @@ export class AgentConnection {
    * 연결 확인을 처음부터 다시 돌려(작동 확인 포함) 그 결과를 따른다. 실패하면 연결 확인이 전역 문제로 알린다.
    */
   async confirmForRun(): Promise<boolean> {
+    // 시작 때, 칸을 열 때, 전역 실패가 의심될 때 돈 확인이 아직 끝나지 않았으면 그 결과를 따른다.
     await this.settled();
     /** 작동 확인을 통과한 CLI와 버전. */
     const [cliPath, confirmed] = [this.cliPath, this.confirmedVersion];
     if (cliPath === null || confirmed === null) return false;
 
+    // 매 실행 전에는 버전만 읽는다. 작동 확인 때와 같으면 그대로 실행한다.
     /** 버전 명령 결과. */
     const result = await this.runCli(cliPath, ['--version']);
     /** 지금 CLI 버전. 읽지 못하면 `null`. */
     const version = result.kind === 'exited' && result.exitCode === 0 ? parseCliVersion(result.stdout) : null;
     if (version === confirmed) return true;
 
+    // 버전이 바뀌었거나 읽지 못했으면 연결 확인을 처음부터 돌린다.
     if (version === null) this.options.logger.warn('agent.cli-version-unreadable', { agent: AGENT, result: result.kind });
     else this.options.logger.info('agent.cli-version-changed', { agent: AGENT, from: confirmed, to: version });
     await this.check();
+    // 그 확인이 도는 사이에 사용자가 [다시 찾기] 등으로 새 확인을 시작했으면 마지막 확인의 결과를 따른다.
     await this.settled();
     return this.isConnected();
   }

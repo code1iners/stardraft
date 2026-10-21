@@ -185,22 +185,10 @@ function start(): void {
       bundles: mentionBundles,
       // 지금은 Claude Code 연결만 있다. 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
       agent: () => draftAgentFrom(agentPreferences.state(), [agentConnection]),
-      onAgentChange: (listener) => {
-        /** 구독을 끊는 함수. */
-        const unsubscribes = [agentConnection.onChange(listener), agentPreferences.onChange(listener)];
-        return () => {
-          for (const unsubscribe of unsubscribes) unsubscribe();
-        };
-      },
+      onAgentChange: (listener) => unsubscribeAll([agentConnection.onChange(listener), agentPreferences.onChange(listener)]),
       // "키 확인 필요"인 동안은 맥락을 조회할 수 없어 대기열을 멈춘다. 키를 다시 넣어 풀리면 다시 돈다.
       flowKeyUsable: () => flowAccount.apiKey() !== null && !globalProblems.has('flow-key'),
-      onFlowKeyChange: (listener) => {
-        /** 구독을 끊는 함수. */
-        const unsubscribes = [globalProblems.onChange(listener), flowAccount.onChange(listener)];
-        return () => {
-          for (const unsubscribe of unsubscribes) unsubscribe();
-        };
-      },
+      onFlowKeyChange: (listener) => unsubscribeAll([globalProblems.onChange(listener), flowAccount.onChange(listener)]),
       settingsStore: appData.settingsStore,
       myName: () => flowAccount.state().account?.name || null,
       projectTitle: (projectId) => repoMappings.projectTitle(projectId),
@@ -346,6 +334,13 @@ function start(): void {
     // 앱을 시작할 때 에이전트 연결을 확인한다(작동 확인 포함). 끊겨 있으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
     void agentConnection.check();
   });
+}
+
+/** 구독을 끊는 함수 여럿을 한 번에 부르는 함수 하나로 묶는다. */
+function unsubscribeAll(unsubscribes: readonly (() => void)[]): () => void {
+  return () => {
+    for (const unsubscribe of unsubscribes) unsubscribe();
+  };
 }
 
 /** 사용자의 로그인 셸. Finder에서 켠 앱도 `$SHELL`을 받지만, 없으면 계정 정보의 셸을 쓴다. */

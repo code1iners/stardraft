@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { claudeNotLoggedInStream, claudeStream, claudeSuccessStream, fakeClaudeEvent } from '../fakes/fake-claude-stream';
+import { claudeNotLoggedInStream, claudeStream, claudeSuccessStream, fakeClaudeAuthStatus, fakeClaudeEvent } from '../fakes/fake-claude-stream';
 import { FakeClock } from '../fakes/fake-clock';
 import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
 import { MemorySettingsStore } from '../fakes/memory-settings-store';
@@ -35,13 +35,13 @@ const SHELL = '/bin/fake-login-shell';
 const SHELL_PATH = '/usr/local/fake-node/bin:/usr/bin:/bin';
 
 /** 실제 CLI처럼 로그인된 `claude auth status` 출력. */
-const LOGGED_IN = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty' });
+const LOGGED_IN = fakeClaudeAuthStatus.loggedIn;
 
 /** 로그인되지 않았을 때 `claude auth status`의 실제 출력 모양(2.1.303, 종료 코드 1). */
-const NOT_LOGGED_IN = JSON.stringify({ loggedIn: false, authMethod: 'none', apiProvider: 'firstParty' });
+const NOT_LOGGED_IN = fakeClaudeAuthStatus.notLoggedIn;
 
 /** `apiKeyHelper`만 설정했을 때 `claude auth status`의 실제 출력 모양(2.1.303, 종료 코드 0). */
-const API_KEY_HELPER = JSON.stringify({ loggedIn: true, authMethod: 'api_key_helper', apiProvider: 'firstParty', apiKeySource: 'apiKeyHelper' });
+const API_KEY_HELPER = fakeClaudeAuthStatus.apiKeyHelper;
 
 /** 홈 폴더 아래 `relativeDir`에 실행 파일 `claude`를 만들고 경로를 돌려준다. */
 function installCli(relativeDir: string): string {
@@ -635,7 +635,10 @@ describe('실행 직전 확인', () => {
 
     await expect(connection.confirmForRun()).resolves.toBe(true);
 
-    expect(runner.requests.slice(before).map(cliCommandOf)).toEqual(['--version', '--version', '--restricted auth status', '-p']);
+    /** 실행 직전 확인이 부른 명령. */
+    const commands = runner.requests.slice(before).map(cliCommandOf);
+    expect(commands[0]).toBe('--version');
+    expect(commands).toEqual(expect.arrayContaining(['--restricted auth status', '-p']));
     expect(connection.state().details.version).toBe('2.1.310');
   });
 
@@ -649,6 +652,16 @@ describe('실행 직전 확인', () => {
     expect(connection.isConnected()).toBe(false);
     expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'check-failed' });
     expect(notifier.sent).toHaveLength(1);
+  });
+
+  it('CLI가 필수 플래그를 지원하지 않는 낮은 버전으로 바뀌었으면 실행하면 안 된다고 답하고, CLI 업데이트 필요 전역 문제로 알린다', async () => {
+    const { runner, connection, cliPath, problems } = await setupConnected();
+    runner.respond(cliPath, ['--version'], exited(0, '2.1.250 (Claude Code)\n'));
+
+    await expect(connection.confirmForRun()).resolves.toBe(false);
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'version', reason: 'update-required' } });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'update-required' });
   });
 
   it('CLI가 지워져 버전을 읽지 못하면 연결 확인을 처음부터 다시 돌려 CLI 없음 전역 문제로 알리고, 실행하면 안 된다고 답한다', async () => {

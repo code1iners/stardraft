@@ -6,7 +6,7 @@ import { activeMentions, mentionSetKey } from '../bundles/mention-bundle';
 import type { MentionBundles, RunPreparation } from '../bundles/mention-bundles';
 import { contextDocument, omittedItemCount } from '../flow/bundle-context';
 import { errorFields, type Logger } from '../logging/logger';
-import type { Clock } from '../ports/clock';
+import type { CancelScheduled, Clock } from '../ports/clock';
 import type { Executor, ExecutorOutcome, ExecutorReport, ExecutorRunRequest } from '../ports/executor';
 import type { SettingsStore } from '../ports/settings-store';
 import {
@@ -30,6 +30,10 @@ const MAX_ATTEMPTS = 2;
  * 시간 초과, 취소, 형식 위반(빈 초안, 비밀 파일을 근거로 듦)은 다시 실행해도 같을 가능성이 커 다시 실행하지 않는다.
  */
 const TRANSIENT_FAILURES: readonly RunFailureReason[] = ['invalid-output', 'overloaded', 'network'];
+/** Flow에 닿지 못해(네트워크 오류) 멈춘 대기열이 다시 조회하기까지 기다리는 시간(밀리초). 폴링이 다음 주기에 다시 조회하는 것과 같다. */
+const FLOW_RETRY_DELAY_MS = 60_000;
+/** 요청 한도에 걸려 멈춘 대기열이 기다리는 가장 짧은 시간(밀리초). Flow가 알려 준 시간이 이보다 짧아도 이만큼은 기다린다. */
+const MIN_FLOW_RETRY_DELAY_MS = 1_000;
 
 /** 초안 대기열이 실행에 쓰는 에이전트 연결 하나. 연결 확인이 만든 실행기와 실행 직전 확인을 준다. */
 export interface RunnableAgent {
@@ -42,14 +46,10 @@ export interface RunnableAgent {
   confirmForRun(): Promise<boolean>;
 }
 
-/** 초안 실행에 쓸 에이전트. */
-export interface DraftAgent {
-  /** 기본 에이전트의 실행기. */
-  executor: Executor;
+/** 초안 실행에 쓸 에이전트. 기본 에이전트의 연결과 그 에이전트에 고른 모델이다. 실행 직전 확인이 거짓이면 실행하지 않고 대기열을 멈춘다. */
+export interface DraftAgent extends RunnableAgent {
   /** 고른 모델. 기본 모델(에이전트가 정함)이면 `null`. */
   model: string | null;
-  /** 실행 직전 확인. 거짓이면 실행하지 않고 대기열을 멈춘다. */
-  confirmForRun: () => Promise<boolean>;
 }
 
 /**
@@ -101,7 +101,7 @@ type Interruption = 'user' | 'bundle-changed' | 'app-quit';
 
 /** 대기열에서 묶음이 들어가는 자리. 앞 자리일수록 먼저 실행하고, 같은 자리끼리는 들어온 순서대로 실행한다. */
 type QueuePriority =
-  /** 끊긴 생성을 처음부터 다시 하는 묶음. 실행 중에 새 멘션이 합쳐졌거나 전역 실패로 멈춘 묶음이다. 맨 앞이다. */
+  /** 바로 이어서 돌아야 하는 묶음. 끊긴 생성을 처음부터 다시 하는 묶음(실행 중에 새 멘션이 합쳐짐, 전역 실패나 Flow에 닿지 못해 멈춤)이다. 맨 앞이다. */
   | 'resume'
   /** 사용자가 누른 행동(다시 시도, 되돌리기)으로 생성 중이 된 묶음. 감지한 묶음보다 앞이다. */
   | 'user'
@@ -119,8 +119,14 @@ interface QueuedDraft {
   priority: QueuePriority;
 }
 
-/** 대기열을 멈추게 한 까닭. `agent`는 에이전트를 쓸 수 없음(전역 실패), `flow-key`는 Flow 키를 쓸 수 없음("키 확인 필요")이다. */
-type PauseCause = 'agent' | 'flow-key';
+/**
+ * 대기열을 멈추게 한 까닭. `agent`는 에이전트를 쓸 수 없음(전역 실패), `flow-key`는 Flow 키를 쓸 수 없음("키 확인 필요")이고,
+ * 둘은 그 까닭이 바뀌었다는 알림이 오면 풀린다. `flow-unreachable`은 지금 Flow에 닿지 못함(네트워크 오류, 요청 한도)이고 시간이 지나면 풀린다.
+ */
+type PauseCause = 'agent' | 'flow-key' | 'flow-unreachable';
+
+/** 그 까닭이 바뀌었다는 알림이 오면 풀리는 멈춤의 까닭. */
+type NotifiedCause = Exclude<PauseCause, 'flow-unreachable'>;
 
 /** 실행하고 있는 묶음. */
 interface RunningDraft {
@@ -152,21 +158,24 @@ type CheckedVerdict = { kind: 'draft'; output: CheckedDraftOutput } | FailedVerd
  * 끊긴 생성과 사용자 행동은 감지한 묶음보다 앞에 넣는다. 실행마다 직전에 에이전트를 확인하고,
  * 실행 직전에 저장소 매핑과 "이미 답함"을 다시 확인하고, 맥락을 새로 조회해 입력 문서를 만든다.
  * 일시적 실패는 한 번 다시 실행하고, 전역 실패는 묶음을 실패로 두지 않고 대기열을 멈췄다가 원인이 풀리면 다시 돈다.
+ * Flow에 닿지 못하면(네트워크 오류, 요청 한도) 묶음을 실패로 두지 않고 잠시 멈췄다가 다시 조회한다.
  * 결과는 멘션 묶음에 맡겨 준비됨이나 실패로 옮기고, 실행마다 실행 기록을 남긴다. 실행 중인 묶음의 진행 단계는 메모리에만 둔다.
  */
 export class DraftQueue {
   /** 차례를 기다리는 생성 중 묶음. 자리 순서대로 서 있고 앞에서부터 꺼낸다. */
   private waiting: QueuedDraft[] = [];
-  /** 곧 생성 중이 될 묶음이 들어갈 자리. 묶음이 바뀌는 즉시 대기열을 맞추므로, 사용자 행동으로 바꾸기 전에 적어 둔다. */
-  private readonly expected = new Map<number, QueuePriority>();
+  /** 사용자 행동으로 곧 생성 중이 될 묶음에 잡아 둔 자리. 묶음이 바뀌는 즉시 대기열을 맞추므로, 묶음을 바꾸기 전에 적어 둔다. */
+  private readonly reservedPriorities = new Map<number, QueuePriority>();
   /** 다음 실행을 시작하는 중(실행 직전 확인)이거나 실행하고 있는지 여부. 한 번에 하나만 실행하게 한다. */
   private busy = false;
   /** 실행하고 있는 묶음. 없으면 `null`. */
   private running: RunningDraft | null = null;
-  /** 대기열을 멈추게 한 까닭. 그 까닭이 바뀌었다는 알림이 오면 푼다. */
+  /** 대기열을 멈추게 한 까닭. 그 까닭이 바뀌었다는 알림이 오거나 기다릴 시간이 지나면 푼다. */
   private readonly paused = new Set<PauseCause>();
   /** 까닭마다 바뀌었다는 알림을 받은 횟수. 확인하는 사이에 알림이 왔는지 보려고 센다. */
-  private readonly changes: Record<PauseCause, number> = { agent: 0, 'flow-key': 0 };
+  private readonly changeCounts: Record<NotifiedCause, number> = { agent: 0, 'flow-key': 0 };
+  /** Flow에 닿지 못해 멈춘 대기열을 다시 보는 예약을 지우는 함수. 예약이 없으면 `null`. */
+  private cancelFlowRetry: CancelScheduled | null = null;
   /** 대기열 상태. `stopped`면 새 실행을 시작하지 않는다. */
   private status: 'idle' | 'started' | 'stopped' = 'idle';
   /** 묶음, 에이전트 연결, Flow 키 구독을 끊는 함수. */
@@ -196,6 +205,8 @@ export class DraftQueue {
     if (this.status === 'stopped') return;
     this.status = 'stopped';
     for (const unsubscribe of this.unsubscribes.splice(0)) unsubscribe();
+    this.cancelFlowRetry?.();
+    this.cancelFlowRetry = null;
     if (this.running) this.interrupt(this.running, 'app-quit');
   }
 
@@ -238,11 +249,11 @@ export class DraftQueue {
 
   /** 사용자 행동으로 묶음을 바꾼다. 바꾸는 사이에 묶음이 생성 중이 되면 사용자 행동 자리에 넣는다. */
   private async changeByUser(bundleId: number, change: () => Promise<void>): Promise<void> {
-    this.expected.set(bundleId, 'user');
+    this.reservedPriorities.set(bundleId, 'user');
     try {
       await change();
     } finally {
-      this.expected.delete(bundleId);
+      this.reservedPriorities.delete(bundleId);
     }
   }
 
@@ -256,7 +267,7 @@ export class DraftQueue {
     // 생성 중이 아니게 된 묶음(취소함, 저장소 확인 필요 등)은 빼고, 새로 생성 중이 된 묶음은 그 까닭에 맞는 자리에 넣는다.
     this.waiting = this.waiting.filter((queued) => generating.includes(queued.bundleId));
     for (const bundleId of generating) {
-      if (bundleId !== this.running?.bundleId) this.enqueue(bundleId, this.expected.get(bundleId) ?? 'auto');
+      if (bundleId !== this.running?.bundleId) this.enqueue(bundleId, this.reservedPriorities.get(bundleId) ?? 'auto');
     }
     // 실행 중인 묶음에 새 멘션이 합쳐졌거나 묶음이 생성 중이 아니게 되었으면 실행을 멈춘다. 생성 중으로 남았으면 처음부터 다시 만든다.
     if (this.running && !this.isStillGenerating(this.running)) this.interrupt(this.running, 'bundle-changed');
@@ -304,9 +315,14 @@ export class DraftQueue {
     });
   }
 
-  /** 다음 묶음을 실행할 수 있는지 본다. 이미 실행 중이거나, 기다리는 묶음이 없거나, 멈췄거나, Flow 키를 쓸 수 없으면 거짓이다. */
+  /** 다음 묶음을 시작할 수 있는지 본다. 이미 실행 중이거나 기다리는 묶음이 없으면 거짓이다. */
   private canStart(): boolean {
-    return this.status === 'started' && !this.busy && this.waiting.length > 0 && this.paused.size === 0 && this.options.flowKeyUsable();
+    return !this.busy && this.waiting.length > 0 && this.isRunnable();
+  }
+
+  /** 대기열이 돌 수 있는지 본다. 멈췄거나(전역 실패, Flow에 닿지 못함) Flow 키를 쓸 수 없으면 거짓이다. */
+  private isRunnable(): boolean {
+    return this.status === 'started' && this.paused.size === 0 && this.options.flowKeyUsable();
   }
 
   /** 실행 직전 확인을 거쳐 대기열 맨 앞 묶음의 초안을 만든다. 확인하는 동안 묶음은 차례를 기다리는 것으로 보인다. */
@@ -314,7 +330,7 @@ export class DraftQueue {
     if (!(await this.confirmAgent(agent))) return;
     // 확인하는 사이에 대기열이 바뀌었거나(취소, 사용자 행동) 멈출 까닭이 생겼을 수 있으므로 확인한 뒤에 다시 보고 꺼낸다.
     /** 다음에 실행할 묶음. */
-    const next = this.status === 'started' && this.paused.size === 0 && this.options.flowKeyUsable() ? this.waiting.shift() : undefined;
+    const next = this.isRunnable() ? this.waiting.shift() : undefined;
     if (!next) return;
 
     /** 실행하는 묶음. */
@@ -353,29 +369,52 @@ export class DraftQueue {
   /** 실행 직전에 에이전트를 확인한다. 쓸 수 없으면 에이전트 연결이 바뀌었다는 알림이 올 때까지 대기열을 멈춘다. */
   private async confirmAgent(agent: DraftAgent): Promise<boolean> {
     /** 확인을 시작할 때까지 받은 알림 수. */
-    const changesBefore = this.changes.agent;
+    const changesBefore = this.changeCounts.agent;
     /** 실행해도 되는지 여부. 확인하다 예외가 나면 쓸 수 없는 것으로 본다. */
     const ready = await agent.confirmForRun().catch((error: unknown) => {
       this.options.logger.error('draft.agent-confirm-crashed', errorFields(error));
       return false;
     });
-    if (!ready) this.pause('agent', changesBefore);
+    if (!ready) this.pauseUntilChanged('agent', changesBefore);
     return ready;
   }
 
   /**
-   * 그 까닭이 바뀌었다는 알림이 올 때까지 대기열을 멈춘다. 이미 멈췄으면 그대로 둔다.
+   * 그 까닭이 바뀌었다는 알림이 올 때까지 대기열을 멈춘다.
    * 확인하는 사이(`changesBefore` 뒤)에 알림이 왔으면 멈추지 않고 다시 본다. 그래야 그사이 풀린 것을 놓치지 않는다.
    */
-  private pause(cause: PauseCause, changesBefore: number): void {
-    if (this.changes[cause] !== changesBefore || this.paused.has(cause)) return;
+  private pauseUntilChanged(cause: NotifiedCause, changesBefore: number): void {
+    if (this.changeCounts[cause] === changesBefore) this.pause(cause);
+  }
+
+  /**
+   * Flow에 닿지 못해 대기열을 멈추고, 기다릴 시간이 지나면 다시 본다. 요청 한도면 Flow가 알려 준 시간(`retryAfterMs`)을,
+   * 모르면 폴링 주기만큼 기다린다. 이미 기다리고 있으면 새로 받은 시간으로 다시 잰다.
+   */
+  private pauseForFlowRetry(retryAfterMs: number | null): void {
+    this.pause('flow-unreachable');
+    this.cancelFlowRetry?.();
+    this.cancelFlowRetry = this.options.clock.after(Math.max(retryAfterMs ?? FLOW_RETRY_DELAY_MS, MIN_FLOW_RETRY_DELAY_MS), () => {
+      this.cancelFlowRetry = null;
+      this.resume('flow-unreachable');
+    });
+  }
+
+  /** 대기열을 멈춘다. 이미 멈췄으면 그대로 둔다. */
+  private pause(cause: PauseCause): void {
+    if (this.paused.has(cause)) return;
     this.paused.add(cause);
     this.options.logger.warn('draft.queue-paused', { cause });
   }
 
   /** 멈춘 까닭이 바뀌었다는 알림을 받는다. 그 까닭으로 멈췄으면 풀고 다시 본다. */
-  private conditionChanged(cause: PauseCause): void {
-    this.changes[cause] += 1;
+  private conditionChanged(cause: NotifiedCause): void {
+    this.changeCounts[cause] += 1;
+    this.resume(cause);
+  }
+
+  /** 그 까닭으로 멈췄으면 풀고, 다음 묶음을 실행할 수 있는지 다시 본다. */
+  private resume(cause: PauseCause): void {
     if (this.paused.delete(cause)) this.options.logger.info('draft.queue-resumed', { cause });
     this.pump();
   }
@@ -383,7 +422,8 @@ export class DraftQueue {
   /**
    * 묶음 하나의 초안을 만든다. 저장소 매핑 확인 → 맥락 조회와 "이미 답함" 확인 → 초안 실행 순서다.
    * 일시적 실패는 종류가 달라도 한 번만 다시 실행하고, 그 밖의 실패는 다시 실행하지 않는다.
-   * 전역 실패(에이전트를 쓸 수 없음, Flow 키를 쓸 수 없음)면 묶음을 실패로 두지 않고 대기열 맨 앞에 되돌려, 대기열이 다시 돌 때 처음부터 만든다.
+   * 전역 실패(에이전트를 쓸 수 없음, Flow 키를 쓸 수 없음)나 Flow에 닿지 못함이면 묶음을 실패로 두지 않고 대기열 맨 앞에 되돌려,
+   * 대기열이 다시 돌 때 처음부터 만든다.
    */
   private async generate(entry: RunningDraft, agent: DraftAgent): Promise<void> {
     /** 실행할 묶음. */
@@ -401,14 +441,19 @@ export class DraftQueue {
 
     // 맥락을 새로 조회하고, 그 사이 Flow에 내 답이 생겼으면 실행하지 않는다.
     /** 맥락을 조회하기 전까지 받은 Flow 키 변경 알림 수. */
-    const flowKeyChangesBefore = this.changes['flow-key'];
+    const flowKeyChangesBefore = this.changeCounts['flow-key'];
     /** 실행 직전 준비의 결과. */
     const prepared = await this.options.bundles.prepareRun(entry.bundleId);
     if (entry.interruption) return this.afterInterruption(entry, []);
     if (prepared.kind === 'skipped' || prepared.kind === 'answered') return;
     // 쓸 키가 없거나 Flow가 키를 거부했으면 묶음이 아니라 키의 문제다. 실패로 두지 않고 "키 확인 필요"가 풀릴 때까지 멈춘다.
     if (prepared.kind === 'key-unusable') {
-      this.pause('flow-key', flowKeyChangesBefore);
+      this.pauseUntilChanged('flow-key', flowKeyChangesBefore);
+      return this.requeueFromStart(entry, []);
+    }
+    // 지금 Flow에 닿지 못했으면(네트워크 오류, 요청 한도) 다음 묶음도 같으므로, 실패로 두지 않고 잠시 멈췄다가 다시 조회한다.
+    if (prepared.kind === 'flow-unreachable') {
+      this.pauseForFlowRetry(prepared.retryAfterMs);
       return this.requeueFromStart(entry, []);
     }
     if (prepared.kind === 'unavailable') {
@@ -435,8 +480,9 @@ export class DraftQueue {
       /** 실행 한 번의 결과와 실행 기록. */
       const ran = await this.runOnce(entry, current, request, omitted);
       if (entry.interruption) return this.afterInterruption(entry, [...runs, ran.record]);
+      /** 전역 실패가 의심됐지만 다시 한 연결 확인이 통과했는지 여부. 실행하는 사이 CLI가 바뀐 경우 등이라 일시적 실패처럼 다룬다. */
+      let recovered = false;
       // 전역 실패가 의심되면 에이전트가 다시 하는 연결 확인을 기다린다. 확인도 실패하면 전역 실패라 묶음을 실패로 두지 않고 대기열을 멈춘다.
-      // 확인이 통과하면 이 묶음만의 실패로 보고 아래에서 실패로 둔다. 같은 실패가 되풀이되며 대기열이 끝없이 돌지 않게 하려는 것이다.
       if (ran.verdict.kind === 'failed' && suspectsGlobalFailure(ran.verdict.reason)) {
         /** 연결 확인을 통과했는지 여부. */
         const healthy = await this.confirmAgent(current);
@@ -445,9 +491,12 @@ export class DraftQueue {
           this.options.logger.warn('draft.global-failure', { bundleId: entry.bundleId, reason: ran.verdict.reason });
           return this.requeueFromStart(entry, [...runs, ran.record]);
         }
+        recovered = true;
+        confirmed = current;
       }
-      // 일시적 실패는 한 번 더 실행한다. 다시 실행도 새 실행이라 실행 직전 확인을 다시 거친다. 두 번째도 일시적 실패면 실패로 둔다.
-      if (ran.verdict.kind === 'failed' && ran.verdict.retry && attempt < MAX_ATTEMPTS) {
+      // 일시적 실패는 한 번 더 실행한다. 다시 실행도 새 실행이라 실행 직전 확인을 다시 거친다.
+      // 두 번째도 실패면 실패로 둔다. 연결 확인이 통과하는데도 같은 실패가 되풀이되며 대기열이 끝없이 돌지 않게 하려는 것이다.
+      if (ran.verdict.kind === 'failed' && (ran.verdict.retry || recovered) && attempt < MAX_ATTEMPTS) {
         this.options.logger.info('draft.run-retrying', { bundleId: entry.bundleId, reason: ran.verdict.reason });
         runs.push(ran.record);
         continue;
@@ -591,6 +640,11 @@ export class DraftQueue {
    */
   private async requeueFromStart(entry: RunningDraft, runs: RunRecord[]): Promise<void> {
     await this.options.bundles.addRuns(entry.bundleId, runs);
+    // 기록을 남기는 사이에 [취소]를 눌렀으면 다시 넣지 않고 "취소함" 실패로 둔다.
+    if (entry.interruption === 'user') {
+      await this.options.bundles.markFailed(entry.bundleId, { reason: 'cancelled', detail: null, lastStep: entry.step }, [], null);
+      return;
+    }
     if (this.status === 'started' && this.options.bundles.get(entry.bundleId)?.status === 'generating') this.enqueue(entry.bundleId, 'resume');
   }
 

@@ -7,7 +7,7 @@ import { AgentPreferences } from '../agent/agent-preferences';
 import { CHECK_RUN_INPUT } from '../agent/check-run';
 import { MentionBundles } from '../bundles/mention-bundles';
 import { MentionDetection } from '../detection/mention-detection';
-import { claudeNotLoggedInStream, claudeSuccessStream } from '../fakes/fake-claude-stream';
+import { claudeNotLoggedInStream, claudeSuccessStream, fakeClaudeAuthStatus } from '../fakes/fake-claude-stream';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeExecutor } from '../fakes/fake-executor';
 import { FAKE_ME, FakeFlowApi } from '../fakes/fake-flow-api';
@@ -106,13 +106,13 @@ function draftOutput(repository: string) {
 }
 
 /** 가짜 게시물에 나를 멘션한 댓글 스레드를 하나 더하고 그 멘션의 알림을 돌려준다. 댓글 스레드마다 다른 멘션 묶음이 된다. */
-function mentionThread(flow: FakeFlowApi, alarmId: string, commentId: string, text: string, registeredDateTime: string): FlowAlarm {
+function addThreadMention(flow: FakeFlowApi, alarmId: string, commentId: string, text: string, registeredDateTime: string): FlowAlarm {
   flow.addComment(POST_ID, { commentId, contents: `${MY_MARKUP} ${text}`, registerId: SENDER, registeredDateTime });
   return alarm(alarmId, { remarkId: commentId, registeredDateTime });
 }
 
 /** 실행 요청이 답할 멘션의 글. 입력 문서의 멘션 목록에서 "[답할 대상]"을 붙인 줄 바로 아래 줄이다. */
-function answeredMention(request: ExecutorRunRequest | undefined): string | undefined {
+function targetMentionOf(request: ExecutorRunRequest | undefined): string | undefined {
   return /^\d+\. \[답할 대상\][^\n]*\n\s*(.*)$/m.exec(request?.input ?? '')?.[1];
 }
 
@@ -125,22 +125,37 @@ function heldOutcome(): { outcome: Promise<ExecutorOutcome>; release: (outcome: 
   return { outcome, release };
 }
 
-/** 감지한 묶음을 저장하는 일을 붙잡아 둘 수 있는 상태 저장소. 저장이 끝나기 전에 다른 일이 줄을 서는 경우를 만든다. */
+/** 감지한 묶음이나 묶음 하나를 저장하는 일을 붙잡아 둘 수 있는 상태 저장소. 저장이 끝나기 전에 다른 일이 끼어드는 경우를 만든다. */
 class GatedStateStore extends MemoryStateStore {
-  /** 붙잡은 저장을 놓아 줄 함수. 붙잡지 않으면 `null`. */
+  /** 붙잡은 감지 저장을 놓아 줄 함수. 붙잡지 않으면 `null`. */
   private open: (() => void) | null = null;
-  /** 다음 저장을 붙잡을지 여부. */
+  /** 다음 감지 저장을 붙잡을지 여부. */
   private armed = false;
+  /** 붙잡은 묶음 저장을 놓아 줄 함수. 붙잡지 않으면 `null`. */
+  private openSave: (() => void) | null = null;
+  /** 다음 묶음 저장을 붙잡을지 여부. */
+  private armedSave = false;
 
   /** 다음 감지 저장을 놓아 줄 때까지 붙잡는다. */
   holdNextDetection(): void {
     this.armed = true;
   }
 
-  /** 붙잡은 저장을 놓아 준다. */
+  /** 붙잡은 감지 저장을 놓아 준다. */
   releaseDetection(): void {
     this.open?.();
     this.open = null;
+  }
+
+  /** 다음 묶음 저장(실행 기록 더하기, 실패로 두기 등)을 놓아 줄 때까지 붙잡는다. */
+  holdNextSave(): void {
+    this.armedSave = true;
+  }
+
+  /** 붙잡은 묶음 저장을 놓아 준다. */
+  releaseSave(): void {
+    this.openSave?.();
+    this.openSave = null;
   }
 
   override async saveDetectedBundles(...args: Parameters<MemoryStateStore['saveDetectedBundles']>) {
@@ -149,6 +164,14 @@ class GatedStateStore extends MemoryStateStore {
       await new Promise<void>((resolve) => (this.open = resolve));
     }
     return super.saveDetectedBundles(...args);
+  }
+
+  override async saveBundle(...args: Parameters<MemoryStateStore['saveBundle']>) {
+    if (this.armedSave) {
+      this.armedSave = false;
+      await new Promise<void>((resolve) => (this.openSave = resolve));
+    }
+    return super.saveBundle(...args);
   }
 }
 
@@ -283,12 +306,6 @@ async function setup(queueAgent?: Pick<DraftQueueOptions, 'agent' | 'onAgentChan
 /** 가짜 CLI 경로. 실제 파일은 없고, 연결 확인이 실행할 수 있는 파일로 본다. */
 const FAKE_CLI = '/fake/bin/claude';
 
-/** `claude auth status`가 로그인되어 있을 때와 아닐 때의 출력. 실제 CLI(2.1.303)의 모양이다. */
-const AUTH_STATUS = {
-  loggedIn: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty' }),
-  notLoggedIn: JSON.stringify({ loggedIn: false, authMethod: 'none', apiProvider: 'firstParty' }),
-};
-
 /**
  * 가짜 프로세스 실행기 위에 실제 에이전트 연결 확인과 기본 에이전트·모델 선택을 만든다. 감지를 시작한 뒤라 연결이 끊기면 전역 문제로 알린다.
  * 가짜 CLI는 처음에 2.1.303으로 로그인되어 있고 작동 확인과 초안 실행이 성공한다. 테스트가 `cli`를 바꿔 CLI의 대답을 바꾼다.
@@ -299,8 +316,10 @@ async function realAgent(tempRoot: string) {
   const cli = { version: '2.1.303', loggedIn: true, checkRunWorks: true };
   const runner = new FakeProcessRunner();
   runner.respond(FAKE_CLI, ['--version'], () => exited(0, `${cli.version} (Claude Code)\n`));
-  runner.respond(FAKE_CLI, ['--restricted', 'auth', 'status'], () => exited(cli.loggedIn ? 0 : 1, cli.loggedIn ? AUTH_STATUS.loggedIn : AUTH_STATUS.notLoggedIn));
-  runner.respond(FAKE_CLI, ['auth', 'status'], () => exited(cli.loggedIn ? 0 : 1, cli.loggedIn ? AUTH_STATUS.loggedIn : AUTH_STATUS.notLoggedIn));
+  /** 지금 로그인 상태의 `claude auth status` 대답. 로그인되어 있지 않으면 종료 코드 1이다. */
+  const authStatus = () => (cli.loggedIn ? exited(0, fakeClaudeAuthStatus.loggedIn) : exited(1, fakeClaudeAuthStatus.notLoggedIn));
+  runner.respond(FAKE_CLI, ['--restricted', 'auth', 'status'], authStatus);
+  runner.respond(FAKE_CLI, ['auth', 'status'], authStatus);
   runner.respondWhen(
     (request) => request.command === FAKE_CLI && request.args[0] === '-p',
     (request) => {
@@ -948,15 +967,15 @@ describe('대기열: 순서와 우선순위', () => {
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     await poll(
-      mentionThread(flow, '102', '701', '두 번째 질문', '20261020085600'),
-      mentionThread(flow, '103', '702', '세 번째 질문', '20261020085700'),
+      addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'),
+      addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085700'),
     );
 
     await drafts.retry(failed!.id);
     run.release({ type: 'completed', output: draftOutput(repos.a) });
     await settle();
 
-    expect(executor.requests.map(answeredMention)).toEqual([
+    expect(executor.requests.map(targetMentionOf)).toEqual([
       '@테스트 사용자 재시도는 몇 번 하나요?',
       '@테스트 사용자 두 번째 질문',
       '@테스트 사용자 재시도는 몇 번 하나요?',
@@ -971,18 +990,18 @@ describe('대기열: 순서와 우선순위', () => {
     executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: '둘째 실패' } });
     executor.script({ outcome: 'wait-for-abort' });
     for (let run = 0; run < 4; run += 1) executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    await poll(alarm('101'), mentionThread(flow, '102', '701', '두 번째 질문', '20261020085100'));
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085100'));
     /** 실패한 두 묶음. */
     const [first, second] = bundles.state();
     expect([first?.status, second?.status]).toEqual(['failed', 'failed']);
-    await poll(mentionThread(flow, '103', '702', '세 번째 질문', '20261020085600'), mentionThread(flow, '104', '703', '네 번째 질문', '20261020085700'));
+    await poll(addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085600'), addThreadMention(flow, '104', '703', '네 번째 질문', '20261020085700'));
 
     await drafts.retry(first!.id);
     await drafts.retry(second!.id);
     flow.addReply(POST_ID, '702', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registeredDateTime: '20261020085800' });
     await poll(alarm('105', { remarkId: '702', replyId: '801', registeredDateTime: '20261020085800' }));
 
-    expect(executor.requests.map(answeredMention)).toEqual([
+    expect(executor.requests.map(targetMentionOf)).toEqual([
       '@테스트 사용자 재시도는 몇 번 하나요?',
       '@테스트 사용자 두 번째 질문',
       '@테스트 사용자 세 번째 질문',
@@ -1007,8 +1026,8 @@ describe('대기열: 순서와 우선순위', () => {
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     await poll(
-      mentionThread(flow, '102', '701', '두 번째 질문', '20261020085600'),
-      mentionThread(flow, '103', '702', '세 번째 질문', '20261020085700'),
+      addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'),
+      addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085700'),
     );
 
     await drafts.restore(ignored!.id);
@@ -1016,7 +1035,7 @@ describe('대기열: 순서와 우선순위', () => {
     await settle();
 
     expect(bundles.get(ignored!.id)?.status).toBe('ready');
-    expect(executor.requests.map(answeredMention)).toEqual([
+    expect(executor.requests.map(targetMentionOf)).toEqual([
       '@테스트 사용자 재시도는 몇 번 하나요?',
       '@테스트 사용자 두 번째 질문',
       '@테스트 사용자 재시도는 몇 번 하나요?',
@@ -1096,7 +1115,7 @@ describe('대기열: 에이전트 전역 실패', () => {
       executor.script({ outcome: run.outcome });
       executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
       executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-      await poll(alarm('101'), mentionThread(flow, '102', '701', '두 번째 질문', '20261020085600'));
+      await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
       /** 실행하던 묶음과 기다리던 묶음. */
       const [first, second] = bundles.state();
 
@@ -1113,7 +1132,7 @@ describe('대기열: 에이전트 전역 실패', () => {
       setConnected(true);
       await settle();
 
-      expect(executor.requests.map(answeredMention)).toEqual([
+      expect(executor.requests.map(targetMentionOf)).toEqual([
         '@테스트 사용자 재시도는 몇 번 하나요?',
         '@테스트 사용자 재시도는 몇 번 하나요?',
         '@테스트 사용자 두 번째 질문',
@@ -1123,41 +1142,86 @@ describe('대기열: 에이전트 전역 실패', () => {
     },
   );
 
-  it('실행이 전역 실패를 의심하게 끝나면 다시 한 연결 확인을 기다리고, 확인이 통과하면 그 묶음만의 실패로 두고 다음 묶음을 실행한다', async () => {
-    const { flow, executor, agent, bundles, repos, poll } = await setup();
+  it('실행이 전역 실패를 의심하게 끝나면 다시 한 연결 확인을 기다리고, 확인이 통과하면(실행하는 사이 CLI가 새 버전으로 바뀐 경우 등) 일시적 실패처럼 한 번 더 실행한다', async () => {
+    const { executor, agent, bundles, repos, poll } = await setup();
     /** 끝나지 않고 기다리는 실행. */
     const run = heldOutcome();
     executor.script({ outcome: run.outcome });
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    await poll(alarm('101'), mentionThread(flow, '102', '701', '두 번째 질문', '20261020085600'));
-    /** 실행하던 묶음과 기다리던 묶음. */
-    const [first, second] = bundles.state();
+    await poll(alarm('101'));
+    /** 실행하던 묶음. */
+    const [bundle] = bundles.state();
     /** 다시 하는 연결 확인을 끝내는 함수. */
     let finishRecheck: (connected: boolean) => void = () => {};
     agent.confirmForRun = () => new Promise((resolve) => (finishRecheck = resolve));
 
-    run.release({ type: 'failed', reason: 'cli-error', detail: 'Segmentation fault' });
+    run.release({ type: 'failed', reason: 'cli-missing', detail: 'spawn /fake/bin/claude ENOENT' });
     await settle();
 
-    expect(bundles.get(first!.id)?.status).toBe('generating');
+    expect(bundles.get(bundle!.id)).toMatchObject({ status: 'generating', failure: null });
     expect(executor.requests).toHaveLength(1);
 
     agent.confirmForRun = async () => agent.connected;
     finishRecheck(true);
     await settle();
 
-    expect(bundles.get(first!.id)).toMatchObject({ status: 'failed', failure: { reason: 'cli-error', detail: 'Segmentation fault' } });
-    expect(bundles.get(second!.id)?.status).toBe('ready');
+    expect(bundles.get(bundle!.id)?.status).toBe('ready');
+    expect(bundles.get(bundle!.id)?.runs.map((record) => record.result)).toEqual(['cli-missing', 'succeeded']);
     expect(executor.requests).toHaveLength(2);
   });
 
-  it('실행 직전 확인이 실패하면(CLI 버전이 바뀌어 돌린 작동 확인이 실패하는 등) 실행하지 않고 대기열을 멈추고, 에이전트 연결이 바뀔 때까지 다시 확인하지 않는다', async () => {
+  it('전역 실패로 묶음을 대기열 맨 앞에 되돌리는 사이에 [취소]를 누르면, 다시 넣지 않고 "취소함" 실패로 둔다', async () => {
+    const { executor, stateStore, drafts, bundles, poll, setConnected } = await setup();
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    await poll(alarm('101'));
+    /** 실행하던 묶음. */
+    const [bundle] = bundles.state();
+
+    // 실행 기록을 남기는 저장을 붙잡아, 그사이에 [취소]를 누른다.
+    stateStore.holdNextSave();
+    setConnected(false);
+    run.release({ type: 'failed', reason: 'not-logged-in', detail: 'Not logged in · Please run /login' });
+    await settle();
+    await drafts.cancel(bundle!.id);
+    stateStore.releaseSave();
+    await settle();
+
+    expect(bundles.get(bundle!.id)).toMatchObject({ status: 'failed', failure: { reason: 'cancelled' } });
+    expect(bundles.get(bundle!.id)?.runs.map((record) => record.result)).toEqual(['not-logged-in']);
+
+    setConnected(true);
+    await settle();
+
+    expect(executor.requests).toHaveLength(1);
+  });
+
+  it('다시 한 연결 확인이 통과했는데 한 번 더 실행해도 같은 실패면, 그 묶음만 실패로 두고 다음 묶음을 실행한다', async () => {
+    const { flow, executor, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'failed', reason: 'cli-error', detail: 'Segmentation fault' } });
+    executor.script({ outcome: { type: 'failed', reason: 'cli-error', detail: 'Segmentation fault' } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+
+    /** 실패한 묶음과 다음 묶음. */
+    const [first, second] = bundles.state();
+    expect(first).toMatchObject({ status: 'failed', failure: { reason: 'cli-error', detail: 'Segmentation fault' } });
+    expect(first?.runs.map((record) => record.result)).toEqual(['cli-error', 'cli-error']);
+    expect(second?.status).toBe('ready');
+    expect(executor.requests).toHaveLength(3);
+  });
+
+  it('실행 직전 확인이 실패하면(CLI 버전이 바뀌어 돌린 작동 확인이 실패하는 등) 실행하지 않고 대기열을 멈추며, 에이전트 연결이 바뀌었다는 알림이 오기 전에는 다시 확인하지 않는다', async () => {
     const { executor, agent, drafts, bundles, repos, poll, setConnected } = await setup();
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    /** 실행 직전 확인을 부른 횟수. */
-    let confirmations = 0;
+    // 처음 확인만 실패하고 그 뒤로는 통과한다. 알림 없이 다시 확인하는 대기열이면 곧바로 실행해 버린다.
+    /** 실패를 이미 한 번 돌려줬는지 여부. */
+    let failedOnce = false;
     agent.confirmForRun = async () => {
-      confirmations += 1;
+      if (failedOnce) return true;
+      failedOnce = true;
       return false;
     };
 
@@ -1168,9 +1232,7 @@ describe('대기열: 에이전트 전역 실패', () => {
     expect(bundle).toMatchObject({ status: 'generating', failure: null, runs: [] });
     expect(drafts.progress(bundle!.id)).toEqual({ status: 'waiting' });
     expect(executor.requests).toEqual([]);
-    expect(confirmations).toBe(1);
 
-    agent.confirmForRun = async () => agent.connected;
     setConnected(true);
     await settle();
 
@@ -1187,7 +1249,7 @@ describe('대기열: 설정 변경의 반영', () => {
     /** 바꾼 기본 에이전트의 실행기. */
     const codex = new FakeExecutor('codex');
     codex.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    await poll(alarm('101'), mentionThread(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
 
     agent.executor = codex;
     agent.model = 'fake-codex-model';
@@ -1295,7 +1357,7 @@ describe('대기열과 에이전트 연결 확인', () => {
     // CLI가 스스로 새 버전으로 바뀌었는데, 새 버전에서는 작동 확인이 실패한다.
     real.cli.version = '2.1.310';
     real.cli.checkRunWorks = false;
-    await poll(mentionThread(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    await poll(addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
     await settle();
 
     /** 새 버전을 알아챈 뒤 기다리는 묶음. */
@@ -1349,7 +1411,7 @@ describe('대기열: 키 확인 필요', () => {
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     setConnected(false);
-    await poll(alarm('101'), mentionThread(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
     // 감지가 끝난 뒤 Flow가 키를 거부하기 시작해, 초안 실행 직전의 맥락 조회(게시물부터 받는다)가 401을 받는다.
     flow.failOn(`GET /user/posts/${POST_ID}`, { kind: 'unauthorized' }, 1);
 
@@ -1366,7 +1428,7 @@ describe('대기열: 키 확인 필요', () => {
     problems.resolve('flow-key');
     await settle();
 
-    expect(executor.requests.map(answeredMention)).toEqual(['@테스트 사용자 재시도는 몇 번 하나요?', '@테스트 사용자 두 번째 질문']);
+    expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 재시도는 몇 번 하나요?', '@테스트 사용자 두 번째 질문']);
     expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready']);
   });
 
@@ -1387,6 +1449,76 @@ describe('대기열: 키 확인 필요', () => {
     await settle();
 
     expect(bundles.get(bundle!.id)?.status).toBe('ready');
+  });
+});
+
+describe('대기열: Flow에 닿지 못할 때', () => {
+  it('맥락을 조회할 때 Flow에 닿지 못하면(네트워크 오류) 묶음을 실패로 두지 않고 대기열을 멈췄다가, 폴링 주기(1분) 뒤 다시 조회해 실행한다', async () => {
+    const { flow, executor, clock, drafts, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    setConnected(false);
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    // 감지가 끝난 뒤 네트워크가 끊겨, 초안 실행 직전의 맥락 조회(게시물부터 받는다)가 Flow에 닿지 못한다.
+    flow.failOn(`GET /user/posts/${POST_ID}`, { kind: 'network' }, 1);
+
+    setConnected(true);
+    await settle();
+
+    /** 맥락을 조회하던 묶음과 기다리던 묶음. */
+    const [first, second] = bundles.state();
+    expect([first?.status, second?.status]).toEqual(['generating', 'generating']);
+    expect(first?.failure).toBeNull();
+    expect(drafts.progress(first!.id)).toEqual({ status: 'waiting' });
+    expect(executor.requests).toEqual([]);
+
+    clock.advance(59_000);
+    await settle();
+
+    expect(executor.requests).toEqual([]);
+
+    clock.advance(1_000);
+    await settle();
+
+    expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 재시도는 몇 번 하나요?', '@테스트 사용자 두 번째 질문']);
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready']);
+  });
+
+  it('맥락을 조회할 때 요청 한도(429)에 걸리면 Flow가 알려 준 Retry-After만큼 기다렸다가 다시 조회한다', async () => {
+    const { flow, executor, clock, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    setConnected(false);
+    await poll(alarm('101'));
+    flow.failOn(`GET /user/posts/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: 20_000 }, 1);
+
+    setConnected(true);
+    await settle();
+    clock.advance(19_000);
+    await settle();
+
+    expect(bundles.state()[0]).toMatchObject({ status: 'generating', failure: null });
+    expect(executor.requests).toEqual([]);
+
+    clock.advance(1_000);
+    await settle();
+
+    expect(bundles.state()[0]?.status).toBe('ready');
+  });
+
+  it('Flow 서버 오류(5xx)는 그 글에서만 생길 수 있어 대기열을 멈추지 않고 그 묶음을 실패로 둔다', async () => {
+    const { flow, executor, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    setConnected(false);
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    flow.failOn(`GET /user/posts/${POST_ID}`, { kind: 'http', status: 503 }, 1);
+
+    setConnected(true);
+    await settle();
+
+    /** 맥락을 조회하지 못한 묶음과 다음 묶음. */
+    const [first, second] = bundles.state();
+    expect(first).toMatchObject({ status: 'failed', failure: { reason: 'flow-unavailable' } });
+    expect(second?.status).toBe('ready');
   });
 });
 

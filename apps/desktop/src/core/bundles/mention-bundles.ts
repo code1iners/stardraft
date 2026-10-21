@@ -51,6 +51,11 @@ export type RunPreparation =
   | { kind: 'answered' }
   /** 쓸 키가 없거나 Flow가 키를 거부해(`401`) 맥락을 조회하지 못했다. 묶음의 실패가 아니라 "키 확인 필요"를 풀 일이다. */
   | { kind: 'key-unusable' }
+  /**
+   * 지금 Flow에 닿지 못했다(네트워크 오류, 요청 한도 `429`). 묶음의 실패가 아니라 잠시 뒤 다시 조회할 일이다.
+   * `retryAfterMs`는 요청 한도일 때 Flow가 알려 준 기다릴 시간이고, 모르면 `null`.
+   */
+  | { kind: 'flow-unreachable'; retryAfterMs: number | null }
   /** 맥락을 조회하지 못했다. */
   | { kind: 'unavailable'; reason: ContextFailureReason }
   /** 묶음이 없거나 더는 생성 중이 아니다. */
@@ -240,7 +245,8 @@ export class MentionBundles {
   /**
    * 초안 실행 직전에 맥락을 Flow에서 새로 조회해 비교 기준으로 저장하고, 같은 조회에서 찾은 내 답으로 "이미 답함"을 다시 판정한다(감지 때와 같은 규칙).
    * 내가 마지막으로 답한 글보다 앞선 멘션은 묶음에서 빼고, 모두 빠지면 초안 없이 처리됨의 "이미 답함"으로 옮긴다.
-   * 쓸 키가 없거나 Flow가 키를 거부하면 묶음을 바꾸지 않고 그렇게 알린다. 생성 중이 아닌 묶음은 바꾸지 않는다.
+   * 쓸 키가 없거나 Flow가 키를 거부했거나 지금 Flow에 닿지 못하면(네트워크 오류, 요청 한도) 묶음을 바꾸지 않고 그렇게 알린다.
+   * 생성 중이 아닌 묶음은 바꾸지 않는다.
    */
   async prepareRun(bundleId: number): Promise<RunPreparation> {
     /** 준비할 묶음. */
@@ -262,8 +268,13 @@ export class MentionBundles {
       return { kind: 'key-unusable' };
     }
     if (!result.ok) {
-      this.options.logger.warn('bundle.context-failed', { bundleId, reason: result.failure.kind });
-      return { kind: 'unavailable', reason: isSourceGone(result.failure) ? 'source-gone' : 'flow-unavailable' };
+      /** 조회하지 못한 까닭. */
+      const failure = result.failure;
+      this.options.logger.warn('bundle.context-failed', { bundleId, reason: failure.kind });
+      // 네트워크 오류와 요청 한도는 이 글이 아니라 Flow에 닿는 길의 문제다. 서버 오류는 그 글에서만 생길 수 있어 묶음 실패로 둔다.
+      if (failure.kind === 'network') return { kind: 'flow-unreachable', retryAfterMs: null };
+      if (failure.kind === 'rate-limited') return { kind: 'flow-unreachable', retryAfterMs: failure.retryAfterMs };
+      return { kind: 'unavailable', reason: isSourceGone(failure) ? 'source-gone' : 'flow-unavailable' };
     }
 
     // 조회하는 사이에 새 멘션이 합쳐졌을 수 있으므로 줄에 들어가 지금 값으로 판정한다.

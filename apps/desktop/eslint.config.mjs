@@ -61,7 +61,7 @@ export default defineConfig(
   js.configs.recommended,
   tseslint.configs.recommended,
   {
-    files: ['**/*.{ts,mjs}'],
+    files: ['**/*.{ts,mts,mjs}'],
     ignores: ['src/renderer/**'],
     languageOptions: { globals: globals.node },
   },

@@ -1,6 +1,6 @@
 import type { BundleContext } from '../flow/bundle-context';
 import { mentionLocationKey, type Mention, type MentionLocation } from '../detection/mention';
-import type { Draft, DraftFailure, RunRecord } from '../drafts/draft';
+import type { Draft, DraftFailure, Regeneration, RunRecord } from '../drafts/draft';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { MyAnswer } from '../flow/mention-judgement';
@@ -58,6 +58,14 @@ export function canPickRepos(status: BundleStatus): boolean {
 /** 초안을 편집하고 받는 사람을 뺄 수 있는 상태인지 본다. 준비됨이다. */
 export function canEditDraft(status: BundleStatus): boolean {
   return status === 'ready';
+}
+
+/**
+ * 사용자가 초안·요구·지시 가운데 하나라도 손댔는지 본다. 편집본이 있거나, 요구를 고쳤거나, 지시를 덧붙였으면 손댄 것이다.
+ * 받는 사람을 뺀 것은 손댐이 아니다. 받는 사람은 초안 텍스트 밖에 있어 다시 만들어도 덮어쓰지 않기 때문이다.
+ */
+export function isDraftTouched(bundle: Pick<MentionBundle, 'editedText' | 'fixedRequirement' | 'instructions'>): boolean {
+  return bundle.editedText !== null || bundle.fixedRequirement !== null || bundle.instructions.length > 0;
 }
 
 /** 트레이 숫자에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. */
@@ -155,6 +163,12 @@ export interface MentionBundle extends BundlePlace {
   editedText: string | null;
   /** 사용자가 받는 사람에서 ×로 뺀 사람의 Flow 사용자 ID. 뺀 순서다. */
   removedRecipients: string[];
+  /** 이 묶음에 지금까지 덧붙인 지시. 덧붙인 순서다. 요구를 고치거나 저장소를 바꾸면 비운다. */
+  instructions: string[];
+  /** 사용자가 고친 요구. 요구 고치기로 다시 만드는 중이거나 그렇게 만든 초안이면 그 요구이고, 다른 재생성을 하면 지운다. 고친 적이 없으면 `null`. */
+  fixedRequirement: string | null;
+  /** 생성 중 묶음을 다시 만드는 재생성. 처음 만드는 묶음이거나 저장소 선택 창으로 다시 만들면 `null`. */
+  regeneration: Regeneration | null;
   /** 생성이 실패한 까닭. 실패가 아니면 `null`. */
   failure: DraftFailure | null;
   /** 실행 기록. 실행한 순서다. */

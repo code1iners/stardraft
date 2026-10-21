@@ -2,8 +2,8 @@ import type { AgentPreferencesState } from '../agent/agent-preferences';
 import { suspectsGlobalFailure } from '../agent/run-failures';
 import { withDefaultSecretPatterns } from '../agent/secret-patterns';
 import { CHOOSING_REPO_STEP, FETCHING_CONTEXT_STEP, WRITING_DRAFT_STEP } from '../agent/progress-steps';
-import { activeMentions, mentionSetKey, type RepoCheck } from '../bundles/mention-bundle';
-import type { MentionBundles, RunPreparation } from '../bundles/mention-bundles';
+import { activeMentions, mentionSetKey, type MentionBundle, type RepoCheck } from '../bundles/mention-bundle';
+import type { MentionBundles, RegenerationRequest, RunPreparation } from '../bundles/mention-bundles';
 import { contextDocument, omittedItemCount } from '../flow/bundle-context';
 import { errorFields, type Logger } from '../logging/logger';
 import type { CancelScheduled, Clock } from '../ports/clock';
@@ -24,7 +24,7 @@ import {
   type RunResult,
 } from './draft';
 import { checkDraftOutput, type CheckedDraftOutput } from './draft-check';
-import { draftInputDocument, draftInstructions, type RunDataSource } from './draft-input';
+import { draftInputDocument, draftInstructions, type RegenerationInput, type RunDataSource } from './draft-input';
 import { readSelectionOutput, SELECTION_INSTRUCTIONS, selectionInputDocument, selectionOutputSchema, type SelectionOutput } from './repo-selection';
 
 /** 초안 실행의 제한 시간(밀리초). 넘기면 프로세스 트리를 끝내고 "시간 초과"로 실패한다. 설정에서 바꿀 수 없다. */
@@ -309,6 +309,14 @@ export class DraftQueue {
     await this.changeByUser(bundleId, () => this.options.bundles.regenerateWithRepos(bundleId, repos));
   }
 
+  /**
+   * 준비됨 묶음을 다시 만든다. 다시 만들기, 지시를 덧붙여 다시 만들기, 요구 고치기다.
+   * 매번 새 실행이고 사용자 행동이라 감지해서 기다리는 묶음보다 앞에 들어간다. 자동 선택으로 저장소를 정한 묶음도 선택 실행은 다시 돌리지 않는다.
+   */
+  async regenerate(bundleId: number, request: RegenerationRequest): Promise<void> {
+    await this.changeByUser(bundleId, () => this.options.bundles.regenerate(bundleId, request));
+  }
+
   /** 처리됨 묶음을 되돌린다. 초안이 없어 새로 만들게 되면 사용자 행동이라 감지해서 기다리는 묶음보다 앞에 들어간다. */
   async restore(bundleId: number): Promise<void> {
     await this.changeByUser(bundleId, () => this.options.bundles.restore(bundleId));
@@ -533,12 +541,16 @@ export class DraftQueue {
     const generation: Generation = { entry, mentionSet, runs: [], ...(await this.runData(prepared)) };
     /** 초안 실행에 넘길 저장소와 자동 선택의 내력. 고른 구성도 매핑도 없으면 자동 선택으로 정하고, 정하지 못했으면 `null`이다. */
     const selected: SelectedRepos | null =
-      runRepos.kind === 'unmapped' ? await this.selectRepos(generation, agent) : { repositories: runRepos.repos, autoSelection: null };
+      runRepos.kind === 'unmapped'
+        ? await this.selectRepos(generation, agent)
+        : { repositories: runRepos.repos, autoSelection: runRepos.kind === 'auto-selected' ? runRepos.autoSelection : null };
     if (!selected) return;
     /** 초안 실행에 넘길 저장소. 첫 저장소가 cwd가 된다. */
     const { repositories } = selected;
+    /** 재생성 입력. 처음 입력만 넘기면 `null`. */
+    const regeneration = regenerationInputOf(prepared.bundle);
     /** 입력 문서. 다시 실행해도 같은 입력을 넘긴다. */
-    const input = draftInputDocument({ ...generation.data, repositories });
+    const input = draftInputDocument({ ...generation.data, repositories, regeneration });
 
     // 대기열에서 꺼낼 때 실행 직전 확인을 마쳤다. 선택 실행을 돌렸으면 초안 실행도 새 실행이라 다시 확인한다.
     /** 초안 실행 단계의 마지막 실행. */
@@ -550,7 +562,7 @@ export class DraftQueue {
     });
     if (ran.kind === 'stopped') return;
     /** 출력 검증까지 마친 결과와 실행 기록. */
-    const { verdict, record } = await checkVerdict(ran, repositories, ran.request.secretPatterns);
+    const { verdict, record } = await checkVerdict(ran, repositories, ran.request.secretPatterns, regeneration?.path === 'requirement' ? regeneration.requirement : null);
     // 검증하는 사이에 [취소]나 새 멘션으로 멈췄을 수 있으므로 기록의 결과는 검증 뒤에 정한다.
     generation.runs.push({ ...record, result: runResultOf(entry.interruption, verdict) });
     if (entry.interruption) return this.afterInterruption(entry, generation.runs);
@@ -902,18 +914,33 @@ async function checkVerdict(
   ran: { verdict: RunVerdict<DraftOutput>; record: RunRecord },
   repositories: readonly string[],
   extraSecretPatterns: readonly string[],
+  fixedRequirement: string | null,
 ): Promise<{ verdict: CheckedVerdict; record: RunRecord }> {
   if (ran.verdict.kind !== 'output') return { verdict: ran.verdict, record: ran.record };
-  /** 출력 검증의 결과. 요구 고치기 재생성은 아직 없어 고친 요구가 없다. */
+  /** 출력 검증의 결과. 요구를 고쳐 다시 만들었으면 에이전트가 낸 요구를 고친 요구로 덮어쓴다. */
   const check = await checkDraftOutput(ran.verdict.output, {
     repositories,
     secretPatterns: withDefaultSecretPatterns(extraSecretPatterns),
-    fixedRequirement: null,
+    fixedRequirement,
   });
   if (check.kind === 'secret-evidence') {
     return { verdict: { kind: 'failed', reason: 'secret-evidence', detail: null, retry: false }, record: { ...ran.record, fixes: check.fixes } };
   }
   return { verdict: { kind: 'output', output: check.output }, record: { ...ran.record, fixes: check.fixes } };
+}
+
+/**
+ * 묶음의 재생성에서 초안 실행에 더해 넘길 재생성 입력을 만든다. 지시를 덧붙였으면 직전 결과와 지금까지 덧붙인 지시 전부,
+ * 요구를 고쳤으면 고친 요구다. 다시 만들기와 처음 만드는 묶음은 처음 입력만 넘기므로 `null`이다.
+ */
+function regenerationInputOf(bundle: MentionBundle): RegenerationInput | null {
+  /** 묶음의 재생성. */
+  const regeneration = bundle.regeneration;
+  if (regeneration?.path === 'instructions' && regeneration.previous) {
+    return { path: 'instructions', previous: regeneration.previous, instructions: bundle.instructions };
+  }
+  if (regeneration?.path === 'requirement' && bundle.fixedRequirement !== null) return { path: 'requirement', requirement: bundle.fixedRequirement };
+  return null;
 }
 
 /** 실행 기록의 결과. 앱이 실행을 멈췄으면 그 까닭(묶음이 바뀜, 그 밖에는 취소함)이고, 아니면 실행의 결과다. */

@@ -115,6 +115,9 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     draft: null,
     editedText: null,
     removedRecipients: [],
+    instructions: [],
+    fixedRequirement: null,
+    regeneration: null,
     failure: null,
     runs: [],
     ...overrides,
@@ -541,6 +544,57 @@ describe('멘션 묶음', () => {
 
     expect((await store.listBundles()).map(({ editedText, removedRecipients }) => ({ editedText, removedRecipients }))).toEqual([
       { editedText: null, removedRecipients: [] },
+    ]);
+  });
+  it('덧붙인 지시, 고친 요구, 다시 만드는 중인 재생성을 다시 열어도 그대로 읽는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    /** 지시를 덧붙여 다시 만드는 중인 재생성. 직전 결과와 자동 선택으로 정한 저장소를 든다. */
+    const regeneration = {
+      path: 'instructions' as const,
+      previous: {
+        requirement: { text: '재시도 횟수를 알고 싶다.', summary: '재시도 횟수' },
+        paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }] }],
+        evidence: [{ id: 1, explanation: '설정에서 횟수를 정합니다.', repository: '/fake/repo', path: 'a.yml', startLine: 1, endLine: 2, located: true }],
+      },
+      autoSelected: { repositories: ['/fake/repo'], autoSelection: { kind: 'chosen' as const, reason: '설정을 묻고 있습니다.' } },
+    };
+    await store.saveDetectedBundles(
+      [
+        bundle([mention('101')], { status: 'generating', instructions: ['더 짧게', '존댓말로'], regeneration }),
+        bundle([mention('102', { postId: '90000012' })], { status: 'ready', fixedRequirement: '운영 환경의 횟수만 알고 싶다.' }),
+      ],
+      '102',
+    );
+
+    /** 다시 연 저장소에서 읽은 묶음. */
+    const reopened = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
+
+    expect(reopened.map(({ instructions, fixedRequirement, regeneration }) => ({ instructions, fixedRequirement, regeneration }))).toEqual([
+      { instructions: ['더 짧게', '존댓말로'], fixedRequirement: null, regeneration },
+      { instructions: [], fixedRequirement: '운영 환경의 횟수만 알고 싶다.', regeneration: null },
+    ]);
+  });
+
+  it('형식 10에서 올리면 이미 있던 묶음은 지시, 고친 요구, 재생성 없이 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 10으로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 10), '0.0.10');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'ready', '가짜 게시물', NULL, 0, 1000, NULL)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ instructions, fixedRequirement, regeneration }) => ({ instructions, fixedRequirement, regeneration }))).toEqual([
+      { instructions: [], fixedRequirement: null, regeneration: null },
     ]);
   });
 });

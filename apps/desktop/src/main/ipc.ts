@@ -269,6 +269,16 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'remove-recipient':
       await bundles.removeRecipient(command.bundleId, command.index, command.name);
       return;
+    // 재생성은 사용자 행동이라 초안 대기열이 감지한 묶음보다 앞에 넣는다.
+    case 'regenerate-bundle':
+      await drafts.regenerate(command.bundleId, { path: 'again' });
+      return;
+    case 'regenerate-with-instruction':
+      await drafts.regenerate(command.bundleId, { path: 'instructions', instruction: command.instruction });
+      return;
+    case 'fix-requirement':
+      await drafts.regenerate(command.bundleId, { path: 'requirement', requirement: command.requirement });
+      return;
     case 'link-bundle-repos':
       await repoPicker.linkBundle(command.bundleId);
       return;

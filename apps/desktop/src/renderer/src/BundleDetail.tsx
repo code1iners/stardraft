@@ -369,43 +369,58 @@ function RepoCheckBody({ repoCheck }: RepoCheckBodyProps) {
   );
 }
 
-/**
- * 저장소 확인 필요의 사유. 매핑된 폴더가 사라졌으면 그 폴더를, 작업 폴더에 후보가 없으면 확인할 곳을,
- * 선택 실행이 고르지 않았으면 에이전트의 사유와 짚은 후보를 보인다.
- */
+/** 저장소 확인 필요의 사유와 내용에 넘기는 값. */
+interface RepoCheckReasonProps {
+  /** 사유. */
+  repoCheck: RepoCheckSnapshot;
+}
+
+/** 저장소 확인 필요의 사유. 첫 줄에 사유를 쓰고 그 아래에 사유마다 내용을 둔다. 사유가 없는 옛 묶음은 안내만 보인다. */
 function RepoCheckReason({ repoCheck }: RepoCheckBodyProps) {
   if (!repoCheck) return <p className="small muted">{NO_REPOSITORY_NOTE}</p>;
+  return (
+    <>
+      <p className="warning-text">{REPO_CHECK_TEXT[repoCheck.kind]}</p>
+      <RepoCheckDetail repoCheck={repoCheck} />
+    </>
+  );
+}
+
+/**
+ * 저장소 확인 필요 사유의 내용. 매핑된 폴더가 사라졌으면 그 폴더를, 작업 폴더에 후보가 없으면 확인할 곳을,
+ * 선택 실행이 고르지 않았으면 에이전트의 사유와 후보를 보인다. 후보는 에이전트가 짚은 것을 먼저, 작업 폴더의 나머지를 뒤에 둔다.
+ */
+function RepoCheckDetail({ repoCheck }: RepoCheckReasonProps) {
   switch (repoCheck.kind) {
     case 'missing-folders':
       return (
-        <>
-          <p className="warning-text">{REPO_CHECK_TEXT[repoCheck.kind]}</p>
-          <ul className="repository-list">
-            {repoCheck.paths.map((path) => (
-              <li key={path}>
-                <span className="small muted">{path}</span>
-              </li>
-            ))}
-          </ul>
-        </>
+        <ul className="repository-list">
+          {repoCheck.paths.map((path) => (
+            <li key={path}>
+              <span className="small muted">{path}</span>
+            </li>
+          ))}
+        </ul>
       );
     case 'no-candidates':
-      return (
-        <>
-          <p className="warning-text">{REPO_CHECK_TEXT[repoCheck.kind]}</p>
-          <p className="small muted">설정의 "저장소" 칸에서 작업 폴더를 확인하세요.</p>
-        </>
-      );
+      return <p className="small muted">설정의 "저장소" 칸에서 작업 폴더를 확인하세요.</p>;
     case 'unsure':
     case 'unrelated':
       return (
         <>
-          <p className="warning-text">{REPO_CHECK_TEXT[repoCheck.kind]}</p>
           <ReasonText reason={repoCheck.reason} />
-          {repoCheck.candidates.length > 0 && (
+          {repoCheck.picked.length > 0 && (
             <>
               <p className="small muted repo-subhead">에이전트가 짚은 후보</p>
-              <RepositoryList repositories={repoCheck.candidates} />
+              <RepositoryList repositories={repoCheck.picked} />
+            </>
+          )}
+          {repoCheck.others.length > 0 && (
+            <>
+              <p className="small muted repo-subhead">
+                {repoCheck.picked.length > 0 ? '작업 폴더의 다른 후보' : '작업 폴더의 후보'} {repoCheck.others.length}개
+              </p>
+              <RepositoryList repositories={repoCheck.others} />
             </>
           )}
         </>

@@ -1032,7 +1032,7 @@ describe('자동 선택: 선택 실행', () => {
   it.each([
     ['unsure', '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽을 묻는지 알 수 없습니다.'],
     ['unrelated', '회의 일정을 묻는 멘션이라 저장소를 읽을 필요가 없습니다.'],
-  ] as const)('선택 실행의 판정이 %s면 초안 없이 에이전트의 사유와 후보를 담아 저장소 확인 필요가 되고, OS 알림을 띄우며 트레이 숫자에 센다', async (verdict, reason) => {
+  ] as const)('선택 실행의 판정이 %s면 초안 없이 에이전트의 사유, 작업 폴더의 후보, 에이전트가 짚은 저장소를 담아 저장소 확인 필요가 되고, OS 알림을 띄우며 트레이 숫자에 센다', async (verdict, reason) => {
     const { executor, bundles, notifier, settingsStore, poll } = await setup();
     /** 저장소가 셋인 작업 폴더. */
     const work = makeWorkFolder('work', ['api', 'batch', 'web']);
@@ -1050,7 +1050,12 @@ describe('자동 선택: 선택 실행', () => {
     expect(bundle?.repoCheck).toEqual({
       kind: verdict,
       reason,
-      candidates: picked.map((path) => ({ name: path.slice(work.folder.length + 1), path })),
+      candidates: [
+        { name: 'api', path: work.repos[0] },
+        { name: 'batch', path: work.repos[1] },
+        { name: 'web', path: work.repos[2] },
+      ],
+      picked,
     });
     expect(bundle?.runs.map((run) => [run.kind, run.result])).toEqual([['selection', 'succeeded']]);
     expect(bundles.reviewCount()).toBe(1);
@@ -1076,7 +1081,7 @@ describe('자동 선택: 선택 실행의 내용 불일치', () => {
 
     /** 저장소 확인 필요 묶음. */
     const [bundle] = bundles.state();
-    expect(bundle).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unsure', reason: '고를 저장소가 보이지 않습니다.', candidates: [] } });
+    expect(bundle).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unsure', reason: '고를 저장소가 보이지 않습니다.', picked: [] } });
     expect(bundle?.runs.map(({ kind, result, fixes }) => ({ kind, result, fixes }))).toEqual([
       { kind: 'selection', result: 'succeeded', fixes: ['판정이 고름인데 저장소가 0개라 확신 못함으로 다룸'] },
     ]);

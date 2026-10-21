@@ -409,17 +409,19 @@ describe('저장소 확인 필요와 자동 선택', () => {
     return popoverMarkup(item).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').replaceAll('&quot;', '"');
   }
 
-  it('선택 실행이 확신하지 못한 묶음은 저장소 영역에 에이전트의 사유와 짚은 후보를 보이고, [저장소를 골라 만들기]·[Flow에서 열기]·[무시]를 둔다', () => {
+  it('선택 실행이 확신하지 못한 묶음은 저장소 영역에 에이전트의 사유, 에이전트가 짚은 후보, 작업 폴더의 다른 후보를 보이고, [저장소를 골라 만들기]·[Flow에서 열기]·[무시]를 둔다', () => {
     /** 선택 실행이 확신하지 못한 묶음. */
     const unsure = bundle(13, {
       repoCheck: {
         kind: 'unsure',
         reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽을 묻는지 알 수 없습니다.',
-        candidates: [
+        picked: [
           { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
           { name: 'billing-api', path: '/fake/work/billing-api' },
         ],
+        others: [{ name: 'team/billing-batch', path: '/fake/work/team/billing-batch' }],
       },
+      run: { agent: 'claude-code', durationMs: 62_000, contextOmitted: false },
     });
     /** 마크업. */
     const markup = popoverMarkup(unsure);
@@ -429,9 +431,9 @@ describe('저장소 확인 필요와 자동 선택', () => {
     expect(text).toContain('저장소 확인 필요');
     expect(text).toContain('에이전트가 저장소를 확신하지 못함');
     expect(text).toContain('재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽을 묻는지 알 수 없습니다.');
-    expect(text).toContain('에이전트가 짚은 후보');
-    expect(text).toContain('team/billing-web /fake/work/team/billing-web');
-    expect(text).toContain('billing-api /fake/work/billing-api');
+    expect(text).toContain('에이전트가 짚은 후보 team/billing-web /fake/work/team/billing-web billing-api /fake/work/billing-api');
+    expect(text).toContain('작업 폴더의 다른 후보 1개 team/billing-batch /fake/work/team/billing-batch');
+    expect(text).toContain('Claude Code · 1분 2초');
     expect(text).toContain('Flow에서 열기');
     expect(text).toContain('무시');
     // 저장소 선택 창이 생기기 전이라 버튼은 꺼 둔다.
@@ -439,15 +441,26 @@ describe('저장소 확인 필요와 자동 선택', () => {
     expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
   });
 
-  it('코드와 무관한 멘션으로 판정한 묶음은 그 사유를 보이고, 사유가 비어 있으면 "이유 없음"을, 짚은 후보가 없으면 후보 목록을 보이지 않는다', () => {
+  it('코드와 무관한 멘션으로 판정한 묶음은 그 사유를 보이고, 사유가 비어 있으면 "이유 없음"을, 짚은 후보가 없으면 작업 폴더의 후보만 보인다', () => {
     /** 코드와 무관하다고 판정한 묶음. */
-    const unrelated = bundle(14, { repoCheck: { kind: 'unrelated', reason: '', candidates: [] } });
+    const unrelated = bundle(14, {
+      repoCheck: {
+        kind: 'unrelated',
+        reason: '',
+        picked: [],
+        others: [
+          { name: 'billing-api', path: '/fake/work/billing-api' },
+          { name: 'billing-web', path: '/fake/work/billing-web' },
+        ],
+      },
+    });
     /** 글자. */
     const text = popoverText(unrelated);
 
     expect(text).toContain('에이전트가 코드와 무관한 멘션으로 판정함');
     expect(text).toContain('이유 없음');
     expect(text).not.toContain('에이전트가 짚은 후보');
+    expect(text).toContain('작업 폴더의 후보 2개 billing-api /fake/work/billing-api billing-web /fake/work/billing-web');
     expect(text).toContain('저장소를 골라 만들기');
   });
 

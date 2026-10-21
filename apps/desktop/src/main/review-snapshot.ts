@@ -1,16 +1,19 @@
 import { basename } from 'node:path';
-import { activeMentions, isRestorable, listGroupOf, type MentionBundle } from '../core/bundles/mention-bundle';
+import { activeMentions, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
 import type { BundleContext, ContextWriting } from '../core/flow/bundle-context';
+import type { RepoCandidate } from '../core/repos/repo-candidates';
 import type {
   BundleMentionSnapshot,
   BundleSnapshot,
   DraftSnapshot,
   GenerationSnapshot,
   MentionPlaceSnapshot,
+  RepoCheckSnapshot,
+  RepositorySnapshot,
   ReviewSnapshot,
   RunLineSnapshot,
   ThreadEntrySnapshot,
@@ -77,7 +80,7 @@ export function bundleSnapshot(bundle: MentionBundle, projectOf: ProjectLookup, 
     run: runLine(bundle),
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
     failure: bundle.failure && { ...bundle.failure },
-    repoCheck: bundle.repoCheck && structuredClone(bundle.repoCheck),
+    repoCheck: bundle.repoCheck && repoCheckSnapshot(bundle.repoCheck),
   };
 }
 
@@ -101,15 +104,44 @@ function draftSnapshot(draft: Draft): DraftSnapshot {
 }
 
 /**
- * 상세 머리의 실행 줄. 초안이 있으면 그 초안을 만든 실행(마지막 성공), 실패 묶음이면 마지막 실행이다.
- * 생성 중이거나 그런 실행이 없으면 `null`.
+ * 저장소 확인 필요의 사유를 렌더러에 넘길 모양으로 바꾼다.
+ * 선택 실행의 후보는 에이전트가 짚은 것(짚은 순서)과 나머지(작업 폴더에서 찾은 순서)로 나눈다.
+ */
+function repoCheckSnapshot(repoCheck: RepoCheck): RepoCheckSnapshot {
+  switch (repoCheck.kind) {
+    case 'missing-folders':
+      return { kind: repoCheck.kind, paths: [...repoCheck.paths] };
+    case 'no-candidates':
+      return { kind: repoCheck.kind };
+    case 'unsure':
+    case 'unrelated': {
+      /** 후보를 렌더러의 저장소 모양으로 바꾼다. */
+      const repositoryOf = ({ name, path }: RepoCandidate): RepositorySnapshot => ({ name, path });
+      return {
+        kind: repoCheck.kind,
+        reason: repoCheck.reason,
+        picked: repoCheck.picked.flatMap((path) => repoCheck.candidates.filter((candidate) => candidate.path === path)).map(repositoryOf),
+        others: repoCheck.candidates.filter((candidate) => !repoCheck.picked.includes(candidate.path)).map(repositoryOf),
+      };
+    }
+  }
+}
+
+/**
+ * 상세 머리의 실행 줄. 초안이 있으면 그 초안을 만든 실행(마지막 성공), 실패 묶음이면 마지막 실행,
+ * 선택 실행이 고르지 않아 저장소 확인 필요가 된 묶음이면 그 선택 실행이다. 생성 중이거나 그런 실행이 없으면 `null`.
  */
 function runLine(bundle: MentionBundle): RunLineSnapshot | null {
   if (bundle.status === 'generating') return null;
   /** 실행 줄에 보일 실행. */
-  const run = bundle.draft ? bundle.runs.findLast((record) => record.result === 'succeeded') : bundle.status === 'failed' ? bundle.runs.at(-1) : undefined;
+  const run = bundle.draft ? bundle.runs.findLast((record) => record.result === 'succeeded') : bundle.status === 'failed' || decidedBySelection(bundle) ? bundle.runs.at(-1) : undefined;
   if (!run) return null;
   return { agent: run.agent, durationMs: Math.max(0, run.finishedAt - run.startedAt), contextOmitted: run.omittedContextItems > 0 };
+}
+
+/** 선택 실행의 판정으로 저장소 확인 필요가 된 묶음인지 본다. 마지막 실행 기록이 그 선택 실행이다. */
+function decidedBySelection(bundle: MentionBundle): boolean {
+  return bundle.status === 'repo-check-needed' && (bundle.repoCheck?.kind === 'unsure' || bundle.repoCheck?.kind === 'unrelated');
 }
 
 /**

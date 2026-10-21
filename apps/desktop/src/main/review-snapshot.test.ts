@@ -314,17 +314,21 @@ describe('묶음 스냅숏: 초안 실행', () => {
 });
 
 describe('묶음 스냅숏: 자동 선택', () => {
-  it('자동 선택으로 정하지 못한 저장소 확인 필요 묶음은 선택 실행의 사유와 짚은 후보(작업 폴더 안 이름과 경로)를, 후보가 없으면 그 사유를 넘긴다', () => {
+  it('선택 실행이 고르지 않은 저장소 확인 필요 묶음은 선택 실행의 사유와, 에이전트가 짚은 후보(짚은 순서)와 작업 폴더의 나머지 후보를 나눠 넘긴다. 후보가 없었으면 그 사유를 넘긴다', () => {
+    /** 작업 폴더의 후보. */
+    const candidates = [
+      { name: 'billing-api', path: '/fake/work/billing-api' },
+      { name: 'team/billing-batch', path: '/fake/work/team/billing-batch' },
+      { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
+    ];
     /** 선택 실행이 확신하지 못한 묶음의 스냅숏. */
     const unsure = bundleSnapshot(
       bundle({
         repoCheck: {
           kind: 'unsure',
           reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽인지 알 수 없습니다.',
-          candidates: [
-            { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
-            { name: 'billing-api', path: '/fake/work/billing-api' },
-          ],
+          candidates,
+          picked: ['/fake/work/team/billing-web', '/fake/work/billing-api'],
         },
       }),
       () => null,
@@ -333,12 +337,31 @@ describe('묶음 스냅숏: 자동 선택', () => {
     expect(unsure.repoCheck).toEqual({
       kind: 'unsure',
       reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽인지 알 수 없습니다.',
-      candidates: [
+      picked: [
         { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
         { name: 'billing-api', path: '/fake/work/billing-api' },
       ],
+      others: [{ name: 'team/billing-batch', path: '/fake/work/team/billing-batch' }],
+    });
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'unrelated', reason: '', candidates, picked: [] } }), () => null).repoCheck).toMatchObject({
+      picked: [],
+      others: candidates,
     });
     expect(bundleSnapshot(bundle({ repoCheck: { kind: 'no-candidates' } }), () => null).repoCheck).toEqual({ kind: 'no-candidates' });
+  });
+
+  it('선택 실행만 돌고 저장소 확인 필요가 된 묶음은 그 선택 실행의 실행 줄을 넘기고, 매핑된 폴더가 사라져 실행하지 않은 묶음은 실행 줄이 없다', () => {
+    /** 선택 실행이 확신하지 못한 묶음의 스냅숏. */
+    const unsure = bundleSnapshot(
+      bundle({
+        repoCheck: { kind: 'unsure', reason: '모르겠습니다.', candidates: [], picked: [] },
+        runs: [run({ kind: 'selection', startedAt: 0, finishedAt: 62_000 })],
+      }),
+      () => null,
+    );
+
+    expect(unsure.run).toEqual({ agent: 'claude-code', durationMs: 62_000, contextOmitted: false });
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).run).toBeNull();
   });
 
   it('자동 선택으로 만든 준비됨 묶음의 초안은 자동 선택의 내력(선택 실행의 이유, 후보가 하나였음)을 넘긴다', () => {

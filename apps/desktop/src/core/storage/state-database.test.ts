@@ -315,7 +315,15 @@ describe('멘션 묶음', () => {
       createdAt: 2_000,
     };
     /** 선택 실행이 확신하지 못한 사유. */
-    const unsure: RepoCheck = { kind: 'unsure', reason: '어느 저장소인지 알 수 없습니다.', candidates: [{ name: 'team/api', path: '/fake/work/team/api' }] };
+    const unsure: RepoCheck = {
+      kind: 'unsure',
+      reason: '어느 저장소인지 알 수 없습니다.',
+      candidates: [
+        { name: 'team/api', path: '/fake/work/team/api' },
+        { name: 'team/web', path: '/fake/work/team/web' },
+      ],
+      picked: ['/fake/work/team/web'],
+    };
     /** 저장할 실행 기록. */
     const run: RunRecord = {
       kind: 'draft',

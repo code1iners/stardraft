@@ -460,6 +460,9 @@ export type DraftFailureReasonSnapshot =
   | 'max-turns'
   | 'agent-error';
 
+/** 묶음 하나를 만들 때 돌리는 실행의 종류. 선택 실행과 초안 실행이다. */
+export type GenerationRunKindSnapshot = 'selection' | 'draft';
+
 /** 생성이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
 export interface FailureSnapshot {
   /** 사유. */
@@ -468,8 +471,8 @@ export interface FailureSnapshot {
   detail: string | null;
   /** 실패할 때의 마지막 진행 단계. 없으면 `null`. */
   lastStep: string | null;
-  /** 실패한 실행의 종류. 선택 실행이나 초안 실행이고, 실행을 시작하기 전에 실패했으면 `null`. */
-  runKind: 'selection' | 'draft' | null;
+  /** 실패한 실행의 종류. 실행을 시작하기 전에 실패했으면 `null`. */
+  runKind: GenerationRunKindSnapshot | null;
 }
 
 /** 저장소 확인 필요의 사유. */
@@ -478,8 +481,11 @@ export type RepoCheckSnapshot =
   | { kind: 'missing-folders'; paths: string[] }
   /** 자동 선택을 하려 했지만 작업 폴더에서 저장소를 찾지 못함. */
   | { kind: 'no-candidates' }
-  /** 선택 실행이 저장소를 확신하지 못했거나 코드와 무관한 멘션이라고 판정함. 사유와 에이전트가 짚은 후보(작업 폴더 안의 이름과 경로)다. */
-  | { kind: 'unsure' | 'unrelated'; reason: string; candidates: RepositorySnapshot[] };
+  /**
+   * 선택 실행이 저장소를 확신하지 못했거나 코드와 무관한 멘션이라고 판정함. 사유와 작업 폴더의 후보(작업 폴더 안의 이름과 경로)다.
+   * 후보는 에이전트가 짚은 것(`picked`, 짚은 순서)과 나머지(`others`, 찾은 순서)로 나눈다.
+   */
+  | { kind: 'unsure' | 'unrelated'; reason: string; picked: RepositorySnapshot[]; others: RepositorySnapshot[] };
 
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {

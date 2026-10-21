@@ -69,7 +69,7 @@ function flagValue(request: ProcessRequest | undefined, flag: string): string | 
 }
 
 describe('Claude Code 실행기: 인수 묶음', () => {
-  it('실행 계약의 필수 플래그 묶음을 그대로 쓰고, 첫 저장소를 작업 폴더로, 나머지 저장소를 --add-dir로 붙인다', async () => {
+  it('실행 계약의 필수 플래그 묶음을 그대로 쓰고, 첫 저장소를 cwd로, 나머지 저장소를 --add-dir로 붙인다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: { requirement: '가짜 요구' } }))));
 

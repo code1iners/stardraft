@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import type {
   AutoSelectionSnapshot,
   BundleSnapshot,
@@ -108,12 +108,14 @@ interface ReviewSectionBlockProps {
   title: string;
   /** 머리 제목 옆에 작게 붙이는 말. */
   detail?: string;
+  /** 머리 오른쪽에 두는 버튼. 접고 펴는 버튼 밖에 있어 누르면 그 일만 한다. */
+  action?: ReactNode;
   /** 펼쳤을 때 보일 내용. */
   children: ReactNode;
 }
 
 /** 머리를 눌러 접고 펴는 상세 영역. 펼침 상태는 main이 창마다 기억한다. */
-function ReviewSectionBlock({ windowKind, section, open, title, detail, children }: ReviewSectionBlockProps) {
+function ReviewSectionBlock({ windowKind, section, open, title, detail, action, children }: ReviewSectionBlockProps) {
   /** 영역을 접거나 편다. */
   const handleToggle = () => {
     void window.stardraft.send({ type: 'set-review-section', window: windowKind, section, open: !open });
@@ -121,13 +123,16 @@ function ReviewSectionBlock({ windowKind, section, open, title, detail, children
 
   return (
     <section className="review-section">
-      <button type="button" className="section-toggle" aria-expanded={open} onClick={handleToggle}>
-        <span className="section-chevron" aria-hidden="true">
-          {open ? '▾' : '▸'}
-        </span>
-        <span>{title}</span>
-        {detail && <span className="section-detail">{detail}</span>}
-      </button>
+      <div className="section-head">
+        <button type="button" className="section-toggle" aria-expanded={open} onClick={handleToggle}>
+          <span className="section-chevron" aria-hidden="true">
+            {open ? '▾' : '▸'}
+          </span>
+          <span>{title}</span>
+          {detail && <span className="section-detail">{detail}</span>}
+        </button>
+        {action}
+      </div>
       {open && <div className="section-body">{children}</div>}
     </section>
   );
@@ -623,8 +628,18 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
   const [threadBundleId, setThreadBundleId] = useState<number | null>(null);
   /** "스레드 보기"를 펼치거나 접는다. */
   const handleToggleThread = () => setThreadBundleId((current) => (current === bundle.id ? null : bundle.id));
+  // 요구를 고치는 칸도 보고 있는 묶음에만 연다. 다른 묶음으로 넘어가면 닫힌다.
+  /** 요구를 고치는 칸을 연 묶음 ID. 열지 않았으면 `null`. */
+  const [requirementBundleId, setRequirementBundleId] = useState<number | null>(null);
   /** 초안. 생성 중이면 새로 만들고 있으므로 보이지 않는다. */
   const draft = bundle.status === 'generating' ? null : bundle.draft;
+  /** 요구를 고치는 칸을 보일지 여부. 초안을 고칠 수 있는 묶음에서만 연다. */
+  const editingRequirement = requirementBundleId === bundle.id && draft?.canEdit === true;
+  /** 망치 버튼을 눌렀다. 요구 영역이 접혀 있으면 펼치고 요구를 고치는 칸을 연다. */
+  const handleFixRequirement = () => {
+    if (!open.requirement) void window.stardraft.send({ type: 'set-review-section', window: windowKind, section: 'requirement', open: true });
+    setRequirementBundleId(bundle.id);
+  };
   /** 저장소 영역. 초안을 만들 때 쓴 저장소와 자동으로 고른 까닭, 또는 저장소 확인 필요 사유를 보인다. */
   const repository = (draft || bundle.status === 'repo-check-needed') && (
     <ReviewSectionBlock windowKind={windowKind} section="repository" open={open.repository} title="저장소">
@@ -634,7 +649,7 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
 
   return (
     <>
-      {bundle.newMentionCount > 0 && <p className="notice-line">새 멘션 {bundle.newMentionCount}건</p>}
+      {bundle.newMentionCount > 0 && <NewMentionNotice bundle={bundle} />}
       <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={`멘션 ${bundle.mentions.length}건`}>
         <OriginalBody bundle={bundle} threadOpen={threadBundleId === bundle.id} onToggleThread={handleToggleThread} />
       </ReviewSectionBlock>
@@ -649,8 +664,24 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
         </ReviewSectionBlock>
       )}
       {draft && (
-        <ReviewSectionBlock windowKind={windowKind} section="requirement" open={open.requirement} title="에이전트가 이해한 요구">
-          <p className="requirement-text">{draft.requirement.text}</p>
+        <ReviewSectionBlock
+          windowKind={windowKind}
+          section="requirement"
+          open={open.requirement}
+          title="에이전트가 이해한 요구"
+          action={draft.canEdit && <FixRequirementButton onClick={handleFixRequirement} />}
+        >
+          {editingRequirement ? (
+            <RequirementEditor
+              bundleId={bundle.id}
+              requirement={draft.requirement.text}
+              directiveCount={bundle.directives.length}
+              edited={draft.edited}
+              onClose={() => setRequirementBundleId(null)}
+            />
+          ) : (
+            <p className="requirement-text">{draft.requirement.text}</p>
+          )}
         </ReviewSectionBlock>
       )}
       {windowKind === 'expanded' && repository}
@@ -684,8 +715,42 @@ interface BundleFooterProps extends BundleProps {
 /**
  * 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다.
  * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가, 준비됨 묶음은 오른쪽에 재생성 메뉴가 있다.
+ * 재생성 메뉴에서 지시를 덧붙이기로 하면 바닥 줄이 지시를 쓰는 칸이 되고, 편집한 초안이 있으면 다시 만들기 전에 바닥 줄에서 버릴지 묻는다.
  */
 export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }: BundleFooterProps) {
+  // 바닥 줄의 칸은 보고 있는 묶음에만 연다. 다른 묶음으로 넘어가거나 준비됨이 아니게 되면 닫힌다.
+  /** 바닥 줄에 연 칸과 그 묶음 ID. 지시를 쓰는 칸이거나, 그 경로로 다시 만들기 전에 편집본을 버릴지 묻는 칸이다. 열지 않았으면 `null`. */
+  const [pane, setPane] = useState<{ bundleId: number; kind: RegenerateChoice } | null>(null);
+  /** 지금 묶음에 연 칸. */
+  const openPane = bundle.status === 'ready' && bundle.draft && pane?.bundleId === bundle.id ? pane.kind : null;
+  /** 칸을 닫는다. */
+  const closePane = () => setPane(null);
+  /** 재생성 메뉴에서 고른 경로를 한다. 편집한 초안이 있으면 먼저 버릴지 묻고, 지시를 덧붙이면 지시를 쓰는 칸을 연다. */
+  const handlePick = (choice: RegenerateChoice) => {
+    if (choice === 'directive') setPane({ bundleId: bundle.id, kind: 'directive' });
+    else if (bundle.draft?.edited) setPane({ bundleId: bundle.id, kind: choice });
+    else sendRegeneration(bundle.id, choice);
+  };
+
+  if (openPane === 'directive') {
+    return (
+      <footer className="review-foot stacked">
+        <DirectiveForm bundleId={bundle.id} directives={bundle.directives} edited={bundle.draft?.edited === true} onClose={closePane} />
+      </footer>
+    );
+  }
+  if (openPane === 'again' || openPane === 'other-repos') {
+    /** 편집본을 버리고 고른 경로로 다시 만든다. */
+    const handleConfirm = () => {
+      closePane();
+      sendRegeneration(bundle.id, openPane);
+    };
+    return (
+      <footer className="review-foot">
+        <DiscardEditConfirm onConfirm={handleConfirm} onCancel={closePane} />
+      </footer>
+    );
+  }
   if (bundle.status === 'generating') {
     return (
       <footer className="review-foot">
@@ -721,28 +786,255 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }:
           다시 시도
         </button>
       )}
-      {bundle.status === 'ready' && <RegenerateMenu bundle={bundle} />}
+      {bundle.status === 'ready' && <RegenerateMenu onPick={handlePick} />}
     </footer>
   );
 }
 
-/** 준비됨 묶음의 재생성 메뉴. "다른 저장소로 다시 만들기"는 저장소 선택 창을 연다. 바닥 줄 위로 펼친다. */
-function RegenerateMenu({ bundle }: BundleProps) {
-  /** 메뉴를 닫고 저장소 선택 창을 연다. */
-  const handleOtherRepos = (event: MouseEvent<HTMLButtonElement>) => {
-    event.currentTarget.closest('details')?.removeAttribute('open');
-    void window.stardraft.send({ type: 'open-repo-picker', bundleId: bundle.id });
-  };
+/** 재생성 메뉴의 항목. 다시 만들기, 지시를 덧붙여 다시 만들기, 다른 저장소로 다시 만들기다. */
+type RegenerateChoice = 'again' | 'directive' | 'other-repos';
 
+/** 재생성 메뉴 항목의 이름. 메뉴에 이 순서로 보인다. */
+const REGENERATE_CHOICES: readonly { choice: RegenerateChoice; label: string }[] = [
+  { choice: 'again', label: '다시 만들기' },
+  { choice: 'directive', label: '지시를 덧붙여 다시 만들기' },
+  { choice: 'other-repos', label: '다른 저장소로 다시 만들기' },
+];
+
+/** 묻지 않고 바로 하는 재생성을 main에 보낸다. 다시 만들기는 바로 다시 만들고, 다른 저장소로 다시 만들기는 저장소 선택 창을 연다. */
+function sendRegeneration(bundleId: number, choice: Exclude<RegenerateChoice, 'directive'>) {
+  void window.stardraft.send(choice === 'again' ? { type: 'regenerate-bundle', bundleId } : { type: 'open-repo-picker', bundleId });
+}
+
+/** 재생성 메뉴에 넘기는 값. */
+interface RegenerateMenuProps {
+  /** 메뉴 항목을 골랐다. */
+  onPick: (choice: RegenerateChoice) => void;
+}
+
+/** 준비됨 묶음의 재생성 메뉴. 바닥 줄 위로 펼치고, 항목을 고르면 닫는다. */
+function RegenerateMenu({ onPick }: RegenerateMenuProps) {
   return (
     <details className="menu">
       <summary className="btn">다시 만들기 ▾</summary>
       <div className="menu-list" role="menu">
-        <button type="button" role="menuitem" className="menu-item" onClick={handleOtherRepos}>
-          다른 저장소로 다시 만들기
-        </button>
+        {REGENERATE_CHOICES.map(({ choice, label }) => (
+          <button
+            key={choice}
+            type="button"
+            role="menuitem"
+            className="menu-item"
+            onClick={(event) => {
+              event.currentTarget.closest('details')?.removeAttribute('open');
+              onPick(choice);
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
     </details>
+  );
+}
+
+/** 편집본을 버릴지 묻는 줄에 넘기는 값. */
+interface DiscardEditConfirmProps {
+  /** [버리고 다시 만들기]를 눌렀다. */
+  onConfirm: () => void;
+  /** [취소]를 눌렀다. */
+  onCancel: () => void;
+}
+
+/** 편집한 초안이 있는 묶음을 다시 만들기 전에 편집본을 버릴지 묻는 줄. */
+export function DiscardEditConfirm({ onConfirm, onCancel }: DiscardEditConfirmProps) {
+  return (
+    <div className="confirm-line" role="alertdialog" aria-label="편집본 버리기">
+      <span>편집한 초안을 버리고 다시 만들까요?</span>
+      <span className="spacer" />
+      <button type="button" className="btn" onClick={onCancel}>
+        취소
+      </button>
+      <button type="button" className="btn primary" onClick={onConfirm}>
+        버리고 다시 만들기
+      </button>
+    </div>
+  );
+}
+
+/** 편집한 초안을 버리고 다시 만든다는 안내. 지시나 고친 요구를 쓰는 칸에 보인다. */
+const DISCARD_EDIT_NOTE = '편집한 초안은 버리고 다시 만듭니다.';
+
+/** 지시를 쓰는 칸에 넘기는 값. */
+interface DirectiveFormProps {
+  /** 다시 만들 묶음 ID. */
+  bundleId: number;
+  /** 앞서 덧붙인 지시. 덧붙인 순서다. */
+  directives: string[];
+  /** 초안을 편집했는지 여부. 참이면 편집본을 버린다고 알린다. */
+  edited: boolean;
+  /** 칸을 닫는다. 보내거나 [취소]를 누르면 부른다. */
+  onClose: () => void;
+}
+
+/**
+ * 지시를 덧붙여 다시 만드는 칸. 바닥 줄 자리에 열린다. 앞서 덧붙인 지시가 있으면 함께 넘긴다고 보이고,
+ * 편집한 초안이 있으면 버린다고 알리며 버튼 이름에도 적는다. 빈 지시로는 보낼 수 없다.
+ */
+export function DirectiveForm({ bundleId, directives, edited, onClose }: DirectiveFormProps) {
+  /** 쓰고 있는 지시. */
+  const [text, setText] = useState('');
+  /** 지시를 덧붙여 다시 만든다. */
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (text.trim() === '') return;
+    void window.stardraft.send({ type: 'regenerate-with-directive', bundleId, directive: text });
+    onClose();
+  };
+
+  return (
+    <form className="regen-form" onSubmit={handleSubmit}>
+      <label className="field-label" htmlFor={`directive-${bundleId}`}>
+        덧붙일 지시
+      </label>
+      {directives.length > 0 && (
+        <>
+          <p className="small muted">앞서 덧붙인 지시도 함께 넘깁니다.</p>
+          <ol className="directive-list small">
+            {directives.map((directive, index) => (
+              <li key={index}>{directive}</li>
+            ))}
+          </ol>
+        </>
+      )}
+      <textarea
+        id={`directive-${bundleId}`}
+        className="text-input regen-input"
+        value={text}
+        placeholder="예: 더 짧게 써 주세요."
+        autoFocus
+        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value)}
+      />
+      {edited && <p className="small warning-text">{DISCARD_EDIT_NOTE}</p>}
+      <div className="regen-actions">
+        <button type="button" className="btn" onClick={onClose}>
+          취소
+        </button>
+        <span className="spacer" />
+        <button type="submit" className="btn primary" disabled={text.trim() === ''}>
+          {edited ? '편집본을 버리고 다시 만들기' : '지시를 덧붙여 다시 만들기'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** 망치 버튼에 넘기는 값. */
+interface FixRequirementButtonProps {
+  /** 눌렀다. */
+  onClick: () => void;
+}
+
+/** "에이전트가 이해한 요구" 제목 옆의 망치 버튼. 요구를 고치는 칸을 연다. */
+function FixRequirementButton({ onClick }: FixRequirementButtonProps) {
+  return (
+    <button type="button" className="icon-btn" aria-label="요구 고치기" title="요구 고치기" onClick={onClick}>
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round">
+        <path d="M6.5 3.5 9 1l4.5 4.5L11 8z" />
+        <path d="M8 6 2.2 11.8a1.3 1.3 0 0 0 1.9 1.9L10 7.9" />
+      </svg>
+    </button>
+  );
+}
+
+/** 요구를 고치는 칸에 넘기는 값. */
+interface RequirementEditorProps {
+  /** 다시 만들 묶음 ID. */
+  bundleId: number;
+  /** 지금 요구. 칸에 채워 둔다. */
+  requirement: string;
+  /** 앞서 덧붙인 지시 수. 요구를 고치면 지워진다고 알린다. */
+  directiveCount: number;
+  /** 초안을 편집했는지 여부. 참이면 편집본을 버린다고 알린다. */
+  edited: boolean;
+  /** 칸을 닫는다. 보내거나 [취소]를 누르면 부른다. */
+  onClose: () => void;
+}
+
+/**
+ * 요구를 고쳐 "이 요구로 재생성"하는 칸. 요구 영역 안에 열리고 지금 요구를 채워 둔다.
+ * 덧붙인 지시가 지워지는 것과 편집한 초안을 버리는 것을 먼저 알리고, 편집한 초안이 있으면 버튼 이름에도 적는다. 빈 요구로는 보낼 수 없다.
+ */
+export function RequirementEditor({ bundleId, requirement, directiveCount, edited, onClose }: RequirementEditorProps) {
+  /** 고치고 있는 요구. */
+  const [text, setText] = useState(requirement);
+  /** 고친 요구로 다시 만든다. */
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (text.trim() === '') return;
+    void window.stardraft.send({ type: 'fix-requirement', bundleId, requirement: text });
+    onClose();
+  };
+
+  return (
+    <form className="regen-form" onSubmit={handleSubmit}>
+      <textarea
+        className="text-input regen-input"
+        aria-label="고친 요구"
+        value={text}
+        autoFocus
+        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value)}
+      />
+      {directiveCount > 0 && <p className="small muted">덧붙인 지시 {directiveCount}개는 지워집니다.</p>}
+      {edited && <p className="small warning-text">{DISCARD_EDIT_NOTE}</p>}
+      <div className="regen-actions">
+        <button type="button" className="btn" onClick={onClose}>
+          취소
+        </button>
+        <span className="spacer" />
+        <button type="submit" className="btn primary" disabled={text.trim() === ''}>
+          {edited ? '편집본을 버리고 이 요구로 재생성' : '이 요구로 재생성'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * 합쳐진 새 멘션의 알림 줄. 준비됨 묶음이면 [다시 만들기]를 두어 새 멘션까지 넣어 다시 만든다.
+ * 편집한 초안이 있으면 같은 줄에서 먼저 버릴지 묻는다. 저장소 확인 필요처럼 초안이 없는 묶음은 수만 보인다.
+ */
+function NewMentionNotice({ bundle }: BundleProps) {
+  /** 편집본을 버릴지 묻고 있는 묶음 ID. 묻지 않으면 `null`. */
+  const [confirmingBundleId, setConfirmingBundleId] = useState<number | null>(null);
+  /** 새 멘션까지 넣어 다시 만들 수 있는지 여부. */
+  const canRegenerate = bundle.status === 'ready' && bundle.draft !== null;
+  /** [다시 만들기]를 눌렀다. 편집한 초안이 있으면 먼저 묻는다. */
+  const handleRegenerate = () => {
+    if (bundle.draft?.edited) setConfirmingBundleId(bundle.id);
+    else sendRegeneration(bundle.id, 'again');
+  };
+
+  if (canRegenerate && confirmingBundleId === bundle.id) {
+    /** 편집본을 버리고 다시 만든다. */
+    const handleConfirm = () => {
+      setConfirmingBundleId(null);
+      sendRegeneration(bundle.id, 'again');
+    };
+    return (
+      <div className="notice-line">
+        <DiscardEditConfirm onConfirm={handleConfirm} onCancel={() => setConfirmingBundleId(null)} />
+      </div>
+    );
+  }
+  return (
+    <div className="notice-line">
+      <span>새 멘션 {bundle.newMentionCount}건</span>
+      {canRegenerate && (
+        <button type="button" className="btn sm" onClick={handleRegenerate}>
+          다시 만들기
+        </button>
+      )}
+    </div>
   );
 }
 

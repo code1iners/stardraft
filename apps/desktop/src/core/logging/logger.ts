@@ -57,6 +57,8 @@ const SENSITIVE_WORDS = new Set([
   'prompt',
   'instruction',
   'instructions',
+  'directive',
+  'directives',
   'input',
   'output',
   'stdout',

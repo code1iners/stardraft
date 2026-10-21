@@ -1511,6 +1511,36 @@ describe('대기열: 순서와 우선순위', () => {
     expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready', 'ready']);
   });
 
+  it('준비됨 묶음을 다시 만들면 감지해서 기다리는 묶음보다 앞에 들어가, 실행 중인 실행이 끝나면 바로 돈다', async () => {
+    const { flow, executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+    expect(ready?.status).toBe('ready');
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(
+      addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'),
+      addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085700'),
+    );
+
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    expect(executor.requests.map(targetMentionOf)).toEqual([
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 두 번째 질문',
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 세 번째 질문',
+    ]);
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready', 'ready']);
+  });
+
   it('사용자 행동끼리는 누른 순서대로 돌고, 실행 중에 새 멘션이 합쳐져 처음부터 다시 만드는 묶음은 그보다도 앞에서 바로 다시 돈다', async () => {
     const { flow, executor, drafts, bundles, repos, poll } = await setup();
     executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: '첫 실패' } });
@@ -2065,5 +2095,351 @@ describe('초안 실행에 쓸 에이전트', () => {
     ).toMatchObject({ executor: claude.executor, model: null });
     expect(draftAgentFrom({ connectedAgents: [], defaultAgent: null, models: {} }, [claude])).toBeNull();
     expect(draftAgentFrom({ connectedAgents: ['codex'], defaultAgent: 'codex', models: {} }, [claude])).toBeNull();
+  });
+});
+
+describe('재생성: 입력', () => {
+  it('다시 만들기는 직전 초안과 비교 기준을 바로 지우고, Flow 내용을 새로 조회해 처음과 같은 구성의 입력으로 새 초안 실행을 돌린다', async () => {
+    const { flow, executor, drafts, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+    expect(ready?.context).not.toBeNull();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    // 처음 초안 실행 뒤에 생긴, 멘션이 아닌 새 글. 재생성은 Flow 내용을 새로 조회한다.
+    flow.addReply(POST_ID, '700', { replyId: '802', contents: '참고로 시험 환경도 궁금합니다.', registerId: OTHER_SENDER, registeredDateTime: '20261020085800' });
+    // 실행을 시작하기 전의 묶음을 보려고 에이전트 연결을 잠시 끊는다.
+    setConnected(false);
+
+    await drafts.regenerate(ready!.id, { path: 'again' });
+    await settle();
+
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'generating', draft: null, editedText: null, context: null });
+
+    setConnected(true);
+    await settle();
+
+    /** 처음 초안 실행과 다시 만든 초안 실행. */
+    const [first, second] = executor.requests;
+    expect(executor.requests.map((request) => request.kind)).toEqual(['draft', 'draft']);
+    expect(second?.readRoots).toEqual(first?.readRoots);
+    expect(second?.instructions).toBe(first?.instructions);
+    // 읽을 저장소와 멘션은 처음과 같고, 맥락은 새로 조회한 것이다. 직전 결과는 넘기지 않는다.
+    expect(second?.input.slice(0, second.input.indexOf('## 맥락'))).toBe(first?.input.slice(0, first.input.indexOf('## 맥락')));
+    expect(first?.input).not.toContain('참고로 시험 환경도 궁금합니다.');
+    expect(second?.input).toContain('참고로 시험 환경도 궁금합니다.');
+    expect(second?.input).not.toContain('다섯 번까지 다시 시도합니다');
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', draft: { repositories: [repos.a, repos.b] } });
+  });
+  it('지시를 덧붙여 다시 만들면 처음 입력에 직전 결과(요구·초안·근거)와 지금까지 덧붙인 지시 전부를 더해 넘긴다. 편집한 초안은 넘기지 않는다', async () => {
+    const { executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+    await bundles.editDraft(ready!.id, '사용자가 고쳐 쓴 초안입니다.');
+    /** 두 번째 초안. 첫 지시를 반영해 짧아졌다. */
+    const shorter = { ...draftOutput(repos.a), paragraphs: [{ sentences: [{ text: '다섯 번 다시 시도합니다.', evidence: [1] }] }] };
+    executor.script({ outcome: { type: 'completed', output: shorter } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '  더 짧게 써 주세요.  ' });
+    await settle();
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '시험 환경 이야기는 빼 주세요.' });
+    await settle();
+
+    /** 처음 실행, 첫 지시를 덧붙인 실행, 둘째 지시를 덧붙인 실행. */
+    const [first, second, third] = executor.requests;
+    expect(executor.requests.map((request) => request.kind)).toEqual(['draft', 'draft', 'draft']);
+    expect(second?.readRoots).toEqual(first?.readRoots);
+    // 첫 재생성: 첫 초안의 결과와 첫 지시.
+    expect(second?.input).toContain(
+      [
+        '# 직전 결과',
+        '직전 초안 실행이 낸 요구·초안·근거입니다. "# 덧붙인 지시"를 모두 반영해 이 결과를 고쳐 씁니다.',
+        '## 요구',
+        '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.',
+        '요약: 재시도 횟수',
+        '## 초안',
+        '실제 서비스에서는 다섯 번까지 다시 시도합니다. [근거 1] 시험 환경은 세 번으로 보입니다. [근거 없음]',
+        '## 근거',
+        `1. 운영 설정에서 다시 시도하는 횟수를 5로 정해 둡니다. (${repos.a} · src/main/resources/application-prod.yml · 88-88번째 줄)`,
+        '',
+        '# 덧붙인 지시',
+        '1. 더 짧게 써 주세요.',
+        '',
+        '# 데이터',
+      ].join('\n'),
+    );
+    // 둘째 재생성: 직전(둘째) 초안의 결과와 지금까지의 지시 전부.
+    expect(third?.input).toContain('## 초안\n다섯 번 다시 시도합니다. [근거 1]\n');
+    expect(third?.input).toContain('# 덧붙인 지시\n1. 더 짧게 써 주세요.\n2. 시험 환경 이야기는 빼 주세요.\n');
+    for (const request of [second, third]) {
+      expect(request?.input).not.toContain('사용자가 고쳐 쓴 초안입니다.');
+      // 읽을 저장소와 데이터 구획은 처음 입력과 같다.
+      expect(request?.input.startsWith(first!.input.slice(0, first!.input.indexOf('\n# 데이터\n')).replace(/\n+$/, ''))).toBe(true);
+      expect(request?.input.slice(request.input.indexOf('\n# 데이터\n'))).toBe(first?.input.slice(first.input.indexOf('\n# 데이터\n')));
+    }
+    expect(first?.input).not.toContain('# 직전 결과');
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', editedText: null, directives: ['더 짧게 써 주세요.', '시험 환경 이야기는 빼 주세요.'] });
+  });
+
+  it('다른 저장소로 다시 만들면 그때까지의 지시와 고친 요구를 지우고, 처음 입력에 읽을 저장소만 바꿔 넘긴다', async () => {
+    const { executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.b) } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
+    await settle();
+
+    await drafts.regenerateWithRepos(ready!.id, [repos.b]);
+    await settle();
+
+    expect(executor.requests.at(-1)?.input).not.toContain('# 덧붙인 지시');
+    expect(executor.requests.at(-1)?.input).not.toContain('# 직전 결과');
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', directives: [], fixedRequirement: null, regeneration: null });
+  });
+
+  it('빈 지시나 빈 요구는 받지 않고, 준비됨이 아닌 묶음은 다시 만들지 않는다', async () => {
+    const { executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'timed-out' } });
+    await poll(alarm('101'));
+    /** 실패 묶음. */
+    const [failed] = bundles.state();
+
+    await drafts.regenerate(failed!.id, { path: 'again' });
+    await settle();
+    expect(bundles.get(failed!.id)?.status).toBe('failed');
+
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await bundles.retry(failed!.id);
+    await settle();
+    await drafts.regenerate(failed!.id, { path: 'directive', directive: '   ' });
+    await drafts.regenerate(failed!.id, { path: 'requirement', requirement: '' });
+    await settle();
+
+    expect(bundles.get(failed!.id)).toMatchObject({ status: 'ready', directives: [], fixedRequirement: null });
+    expect(executor.requests).toHaveLength(2);
+  });
+  it('요구를 고치면 처음 입력에 고친 요구만 더해 넘기고 직전 결과는 넘기지 않는다. 에이전트가 다른 요구를 내도 고친 요구로 덮어쓰고 요약은 새로 받은 것을 쓰며, 그때까지의 지시는 지운다', async () => {
+    const { executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
+    await settle();
+    /** 고친 요구를 다시 해석해 바꿔 낸 출력. */
+    const reinterpreted = { ...draftOutput(repos.a), requirement: { text: '재시도 정책 전체를 알고 싶다.', summary: '운영 재시도 횟수' } };
+    executor.script({ outcome: { type: 'completed', output: reinterpreted } });
+
+    await drafts.regenerate(ready!.id, { path: 'requirement', requirement: '  운영 환경에서\n재시도 횟수만 알고 싶다.  ' });
+    await settle();
+
+    /** 처음 실행과 요구를 고친 실행. */
+    const [first, , fixed] = executor.requests;
+    expect(fixed?.input).toContain('# 고친 요구\n사용자가 요구를 아래처럼 고쳤습니다. 다시 해석하지 않고 requirement.text에 그대로 쓰고, summary만 새로 씁니다.\n운영 환경에서 재시도 횟수만 알고 싶다.\n\n# 데이터\n');
+    expect(fixed?.input).not.toContain('# 직전 결과');
+    expect(fixed?.input).not.toContain('# 덧붙인 지시');
+    expect(fixed?.input).not.toContain('다섯 번까지 다시 시도합니다');
+    expect(fixed?.input.slice(fixed.input.indexOf('\n# 데이터\n'))).toBe(first?.input.slice(first.input.indexOf('\n# 데이터\n')));
+    expect(fixed?.instructions).toContain('"# 고친 요구"가 있으면');
+
+    /** 요구를 고쳐 만든 묶음. */
+    const regenerated = bundles.get(ready!.id);
+    expect(regenerated).toMatchObject({
+      status: 'ready',
+      directives: [],
+      fixedRequirement: '운영 환경에서 재시도 횟수만 알고 싶다.',
+      regeneration: null,
+      draft: { requirement: { text: '운영 환경에서 재시도 횟수만 알고 싶다.', summary: '운영 재시도 횟수' } },
+    });
+    expect(regenerated?.runs.at(-1)?.fixes).toContain('에이전트가 낸 요구를 사용자가 고친 요구로 덮어씀');
+  });
+  it('자동으로 저장소를 고른 묶음은 다시 만들기, 지시를 덧붙여, 요구 고치기에서 선택 실행을 다시 돌리지 않고 고른 저장소로 초안 실행만 돌린다', async () => {
+    const { executor, drafts, bundles, settingsStore, poll } = await setup();
+    /** 저장소가 둘인 작업 폴더. */
+    const work = makeWorkFolder('work', ['api', 'web']);
+    /** 후보 저장소. */
+    const [api, web] = work.repos as [string, string];
+    settingsStore.settings.workFolders = [work.folder];
+    /** 선택 실행이 적은 이유. */
+    const reason = '화면 설정을 묻고 있어 웹 화면 저장소를 골랐습니다.';
+    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [web], reason } } });
+    for (let run = 0; run < 4; run += 1) executor.script({ outcome: { type: 'completed', output: draftOutput(web) } });
+    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
+    /** 자동 선택으로 만든 준비됨 묶음. */
+    const [ready] = bundles.state();
+
+    await drafts.regenerate(ready!.id, { path: 'again' });
+    await settle();
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
+    await settle();
+    await drafts.regenerate(ready!.id, { path: 'requirement', requirement: '화면의 재시도 횟수만 알고 싶다.' });
+    await settle();
+
+    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'draft', 'draft', 'draft', 'draft']);
+    for (const request of executor.requests.slice(1)) expect(request.readRoots).toEqual([web]);
+    // 저장소 영역은 여전히 자동으로 고른 이유를 보인다.
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', draft: { repositories: [web], autoSelection: { kind: 'chosen', reason } } });
+    expect(api).not.toBe(web);
+  });
+
+  it('자동으로 고른 저장소 폴더가 사라졌으면 다시 만들 때 자동 선택을 다시 한다', async () => {
+    const { executor, drafts, bundles, settingsStore, poll } = await setup();
+    /** 저장소가 둘인 작업 폴더. */
+    const work = makeWorkFolder('work', ['api', 'web']);
+    /** 후보 저장소. */
+    const [api, web] = work.repos as [string, string];
+    settingsStore.settings.workFolders = [work.folder];
+    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [web], reason: '웹입니다.' } } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(web) } });
+    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
+    /** 자동 선택으로 만든 준비됨 묶음. */
+    const [ready] = bundles.state();
+    rmSync(web, { recursive: true });
+    // 저장소가 하나 남아 선택 실행 없이 그 저장소를 쓴다.
+    executor.script({ outcome: { type: 'completed', output: draftOutput(api) } });
+
+    await drafts.regenerate(ready!.id, { path: 'again' });
+    await settle();
+
+    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'draft', 'draft']);
+    expect(executor.requests[2]?.readRoots).toEqual([api]);
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', draft: { repositories: [api], autoSelection: { kind: 'single-candidate' } } });
+  });
+});
+
+describe('재생성: 준비됨·실패 묶음에 새 멘션이 올 때', () => {
+  /** 처음 초안이 준비된 묶음과, 같은 댓글 스레드에 새 멘션을 보내는 함수. 새 멘션은 다른 송신자가 보낸 대댓글이다. */
+  async function readyWithNewMention() {
+    const context = await setup();
+    context.executor.script({ outcome: { type: 'completed', output: draftOutput(context.repos.a) } });
+    await context.poll(alarm('101'));
+    /** 준비됨 묶음의 ID. */
+    const bundleId = context.bundles.state()[0]!.id;
+    /** 같은 댓글 스레드에 새 멘션을 보내고 한 번 조회한다. */
+    const sendNewMention = async () => {
+      context.flow.addReply(POST_ID, '700', {
+        replyId: '801',
+        contents: `${MY_MARKUP} 시험 환경도 알려 주세요`,
+        registerId: OTHER_SENDER,
+        registerName: '다른 사람',
+        registeredDateTime: '20261020085500',
+      });
+      await context.poll(alarm('102', { replyId: '801', registerId: OTHER_SENDER, registerName: '다른 사람', registeredDateTime: '20261020085500' }));
+    };
+    return { ...context, bundleId, sendNewMention };
+  }
+
+  it('초안·요구·지시를 손대지 않았으면 합치고 자동으로 다시 만든다. 받는 사람을 뺀 것은 손댐이 아니라 뺀 사람은 그대로 빠져 있다', async () => {
+    const { executor, bundles, bundleId, repos, sendNewMention } = await readyWithNewMention();
+    await bundles.removeRecipient(bundleId, 0, '보낸 사람');
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.b) } });
+
+    await sendNewMention();
+
+    /** 자동으로 다시 만든 묶음. */
+    const regenerated = bundles.get(bundleId);
+    expect(executor.requests).toHaveLength(2);
+    expect(executor.requests[1]?.input).toContain('## 멘션 2건 (시간순, 마지막이 답할 대상)');
+    expect(executor.requests[1]?.input).toContain('2. [답할 대상] 다른 사람');
+    expect(regenerated).toMatchObject({ status: 'ready', newMentionCount: 0, draft: { evidence: [{ repository: repos.b }] } });
+    // 받는 사람에서 뺀 송신자는 그대로 빠져 있다.
+    expect(regenerated?.removedRecipients).toEqual([SENDER]);
+  });
+
+  it('새 멘션의 송신자를 전에 받는 사람에서 뺐더라도, 합칠 때 다시 더한다', async () => {
+    const { executor, bundles, bundleId, flow, repos, poll } = await readyWithNewMention();
+    await bundles.removeRecipient(bundleId, 0, '보낸 사람');
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    // 뺀 송신자가 같은 스레드에서 다시 멘션한다.
+    flow.addReply(POST_ID, '700', { replyId: '803', contents: `${MY_MARKUP} 다시 여쭙니다`, registerId: SENDER, registeredDateTime: '20261020085600' });
+
+    await poll(alarm('103', { replyId: '803', registeredDateTime: '20261020085600' }));
+
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'ready', removedRecipients: [] });
+    expect(executor.requests).toHaveLength(2);
+  });
+
+  it.each([
+    ['초안을 편집했으면', 'edited'],
+    ['지시를 덧붙였으면', 'directive'],
+    ['요구를 고쳤으면', 'requirement'],
+  ] as const)('%s 합치기만 하고 "새 멘션 1건"을 세며 초안을 그대로 둔다. [다시 만들기]를 누르면 새 멘션까지 넣어 다시 만든다', async (_, touch) => {
+    const { executor, drafts, bundles, bundleId, repos, sendNewMention } = await readyWithNewMention();
+    if (touch === 'edited') {
+      await bundles.editDraft(bundleId, '사용자가 고쳐 쓴 초안입니다.');
+    } else {
+      executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+      await drafts.regenerate(bundleId, touch === 'directive' ? { path: 'directive', directive: '더 짧게' } : { path: 'requirement', requirement: '횟수만 알고 싶다.' });
+      await settle();
+    }
+    /** 손댄 뒤의 묶음. */
+    const touched = bundles.get(bundleId)!;
+    /** 손댄 뒤까지의 실행 수. */
+    const runsBefore = executor.requests.length;
+
+    await sendNewMention();
+
+    /** 합치기만 한 묶음. */
+    const merged = bundles.get(bundleId);
+    expect(executor.requests).toHaveLength(runsBefore);
+    expect(merged).toMatchObject({ status: 'ready', newMentionCount: 1, draft: touched.draft, editedText: touched.editedText, context: touched.context });
+    expect(merged?.mentions).toHaveLength(2);
+
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await drafts.regenerate(bundleId, { path: 'again' });
+    await settle();
+
+    expect(executor.requests).toHaveLength(runsBefore + 1);
+    expect(executor.requests.at(-1)?.input).toContain('## 멘션 2건 (시간순, 마지막이 답할 대상)');
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'ready', newMentionCount: 0, editedText: null });
+  });
+
+  it('실패 묶음에 새 멘션이 오면 합치고 자동으로 다시 시도한다', async () => {
+    const { executor, bundles, flow, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'timed-out' } });
+    await poll(alarm('101'));
+    /** 실패 묶음. */
+    const [failed] = bundles.state();
+    expect(failed?.status).toBe('failed');
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registeredDateTime: '20261020085500' });
+
+    await poll(alarm('102', { replyId: '801', registeredDateTime: '20261020085500' }));
+
+    expect(executor.requests).toHaveLength(2);
+    expect(executor.requests[1]?.input).toContain('## 멘션 2건 (시간순, 마지막이 답할 대상)');
+    expect(bundles.get(failed!.id)).toMatchObject({ status: 'ready', failure: null, newMentionCount: 0 });
+  });
+
+  it('지시를 덧붙여 다시 만들다 실패한 묶음에 새 멘션이 오면, 같은 재생성 입력에 새 멘션을 넣어 다시 시도한다', async () => {
+    const { executor, drafts, bundles, flow, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'timed-out' } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게' });
+    await settle();
+    expect(bundles.get(ready!.id)?.status).toBe('failed');
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registeredDateTime: '20261020085500' });
+
+    await poll(alarm('102', { replyId: '801', registeredDateTime: '20261020085500' }));
+
+    /** 다시 시도한 실행의 입력. */
+    const input = executor.requests.at(-1)?.input ?? '';
+    expect(executor.requests).toHaveLength(3);
+    expect(input).toContain('# 직전 결과');
+    expect(input).toContain('# 덧붙인 지시\n1. 더 짧게\n');
+    expect(input).toContain('## 멘션 2건 (시간순, 마지막이 답할 대상)');
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', regeneration: null, directives: ['더 짧게'] });
   });
 });

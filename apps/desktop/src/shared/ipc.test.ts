@@ -6,6 +6,7 @@ import {
   FLOW_PROJECT_ID_MAX_LENGTH,
   parseAppCommand,
   RECIPIENT_NAME_MAX_LENGTH,
+  REGENERATION_TEXT_MAX_LENGTH,
   WORK_FOLDER_PATH_MAX_LENGTH,
 } from './ipc';
 
@@ -194,6 +195,31 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1.5, name: '이영희' })).toBeNull();
     expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1 })).toBeNull();
     expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1, name: '가'.repeat(RECIPIENT_NAME_MAX_LENGTH + 1) })).toBeNull();
+  });
+
+  it('다시 만들기 명령은 묶음 ID를, 지시를 덧붙여 다시 만들기와 요구 고치기 명령은 묶음 ID와 비어 있지 않은 글을 받는다', () => {
+    expect(parseAppCommand({ type: 'regenerate-bundle', bundleId: 3 })).toEqual({ type: 'regenerate-bundle', bundleId: 3 });
+    expect(parseAppCommand({ type: 'regenerate-bundle', bundleId: 0 })).toBeNull();
+    expect(parseAppCommand({ type: 'regenerate-with-directive', bundleId: 3, directive: '더 짧게' })).toEqual({
+      type: 'regenerate-with-directive',
+      bundleId: 3,
+      directive: '더 짧게',
+    });
+    expect(parseAppCommand({ type: 'fix-requirement', bundleId: 3, requirement: '횟수만 알고 싶다.' })).toEqual({
+      type: 'fix-requirement',
+      bundleId: 3,
+      requirement: '횟수만 알고 싶다.',
+    });
+    expect(parseAppCommand({ type: 'regenerate-with-directive', bundleId: 3, directive: '가'.repeat(REGENERATION_TEXT_MAX_LENGTH) })).not.toBeNull();
+    for (const [field, type] of [
+      ['directive', 'regenerate-with-directive'],
+      ['requirement', 'fix-requirement'],
+    ] as const) {
+      expect(parseAppCommand({ type, bundleId: 3, [field]: '   ' })).toBeNull();
+      expect(parseAppCommand({ type, bundleId: 3, [field]: '가'.repeat(REGENERATION_TEXT_MAX_LENGTH + 1) })).toBeNull();
+      expect(parseAppCommand({ type, bundleId: 3 })).toBeNull();
+      expect(parseAppCommand({ type, bundleId: -1, [field]: '글' })).toBeNull();
+    }
   });
 
   it('펼쳐 보기·접어 보기 명령은 보고 있던 묶음 ID나 null을 받는다', () => {

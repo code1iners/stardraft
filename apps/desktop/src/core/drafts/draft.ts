@@ -70,6 +70,33 @@ export interface Draft {
   createdAt: number;
 }
 
+/** 지시를 덧붙여 다시 만들 때 넘기는 직전 결과. 직전 초안의 요구·초안·근거다. 사용자가 편집한 초안은 넣지 않는다. */
+export type PreviousResult = Pick<Draft, 'requirement' | 'paragraphs' | 'evidence'>;
+
+/**
+ * 재생성의 경로. 저장소 선택 창으로 다시 만들기는 고른 구성(`userRepos`)으로 처음 입력을 넘기므로 여기에 들지 않는다.
+ * - `again`: 다시 만들기. 처음과 같은 구성의 입력이다. 준비됨 묶음에 새 멘션이 합쳐져 자동으로 다시 만들 때도 이것이다.
+ * - `directive`: 지시를 덧붙여 다시 만들기. 처음 입력에 직전 결과와 지금까지 덧붙인 지시 전부를 더한다.
+ * - `requirement`: 요구 고치기. 처음 입력에 고친 요구를 더하고, 직전 결과는 넘기지 않는다.
+ */
+export type RegenerationPath = 'again' | 'directive' | 'requirement';
+
+/**
+ * 생성 중 묶음을 다시 만드는 재생성. 직전 초안은 재생성을 시작할 때 바로 지우므로, 다음 초안 실행에 넘길 것을 여기에 둔다.
+ * 초안을 저장하면 지운다. 실패하면 남겨 두어 [다시 시도]가 같은 입력으로 다시 만든다.
+ */
+export interface Regeneration {
+  /** 경로. */
+  path: RegenerationPath;
+  /** 지시를 덧붙여 다시 만들 때 넘기는 직전 결과. 다른 경로면 `null`. */
+  previous: PreviousResult | null;
+  /**
+   * 직전 초안이 자동 선택으로 정한 저장소와 그 내력. 저장소 매핑이 여전히 없으면 선택 실행을 다시 돌리지 않고 이 저장소로 초안 실행만 돌린다.
+   * 직전 초안의 저장소를 저장소 매핑이나 사용자가 고른 구성으로 정했으면 `null`이다.
+   */
+  autoSelected: { repositories: string[]; autoSelection: AutoSelection } | null;
+}
+
 /** 초안 실행 직전에 맥락을 조회하지 못한 사유. */
 export type ContextFailureReason =
   /** Flow에서 멘션 묶음의 내용을 가져오지 못했다(연결 실패, 키 거부, 요청 한도, 서버 오류). */

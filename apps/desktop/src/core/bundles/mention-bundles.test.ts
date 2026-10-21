@@ -614,7 +614,8 @@ describe('멘션 묶음: 초안 편집과 받는 사람', () => {
 
     await poll(alarm('103', { remarkId: '700', replyId: '802', registerId: OTHER_SENDER, registerName: '다른 사람', registeredDateTime: '20261020085200' }));
 
-    expect(bundles.get(bundleId)).toMatchObject({ newMentionCount: 1, removedRecipients: [SENDER] });
+    // 받는 사람을 뺀 것은 손댐이 아니므로 자동으로 다시 만들러 생성 중이 된다.
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'generating', newMentionCount: 0, removedRecipients: [SENDER] });
   });
 
   it('준비됨이 아닌 묶음은 편집하거나 받는 사람을 빼지 않는다', async () => {

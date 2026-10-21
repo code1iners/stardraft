@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/ipc';
-import { ThreadList } from './BundleDetail';
+import { DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
 
@@ -39,6 +39,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     ],
     senderNames: ['보낸 사람', '다른 사람'],
     newMentionCount: 0,
+    directives: [],
     lastMentionAt: Date.UTC(2026, 9, 19, 23, 51),
     processedAt: null,
     canRestore: false,
@@ -697,5 +698,80 @@ describe('초안 편집기와 받는 사람', () => {
     expect(html).not.toContain('<textarea');
     expect(html).not.toContain('빼기"');
     expect(html).not.toContain('원래 초안으로 되돌리기');
+  });
+});
+
+describe('재생성', () => {
+  /** 그린 HTML에서 태그를 지운 글자. 공백은 하나로 줄인다. */
+  function textIn(markup: string): string {
+    return markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  }
+
+  /** 초안을 편집한 준비됨 묶음. */
+  const EDITED: BundleSnapshot = { ...READY, draft: { ...READY.draft!, editorText: '고친 초안입니다.', edited: true } };
+
+  it('준비됨 묶음의 바닥 줄 재생성 메뉴에 다시 만들기, 지시를 덧붙여 다시 만들기, 다른 저장소로 다시 만들기가 이 순서로 있다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />);
+    /** 메뉴 항목. */
+    const items = [...html.matchAll(/<button[^>]*role="menuitem"[^>]*>([^<]*)<\/button>/g)].map((match) => match[1]);
+
+    expect(items).toEqual(['다시 만들기', '지시를 덧붙여 다시 만들기', '다른 저장소로 다시 만들기']);
+  });
+
+  it('준비됨 묶음은 "에이전트가 이해한 요구" 제목 옆에 요구를 고치는 망치 버튼을 두고, 고칠 수 없는 묶음에는 두지 않는다', () => {
+    /** 처리됨 묶음. */
+    const ignored: BundleSnapshot = { ...READY, status: 'ignored', group: 'processed', canRestore: true, draft: { ...READY.draft!, canEdit: false } };
+
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).toContain('aria-label="요구 고치기"');
+    expect(renderToStaticMarkup(<ReviewContent snapshot={snapshot([ignored])} initialBundleId={4} />)).not.toContain('aria-label="요구 고치기"');
+  });
+
+  it('손댄 준비됨 묶음에 새 멘션이 합쳐졌으면 "새 멘션 1건"과 [다시 만들기]를, 저장소 확인 필요 묶음에는 "새 멘션 1건"만 보인다', () => {
+    /** 새 멘션이 합쳐진 준비됨 묶음의 알림 줄. */
+    const ready = renderToStaticMarkup(<PopoverContent snapshot={snapshot([{ ...EDITED, newMentionCount: 1 }])} />);
+    /** 새 멘션이 합쳐진 저장소 확인 필요 묶음의 알림 줄. */
+    const check = renderToStaticMarkup(<PopoverContent snapshot={snapshot([bundle(1, { newMentionCount: 1 })])} />);
+
+    expect(ready).toMatch(/<div class="notice-line"[^>]*><span>새 멘션 1건<\/span><button[^>]*>다시 만들기<\/button><\/div>/);
+    expect(check).toContain('<div class="notice-line"><span>새 멘션 1건</span></div>');
+  });
+
+  it('편집한 초안이 있으면 다시 만들기 전에 편집본을 버릴지 묻는다', () => {
+    const text = textOf(<DiscardEditConfirm onConfirm={() => {}} onCancel={() => {}} />);
+
+    expect(text).toContain('편집한 초안을 버리고 다시 만들까요?');
+    expect(text).toContain('취소');
+    expect(text).toContain('버리고 다시 만들기');
+  });
+
+  it('지시를 덧붙이는 칸은 앞서 덧붙인 지시를 함께 넘긴다고 보이고, 편집한 초안이 있으면 버린다고 알린다. 빈 지시로는 다시 만들 수 없다', () => {
+    /** 처음 지시를 덧붙이는 칸. */
+    const first = renderToStaticMarkup(<DirectiveForm bundleId={4} directives={[]} edited={false} onClose={() => {}} />);
+    /** 지시를 덧붙인 적이 있고 초안을 편집한 묶음의 칸. */
+    const again = renderToStaticMarkup(<DirectiveForm bundleId={4} directives={['더 짧게', '존댓말로']} edited onClose={() => {}} />);
+
+    expect(textIn(first)).toContain('덧붙일 지시');
+    expect(first).toMatch(/<button[^>]*disabled[^>]*>지시를 덧붙여 다시 만들기<\/button>/);
+    expect(textIn(first)).not.toContain('앞서 덧붙인 지시');
+    expect(textIn(again)).toContain('앞서 덧붙인 지시도 함께 넘깁니다');
+    expect(textIn(again)).toContain('더 짧게');
+    expect(textIn(again)).toContain('존댓말로');
+    expect(textIn(again)).toContain('편집한 초안은 버리고 다시 만듭니다.');
+    expect(textIn(again)).toContain('편집본을 버리고 다시 만들기');
+  });
+
+  it('요구를 고치는 칸은 지금 요구를 채워 두고 "이 요구로 재생성"을 두며, 덧붙인 지시가 지워진다고 알린다', () => {
+    /** 지시를 덧붙인 적이 있는 묶음의 요구 칸. */
+    const html = renderToStaticMarkup(<RequirementEditor bundleId={4} requirement="재시도 횟수를 알고 싶다." directiveCount={2} edited={false} onClose={() => {}} />);
+    /** 초안을 편집한 묶음의 요구 칸. */
+    const edited = renderToStaticMarkup(<RequirementEditor bundleId={4} requirement="재시도 횟수를 알고 싶다." directiveCount={0} edited onClose={() => {}} />);
+
+    expect(html).toMatch(/<textarea[^>]*>재시도 횟수를 알고 싶다.<\/textarea>/);
+    expect(textIn(html)).toContain('이 요구로 재생성');
+    expect(textIn(html)).toContain('덧붙인 지시 2개는 지워집니다.');
+    expect(textIn(edited)).toContain('편집한 초안은 버리고 다시 만듭니다.');
+    expect(textIn(edited)).toContain('편집본을 버리고 이 요구로 재생성');
+    expect(textIn(edited)).not.toContain('덧붙인 지시');
   });
 });

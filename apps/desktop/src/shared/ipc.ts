@@ -50,6 +50,9 @@ export const DRAFT_TEXT_MAX_LENGTH = 100_000;
 /** 받는 사람 빼기 명령이 받는 이름의 최대 길이. */
 export const RECIPIENT_NAME_MAX_LENGTH = 200;
 
+/** 지시를 덧붙여 다시 만들기와 요구 고치기 명령이 받는 글의 최대 길이. */
+export const REGENERATION_TEXT_MAX_LENGTH = 2_000;
+
 /** "Flow 계정" 칸의 계정 카드에 보일 계정. */
 export interface FlowAccountProfile {
   /** 이름. */
@@ -568,6 +571,8 @@ export interface BundleSnapshot {
   senderNames: string[];
   /** 합쳐진 새 멘션 수. 0보다 크면 "새 멘션 N건"을 보인다. */
   newMentionCount: number;
+  /** 이 묶음에 지금까지 덧붙인 지시. 덧붙인 순서다. 지시를 덧붙여 다시 만들면 이것도 함께 넘긴다. */
+  directives: string[];
   /** 목록 행에 보일 시각. 가장 최근 멘션의 시각(Unix epoch 밀리초)이다. */
   lastMentionAt: number;
   /** 처리한 시각(Unix epoch 밀리초). 처리됨이 아니면 `null`. */
@@ -737,6 +742,12 @@ export type AppCommand =
    * 그사이 목록이 바뀌어 그 위치의 이름이 다르면 main이 무시한다. 사용자 ID는 main이 묶음에서 찾는다.
    */
   | { type: 'remove-recipient'; bundleId: number; index: number; name: string }
+  /** 준비됨 묶음을 처음과 같은 구성의 입력으로 다시 만든다. 준비됨이 아니면 main이 무시한다. */
+  | { type: 'regenerate-bundle'; bundleId: number }
+  /** 준비됨 묶음에 지시를 덧붙여 다시 만든다. 직전 결과와 지금까지 덧붙인 지시 전부를 넘긴다. */
+  | { type: 'regenerate-with-directive'; bundleId: number; directive: string }
+  /** 준비됨 묶음의 요구를 고쳐 "이 요구로 재생성"한다. 그때까지의 지시는 지운다. */
+  | { type: 'fix-requirement'; bundleId: number; requirement: string }
   /** 저장소 선택 창의 후보 하나를 체크하거나 뺀다. 후보에 없는 경로는 main이 받지 않는다. */
   | { type: 'set-repo-picker-checked'; path: string; checked: boolean }
   /** 저장소 선택 창의 "폴더 직접 고르기". 폴더 선택 창의 경로는 main이 받으므로 렌더러는 보내지 않는다. */
@@ -809,6 +820,11 @@ function isRecipientNameInput(value: unknown): value is string {
   return typeof value === 'string' && value.length <= RECIPIENT_NAME_MAX_LENGTH;
 }
 
+/** 지시나 고친 요구로 실을 수 있는 글인지 확인한다. 공백만 있는 글은 받지 않는다. */
+function isRegenerationTextInput(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '' && value.length <= REGENERATION_TEXT_MAX_LENGTH;
+}
+
 /** 묶음을 보는 창 이름인지 확인한다. */
 function isReviewWindow(value: unknown): value is ReviewWindow {
   return typeof value === 'string' && (REVIEW_WINDOWS as readonly string[]).includes(value);
@@ -870,8 +886,17 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isBundleIdInput(candidate.bundleId) && Number.isSafeInteger(candidate.index) && (candidate.index as number) >= 0 && isRecipientNameInput(candidate.name)
         ? { type: 'remove-recipient', bundleId: candidate.bundleId, index: candidate.index as number, name: candidate.name }
         : null;
+    case 'regenerate-with-directive':
+      return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.directive)
+        ? { type: 'regenerate-with-directive', bundleId: candidate.bundleId, directive: candidate.directive }
+        : null;
+    case 'fix-requirement':
+      return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.requirement)
+        ? { type: 'fix-requirement', bundleId: candidate.bundleId, requirement: candidate.requirement }
+        : null;
     case 'ignore-bundle':
     case 'restore-bundle':
+    case 'regenerate-bundle':
     case 'revert-draft-edit':
     case 'cancel-generation':
     case 'retry-bundle':

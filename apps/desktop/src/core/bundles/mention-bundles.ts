@@ -1,6 +1,6 @@
 import { isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
 import { mentionLocationKey, type Mention } from '../detection/mention';
-import type { ContextFailureReason, Draft, DraftFailure, RunRecord } from '../drafts/draft';
+import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
@@ -19,6 +19,7 @@ import {
   compareMentions,
   countsForReview,
   isProcessed,
+  isDraftTouched,
   isRestorable,
   judgeAnswered,
   mentionSetKey,
@@ -51,8 +52,20 @@ export interface MentionBundlesOptions {
 /**
  * 생성을 시작할 때 읽을 저장소를 확인한 결과. 사용자가 저장소 선택 창에서 고른 구성이 있으면 그 구성(`user`)을,
  * 없으면 저장소 매핑을 보고 매핑의 폴더가 모두 있으면 그 저장소(`mapped`)를 읽고, 매핑이 없으면(`unmapped`) 작업 폴더에서 자동 선택으로 정한다.
+ * 자동 선택으로 정한 초안을 다시 만들면 선택 실행을 다시 돌리지 않고 직전 초안의 저장소와 그 내력(`auto-selected`)을 쓴다.
  */
-export type RunRepos = Exclude<RepoResolution, { kind: 'missing-folders' }> | { kind: 'user'; repos: string[] };
+export type RunRepos =
+  | Exclude<RepoResolution, { kind: 'missing-folders' }>
+  | { kind: 'user'; repos: string[] }
+  | { kind: 'auto-selected'; repos: string[]; autoSelection: AutoSelection };
+
+/** 준비됨 묶음을 다시 만드는 사용자 행동. 다시 만들기, 지시를 덧붙여 다시 만들기, 요구 고치기다. */
+export type RegenerationRequest =
+  | { path: 'again' }
+  /** 덧붙일 지시. 앞뒤 공백을 떼고 비어 있으면 받지 않는다. */
+  | { path: 'directive'; directive: string }
+  /** 고친 요구. 앞뒤 공백을 떼고 비어 있으면 받지 않는다. */
+  | { path: 'requirement'; requirement: string };
 
 /** 초안 실행 직전 준비의 결과. */
 export type RunPreparation =
@@ -322,6 +335,7 @@ export class MentionBundles {
    * 생성을 시작할 때 읽을 저장소를 지금 폴더 상태로 다시 확인한다. 기다리는 사이에 매핑이 생겼거나 지워졌거나 폴더가 사라졌을 수 있다.
    * 사용자가 고른 구성이 있으면 저장소 매핑 대신 그 구성을 본다. 폴더가 모두 있으면 읽을 저장소를, 매핑이 없으면 자동 선택으로 정하라고 돌려준다.
    * 읽을 폴더가 하나라도 없으면 자동 선택으로 넘어가지 않고, 생성 중 묶음을 초안 없이 저장소 확인 필요로 올리고 OS 알림을 띄운 뒤 `null`을 돌려준다.
+   * 자동 선택으로 정한 초안을 다시 만드는 묶음은 매핑이 여전히 없으면 직전 초안의 저장소를 쓴다. 그 폴더가 사라졌으면 자동 선택을 다시 한다.
    */
   async reposForRun(bundleId: number): Promise<RunRepos | null> {
     /** 실행할 묶음. */
@@ -329,6 +343,11 @@ export class MentionBundles {
     if (!bundle || bundle.status !== 'generating') return null;
     /** 읽을 저장소를 확인한 결과. */
     const resolution = bundle.userRepos ? await resolveUserRepos(bundle.userRepos) : await this.options.resolveRepos(bundle.projectId);
+    /** 직전 초안이 자동 선택으로 정한 저장소. */
+    const autoSelected = bundle.regeneration?.autoSelected;
+    if (resolution.kind === 'unmapped' && autoSelected && (await missingFolders(autoSelected.repositories)).length === 0) {
+      return { kind: 'auto-selected', repos: [...autoSelected.repositories], autoSelection: structuredClone(autoSelected.autoSelection) };
+    }
     if (resolution.kind !== 'missing-folders') return resolution;
 
     /** 저장소 확인 필요가 된 묶음. 그사이 생성 중이 아니게 되었으면 `null`. */
@@ -366,6 +385,7 @@ export class MentionBundles {
       draft: structuredClone(draft),
       editedText: null,
       failure: null,
+      regeneration: null,
     }));
     if (changed) this.options.notifier.notify(draftReadyNotification(changed));
     return changed !== null;
@@ -412,22 +432,47 @@ export class MentionBundles {
   /** 실패 묶음을 [다시 시도]한다. 생성 중으로 돌아가 초안 대기열에 들어가고, 합쳐진 새 멘션도 이번 초안에 들어간다. */
   async retry(bundleId: number): Promise<void> {
     await this.change(bundleId, 'bundle.retried', (bundle) =>
-      bundle.status === 'failed' ? { ...bundle, status: 'generating', failure: null, newMentionCount: 0 } : null,
+      bundle.status === 'failed' ? { ...bundle, ...retried } : null,
     );
   }
 
   /**
    * 준비됨이나 저장소 확인 필요 묶음을 저장소 선택 창에서 고른 구성으로 다시 만든다. 생성 중으로 올라 초안 대기열에 들어간다.
-   * 직전 초안과 저장소 확인 필요 사유는 지운다. 재생성 입력은 처음 입력에 읽을 저장소만 바뀐 것이라 직전 결과를 남겨 둘 까닭이 없다.
+   * 직전 초안과 비교 기준, 저장소 확인 필요 사유는 지운다. 재생성 입력은 처음 입력에 읽을 저장소만 바뀐 것이라 직전 결과를 남겨 둘 까닭이 없다.
+   * 저장소를 바꾸면 그때까지의 지시와 고친 요구도 지운다.
    * 고른 구성은 묶음에만 두고 저장소 매핑으로 저장하지 않는다. 구성이 비었거나 그 밖의 상태면 아무것도 하지 않는다.
    */
   async regenerateWithRepos(bundleId: number, repos: readonly string[]): Promise<void> {
     if (repos.length === 0) return;
     await this.change(bundleId, 'bundle.regenerated-with-repos', (bundle) =>
       canPickRepos(bundle.status)
-        ? { ...bundle, status: 'generating', userRepos: [...repos], draft: null, editedText: null, repoCheck: null, failure: null, newMentionCount: 0 }
+        ? {
+            ...bundle,
+            ...clearedForRegeneration,
+            userRepos: [...repos],
+            repoCheck: null,
+            directives: [],
+            fixedRequirement: null,
+            regeneration: null,
+          }
         : null,
     );
+  }
+
+  /**
+   * 준비됨 묶음을 다시 만든다. 다시 만들기, 지시를 덧붙여 다시 만들기, 요구 고치기다. 매번 새 실행이고 생성 중으로 올라 초안 대기열에 들어간다.
+   * 직전 초안·편집본과 비교 기준은 바로 지운다. 지시를 덧붙이면 직전 결과를 재생성에 남겨 다음 초안 실행에 넘긴다.
+   * 요구를 고치면 그때까지의 지시를 지운다. 받는 사람에서 뺀 사람은 초안 텍스트 밖이라 그대로 둔다.
+   * 고친 요구는 한 문장이라 줄바꿈을 공백으로 잇는다. 준비됨이 아니거나 덧붙일 지시나 고친 요구가 비어 있으면 아무것도 하지 않는다.
+   */
+  async regenerate(bundleId: number, request: RegenerationRequest): Promise<void> {
+    /** 경로에 따라 바꿀 지시와 고친 요구. 덧붙일 지시나 고친 요구가 비었으면 `null`. */
+    const inputs = regenerationInputsOf(request);
+    if (!inputs) return;
+    await this.change(bundleId, `bundle.regenerated-${request.path}`, (bundle) => {
+      if (!bundle.draft || !canEditDraft(bundle.status)) return null;
+      return { ...bundle, ...regenerationOf(bundle, request.path), ...inputs(bundle.directives) };
+    });
   }
 
   /**
@@ -570,9 +615,65 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
     draft: null,
     editedText: null,
     removedRecipients: [],
+    directives: [],
+    fixedRequirement: null,
+    regeneration: null,
     failure: null,
     runs: [],
   };
+}
+
+/** 실패 묶음을 다시 시도할 때 바꿀 것. 생성 중으로 올라 초안 대기열에 들어가고, 합쳐진 새 멘션도 이번 초안에 들어간다. */
+const retried = { status: 'generating', failure: null, newMentionCount: 0 } as const satisfies Partial<MentionBundle>;
+
+/** 다시 만들 때 바로 지우는 것. 직전 초안과 편집본, 비교 기준(초안을 만들 때 넘긴 맥락)이다. 생성 중으로 올라 초안 대기열에 들어간다. */
+const clearedForRegeneration = {
+  status: 'generating',
+  draft: null,
+  editedText: null,
+  context: null,
+  failure: null,
+  newMentionCount: 0,
+} as const satisfies Partial<MentionBundle>;
+
+/**
+ * 준비됨 묶음을 `path` 경로로 다시 만들 때 바꿀 것. 직전 초안과 비교 기준을 지우고 다음 초안 실행에 넘길 재생성을 남긴다.
+ * 지시를 덧붙이면 직전 결과를 남기고, 직전 초안이 자동 선택으로 정한 저장소였으면 선택 실행을 다시 돌리지 않게 그 저장소를 남긴다.
+ */
+function regenerationOf(bundle: Pick<MentionBundle, 'draft'>, path: RegenerationPath): Pick<MentionBundle, 'regeneration'> & typeof clearedForRegeneration {
+  /** 직전 초안. */
+  const draft = bundle.draft!;
+  /** 재생성. */
+  const regeneration: Regeneration = {
+    path,
+    previous: path === 'directive' ? structuredClone({ requirement: draft.requirement, paragraphs: draft.paragraphs, evidence: draft.evidence }) : null,
+    autoSelected: draft.autoSelection ? { repositories: [...draft.repositories], autoSelection: structuredClone(draft.autoSelection) } : null,
+  };
+  return { ...clearedForRegeneration, regeneration };
+}
+
+/**
+ * 재생성 경로에 따라 묶음의 지시와 고친 요구를 어떻게 바꿀지 정한다. 지금까지의 지시를 받아 바꿀 값을 돌려주는 함수다.
+ * 다시 만들기는 지시를 두고 고친 요구를 지운다. 지시를 덧붙이면 끝에 더하고, 요구를 고치면 지시를 비운다.
+ * 고친 요구는 한 문장이라 줄바꿈을 공백으로 잇는다. 앞뒤 공백을 뗀 지시나 고친 요구가 비었으면 `null`.
+ */
+function regenerationInputsOf(
+  request: RegenerationRequest,
+): ((directives: readonly string[]) => Pick<MentionBundle, 'directives' | 'fixedRequirement'>) | null {
+  switch (request.path) {
+    case 'again':
+      return (directives) => ({ directives: [...directives], fixedRequirement: null });
+    case 'directive': {
+      /** 덧붙일 지시. */
+      const directive = request.directive.trim();
+      return directive === '' ? null : (directives) => ({ directives: [...directives, directive], fixedRequirement: null });
+    }
+    case 'requirement': {
+      /** 고친 요구. */
+      const requirement = request.requirement.trim().replace(/\s*\n\s*/g, ' ');
+      return requirement === '' ? null : () => ({ directives: [], fixedRequirement: requirement });
+    }
+  }
 }
 
 /** 사용자가 고른 구성의 폴더가 지금 모두 있는지 본다. 매핑과 같은 모양으로 돌려준다. */
@@ -606,12 +707,16 @@ function showsContextWithoutDraft(bundle: MentionBundle): boolean {
 
 /**
  * 멘션을 넣은 묶음에 자리를 조회한 결과를 반영한다. 게시물 제목·주소와 내 답을 바꾸고 "이미 답함"을 다시 판정한다.
- * 기존 묶음에 합친 멘션 가운데 묶음에 남은 수만큼 "새 멘션"을 늘리고 그 송신자를 받는 사람에 다시 더하며, 모든 멘션이 빠지면 이미 답함으로 옮긴다.
- * 생성 중 묶음에 합친 멘션은 처음부터 다시 만드는 초안에 들어가므로 "새 멘션"으로 세지 않는다.
+ * 기존 묶음에 합친 멘션 가운데 묶음에 남은 것이 있으면 그 송신자를 받는 사람에 다시 더하고, 묶음 상태에 따라 처리한다.
+ * - 생성 중: 처음부터 다시 만드는 초안에 들어가므로 "새 멘션"으로 세지 않는다.
+ * - 준비됨(초안·요구·지시를 손대지 않음): 합치고 자동으로 다시 만든다(다시 만들기).
+ * - 실패: 합치고 자동으로 다시 시도한다. 재생성 중에 실패했으면 같은 재생성 입력으로 다시 만든다.
+ * - 그 밖(손댄 준비됨, 저장소 확인 필요): 합치기만 하고 "새 멘션"을 센다.
+ * 모든 멘션이 빠지면 이미 답함으로 옮긴다.
  */
 function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, lookup: PlaceLookup | undefined, now: number): UnsavedBundle {
   /** 반영한 묶음. */
-  const next: UnsavedBundle = { ...bundle };
+  let next: UnsavedBundle = { ...bundle };
   if (lookup?.post) {
     next.postTitle = lookup.post.title || next.postTitle;
     next.connectUrl = lookup.post.connectUrl ?? next.connectUrl;
@@ -622,14 +727,33 @@ function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, looku
 
   /** 이번에 넣은 멘션 가운데 묶음에 남은 것. */
   const addedActive = next.mentions.filter((mention) => !mention.answered && added.has(mentionLocationKey(mention)));
-  if (bundle.id !== null && bundle.status !== 'generating') next.newMentionCount += addedActive.length;
   // 뺄 때는 이 새 요청이 없었으므로, 새 멘션의 송신자는 전에 받는 사람에서 뺐더라도 다시 더한다.
   next.removedRecipients = next.removedRecipients.filter((id) => !addedActive.some((mention) => isSameFlowUser(mention.senderId, id)));
+  if (bundle.id !== null && addedActive.length > 0) next = { ...next, ...mergedNewMentions(next, addedActive.length) };
   if (activeMentions(next).length === 0) {
     next.status = 'already-answered';
     next.processedAt = now;
   }
   return next;
+}
+
+/**
+ * 기존 묶음에 묶음에 남는 새 멘션 `count`건을 합칠 때 상태에 따라 바꿀 것. 생성 중 묶음은 대기열이 처음부터 다시 만들므로 바꾸지 않는다.
+ * 손대지 않은 준비됨은 다시 만들기로, 실패는 다시 시도로 생성 중에 올리고, 그 밖에는 "새 멘션"만 센다.
+ */
+function mergedNewMentions(bundle: UnsavedBundle, count: number): Partial<MentionBundle> {
+  switch (bundle.status) {
+    case 'generating':
+      return {};
+    case 'ready':
+      if (bundle.draft && !isDraftTouched(bundle)) return regenerationOf(bundle, 'again');
+      break;
+    case 'failed':
+      return retried;
+    default:
+      break;
+  }
+  return { newMentionCount: bundle.newMentionCount + count };
 }
 
 /** 새로 조회한 내 답으로 기록을 바꾼다. 되돌릴 때 빼기로 기록한 답은 그대로 남기고, Flow에서 지워진 답은 뺀다. */

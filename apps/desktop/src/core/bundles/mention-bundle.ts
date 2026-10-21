@@ -1,3 +1,4 @@
+import type { BundleContext } from '../context/bundle-context';
 import type { Mention, MentionLocation } from '../detection/mention';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
@@ -87,6 +88,11 @@ export interface MentionBundle extends BundlePlace {
   createdAt: number;
   /** 처리한 시각(Unix epoch 밀리초). 처리됨이 아니면 `null`. */
   processedAt: number | null;
+  /**
+   * 마지막으로 Flow에서 조회한 맥락. 초안을 만들 때 넘긴 Flow 내용이라, 준비된 뒤의 변화 감시가 이것과 비교한다(비교 기준).
+   * 원문 영역의 "스레드 보기"도 이것을 보인다. 아직 조회하지 못했으면 `null`.
+   */
+  context: BundleContext | null;
 }
 
 /** 아직 저장하지 않아 ID가 없을 수 있는 묶음. 새 묶음은 저장할 때 ID를 받는다. */

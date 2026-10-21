@@ -1127,6 +1127,32 @@ p.mention-text {
   font-weight: 600;
 }
 
+/* 스레드 보기: 대댓글은 들여 쓰고, 멘션이 아닌 앞선 글은 테두리를 옅게 둔다. */
+.thread-item.is-reply {
+  padding-left: 16px;
+}
+
+.thread-item:not(.is-mention) p.mention-text {
+  border-left-color: var(--border);
+}
+
+.thread-item .tag {
+  margin-left: 6px;
+}
+
+/* 멘션 태그 앞에는 메타 구분점(·)을 두지 않는다. */
+.mention-meta > .tag::before {
+  content: none;
+}
+
+.thread-item p.small {
+  margin: 2px 0 0;
+}
+
+.btn.link.thread-toggle {
+  margin-top: 6px;
+}
+
 /* 상세 바닥 줄. 왼쪽에 무시, 처리됨이면 안내와 되돌리기. */
 .review-foot {
   flex: none;

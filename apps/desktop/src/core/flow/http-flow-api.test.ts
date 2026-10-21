@@ -338,6 +338,9 @@ describe('Flow 어댑터: 멘션 알림 목록 조회', () => {
   });
 });
 
+/** 쓴 사람·시각·시스템 댓글 종류·첨부가 없는 대댓글의 나머지 값. */
+const NO_AUTHORSHIP = { registerId: '', registerName: '', registeredDateTime: '', systemCode: '', attachments: [] };
+
 /** 게시물 본문 `content`의 JSON 문자열. 실호출에서 본 컴포넌트 모양(`COMPS`·`COMP_TYPE`·`COMP_DETAIL`)을 따른다. */
 function postContent(...components: unknown[]): string {
   return JSON.stringify({ COMPS: components });
@@ -374,10 +377,13 @@ describe('Flow 어댑터: 게시물 조회', () => {
         postId: '90000011',
         title: '가짜 제목',
         connectUrl: 'https://fake.flow.test/post/90000011',
+        registerName: '',
+        registeredDateTime: '',
         textComponents: [
           { contents: '@[테스트 사용자](me@example.test) 확인 부탁', mentions: ['me@example.test'] },
           { contents: '둘째 문단', mentions: [] },
         ],
+        attachments: [],
       },
     });
     expect(server.requests.map(({ method, url }) => [method, url])).toEqual([['GET', 'https://api.flow.team/user/posts/90000011']]);
@@ -396,7 +402,10 @@ describe('Flow 어댑터: 게시물 조회', () => {
         postId: '5',
         title: '',
         connectUrl: null,
+        registerName: '',
+        registeredDateTime: '',
         textComponents: [{ contents: '@[테스트 사용자](me@example.test) 평문 본문', mentions: [] }],
+        attachments: [],
       },
     });
   });
@@ -477,10 +486,20 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
             commentId: '900000021',
             contents: '@[테스트 사용자](me@example.test) 질문',
             registerId: 'sender@example.test',
+            registerName: '',
             registeredDateTime: '20261020085900',
             systemCode: '',
+            attachments: [],
             replies: [
-              { replyId: '9000081', contents: '대댓글', registerId: 'me@example.test', registeredDateTime: '20261020090100', systemCode: '' },
+              {
+                replyId: '9000081',
+                contents: '대댓글',
+                registerId: 'me@example.test',
+                registerName: '',
+                registeredDateTime: '20261020090100',
+                systemCode: '',
+                attachments: [],
+              },
             ],
             replyHasNext: true,
           },
@@ -488,8 +507,10 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
             commentId: '900000022',
             contents: '시스템 댓글',
             registerId: 'me@example.test',
+            registerName: '',
             registeredDateTime: '',
             systemCode: 'A00^^',
+            attachments: [],
             replies: [],
             replyHasNext: false,
           },
@@ -544,8 +565,24 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
       ok: true,
       value: {
         replies: [
-          { replyId: '9000090', contents: '열한째 대댓글', registerId: 'me@example.test', registeredDateTime: '20261020090500', systemCode: '' },
-          { replyId: '9000091', contents: '@[테스트 사용자](me@example.test) 열두째', registerId: '', registeredDateTime: '', systemCode: '' },
+          {
+            replyId: '9000090',
+            contents: '열한째 대댓글',
+            registerId: 'me@example.test',
+            registerName: '',
+            registeredDateTime: '20261020090500',
+            systemCode: '',
+            attachments: [],
+          },
+          {
+            replyId: '9000091',
+            contents: '@[테스트 사용자](me@example.test) 열두째',
+            registerId: '',
+            registerName: '',
+            registeredDateTime: '',
+            systemCode: '',
+            attachments: [],
+          },
         ],
         nextCursor: '20',
       },
@@ -561,7 +598,7 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
 
     await expect(connect(server).listReplies('9', '8', null)).resolves.toEqual({
       ok: true,
-      value: { replies: [{ replyId: '1', contents: '하나', registerId: '', registeredDateTime: '', systemCode: '' }], nextCursor: null },
+      value: { replies: [{ replyId: '1', contents: '하나', ...NO_AUTHORSHIP }], nextCursor: null },
     });
     expect(server.requests[0]?.url).toBe('https://api.flow.team/user/comments/9/replies/8');
   });
@@ -575,7 +612,74 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
 
     await expect(connect(server).listReplies('9', '8', '20')).resolves.toEqual({
       ok: true,
-      value: { replies: [{ replyId: '1', contents: '하나', registerId: '', registeredDateTime: '', systemCode: '' }], nextCursor: '30' },
+      value: { replies: [{ replyId: '1', contents: '하나', ...NO_AUTHORSHIP }], nextCursor: '30' },
+    });
+  });
+});
+
+describe('Flow 어댑터: 맥락에 쓰는 작성자와 첨부', () => {
+  it('게시물의 작성자 이름·시각과 첨부 파일 이름을 읽고, 이미지 첨부와 IMAGE 컴포넌트는 넣지 않는다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({
+        postId: '90000011',
+        title: '가짜 제목',
+        registerId: 'sender@example.test',
+        registerName: '보낸 사람',
+        registeredDateTime: '20261020085000',
+        contentJsonYn: 'Y',
+        content: postContent(
+          { COMP_TYPE: 'TEXT', COMP_DETAIL: { CONTENTS: '본문', MENTIONS: [] } },
+          { COMP_TYPE: 'IMAGE', COMP_DETAIL: { FILE_NM: '화면.png' } },
+          { COMP_TYPE: 'FILE', COMP_DETAIL: { FILE_NM: '설계서.pdf' } },
+        ),
+        attachments: [{ ORCP_FILE_NM: '설계서.pdf' }, { fileName: '로그.txt' }, { FILE_NM: '' }],
+        imageAttachments: [{ ORCP_FILE_NM: '화면.png' }],
+      }),
+    });
+
+    await expect(connect(server).getPost('90000011')).resolves.toEqual({
+      ok: true,
+      value: {
+        postId: '90000011',
+        title: '가짜 제목',
+        connectUrl: null,
+        registerName: '보낸 사람',
+        registeredDateTime: '20261020085000',
+        textComponents: [{ contents: '본문', mentions: [] }],
+        attachments: ['설계서.pdf', '로그.txt'],
+      },
+    });
+  });
+
+  it('댓글과 대댓글의 작성자 이름과 첨부 파일 이름을 읽는다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({
+        hasNext: false,
+        comments: [
+          {
+            commentId: '900000021',
+            contents: '질문',
+            registerId: 'sender@example.test',
+            registerName: '보낸 사람',
+            attachments: [{ attachId: '1', fileName: '오류.log' }],
+            replies: [{ replyId: '9000081', contents: '대댓글', registerName: '다른 사람', attachments: [{ fileName: '표.xlsx' }] }],
+            replyHasNext: false,
+          },
+        ],
+      }),
+    });
+
+    /** 받은 댓글 한 쪽. */
+    const result = await connect(server).listComments('90000011', null);
+
+    expect(result.ok && result.value.comments[0]).toMatchObject({
+      registerName: '보낸 사람',
+      attachments: ['오류.log'],
+      replies: [{ registerName: '다른 사람', attachments: ['표.xlsx'] }],
     });
   });
 });

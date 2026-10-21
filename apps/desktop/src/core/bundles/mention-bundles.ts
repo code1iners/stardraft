@@ -1,3 +1,4 @@
+import { contextDocument, omittedItemCount, type BundleContext, type BundleContextResult } from '../context/bundle-context';
 import { mentionLocationKey, type Mention } from '../detection/mention';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
@@ -32,6 +33,8 @@ export interface MentionBundlesOptions {
   logger: Logger;
   /** 지금 키로 묶음 자리의 내 답을 Flow에서 조회한다. 쓸 키가 없거나 조회하지 못하면 `null`. 이미 답함에서 되돌릴 때 쓴다. */
   findMyAnswers: (place: BundlePlace) => Promise<MyAnswer[] | null>;
+  /** 지금 키로 묶음의 맥락을 Flow에서 새로 조회한다. 쓸 키가 없으면 `null`. */
+  collectContext: (bundle: MentionBundle) => Promise<BundleContextResult | null>;
 }
 
 /**
@@ -46,6 +49,10 @@ export class MentionBundles {
   private readonly lane = new SerialQueue();
   /** 묶음이 바뀔 때 부를 함수. */
   private readonly listeners = new Set<() => void>();
+  /** 묶음마다 마지막으로 시작한 맥락 조회의 번호. 늦게 끝난 옛 조회가 새 조회의 결과를 덮지 않게 한다. */
+  private readonly contextRequests = new Map<number, number>();
+  /** 다음 맥락 조회의 번호. */
+  private nextContextRequest = 1;
 
   constructor(private readonly options: MentionBundlesOptions) {}
 
@@ -88,8 +95,9 @@ export class MentionBundles {
    * 자리마다 `lookups`의 내 답으로 "이미 답함"을 판정하고, 모든 멘션이 빠진 묶음은 초안 없이 이미 답함으로 둔다.
    * 새로 저장소 확인 필요가 된 묶음이 있으면 OS 알림을 하나 띄운다.
    */
-  addDetected(mentions: readonly Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baselineAlarmId: string): Promise<void> {
-    return this.lane.run(async () => {
+  async addDetected(mentions: readonly Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baselineAlarmId: string): Promise<void> {
+    /** 멘션을 넣어 처리되지 않은 채로 남은 묶음. 맥락을 새로 조회한다. */
+    const changed = await this.lane.run(async (): Promise<number[]> => {
       /** 지금 시각. */
       const now = this.options.clock.now();
       /** 이번에 바뀌는 묶음과 새로 넣은 멘션. 자리마다 하나다. */
@@ -121,7 +129,7 @@ export class MentionBundles {
       const updated = [...touched].map(([place, { bundle, added }]) => applyDetection(bundle, added, lookups.get(place), now));
       /** 저장한 묶음. */
       const saved = await this.options.stateStore.saveDetectedBundles(updated, baselineAlarmId);
-      if (saved.length === 0) return;
+      if (saved.length === 0) return [];
 
       /** 새로 만든 묶음의 ID. 저장소는 준 순서대로 돌려주므로, ID 없이 넘긴 자리의 묶음이다. */
       const createdIds = new Set(saved.filter((_, index) => updated[index]?.id === null).map((bundle) => bundle.id));
@@ -139,7 +147,57 @@ export class MentionBundles {
       /** 새로 저장소 확인 필요가 된 묶음. 대기열 순서다. */
       const waiting = saved.filter((bundle) => createdIds.has(bundle.id) && countsForReview(bundle.status)).sort(compareBundles);
       if (waiting.length > 0) this.options.notifier.notify(repoCheckNotification(waiting));
+      return saved.filter((bundle) => !isProcessed(bundle.status)).map((bundle) => bundle.id);
     });
+    // 묶음이 바뀌면 초안을 새로 만드므로, 그때 넘길 맥락을 Flow에서 새로 조회한다.
+    await this.refreshContexts(changed);
+  }
+
+  /**
+   * 묶음들의 맥락을 Flow에서 새로 조회해 비교 기준으로 저장한다. 감지 때 받은 내용은 쓰지 않는다.
+   * 조회하지 못한 묶음은 전에 저장한 맥락을 그대로 둔다. 같은 묶음을 거듭 조회하면 마지막으로 시작한 조회의 결과만 저장한다.
+   * 조회한 묶음들은 한 번에 저장해 듣는 쪽에 한 번 알린다.
+   */
+  async refreshContexts(bundleIds: readonly number[]): Promise<void> {
+    /** 묶음마다 조회한 결과. 저장할 것만 남는다. */
+    const fetched = await Promise.all(bundleIds.map((bundleId) => this.fetchContext(bundleId)));
+    /** 묶음 ID마다 저장할 맥락. */
+    const contexts = new Map(fetched.filter((item) => item !== null).map(({ bundleId, context }) => [bundleId, context]));
+    if (contexts.size === 0) return;
+
+    await this.lane.run(async () => {
+      /** 맥락을 바꾼 묶음. */
+      const next = this.bundles.filter((bundle) => contexts.has(bundle.id)).map((bundle) => ({ ...bundle, context: contexts.get(bundle.id)! }));
+      for (const bundle of next) {
+        await this.options.stateStore.saveBundle(bundle);
+        this.bundles = this.bundles.map((item) => (item.id === bundle.id ? bundle : item));
+        this.options.logger.info('bundle.context-saved', {
+          bundleId: bundle.id,
+          omittedCount: omittedItemCount(contextDocument(bundle.context).omissions),
+        });
+      }
+      if (next.length > 0) this.emit();
+    });
+  }
+
+  /** 묶음 하나의 맥락을 조회한다. 조회하지 못했거나, 그 사이 같은 묶음의 조회가 새로 시작됐으면 `null`. */
+  private async fetchContext(bundleId: number): Promise<{ bundleId: number; context: BundleContext } | null> {
+    /** 조회할 묶음. */
+    const bundle = this.bundles.find((item) => item.id === bundleId);
+    if (!bundle) return null;
+    /** 이 조회의 번호. */
+    const request = this.nextContextRequest++;
+    this.contextRequests.set(bundleId, request);
+
+    /** 조회한 결과. 쓸 키가 없거나 조회 중 예외가 나면 `null`. */
+    const result = await this.options.collectContext(structuredClone(bundle)).catch(() => null);
+    if (this.contextRequests.get(bundleId) !== request) return null;
+    this.contextRequests.delete(bundleId);
+    if (!result?.ok) {
+      this.options.logger.warn('bundle.context-failed', { bundleId, reason: result ? result.failure.kind : 'no-key' });
+      return null;
+    }
+    return { bundleId, context: result.context };
   }
 
   /** 묶음을 무시한다. 처리됨의 "무시함"이 되고, 7일 안에 되돌릴 수 있다. 이미 처리됨이면 아무것도 하지 않는다. */
@@ -177,6 +235,8 @@ export class MentionBundles {
         mentions: judgeAnswered(latest.mentions, answers),
       };
     });
+    // 되돌리면 초안을 새로 만드므로 맥락도 새로 조회한다.
+    if (this.bundles.some((item) => item.id === bundleId && !isProcessed(item.status))) await this.refreshContexts([bundleId]);
   }
 
   /** 묶음 하나를 `update`로 바꿔 저장한다. `update`가 `null`을 돌려주면 바꾸지 않는다. 없는 묶음이면 아무것도 하지 않는다. */
@@ -223,6 +283,7 @@ function newBundle(mention: Mention, now: number): UnsavedBundle {
     newMentionCount: 0,
     createdAt: now,
     processedAt: null,
+    context: null,
   };
 }
 

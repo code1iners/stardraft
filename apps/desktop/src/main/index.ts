@@ -6,6 +6,7 @@ import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
+import { collectBundleContext } from '../core/context/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { MentionJudge } from '../core/flow/mention-judgement';
@@ -155,6 +156,16 @@ function start(): void {
         const account = flowAccount.state().account;
         if (!flow || !account) return null;
         return new MentionJudge(flow.api, account.userId).myAnswers(place, [account.userId]);
+      },
+      // 초안을 만들 묶음의 맥락을 지금 키로 새로 조회한다.
+      collectContext: async (bundle) => {
+        /** 지금 키로 만든 Flow 연결. */
+        const flow = connectCurrentFlow();
+        if (!flow) return null;
+        /** 조회한 결과. */
+        const result = await collectBundleContext(flow.api, bundle, systemClock.now());
+        if (!result.ok && result.failure.kind === 'unauthorized') flow.reportKeyRejected();
+        return result;
       },
     });
     await mentionBundles.load();

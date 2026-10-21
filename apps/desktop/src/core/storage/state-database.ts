@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { compareMentions, type BundleStatus, type MentionBundle, type UnsavedBundle } from '../bundles/mention-bundle';
+import type { BundleContext } from '../context/bundle-context';
 import type { MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
@@ -98,6 +99,10 @@ export const STATE_MIGRATIONS: readonly string[] = [
     excluded INTEGER NOT NULL,
     PRIMARY KEY (bundle_id, answer_id)
   ) STRICT;
+  `,
+  // 5: 묶음마다 마지막으로 조회한 맥락(비교 기준). JSON 한 덩어리로 둔다. 이미 있던 묶음은 조회한 적이 없어 비워 둔다.
+  `
+  ALTER TABLE mention_bundle ADD COLUMN context TEXT;
   `,
 ];
 
@@ -294,6 +299,7 @@ export class SqliteStateStore implements StateStore {
       newMentionCount: row.new_mention_count,
       createdAt: row.created_at,
       processedAt: row.processed_at,
+      context: readContext(row.context),
     }));
   }
 
@@ -326,6 +332,7 @@ export class SqliteStateStore implements StateStore {
       newMentionCount: bundle.newMentionCount,
       createdAt: bundle.createdAt,
       processedAt: bundle.processedAt,
+      context: bundle.context === null ? null : JSON.stringify(bundle.context),
     };
     /** 묶음 ID. */
     let id = bundle.id;
@@ -333,8 +340,8 @@ export class SqliteStateStore implements StateStore {
       id = Number(
         this.db
           .prepare(
-            `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
-             VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt)`,
+            `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at, context)
+             VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt, @context)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -343,7 +350,8 @@ export class SqliteStateStore implements StateStore {
       const { changes } = this.db
         .prepare(
           `UPDATE mention_bundle SET post_id = @postId, remark_id = @remarkId, project_id = @projectId, status = @status, post_title = @postTitle,
-             connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt
+             connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt,
+             context = @context
            WHERE id = @id`,
         )
         .run({ ...values, id });
@@ -378,6 +386,16 @@ export class SqliteStateStore implements StateStore {
   }
 }
 
+/** 저장한 맥락 JSON을 읽는다. 없거나 읽을 수 없으면 조회하지 않은 것으로 본다. 다음 조회가 새로 채운다. */
+function readContext(json: string | null): BundleContext | null {
+  if (json === null) return null;
+  try {
+    return JSON.parse(json) as BundleContext;
+  } catch {
+    return null;
+  }
+}
+
 /** 묶음 ID마다 줄을 모은다. 줄 순서는 그대로다. */
 function groupBy<T extends { bundle_id: number }>(rows: readonly T[]): Map<number, T[]> {
   /** 묶음 ID마다 모은 줄. */
@@ -408,6 +426,8 @@ interface BundleRow {
   created_at: number;
   /** 처리한 시각(Unix epoch 밀리초). */
   processed_at: number | null;
+  /** 마지막으로 조회한 맥락의 JSON. 조회하지 않았으면 `null`. */
+  context: string | null;
 }
 
 /** `bundle_answer` 표의 한 줄. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BundledMention, MentionBundle } from '../core/bundles/mention-bundle';
+import type { BundleContext } from '../core/context/bundle-context';
 import { bundleSnapshot, flowUrlOf } from './review-snapshot';
 
 /** 가짜 멘션. 실제 사람이나 글이 아니다. 기본은 08:50(한국 표준시)에 온 댓글 멘션이다. */
@@ -35,6 +36,7 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     newMentionCount: 0,
     createdAt: 1_000,
     processedAt: null,
+    context: null,
     ...overrides,
   };
 }
@@ -77,6 +79,7 @@ describe('묶음 스냅숏', () => {
       processedAt: null,
       canRestore: false,
       canOpenInFlow: true,
+      thread: [],
     });
     expect(snapshot.mentions[0]?.text).toEqual([
       { text: '@테스트 사용자', mention: true },
@@ -104,6 +107,92 @@ describe('묶음 스냅숏', () => {
 
   it('알림 시각을 읽을 수 없으면 감지한 시각을 쓴다', () => {
     expect(bundleSnapshot(bundle({ mentions: [mention('101', { registeredDateTime: '', detectedAt: 4_000 })] }), () => null).mentions[0]?.at).toBe(4_000);
+  });
+});
+
+/** 가짜 맥락. 본문, 머리 댓글(멘션)과 대댓글 둘, 다른 댓글 하나다. */
+function context(): BundleContext {
+  return {
+    fetchedAt: 2_000,
+    post: {
+      title: '가짜 게시물',
+      authorName: '글쓴이',
+      registeredDateTime: '20261020080000',
+      contents: '본문 @[다른 동료](other@example.test)',
+      attachments: ['설계서.pdf'],
+      mention: false,
+    },
+    targetThread: {
+      id: '700',
+      authorName: '보낸 사람',
+      registeredDateTime: '20261020085000',
+      contents: '@[테스트 사용자](me@example.test) 질문',
+      attachments: [],
+      mention: true,
+      replies: [
+        { id: '800', authorName: '동료', registeredDateTime: '20261020085500', contents: '저도 궁금합니다', attachments: ['로그.txt'], mention: false },
+        { id: '801', authorName: '', registeredDateTime: '', contents: '시각 없음', attachments: [], mention: false },
+      ],
+    },
+    otherComments: [
+      { id: '690', authorName: '동료', registeredDateTime: '20261020081000', contents: '다른 이야기', attachments: [], mention: false, replies: [] },
+    ],
+  };
+}
+
+describe('묶음 스냅숏: 스레드 보기', () => {
+  it('댓글 스레드 묶음은 맥락의 게시물 본문과 대상 댓글 스레드를 시간순 글로 넘기고, 묶음의 멘션을 표시한다. 다른 댓글과 사용자 ID는 넘기지 않는다', () => {
+    /** 스냅숏. */
+    const snapshot = bundleSnapshot(bundle({ context: context() }), () => null);
+
+    expect(snapshot.thread).toEqual([
+      {
+        authorName: '글쓴이',
+        place: 'post',
+        at: Date.UTC(2026, 9, 19, 23, 0),
+        text: [
+          { text: '본문 ', mention: false },
+          { text: '@다른 동료', mention: true },
+        ],
+        attachments: ['설계서.pdf'],
+        mention: false,
+      },
+      { authorName: '보낸 사람', place: 'comment', at: Date.UTC(2026, 9, 19, 23, 50), text: expect.any(Array), attachments: [], mention: true },
+      {
+        authorName: '동료',
+        place: 'reply',
+        at: Date.UTC(2026, 9, 19, 23, 55),
+        text: [{ text: '저도 궁금합니다', mention: false }],
+        attachments: ['로그.txt'],
+        mention: false,
+      },
+      { authorName: '', place: 'reply', at: null, text: [{ text: '시각 없음', mention: false }], attachments: [], mention: false },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain('example.test');
+  });
+
+  it('본문 묶음은 본문(멘션) 뒤에 다른 댓글과 그 대댓글을 넘긴다', () => {
+    /** 본문 묶음의 맥락. */
+    const postContext: BundleContext = {
+      ...context(),
+      post: { ...context().post, mention: true },
+      targetThread: null,
+      otherComments: [
+        {
+          ...context().otherComments[0]!,
+          replies: [{ id: '691', authorName: '동료', registeredDateTime: '20261020081500', contents: '답글', attachments: [], mention: false }],
+        },
+      ],
+    };
+
+    /** 스냅숏. */
+    const snapshot = bundleSnapshot(bundle({ remarkId: '-1', mentions: [mention('101', { remarkId: '-1' })], context: postContext }), () => null);
+
+    expect(snapshot.thread.map((entry) => [entry.place, entry.authorName, entry.mention])).toEqual([
+      ['post', '글쓴이', true],
+      ['comment', '동료', false],
+      ['reply', '동료', false],
+    ]);
   });
 });
 

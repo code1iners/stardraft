@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/ipc';
+import { ThreadList } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
 
@@ -42,6 +43,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     processedAt: null,
     canRestore: false,
     canOpenInFlow: true,
+    thread: [],
     ...overrides,
   };
 }
@@ -137,6 +139,44 @@ describe('작은 창: 멘션 묶음', () => {
         />,
       ),
     ).not.toContain('첫 질문입니다');
+  });
+
+  it('맥락을 조회한 묶음은 원문 영역에 "스레드 보기"를 두고, 맥락이 없으면 두지 않는다', () => {
+    /** 본문, 멘션인 머리 댓글, 앞선 대댓글이 든 스레드. */
+    const thread: BundleSnapshot['thread'] = [
+      { authorName: '글쓴이', place: 'post', at: null, text: [{ text: '게시물 본문', mention: false }], attachments: [], mention: false },
+      { authorName: '보낸 사람', place: 'comment', at: null, text: [{ text: '첫 질문입니다', mention: false }], attachments: [], mention: true },
+    ];
+
+    expect(textOf(<PopoverContent snapshot={snapshot([bundle(1, { thread })])} />)).toContain('스레드 보기');
+    expect(textOf(<PopoverContent snapshot={snapshot([bundle(1, { thread })])} />)).not.toContain('게시물 본문');
+    expect(textOf(<PopoverContent snapshot={snapshot([bundle(1)])} />)).not.toContain('스레드 보기');
+  });
+
+  it('스레드 보기는 앞선 글과 멘션을 시간순으로 보이고, 멘션과 첨부 파일 이름을 표시한다', () => {
+    const text = textOf(
+      <ThreadList
+        entries={[
+          { authorName: '글쓴이', place: 'post', at: null, text: [{ text: '게시물 본문', mention: false }], attachments: ['설계서.pdf'], mention: false },
+          {
+            authorName: '보낸 사람',
+            place: 'comment',
+            at: Date.UTC(2026, 9, 19, 23, 50),
+            text: [{ text: '@테스트 사용자', mention: true }, { text: ' 질문', mention: false }],
+            attachments: [],
+            mention: true,
+          },
+          { authorName: '', place: 'reply', at: null, text: [{ text: '앞선 대댓글', mention: false }], attachments: [], mention: false },
+        ]}
+      />,
+    );
+
+    expect(text.indexOf('게시물 본문')).toBeLessThan(text.indexOf('@테스트 사용자 질문'));
+    expect(text.indexOf('@테스트 사용자 질문')).toBeLessThan(text.indexOf('앞선 대댓글'));
+    expect(text).toContain('첨부 있음(설계서.pdf)');
+    expect(text).toContain('보낸 사람 댓글');
+    expect(text).toContain('멘션');
+    expect(text).toContain('이름 없음 대댓글');
   });
 
   it('합쳐진 새 멘션이 있으면 "새 멘션 N건"을 보인다', () => {

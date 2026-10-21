@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BundledMention, UnsavedBundle } from '../bundles/mention-bundle';
+import type { BundleContext } from '../context/bundle-context';
 import type { FlowEmployee } from '../ports/flow-api';
 import { openStateDatabase, SqliteStateStore, STATE_MIGRATIONS } from './state-database';
 
@@ -107,6 +108,7 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     newMentionCount: 0,
     createdAt: 1_000,
     processedAt: null,
+    context: null,
     ...overrides,
   };
 }
@@ -230,7 +232,7 @@ describe('멘션 묶음', () => {
     insert.run('90000011', '-1', '-1', '103', '20261020085200');
     old.close();
 
-    /** 형식 4로 올린 저장소. */
+    /** 마지막 형식으로 올린 저장소. */
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
     expect(
@@ -239,5 +241,58 @@ describe('멘션 묶음', () => {
       ['90000011', '700', 'repo-check-needed', [['101', '', false], ['102', '', false]]],
       ['90000011', '-1', 'repo-check-needed', [['103', '', false]]],
     ]);
+  });
+
+  it('묶음에 저장한 맥락(비교 기준)을 다시 열어도 그대로 읽고, 다시 저장하면 새 맥락으로 바꾼다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const store = new SqliteStateStore(db);
+    /** 처음 조회한 맥락. */
+    const context: BundleContext = {
+      fetchedAt: 2_000,
+      post: { title: '가짜 게시물', authorName: '보낸 사람', registeredDateTime: '20261020085000', contents: '본문', attachments: ['설계서.pdf'], mention: false },
+      targetThread: {
+        id: '700',
+        authorName: '보낸 사람',
+        registeredDateTime: '20261020085900',
+        contents: '@[테스트 사용자](me@example.test) 가짜 질문',
+        attachments: [],
+        mention: true,
+        replies: [{ id: '801', authorName: '동료', registeredDateTime: '20261020090000', contents: '대댓글', attachments: [], mention: false }],
+      },
+      otherComments: [],
+    };
+    /** 저장한 묶음. */
+    const [saved] = await store.saveDetectedBundles([bundle([mention('101', { remarkId: '700' })], { context })], '101');
+    db.close();
+
+    /** 다시 연 저장소. */
+    const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    expect((await reopened.listBundles())[0]?.context).toEqual(context);
+
+    /** 새로 조회한 맥락. */
+    const refreshed: BundleContext = { ...context, fetchedAt: 3_000, targetThread: { ...context.targetThread!, replies: [] } };
+    await reopened.saveBundle({ ...saved!, context: refreshed });
+    expect((await reopened.listBundles())[0]?.context).toEqual(refreshed);
+  });
+
+  it('형식 4에서 올리면 이미 있던 묶음은 맥락 없이 그대로 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 4로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 4), '0.0.9');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'repo-check-needed', '가짜 게시물', NULL, 0, 1000, NULL)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map((item) => [item.postTitle, item.context])).toEqual([['가짜 게시물', null]]);
   });
 });

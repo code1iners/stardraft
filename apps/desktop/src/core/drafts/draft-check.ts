@@ -75,9 +75,7 @@ export async function checkDraftOutput(output: DraftOutput, options: DraftCheckO
 export async function findSecretEvidence(draft: Pick<Draft, 'evidence' | 'repositories'>, secretPatterns: readonly string[]): Promise<DraftEvidence | null> {
   /** 근거 파일이 실제로 가리키는 파일. */
   const targetOf: TargetOf = (item) => evidenceTarget(item, draft.repositories);
-  /** 비밀 파일 패턴에 맞는 근거. */
-  const secret = await firstSecretEvidence(draft.evidence, secretPatterns, targetOf);
-  return secret && (draft.evidence.find((item) => item === secret) ?? null);
+  return firstSecretEvidence(draft.evidence, secretPatterns, targetOf);
 }
 
 /**
@@ -135,7 +133,7 @@ function renumber(output: DraftOutput, fixes: string[]): { paragraphs: DraftPara
  * 에이전트가 적은 경로와, 근거 파일이 실제로 가리키는 파일(심볼릭 링크를 푼 경로)을 모두 본다.
  * 실제 파일이 저장소 안이면 저장소 기준 경로로, 밖이면 절대 경로로 맞춘다. 저장소나 파일이 맞지 않아도 적은 경로만으로 본다.
  */
-async function firstSecretEvidence(evidence: readonly AgentEvidence[], secretPatterns: readonly string[], targetOf: TargetOf): Promise<AgentEvidence | null> {
+async function firstSecretEvidence<T extends AgentEvidence>(evidence: readonly T[], secretPatterns: readonly string[], targetOf: TargetOf): Promise<T | null> {
   for (const item of evidence) {
     if (matchesSecretPattern(normalizedPath(item.path), secretPatterns)) return item;
     /** 근거 파일이 실제로 가리키는 파일. */

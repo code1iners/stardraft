@@ -8,9 +8,11 @@ import { DraftSettings, EXTRA_INSTRUCTIONS_MAX_LENGTH } from './draft-settings';
 
 /** 가짜 설정 저장소 위에 설정 "초안" 칸을 만든다. 초안 대기열과 멘션 묶음에 맡긴 일은 기록만 한다. */
 async function setup(initial: ConstructorParameters<typeof MemorySettingsStore>[0] = {}) {
+  /** 가짜 설정 저장소. */
   const settingsStore = new MemorySettingsStore(initial);
   /** 초안 대기열과 멘션 묶음에 맡긴 일. 맡긴 순서다. */
   const calls: unknown[] = [];
+  /** 설정 "초안" 칸. */
   const draftSettings = new DraftSettings({
     settingsStore,
     logger: createLogger([{ write: () => {} }], new FakeClock(0)),
@@ -82,6 +84,21 @@ describe('설정 "초안" 칸: 비밀 파일 패턴', () => {
 
     expect(settingsStore.settings.extraSecretPatterns).toEqual(['*.vault.yml']);
     expect(calls).toEqual([]);
+  });
+
+  it('패턴을 거의 동시에 둘 추가해도 둘 다 남는다', async () => {
+    const { settingsStore, draftSettings } = await setup();
+    /** 저장이 늦게 끝나는 설정 저장소. 앞의 저장이 끝나기 전에 다음 추가가 설정을 읽는다. */
+    const save = settingsStore.save.bind(settingsStore);
+    settingsStore.save = async (settings) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await save(settings);
+    };
+
+    await Promise.all([draftSettings.addSecretPattern('*.vault.yml'), draftSettings.addSecretPattern('credentials/**')]);
+
+    expect(settingsStore.settings.extraSecretPatterns).toEqual(['*.vault.yml', 'credentials/**']);
+    expect(draftSettings.state().extraSecretPatterns).toEqual(['*.vault.yml', 'credentials/**']);
   });
 
   it('설정을 저장하지 못하면 패턴을 더하지 않고 실행도 다시 돌리지 않는다', async () => {

@@ -41,12 +41,18 @@ export function ExtraInstructionsField({ draftSettings }: DraftSettingsFieldProp
   // 저장한 뒤 새 스냅숏을 받기 전에 칸이 옛 값으로 돌아가지 않게, 마지막으로 친 지침을 따로 둔다.
   /** 마지막으로 친 지침. 치지 않았으면 `null`. */
   const [typed, setTyped] = useState<string | null>(null);
+  /** 칸을 벗어날 때 저장하라고 보낸 지침. 보내지 않았으면 `null`. */
+  const [sent, setSent] = useState<string | null>(null);
   /** 칸의 글. */
   const text = typed ?? saved;
+  // 보낸 지침이 저장되어 새 스냅숏으로 돌아왔고 그 뒤 고치지 않았을 때만 "저장됨"이다. 저장하지 못하면 저장된 지침이 그대로라 보이지 않는다.
+  /** "저장됨"을 보일지 여부. */
+  const savedShown = sent !== null && sent === saved && text === saved;
 
   /** 칸을 벗어나면 친 지침을 저장한다. 그대로면 보내지 않는다. */
   const handleBlur = () => {
     if (typed === null || typed === saved) return;
+    setSent(typed);
     void window.stardraft.send({ type: 'set-extra-instructions', text: typed });
   };
 
@@ -69,7 +75,7 @@ export function ExtraInstructionsField({ draftSettings }: DraftSettingsFieldProp
       />
       <p className="field-note muted">
         칸을 벗어나면 저장하고 다음 실행부터 씁니다. 이미 만든 초안은 다시 만들지 않습니다.
-        {typed !== null && typed === saved && ' 저장됨'}
+        {savedShown && ' 저장됨'}
       </p>
     </div>
   );

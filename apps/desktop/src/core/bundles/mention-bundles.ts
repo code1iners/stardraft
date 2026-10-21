@@ -941,6 +941,8 @@ export class MentionBundles {
    * 되돌리면 새로 만든다. 다시 만들지는 않는다. 결과를 버린 묶음의 ID를 돌려준다.
    */
   async discardSecretEvidenceDrafts(secretPatterns: readonly string[]): Promise<number[]> {
+    // 실행을 끊기에는 늦어 옛 패턴으로 검사한 초안을 저장하는 중일 수 있으므로, 맡은 묶음 바꾸기가 끝난 뒤에 검사할 초안을 고른다.
+    await this.whenIdle();
     /** 결과를 버린 묶음의 ID. */
     const discarded: number[] = [];
     for (const candidate of this.bundles.filter(hasUnpostedDraft)) {

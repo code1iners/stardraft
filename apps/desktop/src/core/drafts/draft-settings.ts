@@ -2,6 +2,7 @@ import { DEFAULT_SECRET_PATTERNS, hasSecretPattern, readSecretPattern, withDefau
 import type { MentionBundles } from '../bundles/mention-bundles';
 import { errorFields, type Logger } from '../logging/logger';
 import type { SettingsStore } from '../ports/settings-store';
+import { SerialQueue } from '../serial-queue';
 import type { DraftQueue } from './draft-queue';
 
 /** 추가 지침의 가장 긴 길이. */
@@ -48,6 +49,8 @@ export interface DraftSettingsOptions {
 export class DraftSettings {
   /** 설정에서 읽어 둔 값. */
   private saved: Pick<DraftSettingsState, 'extraInstructions' | 'extraSecretPatterns'> = { extraInstructions: '', extraSecretPatterns: [] };
+  /** 설정을 읽고 저장하는 일을 하나씩 하는 줄. 거의 동시에 바꿔도 앞의 변경을 덮지 않게 한다. */
+  private readonly lane = new SerialQueue();
   /** 상태가 바뀔 때 부를 함수. */
   private readonly listeners = new Set<() => void>();
 
@@ -77,25 +80,28 @@ export class DraftSettings {
    * 추가 지침을 저장한다. 여러 줄 입력이라 칸을 벗어날 때 부른다. 실행 중인 실행은 그대로 끝나고 다음 실행부터 쓴다.
    * 너무 긴 지침과 그대로인 지침은 저장하지 않는다. 저장하지 못하면 로그만 남긴다.
    */
-  async setExtraInstructions(text: string): Promise<void> {
-    if (text.length > EXTRA_INSTRUCTIONS_MAX_LENGTH || text === this.saved.extraInstructions) return;
-    try {
-      // 다른 칸의 변경을 덮지 않게 저장 직전에 설정을 다시 읽는다.
-      /** 저장 직전의 설정. */
-      const settings = await this.options.settingsStore.load();
-      await this.options.settingsStore.save({ ...settings, extraInstructions: text });
-    } catch (error) {
-      this.options.logger.error('draft-settings.instructions-save-failed', errorFields(error));
-      return;
-    }
-    this.saved = { ...this.saved, extraInstructions: text };
-    this.options.logger.info('draft-settings.instructions-changed', { length: text.length });
-    this.emit();
+  setExtraInstructions(text: string): Promise<void> {
+    return this.lane.run(async () => {
+      if (text.length > EXTRA_INSTRUCTIONS_MAX_LENGTH || text === this.saved.extraInstructions) return;
+      try {
+        // 다른 칸의 변경을 덮지 않게 저장 직전에 설정을 다시 읽는다.
+        /** 저장 직전의 설정. */
+        const settings = await this.options.settingsStore.load();
+        await this.options.settingsStore.save({ ...settings, extraInstructions: text });
+      } catch (error) {
+        this.options.logger.error('draft-settings.instructions-save-failed', errorFields(error));
+        return;
+      }
+      this.saved = { ...this.saved, extraInstructions: text };
+      this.options.logger.info('draft-settings.instructions-changed', { length: text.length });
+      this.emit();
+    });
   }
 
   /**
    * 비밀 파일 패턴을 추가한다. 저장한 뒤 실행 중인 실행을 새 패턴으로 다시 돌리고, 게시하지 않은 초안의 근거를 다시 검사한다.
    * 실행을 다시 돌리는 것이 먼저다. 그래야 검사하는 사이에 옛 패턴으로 끝난 실행이 초안을 저장하지 않는다.
+   * 끊기에는 늦어 이미 저장하는 중인 초안은 멘션 묶음이 저장을 마친 뒤에 함께 검사한다.
    */
   async addSecretPattern(input: string): Promise<SecretPatternAddResult> {
     /** 읽은 패턴. */
@@ -103,19 +109,23 @@ export class DraftSettings {
     if (read.kind !== 'pattern') return read.kind;
     /** 추가할 패턴. */
     const { pattern } = read;
-    /** 패턴을 더한 추가 패턴. */
-    let extraSecretPatterns: string[];
-    try {
-      /** 저장 직전의 설정. */
-      const settings = await this.options.settingsStore.load();
-      if (hasSecretPattern(withDefaultSecretPatterns(settings.extraSecretPatterns), pattern)) return 'duplicate';
-      extraSecretPatterns = [...settings.extraSecretPatterns, pattern];
-      await this.options.settingsStore.save({ ...settings, extraSecretPatterns });
-    } catch (error) {
-      this.options.logger.error('draft-settings.pattern-save-failed', errorFields(error));
-      return 'save-failed';
-    }
-    this.saved = { ...this.saved, extraSecretPatterns };
+    /** 패턴을 더해 저장한 추가 패턴. 더하지 않았으면 그 결과다. */
+    const extraSecretPatterns = await this.lane.run(async (): Promise<string[] | SecretPatternAddResult> => {
+      try {
+        /** 저장 직전의 설정. */
+        const settings = await this.options.settingsStore.load();
+        if (hasSecretPattern(withDefaultSecretPatterns(settings.extraSecretPatterns), pattern)) return 'duplicate';
+        /** 패턴을 더한 추가 패턴. */
+        const patterns = [...settings.extraSecretPatterns, pattern];
+        await this.options.settingsStore.save({ ...settings, extraSecretPatterns: patterns });
+        this.saved = { ...this.saved, extraSecretPatterns: patterns };
+        return patterns;
+      } catch (error) {
+        this.options.logger.error('draft-settings.pattern-save-failed', errorFields(error));
+        return 'save-failed';
+      }
+    });
+    if (!Array.isArray(extraSecretPatterns)) return extraSecretPatterns;
     this.options.logger.info('draft-settings.pattern-added', { count: extraSecretPatterns.length });
     this.emit();
 

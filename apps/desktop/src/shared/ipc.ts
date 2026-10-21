@@ -962,7 +962,7 @@ export type AppCommand =
   /** 추가 지침을 저장한다. 여러 줄 입력이라 칸을 벗어날 때 보낸다. 다음 실행부터 쓴다. */
   | { type: 'set-extra-instructions'; text: string }
   /**
-   * 비밀 파일 패턴을 추가한다. 앞뒤 공백 정리, 쓸 수 없는 글자와 이미 있는 패턴 판단은 main이 한다.
+   * 비밀 파일 패턴을 추가한다. 빈 패턴은 받지 않고, 앞뒤 공백 정리, 쓸 수 없는 글자와 이미 있는 패턴 판단은 main이 한다.
    * 실행 중인 실행을 새 패턴으로 다시 돌리고, 게시하지 않은 초안의 근거를 다시 검사한다.
    */
   | { type: 'add-secret-pattern'; pattern: string }

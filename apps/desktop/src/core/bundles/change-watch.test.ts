@@ -10,9 +10,9 @@ import { MentionJudge } from '../flow/mention-judgement';
 import { createLogger } from '../logging/logger';
 import type { FlowAlarm } from '../ports/flow-api';
 import type { RepoResolution } from '../repos/repo-mappings';
-import { bundleChanges } from './bundle-changes';
 import { bundleRecipients } from '../drafts/post-body';
 import { Posting } from '../posting/posting';
+import { bundleChanges } from './bundle-changes';
 import { mentionSetKey } from './mention-bundle';
 import { MentionBundles } from './mention-bundles';
 
@@ -65,18 +65,26 @@ async function settle(): Promise<void> {
 }
 
 /**
- * 가짜 포트로 감지·멘션 묶음을 만들고, 감지가 폴링마다 변화 감시를 하게 잇는다.
+ * 가짜 포트로 감지·멘션 묶음·게시를 만든다. 감지는 폴링마다 변화 감시를 한다.
  * 게시물 본문과 댓글 700에 송신자 "김철수"가 08:50에 나를 멘션했다. `place`가 `post`면 본문 묶음, `thread`면 댓글 700의 댓글 스레드 묶음이다.
  * `ready`가 참이면(기본) 그 묶음의 맥락을 조회해 비교 기준으로 저장하고 초안을 담아 준비됨으로 둔다. 거짓이면 저장소 확인 필요로 둔다.
  */
 async function setup(place: 'post' | 'thread', { ready = true }: { ready?: boolean } = {}) {
+  /** 가짜 시계. */
   const clock = new FakeClock(NOW);
+  /** 가짜 Flow. */
   const flow = new FakeFlowApi();
+  /** 메모리 상태 저장소. 계정과 기준점이 있다. */
   const stateStore = new MemoryStateStore();
   stateStore.account = { ...FAKE_ME };
   stateStore.baselineAlarmId = '100';
+  /** 진단 로그. 버린다. */
   const logger = createLogger([{ write: () => {} }], clock);
+  /** 띄운 OS 알림을 남기는 알림. */
   const notifier = new RecordingNotifier();
+  /** 지금 키로 부르는 가짜 Flow. */
+  const connectFlow = () => ({ api: flow, reportKeyRejected: () => {} });
+  /** 멘션 묶음. */
   const bundles = new MentionBundles({
     stateStore,
     notifier,
@@ -87,14 +95,10 @@ async function setup(place: 'post' | 'thread', { ready = true }: { ready?: boole
     resolveRepos: async () => GONE_REPO,
   });
   await bundles.load();
-  const detection = new MentionDetection({
-    stateStore,
-    bundles,
-    clock,
-    logger,
-    connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }),
-    watchBundles: () => bundles.watchWaiting(),
-  });
+  /** 멘션 감지. 폴링마다 변화 감시를 한다. */
+  const detection = new MentionDetection({ stateStore, bundles, clock, logger, connectFlow });
+  /** 게시. */
+  const posting = new Posting({ bundles, connectFlow, myUserId: () => ME, clock, logger });
 
   flow.addPost({
     postId: POST_ID,
@@ -119,11 +123,7 @@ async function setup(place: 'post' | 'thread', { ready = true }: { ready?: boole
 
   /** 묶음 ID. */
   const bundleId = bundles.state()[0]!.id;
-  if (ready) {
-    await bundles.regenerateWithRepos(bundleId, ['/fake/work/repo']);
-    await bundles.prepareRun(bundleId);
-    await bundles.saveDraft(bundleId, DRAFT, [], mentionSetKey(bundles.get(bundleId)!));
-  }
+  if (ready) await makeReady(bundles, bundleId);
 
   /** 새 알림을 맨 앞에 두고 다음 주기까지 시간을 돌린다. */
   const poll = async (...alarms: FlowAlarm[]) => {
@@ -131,7 +131,7 @@ async function setup(place: 'post' | 'thread', { ready = true }: { ready?: boole
     clock.advance(POLL_MS);
     await settle();
   };
-  return { clock, flow, stateStore, notifier, bundles, detection, bundleId, poll };
+  return { clock, flow, stateStore, notifier, bundles, detection, posting, bundleId, poll };
 }
 
 /** 묶음의 맥락을 새로 조회해 비교 기준으로 저장하고 초안을 담아 준비됨으로 둔다. */
@@ -145,6 +145,7 @@ async function makeReady(bundles: MentionBundles, bundleId: number): Promise<voi
  * 댓글 700의 댓글 스레드 묶음에 멘션 두 건(김철수의 댓글 멘션, 이영희의 대댓글 801 멘션)을 담아 준비됨으로 둔다.
  */
 async function setupTwoMentions() {
+  /** 감지와 묶음. */
   const context = await setup('thread', { ready: false });
   context.flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 저도 궁금해요`, registerId: COLLEAGUE, registerName: '이영희', registeredDateTime: '20261020085500' });
   await context.poll(alarm('102', { remarkId: '700', replyId: '801', registerId: COLLEAGUE, registerName: '이영희', registeredDateTime: '20261020085500' }));
@@ -212,9 +213,7 @@ describe('변화 감시: 원문 수정과 지켜볼 범위', () => {
     for (let index = 0; index < 22; index += 1) {
       flow.addComment(POST_ID, { commentId: String(720 + index), contents: `댓글 ${index}`, registerId: COLLEAGUE, registeredDateTime: `202610200851${String(index).padStart(2, '0')}` });
     }
-    await bundles.regenerateWithRepos(bundleId, ['/fake/work/repo']);
-    await bundles.prepareRun(bundleId);
-    await bundles.saveDraft(bundleId, DRAFT, [], mentionSetKey(bundles.get(bundleId)!));
+    await makeReady(bundles, bundleId);
     flow.addComment(POST_ID, { commentId: '760', contents: '새 댓글', registerId: COLLEAGUE, registeredDateTime: '20261020090100' });
 
     await poll();
@@ -286,11 +285,13 @@ describe('변화 감시: 내 답이 생김', () => {
     expect(bundles.get(bundleId)?.status).toBe('ready');
   });
 
-  it('초안이 없는 저장소 확인 필요 묶음은 새 글로 알리지 않고, 내 답이 생기면 이미 답함으로 옮긴다', async () => {
+  it('초안이 없는 저장소 확인 필요 묶음은 새 글을 견주지 않고 맥락도 그대로 두며, 내 답이 생기면 이미 답함으로 옮긴다', async () => {
     const { flow, bundles, bundleId, poll } = await setup('thread', { ready: false });
+    /** 감시하기 전의 맥락. */
+    const before = bundles.get(bundleId)!.context;
     flow.addReply(POST_ID, '700', { replyId: '801', contents: '운영 환경 얘기예요', registerId: SENDER, registeredDateTime: '20261020090100' });
     await poll();
-    expect(bundles.get(bundleId)).toMatchObject({ status: 'repo-check-needed', watchedContext: null });
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'repo-check-needed', context: before, watchedContext: null });
     expect(bundleChanges(bundles.get(bundleId)!)).toEqual({ newWritings: [], editedWritings: [], goneMentions: 0 });
 
     flow.addReply(POST_ID, '700', { replyId: '802', contents: '직접 답했습니다', registerId: ME, registeredDateTime: '20261020090200' });
@@ -299,6 +300,7 @@ describe('변화 감시: 내 답이 생김', () => {
   });
 
   it('실패 묶음과 게시 실패 묶음도 내 답이 생기면 이미 답함으로 옮긴다', async () => {
+    /** 생성이 실패한 묶음. */
     const failed = await setup('thread', { ready: false });
     await failed.bundles.regenerateWithRepos(failed.bundleId, ['/fake/work/repo']);
     await failed.bundles.markFailed(failed.bundleId, { reason: 'timed-out', detail: null, lastStep: null, runKind: 'draft' }, [], null);
@@ -306,16 +308,10 @@ describe('변화 감시: 내 답이 생김', () => {
     await failed.poll();
     expect(failed.bundles.get(failed.bundleId)?.status).toBe('already-answered');
 
+    /** 게시가 실패한 묶음. */
     const postFailed = await setup('thread');
-    const posting = new Posting({
-      bundles: postFailed.bundles,
-      connectFlow: () => ({ api: postFailed.flow, reportKeyRejected: () => {} }),
-      myUserId: () => ME,
-      clock: postFailed.clock,
-      logger: createLogger([{ write: () => {} }], postFailed.clock),
-    });
     postFailed.flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'http', status: 403 }, 1);
-    await posting.post(postFailed.bundleId);
+    await postFailed.posting.post(postFailed.bundleId);
     postFailed.clock.advance(5_000);
     await settle();
     expect(postFailed.bundles.get(postFailed.bundleId)?.status).toBe('post-failed');
@@ -325,21 +321,16 @@ describe('변화 감시: 내 답이 생김', () => {
   });
 
   it('생성 중 묶음과 게시 중 묶음은 감시하지 않는다', async () => {
+    /** 다시 만드는 중인 묶음. */
     const generating = await setup('thread');
     await generating.bundles.regenerate(generating.bundleId, { path: 'again' });
     generating.flow.addReply(POST_ID, '700', { replyId: '801', contents: '직접 답했습니다', registerId: ME, registeredDateTime: '20261020090100' });
     await generating.poll();
     expect(generating.bundles.get(generating.bundleId)?.status).toBe('generating');
 
+    /** 게시 카운트다운 중인 묶음. */
     const posting = await setup('thread');
-    const bundlePosting = new Posting({
-      bundles: posting.bundles,
-      connectFlow: () => ({ api: posting.flow, reportKeyRejected: () => {} }),
-      myUserId: () => ME,
-      clock: posting.clock,
-      logger: createLogger([{ write: () => {} }], posting.clock),
-    });
-    await bundlePosting.post(posting.bundleId);
+    await posting.posting.post(posting.bundleId);
     posting.flow.addReply(POST_ID, '700', { replyId: '801', contents: '직접 답했습니다', registerId: ME, registeredDateTime: '20261020090100' });
     await posting.detection.checkNow();
     await settle();
@@ -365,6 +356,33 @@ describe('변화 감시: 멘션이 사라짐', () => {
     expect(bundleChanges(bundle).goneMentions).toBe(1);
     expect(bundleRecipients(bundle).map((recipient) => recipient.name)).toEqual(['김철수']);
     expect(bundles.reviewCount()).toBe(1);
+  });
+
+  it('내 표기만 지워진 멘션 글은 사라진 멘션으로만 알리고 원문 수정으로 세지 않는다', async () => {
+    const { flow, bundles, bundleId, poll } = await setupTwoMentions();
+    flow.editReply(POST_ID, '700', '801', '저도 궁금해요 (멘션 지움)');
+
+    await poll();
+
+    expect(bundles.get(bundleId)?.status).toBe('ready');
+    expect(bundleChanges(bundles.get(bundleId)!)).toEqual({ newWritings: [], editedWritings: [], goneMentions: 1 });
+  });
+
+  it('내 답으로 이미 빠진 멘션은 그 글이 지워져도 사라진 멘션 수에 세지 않는다', async () => {
+    const { flow, bundles, bundleId, poll } = await setupTwoMentions();
+    // 김철수의 멘션(08:50)과 이영희의 멘션(08:55) 사이에 내 답을 썼다고 기록되어, 앞선 멘션은 이미 답한 것으로 빠진다.
+    flow.addReply(POST_ID, '700', { replyId: '802', contents: '앞의 질문에 답합니다', registerId: ME, registeredDateTime: '20261020085200' });
+    await poll();
+    expect(bundles.get(bundleId)?.mentions.map((mention) => [mention.alarmId, mention.answered])).toEqual([
+      ['101', true],
+      ['102', false],
+    ]);
+    flow.editComment(POST_ID, '700', '간격은요? (멘션 지움)');
+
+    await poll();
+
+    expect(bundles.get(bundleId)?.status).toBe('ready');
+    expect(bundleChanges(bundles.get(bundleId)!).goneMentions).toBe(0);
   });
 
   it('수정되어 내 표기가 빠진 멘션도 사라진 것이다. 멘션이 모두 사라지면 원문 사라짐으로 옮기고 초안은 그대로 둔다', async () => {
@@ -515,21 +533,14 @@ describe('변화 감시: 되돌린 뒤의 재판정', () => {
 });
 
 describe('변화 감시: 이 PC가 게시한 글이 답한 범위', () => {
-  /** 댓글 스레드 묶음을 가짜 Flow에 대댓글로 게시한다. 게시한 대댓글의 시각은 `writtenAt`이다. */
-  async function postBundle(context: Awaited<ReturnType<typeof setup>>, bundleId: number, writtenAt: string) {
-    const posting = new Posting({
-      bundles: context.bundles,
-      connectFlow: () => ({ api: context.flow, reportKeyRejected: () => {} }),
-      myUserId: () => ME,
-      clock: context.clock,
-      logger: createLogger([{ write: () => {} }], context.clock),
-    });
+  /** 댓글 스레드 묶음의 [게시]를 누른다. 5초 뒤 올라갈 대댓글의 시각은 `writtenAt`이다. */
+  async function postBundle(context: Awaited<ReturnType<typeof setup>>, bundleId: number, writtenAt: string): Promise<void> {
     context.flow.writtenDateTime = writtenAt;
-    await posting.post(bundleId);
-    return posting;
+    await context.posting.post(bundleId);
   }
 
   it('게시한 글은 게시할 때의 멘션에만 답한 것으로 본다. 카운트다운 중에 와서 새 묶음이 된 멘션은 그 글보다 앞서도 준비된 뒤 이미 답함이 되지 않는다', async () => {
+    /** 감지·묶음·게시. */
     const context = await setup('thread');
     const { clock, flow, bundles, detection, bundleId, poll } = context;
     await postBundle(context, bundleId, '20261020090010');
@@ -551,12 +562,14 @@ describe('변화 감시: 이 PC가 게시한 글이 답한 범위', () => {
   });
 
   it('게시한 글이 답한 범위에 든 멘션은 Flow의 작성 시각과 관계없이 그 글로 답한 것으로 본다', async () => {
+    /** 감지·묶음·게시. */
     const context = await setup('thread');
     const { clock, flow, stateStore, bundles, bundleId, poll } = context;
     await postBundle(context, bundleId, '20261020085900');
     clock.advance(5_000);
     await settle();
     // 게시를 누를 때 조회한 내용에 대댓글 802의 멘션도 있었다. Flow의 작성 시각은 게시한 글보다 늦게 찍혀 있다.
+    // 그 조회와 범위 저장은 게시를 누를 때의 확인이 맡으므로, 여기서는 저장된 범위를 직접 넣는다.
     flow.addReply(POST_ID, '700', { replyId: '802', contents: `${MY_MARKUP} 이것도요`, registerId: COLLEAGUE, registeredDateTime: '20261020090000' });
     /** 게시한 묶음. */
     const posted = bundles.get(bundleId)!;

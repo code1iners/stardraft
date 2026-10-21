@@ -1,6 +1,5 @@
 import type { MentionLocation } from '../detection/mention';
-import { compareAlarmIds } from './alarm-id';
-import type { BundleContext, ContextRemark, ContextWriting } from './bundle-context';
+import { compareRemarks, type BundleContext, type ContextRemark, type ContextWriting } from './bundle-context';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 
 /** 게시물 본문의 글 키. */
@@ -86,7 +85,7 @@ export function contextChanges(baseline: BundleContext, current: BundleContext, 
       continue;
     }
     if (notNew.has(key)) continue;
-    if (oldestComment && isRemark(writing) && compareRemarkOrder(writing, oldestComment) < 0) continue;
+    if (oldestComment && isRemark(writing) && byWrittenTime(writing, oldestComment) < 0) continue;
     changes.newWritings.push(key);
   }
   return changes;
@@ -97,10 +96,5 @@ function isRemark(writing: ContextWriting): writing is ContextRemark {
   return 'id' in writing;
 }
 
-/** 두 글을 쓴 시각, 같거나 모르면 ID 크기로 비교한다. 맥락의 댓글 순서와 같다. */
-function compareRemarkOrder(a: ContextRemark, b: ContextRemark): number {
-  if (a.registeredDateTime && b.registeredDateTime && a.registeredDateTime !== b.registeredDateTime) {
-    return a.registeredDateTime < b.registeredDateTime ? -1 : 1;
-  }
-  return compareAlarmIds(a.id, b.id);
-}
+/** 맥락의 댓글을 쓴 시각, 같으면 ID 크기로 비교한다. 맥락의 댓글 순서와 같다. */
+const byWrittenTime = compareRemarks<ContextRemark>((remark) => remark.id);

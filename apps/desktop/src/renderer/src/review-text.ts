@@ -70,22 +70,23 @@ export const WRITING_CHANGE_LABELS: Record<WritingChangeSnapshot, string> = {
 export const ANSWERED_NOTICE = 'Flow에 이미 내 답이 있습니다';
 
 /**
- * 초안 위 알림 줄의 문구. 합쳐진 새 멘션 수와 준비된 뒤의 변화를 한 줄로 잇는다.
- * 예: "새 멘션 1건 · 초안을 만든 뒤 새 글 2건 · 원문 수정됨 · 멘션 1건 사라짐". 초안이 없는 묶음은 "초안을 만든 뒤"를 붙이지 않는다.
+ * 초안 위 알림 줄의 문구. 합쳐진 새 멘션 수와 초안을 만든 뒤의 변화를 한 줄로 잇는다.
+ * 예: "새 멘션 1건 · 초안을 만든 뒤 새 글 2건 · 원문 수정됨 · 멘션 1건 사라짐". 초안이 없는 묶음은 새 멘션만 알린다.
  * 알릴 것이 없으면 `null`.
  */
 export function noticeText({ newMentionCount, changes, draft }: Pick<BundleSnapshot, 'newMentionCount' | 'changes' | 'draft'>): string | null {
-  /** 준비된 뒤의 변화. */
-  const changed = [
-    changes.newWritingCount > 0 ? `새 글 ${changes.newWritingCount}건` : null,
-    changes.edited ? '원문 수정됨' : null,
-    changes.goneMentionCount > 0 ? `멘션 ${changes.goneMentionCount}건 사라짐` : null,
-  ].filter((part) => part !== null);
+  /** 초안을 만든 뒤의 변화. */
+  const changed = draft
+    ? [
+        changes.newWritingCount > 0 ? `새 글 ${changes.newWritingCount}건` : null,
+        changes.edited ? '원문 수정됨' : null,
+        changes.goneMentionCount > 0 ? `멘션 ${changes.goneMentionCount}건 사라짐` : null,
+      ].filter((part) => part !== null)
+    : [];
   /** 알림 줄에 이을 조각. */
-  const parts = [
-    newMentionCount > 0 ? `새 멘션 ${newMentionCount}건` : null,
-    changed.length > 0 ? `${draft ? '초안을 만든 뒤 ' : ''}${changed.join(' · ')}` : null,
-  ].filter((part) => part !== null);
+  const parts = [newMentionCount > 0 ? `새 멘션 ${newMentionCount}건` : null, changed.length > 0 ? `초안을 만든 뒤 ${changed.join(' · ')}` : null].filter(
+    (part) => part !== null,
+  );
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 

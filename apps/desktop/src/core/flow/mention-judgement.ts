@@ -1,6 +1,6 @@
 import type { MentionLocation } from '../detection/mention';
 import type { FlowAlarm, FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowPost, FlowReply } from '../ports/flow-api';
-import { hasMentionMarkupFor } from './mention-markup';
+import { hasMentionMarkupFor, postBodyMentions } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
 import { isSameFlowUser } from './user-id';
@@ -145,19 +145,12 @@ export class MentionJudge {
     const { postId, remarkId, replyId } = alarm;
     switch (mentionPlaceOf(alarm)) {
       case 'post': {
-        // 본문은 TEXT 컴포넌트의 MENTIONS와 CONTENTS 표기를 둘 다 본다. @전체는 MENTIONS에 "ALL"로 오므로 걸리지 않는다.
         /** 게시물. */
         const post = await this.post(postId);
         if (post.kind !== 'found') return post;
         /** 본문의 글 조각. */
         const components = post.value.textComponents;
-        return found({
-          text: components.map(({ contents }) => contents).join('\n'),
-          mentions: (userId) =>
-            components.some(
-              ({ contents, mentions }) => mentions.some((id) => isSameFlowUser(id, userId)) || hasMentionMarkupFor(contents, userId),
-            ),
-        });
+        return found({ text: components.map(({ contents }) => contents).join('\n'), mentions: (userId) => postBodyMentions(components, userId) });
       }
       case 'comment': {
         /** 댓글. */

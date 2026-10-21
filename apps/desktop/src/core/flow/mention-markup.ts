@@ -1,3 +1,4 @@
+import type { FlowTextComponent } from '../ports/flow-api';
 import { isSameFlowUser } from './user-id';
 
 /** Flow 글의 멘션 표기 `@[표시 이름](사용자 ID)`. 두 번째 묶음이 사용자 ID다. */
@@ -11,6 +12,14 @@ function mentionedUserIds(text: string): string[] {
 /** 글 안에 `userId`를 가리키는 멘션 표기가 있는지 본다. */
 export function hasMentionMarkupFor(text: string, userId: string): boolean {
   return mentionedUserIds(text).some((id) => isSameFlowUser(id, userId));
+}
+
+/**
+ * 게시물 본문이 `userId`를 지목하는지 본다. TEXT 컴포넌트의 `MENTIONS`에 그 ID가 있거나 `CONTENTS`에 그 사람의 멘션 표기가 있으면 지목한 것이다.
+ * 둘 다 본다. `@전체`는 `MENTIONS`에 `ALL`로 오므로 걸리지 않는다.
+ */
+export function postBodyMentions(components: readonly FlowTextComponent[], userId: string): boolean {
+  return components.some(({ contents, mentions }) => mentions.some((id) => isSameFlowUser(id, userId)) || hasMentionMarkupFor(contents, userId));
 }
 
 /** 화면에 보일 글의 한 조각. */

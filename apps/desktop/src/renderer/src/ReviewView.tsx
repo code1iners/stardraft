@@ -39,7 +39,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
   /** 고른 묶음. */
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음. */
-  const { selected, select } = selection;
+  const { selected, select, movedWhileViewing } = selection;
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패 토스트. */
   const { toast, failedToasts, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
@@ -78,7 +78,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                 </button>
               </header>
               <main className="detail-body">
-                <BundleSections bundle={selected} windowKind="expanded" sections={sections} />
+                <BundleSections bundle={selected} windowKind="expanded" sections={sections} movedWhileViewing={movedWhileViewing} />
               </main>
               <BundleFooter
                 bundle={selected}

@@ -249,7 +249,8 @@ describe('멘션 묶음: 맥락', () => {
     await poll(alarm('103', { remarkId: '720', registeredDateTime: '20261020085800' }));
 
     expect(bundles.state().find((bundle) => bundle.remarkId === '720')).toMatchObject({ status: 'already-answered', context: null });
-    expect(flow.requests.slice(before).filter((request) => request.startsWith(`GET /user/posts/`))).toHaveLength(1);
+    // 게시물 조회는 감지의 판정 한 번과, 폴링 뒤 변화 감시가 기다리는 댓글 700 묶음을 다시 조회한 한 번뿐이다.
+    expect(flow.requests.slice(before).filter((request) => request.startsWith(`GET /user/posts/`))).toHaveLength(2);
   });
 
   it('되돌리면 맥락을 새로 조회한다', async () => {

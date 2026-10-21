@@ -4,10 +4,9 @@ import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowRemarkAut
 import { compareAlarmIds } from './alarm-id';
 import { readableFlowTime } from './flow-time';
 import { myAnswersAmong, type MyAnswer } from './mention-judgement';
-import { hasMentionMarkupFor, namedMentionText } from './mention-markup';
+import { hasMentionMarkupFor, namedMentionText, postBodyMentions } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
-import { isSameFlowUser } from './user-id';
 
 /** 맥락 문서의 길이 상한(글자 수). 넘치면 정한 순서대로 빼고, 절대 빼지 않는 것만으로 넘치면 그대로 둔다. */
 export const CONTEXT_CHAR_LIMIT = 30_000;
@@ -138,10 +137,9 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   let targetThread: ContextComment | null = null;
   /** 묶음 자리의 내 답. 본문 묶음이면 게시물에 쓴 내 댓글이다. */
   let myAnswers = myAnswersAmong(comments, myIds);
-  /** 멘션이 일어난 글이 지금도 나를 지목하는지 보는 함수. 본문은 TEXT 컴포넌트의 `MENTIONS`와 표기를 둘 다 본다. */
+  /** 멘션이 일어난 글이 지금도 나를 지목하는지 보는 함수. 본문 묶음이면 게시물 본문이다. */
   let stillMentions = (mention: MentionLocation): boolean =>
-    mentionPlaceOf(mention) === 'post' &&
-    post.value.textComponents.some(({ contents, mentions }) => mentions.some((id) => isMine(id, myIds)) || markupMentions(contents, myIds));
+    mentionPlaceOf(mention) === 'post' && myIds.some((id) => postBodyMentions(post.value.textComponents, id));
   if (!postBody) {
     /** 대상 댓글 스레드의 머리 댓글. */
     const head = comments.find((comment) => comment.commentId === bundle.remarkId);
@@ -156,11 +154,11 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     stillMentions = (mention) => {
       switch (mentionPlaceOf(mention)) {
         case 'comment':
-          return mention.remarkId === head.commentId && markupMentions(head.contents, myIds);
+          return mention.remarkId === head.commentId && mentionsAnyOf(head.contents, myIds);
         case 'reply': {
           /** 멘션이 일어난 대댓글. 지워졌으면 없다. */
           const reply = humanReplies.find((item) => item.replyId === mention.replyId);
-          return reply !== undefined && markupMentions(reply.contents, myIds);
+          return reply !== undefined && mentionsAnyOf(reply.contents, myIds);
         }
         default:
           return false;
@@ -200,14 +198,9 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   };
 }
 
-/** 글에 내 사용자 ID들 가운데 하나를 가리키는 멘션 표기가 있는지 본다. */
-function markupMentions(contents: string, myIds: readonly string[]): boolean {
-  return myIds.some((id) => hasMentionMarkupFor(contents, id));
-}
-
-/** 사용자 ID가 내 사용자 ID들 가운데 하나인지 본다. */
-function isMine(userId: string, myIds: readonly string[]): boolean {
-  return myIds.some((id) => isSameFlowUser(userId, id));
+/** 댓글이나 대댓글에 사용자 ID들 가운데 하나를 가리키는 멘션 표기가 있는지 본다. */
+function mentionsAnyOf(contents: string, userIds: readonly string[]): boolean {
+  return userIds.some((id) => hasMentionMarkupFor(contents, id));
 }
 
 /**
@@ -265,8 +258,8 @@ function remarkOf(id: string, remark: FlowRemarkAuthorship & { contents: string;
   };
 }
 
-/** 글을 쓴 시각, 같으면 ID 크기로 비교하는 함수. 시각이 없는 글은 ID로만 비교한다. */
-function compareRemarks<T extends FlowRemarkAuthorship>(idOf: (remark: T) => string): (a: T, b: T) => number {
+/** 글을 쓴 시각, 같으면 ID 크기로 비교하는 함수. 시각이 없는 글은 ID로만 비교한다. 맥락의 댓글과 대댓글이 이 순서다. */
+export function compareRemarks<T extends Pick<FlowRemarkAuthorship, 'registeredDateTime'>>(idOf: (remark: T) => string): (a: T, b: T) => number {
   return (a, b) => {
     if (a.registeredDateTime && b.registeredDateTime && a.registeredDateTime !== b.registeredDateTime) {
       return a.registeredDateTime < b.registeredDateTime ? -1 : 1;

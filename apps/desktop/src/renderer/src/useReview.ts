@@ -14,6 +14,10 @@ export interface Selection {
   id: number | null;
   /** 막 떠난 묶음 ID. 처리됐다는 상태가 오기 전에 그 묶음을 다시 고르지 않는다. */
   skip: number | null;
+  /** 지난번에 보인 묶음과 그때 처리됨이었는지 여부. 보는 사이 처리됨으로 옮겨졌는지 가린다. 보인 묶음이 없으면 `null`. */
+  shown: { id: number; processed: boolean } | null;
+  /** 보는 사이 변화 감시로 이미 답함·원문 사라짐이 된 묶음 ID. 다른 묶음을 보거나 되돌리면 지운다. */
+  moved: number | null;
 }
 
 /** 창에서 고른 묶음과 대기열. */
@@ -22,11 +26,16 @@ export interface BundleSelection {
   queue: BundleSnapshot[];
   /** 보이는 묶음. 고른 묶음이 없거나 사라졌으면 대기열 첫 묶음이다. 보일 묶음이 없으면 `null`. */
   selected: BundleSnapshot | null;
+  /** 보이는 묶음이 보는 사이 변화 감시로 이미 답함·원문 사라짐이 되었는지 여부. 참이면 "Flow에 이미 내 답이 있습니다 · 되돌리기"를 띄운다. */
+  movedWhileViewing: boolean;
   /** 묶음을 고른다. */
   select: (bundleId: number) => void;
   /** 게시하거나 무시한 묶음을 떠나 다음 준비된 묶음으로 넘어간다. 넘어갈 묶음은 `nextBundleAfter`가 고르고, 없으면 빈 화면이다. */
   leave: (bundleId: number) => void;
 }
+
+/** 변화 감시가 묶음을 옮기는 처리됨 상태. 보던 묶음이 이 상태가 되면 화면을 넘기지 않는다. */
+const AUTO_PROCESSED: readonly BundleSnapshot['status'][] = ['already-answered', 'source-gone'];
 
 /** 게시하거나 무시한 뒤 넘어가도 검토할 것이 있는 상태. 준비됨과 저장소 확인 필요다. */
 const REVIEWABLE: readonly BundleSnapshot['status'][] = ['ready', 'repo-check-needed'];
@@ -47,16 +56,41 @@ export function nextBundleAfter(queue: readonly BundleSnapshot[], bundleId: numb
 
 /**
  * 창이 보일 묶음과 기억할 선택. 고른 묶음이 있으면 처리됨이 되어도 그 묶음을 보인다.
- * 고른 묶음이 없거나 사라졌으면 대기열에서 막 떠난 묶음을 뺀 첫 묶음을 보이고, 그 묶음을 고른 것으로 기억한다.
- * 그래야 보던 묶음이 변화 감시로 이미 답함·원문 사라짐이 되어도 화면이 다음 묶음으로 넘어가지 않는다. 보일 묶음이 없으면 `null`.
+ * 지난번에 보던 묶음이 보는 사이 변화 감시로 이미 답함·원문 사라짐이 되었으면 다음 묶음으로 넘기지 않고 그 묶음을 고른 것으로 둔다.
+ * 그 밖에 고른 묶음이 없거나 사라졌으면 대기열에서 막 떠난 묶음을 뺀 첫 묶음이다. 보일 묶음이 없으면 `null`.
+ * 선택이 그대로면 받은 선택을 그대로 돌려준다.
  */
-export function resolveSelection(bundles: readonly BundleSnapshot[], selection: Selection): { selected: BundleSnapshot | null; selection: Selection } {
+export function resolveSelection(
+  bundles: readonly BundleSnapshot[],
+  selection: Selection,
+): { selected: BundleSnapshot | null; movedWhileViewing: boolean; selection: Selection } {
+  /** 지난번에 보인 묶음의 지금 모습. */
+  const previous = selection.shown ? bundles.find((bundle) => bundle.id === selection.shown?.id) : undefined;
+  /** 보는 사이 변화 감시로 처리됨이 된 묶음. 처리되지 않은 채 보이다가 옮겨졌거나, 그렇게 옮겨진 뒤 계속 보고 있다. */
+  const moved =
+    previous && AUTO_PROCESSED.includes(previous.status) && (selection.moved === previous.id || selection.shown?.processed === false) ? previous : undefined;
   /** 보일 묶음. */
   const selected =
     bundles.find((bundle) => bundle.id === selection.id) ??
+    moved ??
     bundles.find((bundle) => bundle.group !== 'processed' && bundle.id !== selection.skip) ??
     null;
-  return { selected, selection: selected && selected.id !== selection.id ? { id: selected.id, skip: null } : selection };
+  /** 옮겨진 묶음을 계속 보는지 여부. */
+  const viewingMoved = moved !== undefined && selected?.id === moved.id;
+  /** 다음 선택. 옮겨진 묶음은 고른 것으로 두어, 되돌린 뒤에도 그 묶음에 남는다. */
+  const next: Selection = {
+    id: viewingMoved ? moved.id : selection.id,
+    skip: selection.skip,
+    shown: selected && { id: selected.id, processed: selected.group === 'processed' },
+    moved: viewingMoved ? moved.id : null,
+  };
+  /** 선택이 바뀌었는지 여부. */
+  const changed =
+    next.id !== selection.id ||
+    next.moved !== selection.moved ||
+    next.shown?.id !== selection.shown?.id ||
+    next.shown?.processed !== selection.shown?.processed;
+  return { selected, movedWhileViewing: viewingMoved, selection: changed ? next : selection };
 }
 
 /**
@@ -65,11 +99,11 @@ export function resolveSelection(bundles: readonly BundleSnapshot[], selection: 
  */
 export function useBundleSelection(bundles: readonly BundleSnapshot[], initialBundleId: number | null): BundleSelection {
   /** 고른 묶음. */
-  const [selection, setSelection] = useState<Selection>({ id: initialBundleId, skip: null });
+  const [selection, setSelection] = useState<Selection>({ id: initialBundleId, skip: null, shown: null, moved: null });
 
   useEffect(function followRequestedBundle() {
     return window.stardraft.onEvent((event) => {
-      if (event.type === 'review-bundle-requested') setSelection({ id: event.bundleId, skip: null });
+      if (event.type === 'review-bundle-requested') setSelection((current) => ({ ...current, id: event.bundleId, skip: null, moved: null }));
     });
   }, []);
 
@@ -77,17 +111,16 @@ export function useBundleSelection(bundles: readonly BundleSnapshot[], initialBu
   const queue = bundles.filter((bundle) => bundle.group !== 'processed');
   /** 보이는 묶음과 기억할 선택. */
   const resolved = resolveSelection(bundles, selection);
-  /** 보이는 묶음. */
-  const selected = resolved.selected;
-  // 고르지 않고 보던 묶음도 고른 것으로 기억한다. 이전 렌더의 값에서 다음 값을 정하는 것이라 렌더 중에 바꾼다.
+  // 보인 묶음을 기억해 다음 스냅숏에서 보는 사이 옮겨졌는지 가린다. 이전 렌더의 값에서 다음 값을 정하는 것이라 렌더 중에 바꾼다.
   if (resolved.selection !== selection) setSelection(resolved.selection);
 
   return {
     queue,
-    selected,
-    select: (bundleId) => setSelection({ id: bundleId, skip: null }),
+    selected: resolved.selected,
+    movedWhileViewing: resolved.movedWhileViewing,
+    select: (bundleId) => setSelection((current) => ({ ...current, id: bundleId, skip: null, moved: null })),
     leave: (bundleId) => {
-      setSelection({ id: nextBundleAfter(queue, bundleId)?.id ?? null, skip: bundleId });
+      setSelection((current) => ({ ...current, id: nextBundleAfter(queue, bundleId)?.id ?? null, skip: bundleId, moved: null }));
     },
   };
 }

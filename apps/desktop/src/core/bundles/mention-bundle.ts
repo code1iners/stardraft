@@ -57,6 +57,11 @@ export function isProcessed(status: BundleStatus): boolean {
   return listGroupOf(status) === 'processed';
 }
 
+/** Flow에 내 답이 생겼거나 멘션이 사라져 자동으로 처리됨이 된 상태(이미 답함, 원문 사라짐)인지 본다. 되돌릴 때 그 까닭을 기록해 이후 판정에서 뺀다. */
+export function isAutoProcessed(status: BundleStatus): boolean {
+  return status === 'already-answered' || status === 'source-gone';
+}
+
 /** 처리됨에서 되돌릴 수 있는 상태인지 본다. 게시됨은 되돌릴 수 없다. */
 export function isRestorable(status: BundleStatus): boolean {
   return status === 'ignored' || status === 'already-answered' || status === 'source-gone';
@@ -291,7 +296,7 @@ export function activeMentions(bundle: Pick<MentionBundle, 'mentions'>): Bundled
 export function judgeAnswered(
   mentions: readonly BundledMention[],
   answers: readonly RecordedAnswer[],
-  postedRanges: PostedAnswerRanges = new Map(),
+  postedRanges: PostedAnswerRanges,
 ): BundledMention[] {
   /** 세는 답. */
   const counted = answers.filter((answer) => !answer.excluded);

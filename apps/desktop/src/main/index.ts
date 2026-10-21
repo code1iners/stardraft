@@ -298,7 +298,6 @@ function start(): void {
       clock: systemClock,
       logger,
       connectFlow: connectCurrentFlow,
-      watchBundles: () => mentionBundles.watchWaiting(),
     });
     detection = mentionDetection;
     /** 폴링을 마지막으로 시작한 키. 같은 키로 거듭 시작하지 않으려고 둔다. */

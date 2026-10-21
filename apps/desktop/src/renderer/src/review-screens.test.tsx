@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/ipc';
-import { DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
+import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
 import { nextBundleAfter, resolveSelection } from './useReview';
@@ -1065,13 +1065,17 @@ describe('준비된 뒤의 변화', () => {
     expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('notice-line');
   });
 
-  it('초안이 없는 묶음은 사라진 멘션 수만 보이고 [다시 만들기]가 없다', () => {
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([bundle(1, { changes: { newWritingCount: 0, edited: false, goneMentionCount: 1 } })])} />);
+  it('초안이 없는 묶음은 초안 위가 아니므로 변화를 알림 줄에 띄우지 않고, 새 멘션만 알린다', () => {
+    /** 멘션 하나가 사라진 저장소 확인 필요 묶음. */
+    const gone = bundle(1, { changes: { newWritingCount: 0, edited: false, goneMentionCount: 1 } });
 
-    expect(html).toContain('<div class="notice-line"><span>멘션 1건 사라짐</span></div>');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([gone])} />)).not.toContain('notice-line');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([{ ...gone, newMentionCount: 1 }])} />)).toContain(
+      '<div class="notice-line"><span>새 멘션 1건</span></div>',
+    );
   });
 
-  it('이미 답함으로 옮겨진 초안 묶음은 상태 태그만 바꾸고 "Flow에 이미 내 답이 있습니다 · 되돌리기"를 띄운다', () => {
+  it('보던 묶음이 이미 답함으로 옮겨진 직후에는 초안을 그대로 보이고 "Flow에 이미 내 답이 있습니다 · 되돌리기"를 띄운다. 나중에 처리됨 목록에서 열면 띄우지 않는다', () => {
     /** 이미 답함으로 옮겨진 묶음. 초안은 그대로다. */
     const answered: BundleSnapshot = {
       ...READY,
@@ -1080,11 +1084,13 @@ describe('준비된 뒤의 변화', () => {
       canRestore: true,
       draft: { ...READY.draft!, canEdit: false, canRegenerate: false, canPost: false },
     };
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([answered])} initialBundleId={4} />);
+    const justMoved = renderToStaticMarkup(<BundleSections bundle={answered} windowKind="compact" sections={SECTIONS} movedWhileViewing />);
+    const later = renderToStaticMarkup(<BundleSections bundle={answered} windowKind="compact" sections={SECTIONS} movedWhileViewing={false} />);
 
-    expect(html).toMatch(/<div class="notice-line"[^>]*><span>Flow에 이미 내 답이 있습니다<\/span><button[^>]*>되돌리기<\/button><\/div>/);
-    expect(html).toContain('<span class="tag done">이미 답함</span>');
-    expect(html).toContain('실제 서비스에서는 다섯 번까지 다시 시도합니다.');
+    expect(justMoved).toMatch(/<div class="notice-line"[^>]*><span>Flow에 이미 내 답이 있습니다<\/span><button[^>]*>되돌리기<\/button><\/div>/);
+    expect(justMoved).toContain('실제 서비스에서는 다섯 번까지 다시 시도합니다.');
+    expect(later).not.toContain('Flow에 이미 내 답이 있습니다');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([answered])} initialBundleId={4} />)).toContain('<span class="tag done">이미 답함</span>');
   });
 
   it('원문 사라짐 묶음은 상태 태그, 처리됨 안내, [되돌리기]를 보인다', () => {
@@ -1127,13 +1133,38 @@ describe('준비된 뒤의 변화', () => {
     expect(text).toMatch(/동료 대댓글 새 글 새 대댓글/);
   });
 
-  it('보고 있던 묶음은 처리됨으로 옮겨져도 계속 보인다. 고르지 않고 보던 대기열 첫 묶음도 같다', () => {
-    /** 처음 연 창의 선택. 고른 묶음이 없다. */
-    const first = resolveSelection([READY, bundle(5)], { id: null, skip: null });
-    expect(first.selected?.id).toBe(4);
+  it('보던 묶음이 변화 감시로 이미 답함이 되면 다음 묶음으로 넘기지 않고 그 묶음을 계속 보이며, 되돌려도 그 묶음에 남는다', () => {
+    /** 처음 연 창. 고른 묶음 없이 대기열 첫 묶음을 본다. */
+    const first = resolveSelection([READY, bundle(5)], { id: null, skip: null, shown: null, moved: null });
+    expect([first.selected?.id, first.movedWhileViewing]).toEqual([4, false]);
 
     /** 보던 묶음이 이미 답함으로 옮겨진 뒤의 묶음. */
     const moved: BundleSnapshot = { ...READY, status: 'already-answered', group: 'processed', canRestore: true };
-    expect(resolveSelection([bundle(5), moved], first.selection).selected?.id).toBe(4);
+    const second = resolveSelection([bundle(5), moved], first.selection);
+    expect([second.selected?.id, second.movedWhileViewing]).toEqual([4, true]);
+    const third = resolveSelection([bundle(5), moved], second.selection);
+    expect([third.selected?.id, third.movedWhileViewing]).toEqual([4, true]);
+
+    /** 되돌린 뒤. */
+    const restored = resolveSelection([READY, bundle(5)], third.selection);
+    expect([restored.selected?.id, restored.movedWhileViewing]).toEqual([4, false]);
+  });
+
+  it('원문 사라짐으로 옮겨져도 그 묶음을 계속 보인다', () => {
+    const first = resolveSelection([READY, bundle(5)], { id: null, skip: null, shown: null, moved: null });
+    /** 보던 묶음이 원문 사라짐으로 옮겨진 뒤의 묶음. */
+    const gone: BundleSnapshot = { ...READY, status: 'source-gone', group: 'processed', canRestore: true };
+
+    expect(resolveSelection([bundle(5), gone], first.selection).selected?.id).toBe(4);
+  });
+
+  it('보던 묶음이 그대로면 고르지 않고 보던 창은 예전처럼 대기열 첫 묶음을 따라가고, 처리됨 목록에서 연 묶음은 옮겨진 직후로 보지 않는다', () => {
+    const first = resolveSelection([READY, bundle(5)], { id: null, skip: null, shown: null, moved: null });
+    // 더 오래된 멘션의 새 묶음이 대기열 앞에 들어왔다.
+    expect(resolveSelection([bundle(6), READY, bundle(5)], first.selection).selected?.id).toBe(6);
+
+    /** 처리됨 목록에서 연 이미 답함 묶음. */
+    const answered: BundleSnapshot = { ...READY, status: 'already-answered', group: 'processed', canRestore: true };
+    expect(resolveSelection([bundle(5), answered], { id: 4, skip: null, shown: null, moved: null }).movedWhileViewing).toBe(false);
   });
 });

@@ -15,6 +15,7 @@ import {
   bundlePlaceKey,
   canEditDraft,
   canPickRepos,
+  canRegenerate,
   compareBundles,
   compareMentions,
   countsForReview,
@@ -22,10 +23,12 @@ import {
   isDraftTouched,
   isRestorable,
   judgeAnswered,
+  listGroupOf,
   mentionSetKey,
   type BundlePlace,
   type BundleStatus,
   type MentionBundle,
+  type PostFailureReason,
   type RecordedAnswer,
   type RepoCheck,
   type UnsavedBundle,
@@ -135,6 +138,16 @@ export class MentionBundles {
   /** 트레이 숫자. 검토 대기 가운데 준비됨과 저장소 확인 필요 묶음 수다. */
   reviewCount(): number {
     return this.bundles.filter((bundle) => countsForReview(bundle.status)).length;
+  }
+
+  /** 이 PC가 게시해 기록한 글의 ID(`commentId`, `replyId`) 전부. */
+  postedIds(): Set<string> {
+    return new Set(this.bundles.flatMap((bundle) => (bundle.posting?.postedId ? [bundle.posting.postedId] : [])));
+  }
+
+  /** 실패나 게시 실패 묶음이 있는지 본다. 트레이에 빨간 점을 띄운다. */
+  hasFailure(): boolean {
+    return this.bundles.some((bundle) => listGroupOf(bundle.status) === 'failed');
   }
 
   /** 묶음이 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
@@ -474,7 +487,7 @@ export class MentionBundles {
     const inputs = regenerationInputsOf(request);
     if (!inputs) return;
     await this.change(bundleId, `bundle.regenerated-${request.path}`, (bundle) => {
-      if (!bundle.draft || !canEditDraft(bundle.status)) return null;
+      if (!bundle.draft || !canRegenerate(bundle.status)) return null;
       return { ...bundle, ...regenerationOf(bundle, request.path), ...inputs(bundle.directives) };
     });
   }
@@ -514,8 +527,8 @@ export class MentionBundles {
   }
 
   /**
-   * 준비됨 묶음의 게시를 시작해 게시 중(카운트다운)으로 둔다. 게시 중 묶음은 검토 대기에 남지만 트레이 숫자에서는 빠진다.
-   * 준비됨이 아니거나 게시할 수 없는 글(빈 편집기 텍스트, 상한을 넘는 게시 본문)이면 바꾸지 않는다. 시작했으면 참이다.
+   * 준비됨이나 게시 실패 묶음의 게시를 시작해 게시 중(카운트다운)으로 둔다. 게시 중 묶음은 검토 대기에 남지만 트레이 숫자에서는 빠진다.
+   * 게시 실패의 직전 게시 기록은 지운다. 준비됨·게시 실패가 아니거나 게시할 수 없는 글(빈 편집기 텍스트, 상한을 넘는 게시 본문)이면 바꾸지 않는다. 시작했으면 참이다.
    */
   async startPosting(bundleId: number): Promise<boolean> {
     /** 게시 중이 된 묶음. */
@@ -548,7 +561,9 @@ export class MentionBundles {
       if (bundle.status !== 'posting' || bundle.posting !== null) return null;
       /** 보낼 게시 본문. 게시 중에는 초안과 받는 사람을 바꿀 수 없어 [게시]를 누를 때와 같다. */
       const body = postableBody(bundle);
-      return body === null ? { ...bundle, status: 'ready' } : { ...bundle, posting: { body, sentAt: this.options.clock.now(), postedId: null } };
+      return body === null
+        ? { ...bundle, status: 'ready' }
+        : { ...bundle, posting: { body, sentAt: this.options.clock.now(), postedId: null, failure: null } };
     });
     return changed?.posting?.body ?? null;
   }
@@ -560,6 +575,20 @@ export class MentionBundles {
         ? { ...bundle, status: 'posted', processedAt: this.options.clock.now(), posting: { ...bundle.posting, postedId } }
         : null,
     );
+  }
+
+  /**
+   * 게시 요청을 보낸 게시 중 묶음을 게시 실패로 둔다. 게시 기록(보낸 게시 본문)에 사유를 더하고, 초안·편집본·받는 사람은 그대로 둔다.
+   * 게시 실패로 두었으면 참이다. 게시 요청을 보낸 게시 중이 아니면 바꾸지 않고 거짓이다.
+   */
+  async markPostFailed(bundleId: number, failure: PostFailureReason): Promise<boolean> {
+    /** 게시 실패가 된 묶음. */
+    const changed = await this.change(bundleId, 'bundle.post-failed', (bundle) =>
+      bundle.status === 'posting' && bundle.posting && bundle.posting.postedId === null
+        ? { ...bundle, status: 'post-failed', posting: { ...bundle.posting, failure } }
+        : null,
+    );
+    return changed !== null;
   }
 
   /** 게시하지 못한 게시 중 묶음을 준비됨으로 돌린다. 게시 기록은 지우고 초안·편집본·받는 사람은 그대로 둔다. */

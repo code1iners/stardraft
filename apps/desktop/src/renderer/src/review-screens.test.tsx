@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/ipc';
-import { DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList } from './BundleDetail';
+import { DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
 import { nextBundleAfter } from './useReview';
@@ -52,6 +52,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     failure: null,
     repoCheck: null,
     posting: null,
+    postFailure: null,
     ...overrides,
   };
 }
@@ -286,6 +287,7 @@ const READY = bundle(4, {
     editorText: '실제 서비스에서는 다섯 번까지 다시 시도합니다. 시험 환경은 세 번으로 보입니다.\n\n설정을 바꾸면 다음 배포부터 적용됩니다.',
     edited: false,
     canEdit: true,
+    canRegenerate: true,
     recipients: [{ name: '보낸 사람' }, { name: '다른 사람' }],
     postBodyPrefixLength: 59,
     canPost: true,
@@ -740,7 +742,7 @@ describe('재생성', () => {
 
   it('준비됨 묶음은 "에이전트가 이해한 요구" 제목 옆에 요구를 고치는 망치 버튼을 두고, 고칠 수 없는 묶음에는 두지 않는다', () => {
     /** 처리됨 묶음. */
-    const ignored: BundleSnapshot = { ...READY, status: 'ignored', group: 'processed', canRestore: true, draft: { ...READY.draft!, canEdit: false } };
+    const ignored: BundleSnapshot = { ...READY, status: 'ignored', group: 'processed', canRestore: true, draft: { ...READY.draft!, canEdit: false, canRegenerate: false } };
 
     expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).toContain('aria-label="요구 고치기"');
     expect(renderToStaticMarkup(<ReviewContent snapshot={snapshot([ignored])} initialBundleId={4} />)).not.toContain('aria-label="요구 고치기"');
@@ -894,7 +896,7 @@ describe('게시', () => {
       ...READY,
       id: 8,
       status: 'posting',
-      draft: { ...READY.draft!, canEdit: false, canPost: false },
+      draft: { ...READY.draft!, canEdit: false, canRegenerate: false, canPost: false },
       posting: { phase: 'countdown', endsAt: NOW + 4_200 },
     };
   }
@@ -954,7 +956,7 @@ describe('게시', () => {
 
   it('펼친 창에서 게시 중 묶음은 검토 대기에 남고, 게시됨 묶음은 처리됨에 들며 되돌릴 수 없다', () => {
     /** 게시됨 묶음. */
-    const posted: BundleSnapshot = { ...READY, id: 10, status: 'posted', group: 'processed', processedAt: Date.UTC(2026, 9, 20, 0, 5), draft: { ...READY.draft!, canEdit: false, canPost: false } };
+    const posted: BundleSnapshot = { ...READY, id: 10, status: 'posted', group: 'processed', processedAt: Date.UTC(2026, 9, 20, 0, 5), draft: { ...READY.draft!, canEdit: false, canRegenerate: false, canPost: false } };
     const list = textOf(<ReviewContent snapshot={snapshot([countingDown(), posted])} initialBundleId={10} />);
 
     expect(list).toContain('검토 대기 1');
@@ -962,6 +964,64 @@ describe('게시', () => {
     expect(list).toContain('게시됨');
     expect(list).toContain('게시한 묶음입니다. 되돌릴 수 없습니다.');
     expect(list).not.toContain('되돌리기');
+  });
+});
+
+describe('게시 실패', () => {
+  /** 권한이 없어 게시하지 못한 묶음. 편집할 수 있고 다시 게시할 수 있지만 다시 만들 수는 없다. */
+  const POST_FAILED: BundleSnapshot = {
+    ...READY,
+    id: 11,
+    status: 'post-failed',
+    group: 'failed',
+    draft: { ...READY.draft!, canRegenerate: false },
+    postFailure: 'forbidden',
+  };
+
+  /** 그린 HTML에서 [다시 게시] 버튼. 없으면 `undefined`. */
+  function repostButton(html: string): string | undefined {
+    return html.match(/<button[^>]*>다시 게시<\/button>/)?.[0];
+  }
+
+  it('작은 창은 "게시 실패" 태그와 상세 머리의 쉬운 말 사유, 초안 편집기, [무시]와 [다시 게시]를 보인다. 재생성 메뉴와 망치는 없다', () => {
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([POST_FAILED])} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([POST_FAILED])} />);
+
+    expect(text).toContain('게시 실패');
+    expect(text).toContain('이 글에 댓글을 쓸 권한이 없습니다');
+    expect(text).toContain('무시');
+    expect(repostButton(html)).toBeDefined();
+    expect(repostButton(html)).not.toContain('disabled');
+    expect(text).not.toContain('다시 만들기 ▾');
+    expect(html).not.toContain('요구 고치기');
+    expect(text).toContain('실제 서비스에서는 다섯 번까지 다시 시도합니다.');
+  });
+
+  it('사유마다 쉬운 말 한 줄을 보이고, 게시할 수 없는 글로 고쳤으면 [다시 게시]를 끈다', () => {
+    for (const [postFailure, line] of [
+      ['gone', '글이나 댓글이 지워졌습니다'],
+      ['rejected', 'Flow가 글을 받지 않았습니다(길이 등)'],
+      ['rate-limited', 'Flow 요청 한도를 넘었습니다'],
+      ['no-response', 'Flow가 응답하지 않았습니다'],
+    ] as const) {
+      expect(textOf(<ReviewContent snapshot={snapshot([{ ...POST_FAILED, postFailure }])} />)).toContain(line);
+    }
+    /** 4,000자를 넘게 고친 게시 실패 묶음. */
+    const blocked: BundleSnapshot = { ...POST_FAILED, draft: { ...POST_FAILED.draft!, canPost: false } };
+    expect(repostButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([blocked])} />))).toContain('disabled');
+  });
+
+  it('펼친 창에서는 실패 목록에 든다', () => {
+    const text = textOf(<ReviewContent snapshot={snapshot([POST_FAILED, READY])} initialBundleId={4} />);
+
+    expect(text).toContain('실패 1');
+    expect(text).toContain('검토 대기 1');
+  });
+
+  it('게시 실패 토스트는 "게시하지 못했습니다: 송신자님 멘션"이다', () => {
+    const text = textOf(<ToastStack bundles={[POST_FAILED]} ignoreToast={null} failedToasts={[{ key: 1, bundleId: 11 }]} onRestore={() => {}} onCancelPost={() => {}} />);
+
+    expect(text).toContain('게시하지 못했습니다: 보낸 사람, 다른 사람님 멘션');
   });
 });
 

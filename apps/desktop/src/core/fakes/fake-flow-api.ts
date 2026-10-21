@@ -61,6 +61,8 @@ interface ScriptedFailure {
   failure: FlowApiFailure;
   /** 남은 횟수. */
   remaining: number;
+  /** 요청을 처리한(글을 단) 뒤에 실패를 돌려주는지 여부. 응답만 잃은 경우다. */
+  afterProcessing: boolean;
 }
 
 /**
@@ -134,6 +136,11 @@ export class FakeFlowApi implements FlowApi {
     this.comments.set(postId, [...(this.comments.get(postId) ?? []), comment]);
   }
 
+  /** 게시물의 댓글을 지운다. 대댓글도 함께 사라진다. */
+  removeComment(postId: string, commentId: string): void {
+    this.comments.set(postId, (this.comments.get(postId) ?? []).filter((comment) => comment.commentId !== commentId));
+  }
+
   /** 댓글에 대댓글을 단다. 대댓글은 단 순서대로 온다. */
   addReply(postId: string, commentId: string, reply: FakeFlowCommentReply): void {
     /** 부모 댓글. */
@@ -144,7 +151,15 @@ export class FakeFlowApi implements FlowApi {
 
   /** `path`(`메서드 경로`, `?` 앞까지)로 오는 요청을 `times`번 `failure`로 실패시킨다. */
   failOn(path: string, failure: FlowApiFailure, times = Number.POSITIVE_INFINITY): void {
-    this.failures.push({ path, failure, remaining: times });
+    this.failures.push({ path, failure, remaining: times, afterProcessing: false });
+  }
+
+  /**
+   * `path`로 오는 요청을 `times`번 처리한 뒤(게시면 글을 단 뒤) 응답 대신 `failure`를 돌려준다.
+   * Flow에는 올라갔지만 응답을 받지 못한 경우(연결 끊김, 응답 전 `5xx`)를 만든다.
+   */
+  loseResponseOn(path: string, failure: FlowApiFailure, times = 1): void {
+    this.failures.push({ path, failure, remaining: times, afterProcessing: true });
   }
 
   /** `request`(요청 문자열 전체)가 오면 응답하기 전에 `action`을 한 번 한다. 쪽을 넘기는 사이에 새 알림이 오는 경우를 만든다. */
@@ -255,12 +270,11 @@ export class FakeFlowApi implements FlowApi {
 
     /** 이 요청에 걸린 실패. */
     const scripted = this.failures.find((failure) => failure.path === path && failure.remaining > 0);
-    if (scripted) {
-      scripted.remaining -= 1;
-      return { ok: false, failure: scripted.failure };
-    }
+    if (scripted) scripted.remaining -= 1;
+    if (scripted && !scripted.afterProcessing) return { ok: false, failure: scripted.failure };
     /** 대본이 없을 때의 응답. */
     const value = respond();
+    if (scripted) return { ok: false, failure: scripted.failure };
     return value === NOT_FOUND ? { ok: false, failure: { kind: 'http', status: 404 } } : { ok: true, value };
   }
 }

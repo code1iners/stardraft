@@ -27,6 +27,8 @@ import {
   MENTION_PLACE_LABELS,
   postBodyLength,
   postBodyLengthText,
+  POST_FAILURE_TEXT,
+  postFailedToastText,
   postLine,
   postingFooterText,
   PROCESSED_NOTES,
@@ -35,7 +37,7 @@ import {
   runLineText,
   senderLine,
 } from './review-text';
-import { useSecondsLeft, type IgnoreToastState } from './useReview';
+import { useSecondsLeft, type FailedToastState, type IgnoreToastState } from './useReview';
 
 /** 문체 검사에 걸린 문장과 근거 설명 옆에 작게 붙이는 말. */
 const DEVELOPER_TERMS_NOTE = '개발자 용어가 있을 수 있음';
@@ -83,7 +85,13 @@ export function RunLine({ bundle }: BundleProps) {
   return <p className="run-line">{runLineText(bundle.run)}</p>;
 }
 
-/** 작은 창 상세 머리. 첫 줄은 송신자·멘션 자리·시각, 둘째 줄은 게시물과 "Flow에서 열기", 셋째 줄은 실행 줄이다. */
+/** 상세 머리에 더하는 게시 실패 사유 한 줄. 게시 실패가 아니면 그리지 않는다. */
+export function PostFailureLine({ bundle }: BundleProps) {
+  if (!bundle.postFailure) return null;
+  return <p className="post-failure-line">{POST_FAILURE_TEXT[bundle.postFailure]}</p>;
+}
+
+/** 작은 창 상세 머리. 첫 줄은 송신자·멘션 자리·시각, 둘째 줄은 게시물과 "Flow에서 열기", 셋째 줄은 실행 줄이고, 게시 실패면 사유 한 줄을 더한다. */
 export function BundleMeta({ bundle }: BundleProps) {
   return (
     <div className="bundle-meta">
@@ -97,6 +105,7 @@ export function BundleMeta({ bundle }: BundleProps) {
         <OpenInFlowButton bundle={bundle} />
       </p>
       <RunLine bundle={bundle} />
+      <PostFailureLine bundle={bundle} />
     </div>
   );
 }
@@ -723,8 +732,8 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
     if (!open.evidence) void window.stardraft.send({ type: 'set-review-section', window: windowKind, section: 'evidence', open: true });
     setHighlight((current) => ({ bundleId: bundle.id, evidenceId, count: (current?.count ?? 0) + 1 }));
   };
-  /** 요구를 고치는 칸을 보일지 여부. 초안을 고칠 수 있는 묶음에서만 연다. */
-  const editingRequirement = requirementBundleId === bundle.id && draft?.canEdit === true;
+  /** 요구를 고치는 칸을 보일지 여부. 초안을 다시 만들 수 있는 묶음에서만 연다. */
+  const editingRequirement = requirementBundleId === bundle.id && draft?.canRegenerate === true;
   /** 망치 버튼을 눌렀다. 요구 영역이 접혀 있으면 펼치고 요구를 고치는 칸을 연다. */
   const handleFixRequirement = () => {
     if (!open.requirement) void window.stardraft.send({ type: 'set-review-section', window: windowKind, section: 'requirement', open: true });
@@ -759,7 +768,7 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
           section="requirement"
           open={open.requirement}
           title="에이전트가 이해한 요구"
-          action={draft.canEdit && <FixRequirementButton onClick={handleFixRequirement} />}
+          action={draft.canRegenerate && <FixRequirementButton onClick={handleFixRequirement} />}
         >
           {editingRequirement ? (
             <RequirementEditor
@@ -800,7 +809,7 @@ interface BundleFooterProps extends BundleProps {
   onCancel: () => void;
   /** 실패 묶음의 [다시 시도]를 눌렀다. */
   onRetry: () => void;
-  /** 준비됨 묶음의 [게시]를 눌렀다. */
+  /** 준비됨 묶음의 [게시]나 게시 실패 묶음의 [다시 게시]를 눌렀다. */
   onPost: () => void;
   /** 카운트다운 중인 게시의 [취소]를 눌렀다. */
   onCancelPost: () => void;
@@ -809,6 +818,7 @@ interface BundleFooterProps extends BundleProps {
 /**
  * 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다.
  * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가, 준비됨 묶음은 오른쪽에 재생성 메뉴와 [게시]가 있다.
+ * 게시 실패 묶음은 오른쪽에 [다시 게시]만 있다. 편집해 다시 게시할 수는 있지만 다시 만들지는 않는다.
  * 게시 중 묶음은 카운트다운 중이면 남은 초와 [취소]만, 게시 요청을 보냈으면 결과를 기다린다는 말과 꺼진 [게시]만 있다.
  * 재생성 메뉴에서 지시를 덧붙이기로 하면 바닥 줄이 지시를 쓰는 칸이 되고, 편집한 초안이 있으면 다시 만들기 전에 바닥 줄에서 버릴지 묻는다.
  */
@@ -883,6 +893,11 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
       {bundle.status === 'failed' && (
         <button type="button" className="btn primary" onClick={onRetry}>
           다시 시도
+        </button>
+      )}
+      {bundle.status === 'post-failed' && (
+        <button type="button" className="btn primary" disabled={!bundle.draft?.canPost} onClick={onPost}>
+          다시 게시
         </button>
       )}
       {bundle.status === 'ready' && (
@@ -1183,6 +1198,8 @@ interface ToastStackProps {
   bundles: readonly BundleSnapshot[];
   /** 보이는 무시 토스트. 없으면 `null`. */
   ignoreToast: IgnoreToastState | null;
+  /** 보이는 게시 실패 토스트. 띄운 순서다. */
+  failedToasts: readonly FailedToastState[];
   /** 무시 토스트의 [되돌리기]를 눌렀다. */
   onRestore: (bundleId: number) => void;
   /** 카운트다운 토스트의 [취소]를 눌렀다. */
@@ -1190,17 +1207,28 @@ interface ToastStackProps {
 }
 
 /**
- * 창 아래 토스트 자리. 카운트다운 토스트를 먼저, 무시 토스트를 그 아래에 쌓는다. 띄울 토스트가 없으면 그리지 않는다.
- * 카운트다운 토스트는 main의 묶음 상태를 따르므로, 다른 묶음을 보고 있거나 창을 바꿔도 카운트다운 동안 보인다.
+ * 창 아래 토스트 자리. 카운트다운 토스트, 게시 실패 토스트, 무시 토스트 순으로 쌓는다. 띄울 토스트가 없으면 그리지 않는다.
+ * 카운트다운 토스트는 main의 묶음 상태를, 게시 실패 토스트는 main의 실패 알림을 따르므로 다른 묶음을 보고 있어도 뜬다.
  */
-export function ToastStack({ bundles, ignoreToast, onRestore, onCancelPost }: ToastStackProps) {
+export function ToastStack({ bundles, ignoreToast, failedToasts, onRestore, onCancelPost }: ToastStackProps) {
   /** 카운트다운 중인 묶음과 카운트다운이 끝날 시각. */
   const countdowns = bundles.flatMap((bundle) => (bundle.posting?.phase === 'countdown' ? [{ bundle, endsAt: bundle.posting.endsAt }] : []));
-  if (countdowns.length === 0 && !ignoreToast) return null;
+  /** 게시 실패 토스트와 그 묶음. 그사이 사라진 묶음은 뺀다. */
+  const failures = failedToasts.flatMap((toast) => {
+    /** 게시하지 못한 묶음. */
+    const bundle = bundles.find((item) => item.id === toast.bundleId);
+    return bundle ? [{ key: toast.key, bundle }] : [];
+  });
+  if (countdowns.length === 0 && failures.length === 0 && !ignoreToast) return null;
   return (
     <div className="toast-stack">
       {countdowns.map(({ bundle, endsAt }) => (
         <CountdownToast key={`${bundle.id}-${endsAt}`} bundle={bundle} endsAt={endsAt} onCancel={() => onCancelPost(bundle.id)} />
+      ))}
+      {failures.map(({ key, bundle }) => (
+        <div key={key} className="toast" role="alert">
+          <span>{postFailedToastText(bundle)}</span>
+        </div>
       ))}
       {ignoreToast && <IgnoreToast toast={ignoreToast} onRestore={() => onRestore(ignoreToast.bundleId)} />}
     </div>

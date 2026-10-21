@@ -121,6 +121,7 @@ describe('묶음 스냅숏', () => {
       failure: null,
       repoCheck: null,
       posting: null,
+      postFailure: null,
     });
     expect(snapshot.mentions[0]?.text).toEqual([
       { text: '@테스트 사용자', mention: true },
@@ -302,6 +303,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
       editorText: '다섯 번까지 다시 시도합니다. 시험 환경은 세 번으로 보입니다.',
       edited: false,
       canEdit: true,
+      canRegenerate: true,
       recipients: [{ name: '보낸 사람' }],
       // `@[보낸 사람](sender@example.test)` 29자와 공백 하나.
       postBodyPrefixLength: 30,
@@ -567,7 +569,7 @@ describe('게시', () => {
 
   it('게시 요청을 보낸 게시 중 묶음은 결과를 기다린다고 넘긴다', () => {
     /** 게시 요청을 보낸 묶음의 스냅숏. */
-    const snapshot = bundleSnapshot(bundle({ status: 'posting', draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null } }), () => null);
+    const snapshot = bundleSnapshot(bundle({ status: 'posting', draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: null } }), () => null);
 
     expect(snapshot.posting).toEqual({ phase: 'sending' });
   });
@@ -575,12 +577,34 @@ describe('게시', () => {
   it('게시됨 묶음은 처리됨이고 되돌릴 수 없으며, 게시 중이 아니면 게시 단계가 없다', () => {
     /** 게시됨 묶음의 스냅숏. */
     const snapshot = bundleSnapshot(
-      bundle({ status: 'posted', processedAt: 20_000, draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: '950000001' } }),
+      bundle({ status: 'posted', processedAt: 20_000, draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: '950000001', failure: null } }),
       () => null,
     );
 
     expect(snapshot).toMatchObject({ status: 'posted', group: 'processed', canRestore: false, posting: null });
     expect(snapshot.draft?.canPost).toBe(false);
+  });
+
+  it('게시 실패 묶음은 실패 목록에 들고 사유를 넘기며, 편집하고 다시 게시할 수 있지만 다시 만들 수는 없다', () => {
+    /** 게시 실패 묶음의 스냅숏. */
+    const snapshot = bundleSnapshot(
+      bundle({ status: 'post-failed', draft, mentions, editedText: '고친 답입니다.', posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: 'forbidden' } }),
+      () => null,
+    );
+
+    expect(snapshot).toMatchObject({ status: 'post-failed', group: 'failed', postFailure: 'forbidden', posting: null, canRestore: false });
+    expect(snapshot.draft).toMatchObject({ editorText: '고친 답입니다.', canEdit: true, canRegenerate: false, canPost: true });
+  });
+
+  it('게시 실패가 아니면 게시 실패의 사유를 넘기지 않고, 준비됨 묶음은 다시 만들 수 있다', () => {
+    /** 무시한 게시 실패 묶음. 게시 기록에 사유가 남아 있다. */
+    const ignored = bundleSnapshot(
+      bundle({ status: 'ignored', processedAt: 20_000, draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: 'gone' } }),
+      () => null,
+    );
+
+    expect(ignored.postFailure).toBeNull();
+    expect(bundleSnapshot(bundle({ status: 'ready', draft, mentions }), () => null).draft?.canRegenerate).toBe(true);
   });
 
   it('렌더러가 쓰는 게시 본문 상한은 core의 상한과 같다', () => {

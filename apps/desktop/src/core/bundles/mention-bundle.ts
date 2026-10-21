@@ -6,7 +6,7 @@ import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { MyAnswer } from '../flow/mention-judgement';
 import type { RepoCandidate } from '../repos/repo-candidates';
 
-/** 멘션 묶음의 상태. 게시 실패·원문 사라짐은 게시 실패 처리와 변화 감시 기능이 더한다. */
+/** 멘션 묶음의 상태. 원문 사라짐은 변화 감시 기능이 더한다. */
 export type BundleStatus =
   /** 생성 중. 선택 실행이나 초안 실행이 대기열에 있거나 돌고 있다. */
   | 'generating'
@@ -18,6 +18,8 @@ export type BundleStatus =
   | 'posting'
   /** 실패. 생성이 실패했다(시간 초과, 취소함, 빈 초안, 구조 실패 등). */
   | 'failed'
+  /** 게시 실패. 게시 요청이 실패했다. 초안은 그대로 있고, 사유는 게시 기록에 있다. 편집해 다시 게시하거나 무시할 수 있다. */
+  | 'post-failed'
   /** 게시됨. 이 PC가 게시했고 올라간 글의 ID가 게시 기록에 있다. 되돌릴 수 없다. */
   | 'posted'
   /** 무시함. 사용자가 무시했다. */
@@ -38,6 +40,7 @@ export function listGroupOf(status: BundleStatus): BundleListGroup {
     case 'posting':
       return 'awaiting-review';
     case 'failed':
+    case 'post-failed':
       return 'failed';
     case 'posted':
     case 'ignored':
@@ -61,14 +64,19 @@ export function canPickRepos(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
 }
 
-/** 초안을 편집하고 받는 사람을 뺄 수 있는 상태인지 본다. 준비됨이다. */
+/** 초안을 편집하고 받는 사람을 뺄 수 있는 상태인지 본다. 준비됨과 게시 실패다. */
 export function canEditDraft(status: BundleStatus): boolean {
+  return status === 'ready' || status === 'post-failed';
+}
+
+/** 초안을 다시 만들 수 있는 상태인지 본다(다시 만들기, 지시 덧붙이기, 요구 고치기). 준비됨이다. 게시 실패는 편집과 다시 게시만 한다. */
+export function canRegenerate(status: BundleStatus): boolean {
   return status === 'ready';
 }
 
-/** [게시]로 게시를 시작할 수 있는 상태인지 본다. 준비됨이다. 게시 중이면 이미 게시하고 있다. */
+/** [게시]나 [다시 게시]로 게시를 시작할 수 있는 상태인지 본다. 준비됨과 게시 실패다. 게시 중이면 이미 게시하고 있다. */
 export function canPost(status: BundleStatus): boolean {
-  return status === 'ready';
+  return status === 'ready' || status === 'post-failed';
 }
 
 /**
@@ -122,9 +130,22 @@ export interface RecordedAnswer extends MyAnswer {
   excluded: boolean;
 }
 
+/** 게시 실패의 사유. 상세 머리에 쉬운 말 한 줄로 보인다. */
+export type PostFailureReason =
+  /** `403`. 이 글에 댓글을 쓸 권한이 없다. */
+  | 'forbidden'
+  /** `404`, `412`. 게시물이나 머리 댓글이 지워졌다. */
+  | 'gone'
+  /** `400`, `422`와 그 밖의 거절. Flow가 글을 받지 않았다(길이 등). */
+  | 'rejected'
+  /** `429`가 `Retry-After`만큼 기다려 다시 보낸 뒤에도 왔다. */
+  | 'rate-limited'
+  /** 응답이 없거나 `5xx`였고, 그 자리를 다시 조회해도 게시 본문과 같은 내 글이 없었다. */
+  | 'no-response';
+
 /**
- * 게시 기록. 게시 요청을 보내기 직전에 게시 본문과 보낸 시각을 먼저 적고, 성공하면 올라간 글의 ID를 더한다.
- * 결과(`postedId`)가 없는 기록은 요청을 보냈지만 올라갔는지 아직 모르는 것이다.
+ * 게시 기록. 게시 요청을 보내기 직전에 게시 본문과 보낸 시각을 먼저 적고, 성공하면 올라간 글의 ID를, 실패하면 사유를 더한다.
+ * 결과(`postedId`, `failure`)가 모두 없는 기록은 요청을 보냈지만 올라갔는지 아직 모르는 것이다.
  */
 export interface PostingRecord {
   /** 게시 본문. Flow에 보낸 문자열 그대로다. */
@@ -133,6 +154,8 @@ export interface PostingRecord {
   sentAt: number;
   /** 올라간 글의 ID. 본문 묶음이면 새 댓글의 `commentId`, 댓글 스레드 묶음이면 대댓글의 `replyId`다. 결과를 받기 전이면 `null`. */
   postedId: string | null;
+  /** 게시 실패의 사유. 게시 실패가 아니면 `null`. */
+  failure: PostFailureReason | null;
 }
 
 /** 멘션 묶음 자리. 같은 댓글 스레드(`remarkId`가 댓글)나 같은 게시물 본문(`remarkId`가 `"-1"`)이다. */

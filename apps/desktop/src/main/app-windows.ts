@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, type Rectangle } from 'electron';
+import { app, BrowserWindow, dialog, screen, type OpenDialogOptions, type Rectangle } from 'electron';
 import type { AppEvent, SettingsSection } from '../shared/ipc';
 import { IPC_CHANNELS } from '../shared/ipc';
 import { popoverAnchor, popoverPosition } from './popover-position';
@@ -35,6 +35,8 @@ export class AppWindows {
   private review: BrowserWindow | null = null;
   /** 작은 창이 포커스를 잃어 닫힌 시각. */
   private popoverBlurClosedAt = 0;
+  /** 묶음을 보는 창 위에 띄운 폴더 선택 창이 열려 있는지 여부. 그동안은 작은 창이 포커스를 잃어도 닫지 않는다. */
+  private reviewDialogOpen = false;
 
   constructor(
     private readonly getTrayBounds: () => Rectangle,
@@ -44,6 +46,23 @@ export class AppWindows {
   /** 열려 있는 설정 창. 파일 선택 창을 그 위에 띄울 때 쓴다. 없으면 `null`. */
   settingsWindow(): BrowserWindow | null {
     return this.settings;
+  }
+
+  /**
+   * 묶음을 보는 창(펼친 창, 없으면 작은 창) 위에 폴더 선택 창을 띄우고 고른 폴더를 돌려준다. 고르지 않고 닫으면 빈 목록이다.
+   * 작은 창은 포커스를 잃으면 닫히므로, 폴더 선택 창이 떠 있는 동안에는 닫지 않는다.
+   */
+  async pickFoldersOverReview(options: OpenDialogOptions): Promise<string[]> {
+    /** 폴더 선택 창을 붙일 창. */
+    const parent = this.review ?? this.popover;
+    this.reviewDialogOpen = true;
+    try {
+      /** 고른 결과. */
+      const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+      return result.canceled ? [] : result.filePaths;
+    } finally {
+      this.reviewDialogOpen = false;
+    }
   }
 
   /** 열려 있는 모든 창에 변경 이벤트를 보낸다. */
@@ -111,6 +130,7 @@ export class AppWindows {
     });
     // 트레이 팝오버라 다른 곳을 누르면 닫는다.
     window.on('blur', () => {
+      if (this.reviewDialogOpen) return;
       this.popoverBlurClosedAt = Date.now();
       window.close();
     });

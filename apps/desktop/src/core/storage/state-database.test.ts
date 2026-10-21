@@ -111,6 +111,7 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     processedAt: null,
     context: null,
     repoCheck: null,
+    userRepos: null,
     draft: null,
     failure: null,
     runs: [],
@@ -462,5 +463,39 @@ describe('멘션 묶음', () => {
       { draft: null, failure: { ...failure, runKind: null } },
       { draft: null, failure: null },
     ]);
+  });
+
+  it('저장소 선택 창에서 고른 구성을 다시 열어도 순서 그대로 읽는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles(
+      [bundle([mention('101')], { status: 'generating', userRepos: ['/fake/work/web', '/fake/work/api'] }), bundle([mention('102', { postId: '90000012' })])],
+      '102',
+    );
+
+    /** 다시 연 저장소에서 읽은 묶음. */
+    const reopened = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
+
+    expect(reopened.map((item) => item.userRepos)).toEqual([['/fake/work/web', '/fake/work/api'], null]);
+  });
+
+  it('형식 8에서 올리면 이미 있던 묶음은 고른 구성 없이 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 8로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 8), '0.0.9');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'generating', '가짜 게시물', NULL, 0, 1000, NULL)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ status, userRepos }) => ({ status, userRepos }))).toEqual([{ status: 'generating', userRepos: null }]);
   });
 });

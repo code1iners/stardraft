@@ -6,6 +6,8 @@ import { splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
 import type { BundleContext, ContextWriting } from '../core/flow/bundle-context';
 import type { RepoCandidate } from '../core/repos/repo-candidates';
+import type { MappingMatch } from '../core/repos/repo-mappings';
+import type { RepoPickerState } from '../core/repos/repo-picker';
 import type {
   BundleMentionSnapshot,
   BundleSnapshot,
@@ -13,6 +15,7 @@ import type {
   GenerationSnapshot,
   MentionPlaceSnapshot,
   RepoCheckSnapshot,
+  RepoPickerSnapshot,
   RepositorySnapshot,
   ReviewSnapshot,
   RunLineSnapshot,
@@ -33,17 +36,29 @@ export type ProjectLookup = (projectId: string) => FlowProjectInfo | null;
 /** 묶음 ID로 초안 대기열의 진행을 찾는다. 대기열에 없으면 `null`. */
 export type GenerationLookup = (bundleId: number) => GenerationSnapshot | null;
 
+/** Flow 프로젝트의 저장소 매핑과 저장소 구성을 견준다. */
+export type MappingLookup = (projectId: string, repos: readonly string[]) => MappingMatch;
+
 /** 작은 창과 펼친 창이 그릴 묶음 상태. `bundles`는 대기열 순서 그대로 넘긴다. */
 export function reviewSnapshot(
   bundles: readonly MentionBundle[],
   sections: ReviewSnapshot['sections'],
   projectOf: ProjectLookup,
   generationOf: GenerationLookup,
+  mappingOf: MappingLookup,
+  repoPicker: RepoPickerState | null,
 ): ReviewSnapshot {
   return {
-    bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf)),
+    bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf)),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
+    repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
   };
+}
+
+/** 저장소 선택 창의 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function repoPickerSnapshot(picker: RepoPickerState): RepoPickerSnapshot {
+  if (picker.status === 'loading') return { ...picker };
+  return { ...picker, choices: picker.choices.map((choice) => ({ ...choice })) };
 }
 
 /**
@@ -51,7 +66,12 @@ export function reviewSnapshot(
  * 원문 영역에는 묶음에 남은 멘션을 보이고, 모든 멘션이 빠진 이미 답함 묶음이면 빠진 멘션을 보인다.
  * 생성 중 묶음의 진행은 초안 대기열에서 찾고, 대기열이 아직 모르면 기다리는 것으로 본다.
  */
-export function bundleSnapshot(bundle: MentionBundle, projectOf: ProjectLookup, generationOf: GenerationLookup = () => null): BundleSnapshot {
+export function bundleSnapshot(
+  bundle: MentionBundle,
+  projectOf: ProjectLookup,
+  generationOf: GenerationLookup = () => null,
+  mappingOf: MappingLookup = () => 'unmapped',
+): BundleSnapshot {
   /** 묶음에 남은 멘션. */
   const active = activeMentions(bundle);
   /** 원문 영역에 보일 멘션. */
@@ -76,7 +96,7 @@ export function bundleSnapshot(bundle: MentionBundle, projectOf: ProjectLookup, 
     canRestore: isRestorable(bundle.status),
     canOpenInFlow: flowUrlOf(bundle, projectOf) !== null,
     thread: bundle.context ? threadEntries(bundle.context) : [],
-    draft: bundle.draft && draftSnapshot(bundle.draft),
+    draft: bundle.draft && draftSnapshot(bundle.draft, mappingOf(bundle.projectId, bundle.draft.repositories)),
     run: runLine(bundle),
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
     failure: bundle.failure && { ...bundle.failure },
@@ -84,8 +104,11 @@ export function bundleSnapshot(bundle: MentionBundle, projectOf: ProjectLookup, 
   };
 }
 
-/** 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘기고, 자동 선택으로 정했으면 그 내력도 넘긴다. */
-function draftSnapshot(draft: Draft): DraftSnapshot {
+/**
+ * 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘기고, 자동 선택으로 정했으면 그 내력도 넘긴다.
+ * `mapping`은 그 구성을 저장소 매핑과 견준 것이다.
+ */
+function draftSnapshot(draft: Draft, mapping: MappingMatch): DraftSnapshot {
   return {
     requirement: { ...draft.requirement },
     paragraphs: draft.paragraphs.map((paragraph) => ({ sentences: paragraph.sentences.map((sentence) => ({ ...sentence, evidence: [...sentence.evidence] })) })),
@@ -100,6 +123,7 @@ function draftSnapshot(draft: Draft): DraftSnapshot {
     })),
     repositories: draft.repositories.map((path) => ({ name: basename(path), path })),
     autoSelection: draft.autoSelection && { ...draft.autoSelection },
+    mapping,
   };
 }
 

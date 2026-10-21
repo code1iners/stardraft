@@ -6,8 +6,10 @@ import type {
   EvidenceSnapshot,
   FailureSnapshot,
   GenerationSnapshot,
+  MappingMatchSnapshot,
   MentionPlaceSnapshot,
   RepoCheckSnapshot,
+  RepoChoiceGroupSnapshot,
   RunLineSnapshot,
 } from '../../shared/ipc';
 import { AGENT_NAMES } from './AgentSection';
@@ -125,6 +127,22 @@ export const REPO_CHECK_TEXT: Record<RepoCheckSnapshot['kind'], string> = {
   'no-candidates': '작업 폴더에서 저장소를 찾지 못함',
   unsure: '에이전트가 저장소를 확신하지 못함',
   unrelated: '에이전트가 코드와 무관한 멘션으로 판정함',
+};
+
+/** 연결 버튼 문구. 저장소 매핑이 이미 있으면(같은 구성이어도) "매핑을 이 구성으로 바꾸기"다. */
+export function linkButtonText(mapping: MappingMatchSnapshot): string {
+  return mapping === 'unmapped' ? '이 Flow 프로젝트에 연결' : '매핑을 이 구성으로 바꾸기';
+}
+
+/** 연결 버튼을 끈 까닭. 이미 이 구성이 저장소 매핑이다. */
+export const LINKED_NOTE = '이 Flow 프로젝트의 저장소 매핑이 이 구성입니다.';
+
+/** 저장소 선택 창의 후보 무리 머리말. */
+export const REPO_CHOICE_GROUP_LABELS: Record<RepoChoiceGroupSnapshot, string> = {
+  current: '지금 쓰는 저장소',
+  'work-folder': '작업 폴더에서 찾은 저장소',
+  mapping: '다른 매핑에 쓰인 저장소',
+  added: '직접 고른 폴더',
 };
 
 /** 선택 실행이 적은 이유. 에이전트가 비워 두었으면 "이유 없음"이다. */

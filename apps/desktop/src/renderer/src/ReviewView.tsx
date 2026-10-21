@@ -1,6 +1,7 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleSections, IgnoreToast, OpenInFlowButton, RunLine, StatusTag } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
+import { RepoPickerSheet } from './RepoPickerSheet';
 import { BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatMentionTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
@@ -32,8 +33,8 @@ interface ReviewContentProps {
  * "접어 보기"로 보고 있던 묶음을 연 작은 창으로 돌아간다.
  */
 export function ReviewContent({ snapshot, initialBundleId = null }: ReviewContentProps) {
-  /** 묶음 상태. */
-  const { bundles, sections } = snapshot.review;
+  /** 묶음 상태와 열린 저장소 선택 창. */
+  const { bundles, sections, repoPicker } = snapshot.review;
   /** 고른 묶음. */
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음. */
@@ -99,6 +100,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
         </section>
       </div>
       {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
+      {repoPicker && <RepoPickerSheet picker={repoPicker} bundle={bundles.find((bundle) => bundle.id === repoPicker.bundleId) ?? null} />}
     </div>
   );
 }

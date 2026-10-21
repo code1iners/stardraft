@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BundledMention, MentionBundle } from '../core/bundles/mention-bundle';
 import type { RunRecord } from '../core/drafts/draft';
 import type { BundleContext } from '../core/flow/bundle-context';
-import { bundleSnapshot, flowUrlOf } from './review-snapshot';
+import { bundleSnapshot, flowUrlOf, reviewSnapshot } from './review-snapshot';
 
 /** 가짜 멘션. 실제 사람이나 글이 아니다. 기본은 08:50(한국 표준시)에 온 댓글 멘션이다. */
 function mention(alarmId: string, overrides: Partial<BundledMention> = {}): BundledMention {
@@ -38,6 +38,7 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     createdAt: 1_000,
     processedAt: null,
     context: null,
+    userRepos: null,
     repoCheck: null,
     draft: null,
     failure: null,
@@ -276,6 +277,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
         { name: 'billing-web', path: '/fake/work/billing-web' },
       ],
       autoSelection: null,
+      mapping: 'unmapped',
     });
     expect(snapshot.run).toEqual({ agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
     expect(JSON.stringify(snapshot)).not.toContain('costUsd');
@@ -381,6 +383,48 @@ describe('묶음 스냅숏: 자동 선택', () => {
     expect(bundleSnapshot(bundle({ status: 'ready', draft: { ...draft, autoSelection: { kind: 'single-candidate' } } }), () => null).draft?.autoSelection).toEqual({
       kind: 'single-candidate',
     });
+  });
+});
+
+describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
+  /** 초안 하나. */
+  const draft = {
+    requirement: { text: '요구', summary: '요약' },
+    paragraphs: [{ sentences: [{ text: '문장입니다.', evidence: [] }] }],
+    evidence: [],
+    repositories: ['/fake/work/web', '/fake/work/api'],
+    autoSelection: null,
+    createdAt: 144_000,
+  };
+
+  it('초안의 구성을 그 Flow 프로젝트의 저장소 매핑과 견준 결과를 넘긴다. 연결 버튼 문구가 이것으로 정해진다', () => {
+    /** 견준 구성. */
+    const asked: [string, string[]][] = [];
+
+    /** 넘긴 초안. */
+    const snapshot = bundleSnapshot(bundle({ status: 'ready', draft }), () => null, undefined, (projectId, repos) => {
+      asked.push([projectId, [...repos]]);
+      return 'different';
+    }).draft;
+
+    expect(snapshot?.mapping).toBe('different');
+    expect(asked).toEqual([['900001', ['/fake/work/web', '/fake/work/api']]]);
+    expect(bundleSnapshot(bundle({ status: 'ready', draft }), () => null).draft?.mapping).toBe('unmapped');
+  });
+
+  it('열린 저장소 선택 창의 후보와 연결 버튼 상태를 넘기고, 닫혀 있으면 null이다', () => {
+    /** 열린 창. */
+    const picker = {
+      bundleId: 7,
+      status: 'ready' as const,
+      choices: [{ name: 'web', path: '/fake/work/web', group: 'current' as const, checked: true }],
+      mapping: 'same' as const,
+    };
+    /** 창 하나의 영역 펼침 상태. */
+    const sections = { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true };
+
+    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', picker).repoPicker).toEqual(picker);
+    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null).repoPicker).toBeNull();
   });
 });
 

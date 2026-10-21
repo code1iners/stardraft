@@ -158,7 +158,7 @@ interface RunningDraft {
 interface SelectedRepos {
   /** 읽을 저장소(절대 경로). 첫 저장소가 cwd가 된다. */
   repositories: string[];
-  /** 자동 선택의 내력. 저장소 매핑으로 정했으면 `null`. */
+  /** 자동 선택의 내력. 저장소 매핑이나 사용자가 고른 구성으로 정했으면 `null`. */
   autoSelection: AutoSelection | null;
 }
 
@@ -298,6 +298,15 @@ export class DraftQueue {
   /** 실패 묶음을 [다시 시도]한다. 사용자 행동이라 생성 중으로 돌아가면 감지해서 기다리는 묶음보다 앞에 들어간다. */
   async retry(bundleId: number): Promise<void> {
     await this.changeByUser(bundleId, () => this.options.bundles.retry(bundleId));
+  }
+
+  /**
+   * 준비됨이나 저장소 확인 필요 묶음을 저장소 선택 창에서 고른 구성으로 다시 만든다. "다른 저장소로 다시 만들기"와 "저장소를 골라 만들기"다.
+   * 매번 새 실행이고, 처음 입력에 읽을 저장소만 바꿔 넘긴다(직전 결과는 넘기지 않는다). 매핑이 없어도 선택 실행은 돌리지 않는다.
+   * 사용자 행동이라 감지해서 기다리는 묶음보다 앞에 들어간다.
+   */
+  async regenerateWithRepos(bundleId: number, repos: readonly string[]): Promise<void> {
+    await this.changeByUser(bundleId, () => this.options.bundles.regenerateWithRepos(bundleId, repos));
   }
 
   /** 처리됨 묶음을 되돌린다. 초안이 없어 새로 만들게 되면 사용자 행동이라 감지해서 기다리는 묶음보다 앞에 들어간다. */
@@ -479,7 +488,7 @@ export class DraftQueue {
   }
 
   /**
-   * 묶음 하나의 초안을 만든다. 저장소 매핑 확인 → 맥락 조회와 "이미 답함" 확인 → (매핑이 없으면) 자동 선택 → 초안 실행 순서다.
+   * 묶음 하나의 초안을 만든다. 읽을 저장소(고른 구성이나 저장소 매핑) 확인 → 맥락 조회와 "이미 답함" 확인 → (매핑이 없으면) 자동 선택 → 초안 실행 순서다.
    * 자동 선택의 선택 실행이 고르면 다른 묶음에 차례를 넘기지 않고 이 묶음의 초안 실행을 바로 잇는다.
    * 실행마다 일시적 실패는 종류가 달라도 한 번만 다시 실행하고, 그 밖의 실패는 다시 실행하지 않는다.
    * 전역 실패(에이전트를 쓸 수 없음, Flow 키를 쓸 수 없음)나 Flow에 닿지 못함이면 묶음을 실패로 두지 않고 대기열 맨 앞에 되돌려,
@@ -494,7 +503,7 @@ export class DraftQueue {
     entry.mentionSet = mentionSet;
 
     // 기다리는 사이에 매핑된 폴더가 사라졌으면 멘션 묶음이 저장소 확인 필요로 올린다.
-    /** 저장소 매핑을 확인한 결과. 저장소 확인 필요가 되었으면 `null`. */
+    /** 읽을 저장소(고른 구성이나 저장소 매핑)를 확인한 결과. 저장소 확인 필요가 되었으면 `null`. */
     const mapping = await this.options.bundles.reposForRun(entry.bundleId);
     if (entry.interruption) return this.afterInterruption(entry, []);
     if (!mapping) return;
@@ -522,9 +531,9 @@ export class DraftQueue {
 
     /** 이번 생성. 맥락 문서는 한 번 만들어 선택 실행과 초안 실행에 같은 것을 넘긴다. */
     const generation: Generation = { entry, mentionSet, runs: [], ...(await this.runData(prepared)) };
-    /** 초안 실행에 넘길 저장소와 자동 선택의 내력. 매핑이 없으면 자동 선택으로 정하고, 정하지 못했으면 `null`이다. */
+    /** 초안 실행에 넘길 저장소와 자동 선택의 내력. 고른 구성도 매핑도 없으면 자동 선택으로 정하고, 정하지 못했으면 `null`이다. */
     const selected: SelectedRepos | null =
-      mapping.kind === 'mapped' ? { repositories: mapping.repos, autoSelection: null } : await this.selectRepos(generation, agent);
+      mapping.kind === 'unmapped' ? await this.selectRepos(generation, agent) : { repositories: mapping.repos, autoSelection: null };
     if (!selected) return;
     /** 초안 실행에 넘길 저장소. 첫 저장소가 cwd가 된다. */
     const { repositories } = selected;

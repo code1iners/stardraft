@@ -8,6 +8,7 @@ import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
 import type { RepoMappings, RepoMappingsState } from '../core/repos/repo-mappings';
+import type { RepoPicker } from '../core/repos/repo-picker';
 import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
 import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
@@ -60,6 +61,8 @@ export interface IpcServices {
   bundles: MentionBundles;
   /** 생성 중 묶음의 진행과 취소, 생성을 다시 시작하는 사용자 행동(다시 시도, 되돌리기). */
   drafts: DraftQueue;
+  /** 저장소 선택 창. */
+  repoPicker: RepoPicker;
   /** 작은 창과 펼친 창의 영역 펼침 상태. */
   reviewSections: ReviewSections;
 }
@@ -111,11 +114,19 @@ export function registerIpc(services: IpcServices): void {
   services.drafts.onChange(broadcastReview);
   services.reviewSections.onChange(broadcastReview);
   services.repoMappings.onChange(broadcastReview);
+  services.repoPicker.onChange(broadcastReview);
 }
 
 /** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서 읽는다. */
-function currentReviewSnapshot({ bundles, drafts, reviewSections, repoMappings }: IpcServices) {
-  return reviewSnapshot(bundles.state(), reviewSections.state(), projectLookup(repoMappings), (bundleId) => drafts.progress(bundleId));
+function currentReviewSnapshot({ bundles, drafts, reviewSections, repoMappings, repoPicker }: IpcServices) {
+  return reviewSnapshot(
+    bundles.state(),
+    reviewSections.state(),
+    projectLookup(repoMappings),
+    (bundleId) => drafts.progress(bundleId),
+    (projectId, repos) => repoMappings.matchOf(projectId, repos),
+    repoPicker.state(),
+  );
 }
 
 /** 참여 Flow 프로젝트 목록에서 Flow 프로젝트를 찾는 함수. 목록을 아직 받지 않았으면 언제나 `null`이다. */
@@ -166,6 +177,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     launchAtLogin,
     bundles,
     drafts,
+    repoPicker,
     reviewSections,
   } = services;
   switch (command.type) {
@@ -248,6 +260,27 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);
       return;
+    case 'link-bundle-repos':
+      await linkBundleRepos(services, command.bundleId);
+      return;
+    case 'open-repo-picker':
+      await repoPicker.open(command.bundleId);
+      return;
+    case 'set-repo-picker-checked':
+      repoPicker.setChecked(command.path, command.checked);
+      return;
+    case 'pick-repo-picker-folders':
+      await pickRepoPickerFolders(windows, repoPicker);
+      return;
+    case 'link-repo-picker':
+      await repoPicker.link();
+      return;
+    case 'generate-with-repo-picker':
+      await repoPicker.generate();
+      return;
+    case 'close-repo-picker':
+      repoPicker.close();
+      return;
     case 'expand-review':
       windows.openReview(command.bundleId);
       return;
@@ -275,6 +308,34 @@ async function openBundleInFlow({ bundles, repoMappings, logger }: IpcServices, 
   } catch (error) {
     logger.warn('flow.open-failed', { bundleId, ...errorFields(error) });
   }
+}
+
+/**
+ * 준비됨 묶음의 저장소 영역 연결 버튼. 그 초안을 만든 구성으로 Flow 프로젝트의 저장소 매핑을 덮어쓴다.
+ * 렌더러가 보낸 경로는 받지 않고 main이 가진 묶음에서 구성을 읽는다. 초안이 없으면 아무것도 하지 않는다.
+ */
+async function linkBundleRepos({ bundles, repoMappings, logger }: IpcServices, bundleId: number): Promise<void> {
+  /** 연결할 묶음. */
+  const bundle = bundles.get(bundleId);
+  if (!bundle?.draft) {
+    logger.warn('repo-mappings.link-skipped', { bundleId });
+    return;
+  }
+  await repoMappings.replaceRepos(bundle.projectId, bundle.draft.repositories);
+}
+
+/** 저장소 선택 창의 "폴더 직접 고르기". 폴더 선택 창으로 받은 폴더를 체크한 후보로 더한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
+async function pickRepoPickerFolders(windows: AppWindows, repoPicker: RepoPicker): Promise<void> {
+  if (!repoPicker.state()) return;
+  /** 폴더 선택 창 설정. git 저장소가 아닌 코드 폴더도 고를 수 있다. */
+  const options: OpenDialogOptions = {
+    title: '저장소 폴더 고르기',
+    buttonLabel: '고르기',
+    properties: ['openDirectory', 'multiSelections'],
+  };
+  /** 고른 폴더. */
+  const paths = await windows.pickFoldersOverReview(options);
+  if (paths.length > 0) repoPicker.addFolders(paths);
 }
 
 /** core의 온보딩 상태를 렌더러에 넘길 모양으로 바꾼다. */

@@ -15,7 +15,9 @@ import { errorFields } from '../core/logging/logger';
 import { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import { Onboarding } from '../core/onboarding/onboarding';
 import type { FlowConnection } from '../core/ports/flow-api';
+import { findSelectionScope } from '../core/repos/repo-candidates';
 import { RepoMappings } from '../core/repos/repo-mappings';
+import { RepoPicker } from '../core/repos/repo-picker';
 import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { openAppData, type AppData } from '../core/storage/app-data';
@@ -196,6 +198,14 @@ function start(): void {
       logger,
     });
     drafts = draftQueue;
+    /** 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. 창을 열 때마다 설정의 작업 폴더를 새로 훑는다. */
+    const repoPicker = new RepoPicker({
+      bundle: (bundleId) => mentionBundles.get(bundleId),
+      mappings: repoMappings,
+      findWorkFolderRepos: async () => (await findSelectionScope((await appData!.settingsStore.load()).workFolders)).candidates,
+      regenerate: (bundleId, repos) => draftQueue.regenerateWithRepos(bundleId, repos),
+    });
+    mentionBundles.onChange(() => repoPicker.bundlesChanged());
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
     // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.
     /** 목록을 받은 계정의 사용자 ID. */
@@ -254,6 +264,7 @@ function start(): void {
       launchAtLogin,
       bundles: mentionBundles,
       drafts: draftQueue,
+      repoPicker,
       reviewSections: new ReviewSections(),
     });
     /** 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣는다. */

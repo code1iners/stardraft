@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type MouseEvent, type ReactNode } from 'react';
 import type {
   AutoSelectionSnapshot,
   BundleSnapshot,
@@ -21,6 +21,8 @@ import {
   failureText,
   formatMentionTime,
   generationStepText,
+  LINKED_NOTE,
+  linkButtonText,
   MENTION_PLACE_LABELS,
   postLine,
   PROCESSED_NOTES,
@@ -304,16 +306,32 @@ function RepositoryList({ repositories }: RepositoryListProps) {
 
 /** 초안의 저장소 영역에 넘기는 값. */
 interface DraftRepositoriesProps {
+  /** 초안이 있는 묶음 ID. 연결 명령에 실어 보낸다. */
+  bundleId: number;
   /** 그릴 초안. */
   draft: DraftSnapshot;
 }
 
-/** 준비된 묶음의 저장소 영역 내용. 초안을 만들 때 읽은 저장소와, 자동 선택으로 정했으면 그 까닭을 보인다. */
-function DraftRepositories({ draft }: DraftRepositoriesProps) {
+/**
+ * 준비된 묶음의 저장소 영역 내용. 초안을 만들 때 읽은 저장소와, 자동 선택으로 정했으면 그 까닭, 연결 버튼을 보인다.
+ * 연결 버튼은 이 구성으로 Flow 프로젝트의 저장소 매핑을 덮어쓴다. 이미 이 구성이 매핑이면 꺼 두고 그렇다고 알린다.
+ */
+function DraftRepositories({ bundleId, draft }: DraftRepositoriesProps) {
+  /** 이 구성으로 저장소 매핑을 덮어쓴다. 구성은 main이 묶음에서 읽는다. */
+  const handleLink = () => {
+    void window.stardraft.send({ type: 'link-bundle-repos', bundleId });
+  };
+
   return (
     <>
       <RepositoryList repositories={draft.repositories} />
       {draft.autoSelection && <AutoSelectionNote autoSelection={draft.autoSelection} />}
+      <div className="repo-check-actions">
+        <button type="button" className="btn" disabled={draft.mapping === 'same'} onClick={handleLink}>
+          {linkButtonText(draft.mapping)}
+        </button>
+        {draft.mapping === 'same' && <p className="small muted">{LINKED_NOTE}</p>}
+      </div>
     </>
   );
 }
@@ -354,14 +372,24 @@ interface RepoCheckBodyProps {
   repoCheck: RepoCheckSnapshot | null;
 }
 
-/** 저장소 확인 필요 묶음의 저장소 영역 내용. 사유와 그 내용 아래에 [저장소를 골라 만들기]를 둔다. */
-function RepoCheckBody({ repoCheck }: RepoCheckBodyProps) {
+/** 저장소 확인 필요 묶음의 저장소 영역 내용에 넘기는 값. */
+interface RepoCheckActionsProps extends RepoCheckBodyProps {
+  /** 묶음 ID. 저장소 선택 창을 열 때 실어 보낸다. */
+  bundleId: number;
+}
+
+/** 저장소 확인 필요 묶음의 저장소 영역 내용. 사유와 그 내용 아래에 저장소 선택 창을 여는 [저장소를 골라 만들기]를 둔다. */
+function RepoCheckBody({ bundleId, repoCheck }: RepoCheckActionsProps) {
+  /** 저장소 선택 창을 연다. */
+  const handleOpenPicker = () => {
+    void window.stardraft.send({ type: 'open-repo-picker', bundleId });
+  };
+
   return (
     <>
       <RepoCheckReason repoCheck={repoCheck} />
       <div className="repo-check-actions">
-        {/* 저장소 선택 창이 생기기 전이라 꺼 둔다. */}
-        <button type="button" className="btn" disabled title="저장소 선택 창은 아직 준비되지 않았습니다.">
+        <button type="button" className="btn" onClick={handleOpenPicker}>
           저장소를 골라 만들기
         </button>
       </div>
@@ -487,7 +515,7 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
   /** 저장소 영역. 초안을 만들 때 쓴 저장소와 자동으로 고른 까닭, 또는 저장소 확인 필요 사유를 보인다. */
   const repository = (draft || bundle.status === 'repo-check-needed') && (
     <ReviewSectionBlock windowKind={windowKind} section="repository" open={open.repository} title="저장소">
-      {draft ? <DraftRepositories draft={draft} /> : <RepoCheckBody repoCheck={bundle.repoCheck} />}
+      {draft ? <DraftRepositories bundleId={bundle.id} draft={draft} /> : <RepoCheckBody bundleId={bundle.id} repoCheck={bundle.repoCheck} />}
     </ReviewSectionBlock>
   );
 
@@ -542,7 +570,7 @@ interface BundleFooterProps extends BundleProps {
 
 /**
  * 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다.
- * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가 있다.
+ * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가, 준비됨 묶음은 오른쪽에 재생성 메뉴가 있다.
  */
 export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }: BundleFooterProps) {
   if (bundle.status === 'generating') {
@@ -580,7 +608,28 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }:
           다시 시도
         </button>
       )}
+      {bundle.status === 'ready' && <RegenerateMenu bundle={bundle} />}
     </footer>
+  );
+}
+
+/** 준비됨 묶음의 재생성 메뉴. "다른 저장소로 다시 만들기"는 저장소 선택 창을 연다. 바닥 줄 위로 펼친다. */
+function RegenerateMenu({ bundle }: BundleProps) {
+  /** 메뉴를 닫고 저장소 선택 창을 연다. */
+  const handleOtherRepos = (event: MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.closest('details')?.removeAttribute('open');
+    void window.stardraft.send({ type: 'open-repo-picker', bundleId: bundle.id });
+  };
+
+  return (
+    <details className="menu">
+      <summary className="btn">다시 만들기 ▾</summary>
+      <div className="menu-list" role="menu">
+        <button type="button" role="menuitem" className="menu-item" onClick={handleOtherRepos}>
+          다른 저장소로 다시 만들기
+        </button>
+      </div>
+    </details>
   );
 }
 

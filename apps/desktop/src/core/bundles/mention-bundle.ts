@@ -131,6 +131,11 @@ export interface MentionBundle extends BundlePlace {
   context: BundleContext | null;
   /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
   repoCheck: RepoCheck | null;
+  /**
+   * 사용자가 저장소 선택 창에서 고른 구성(절대 경로). 첫 저장소가 초안 실행의 cwd가 된다.
+   * 있으면 저장소 매핑과 자동 선택 대신 이 구성으로 초안 실행만 돌린다. 저장소 매핑은 아니고, 고른 적이 없으면 `null`.
+   */
+  userRepos: string[] | null;
   /** 초안 실행이 만든 초안(원래 초안). 아직 없으면 `null`. */
   draft: Draft | null;
   /** 생성이 실패한 까닭. 실패가 아니면 `null`. */

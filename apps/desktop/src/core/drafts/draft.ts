@@ -36,6 +36,11 @@ export interface DraftEvidence {
   startLine: number;
   /** 끝 줄. 이 줄까지 포함한다. */
   endLine: number;
+  /**
+   * 근거 위치를 찾았는지 여부. 거짓이면 화면에 "위치를 찾을 수 없음"으로 보이고 "에디터에서 열기"가 꺼진다.
+   * 넘긴 저장소 안의 경로가 아니거나, 파일이 없거나, 줄 범위가 파일 길이를 넘으면 거짓이다.
+   */
+  located: boolean;
 }
 
 /** 초안 실행이 만든 초안(원래 초안). 요구, 문단과 문장, 근거를 담는다. */
@@ -72,6 +77,8 @@ export type DraftFailureReason =
   | 'invalid-output'
   /** 빈 초안. 초안 문장이 하나도 없었다. */
   | 'empty-draft'
+  /** 비밀 파일을 근거로 듦. 근거 경로가 비밀 파일 패턴에 맞아 결과 전체를 버렸다. */
+  | 'secret-evidence'
   /** 앱 안에서 예상하지 못한 오류가 났다. */
   | 'app-error'
   | ContextFailureReason
@@ -127,8 +134,14 @@ export interface RunRecord {
   usage: ExecutorUsage | null;
 }
 
-/** 초안 실행의 구조화 출력을 앱이 읽은 것. 근거의 줄 번호 이름만 바꿨다. */
-export type DraftOutput = Pick<Draft, 'requirement' | 'paragraphs' | 'evidence'>;
+/** 에이전트가 낸 근거. 위치를 확인하기 전이다. */
+export type AgentEvidence = Omit<DraftEvidence, 'located'>;
+
+/** 초안 실행의 구조화 출력을 앱이 읽은 것. 근거의 줄 번호 이름만 바꿨고, 내용 불일치와 근거 위치는 아직 보지 않았다. */
+export interface DraftOutput extends Pick<Draft, 'requirement' | 'paragraphs'> {
+  /** 근거. 에이전트가 낸 순서다. */
+  evidence: AgentEvidence[];
+}
 
 /**
  * 초안 실행의 출력 스키마. `--json-schema`로 강제한다.
@@ -196,7 +209,7 @@ export function readDraftOutput(output: unknown): DraftOutput | null {
   }
 
   /** 읽은 근거. */
-  const evidence: DraftEvidence[] = [];
+  const evidence: AgentEvidence[] = [];
   for (const item of root.evidence) {
     /** 근거 하나. */
     const fields = asRecord(item);

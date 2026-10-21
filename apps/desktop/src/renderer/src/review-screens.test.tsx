@@ -254,8 +254,9 @@ const READY = bundle(4, {
         path: 'src/main/resources/application-prod.yml',
         startLine: 88,
         endLine: 88,
+        located: true,
       },
-      { id: 2, explanation: '배포할 때 설정을 새로 읽습니다.', repositoryName: 'billing-api', path: 'deploy/run.sh', startLine: 10, endLine: 14 },
+      { id: 2, explanation: '배포할 때 설정을 새로 읽습니다.', repositoryName: 'billing-api', path: 'deploy/run.sh', startLine: 10, endLine: 14, located: true },
     ],
     repositories: [
       { name: 'billing-api', path: '/fake/work/billing-api' },
@@ -311,6 +312,23 @@ describe('작은 창: 초안 실행', () => {
     expect(text).toContain('/fake/work/billing-web');
   });
 
+  it('위치를 찾을 수 없는 근거는 지우지 않고 "위치를 찾을 수 없음"으로 보이며, 그 근거를 단 문장의 번호는 그대로다', () => {
+    /** 둘째 근거의 위치를 찾지 못한 묶음. */
+    const unlocated = bundle(10, {
+      ...READY,
+      draft: { ...READY.draft!, evidence: [READY.draft!.evidence[0]!, { ...READY.draft!.evidence[1]!, located: false }] },
+    });
+    /** 근거를 편 작은 창. */
+    const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, evidence: true } };
+    const text = textOf(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], sections } })} />);
+
+    expect(text).toContain('설정을 바꾸면 다음 배포부터 적용됩니다. ① ②');
+    expect(text).toContain('billing-api · application-prod.yml · 88번째 줄');
+    expect(text).toContain('② 배포할 때 설정을 새로 읽습니다.');
+    expect(text).toContain('위치를 찾을 수 없음');
+    expect(text).not.toContain('run.sh');
+  });
+
   it('생성 중 묶음은 진행 단계 한 줄과 읽은 파일 수, [취소]를 보이고 [무시]는 두지 않는다. 기다리는 묶음은 차례를 기다린다고 보인다', () => {
     const text = textOf(<PopoverContent snapshot={snapshot([GENERATING])} />);
     const waiting = textOf(<PopoverContent snapshot={snapshot([bundle(7, { status: 'generating', group: 'generating', generation: { status: 'waiting' } })])} />);
@@ -340,6 +358,16 @@ describe('작은 창: 초안 실행', () => {
     expect(text).toContain('무시');
     expect(withDetail).toContain('Claude usage limit reached.');
     expect(withDetail).not.toContain('마지막 단계');
+  });
+
+  it('비밀 파일을 근거로 들어 실패한 묶음은 그 사유를 보이고 초안을 보이지 않는다', () => {
+    const text = textOf(
+      <PopoverContent snapshot={snapshot([bundle(11, { status: 'failed', group: 'failed', failure: { reason: 'secret-evidence', detail: null, lastStep: '초안 쓰는 중' } })])} />,
+    );
+
+    expect(text).toContain('비밀 파일을 근거로 듦');
+    expect(text).not.toContain('에이전트가 이해한 요구');
+    expect(text).toContain('다시 시도');
   });
 
   it('매핑된 폴더가 없어 저장소 확인 필요가 된 묶음은 저장소 영역에 사유와 찾을 수 없는 폴더를 보인다', () => {

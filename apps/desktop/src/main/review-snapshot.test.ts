@@ -226,7 +226,7 @@ describe('묶음 스냅숏: 스레드 보기', () => {
 });
 
 describe('묶음 스냅숏: 초안 실행', () => {
-  it('준비됨 묶음은 요구, 문장마다 근거 번호가 붙은 초안, 저장소 이름이 붙은 근거, 쓴 저장소와, 초안을 만든 실행의 실행 줄을 넘긴다. 비용은 넘기지 않는다', () => {
+  it('준비됨 묶음은 요구, 문장마다 근거 번호가 붙은 초안, 저장소 이름과 위치를 찾았는지가 붙은 근거, 쓴 저장소와, 초안을 만든 실행의 실행 줄을 넘긴다. 비용은 넘기지 않는다', () => {
     /** 스냅숏. */
     const snapshot = bundleSnapshot(
       bundle({
@@ -235,7 +235,16 @@ describe('묶음 스냅숏: 초안 실행', () => {
           requirement: { text: '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.', summary: '재시도 횟수' },
           paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }, { text: '시험 환경은 세 번으로 보입니다.', evidence: [] }] }],
           evidence: [
-            { id: 1, explanation: '운영 설정에서 횟수를 5로 정합니다.', repository: '/fake/work/billing-api', path: 'src/main/resources/application-prod.yml', startLine: 88, endLine: 90 },
+            {
+              id: 1,
+              explanation: '운영 설정에서 횟수를 5로 정합니다.',
+              repository: '/fake/work/billing-api',
+              path: 'src/main/resources/application-prod.yml',
+              startLine: 88,
+              endLine: 90,
+              located: true,
+            },
+            { id: 2, explanation: '넘기지 않은 저장소의 근거', repository: '/fake/elsewhere/other', path: 'a.ts', startLine: 1, endLine: 1, located: false },
           ],
           repositories: ['/fake/work/billing-api', '/fake/work/billing-web'],
           createdAt: 144_000,
@@ -257,7 +266,9 @@ describe('묶음 스냅숏: 초안 실행', () => {
           path: 'src/main/resources/application-prod.yml',
           startLine: 88,
           endLine: 90,
+          located: true,
         },
+        { id: 2, explanation: '넘기지 않은 저장소의 근거', repositoryName: 'other', path: 'a.ts', startLine: 1, endLine: 1, located: false },
       ],
       repositories: [
         { name: 'billing-api', path: '/fake/work/billing-api' },

@@ -86,13 +86,14 @@ function draftSnapshot(draft: Draft): DraftSnapshot {
   return {
     requirement: { ...draft.requirement },
     paragraphs: draft.paragraphs.map((paragraph) => ({ sentences: paragraph.sentences.map((sentence) => ({ ...sentence, evidence: [...sentence.evidence] })) })),
-    evidence: draft.evidence.map(({ id, explanation, repository, path, startLine, endLine }) => ({
+    evidence: draft.evidence.map(({ id, explanation, repository, path, startLine, endLine, located }) => ({
       id,
       explanation,
       repositoryName: basename(repository),
       path,
       startLine,
       endLine,
+      located,
     })),
     repositories: draft.repositories.map((path) => ({ name: basename(path), path })),
   };

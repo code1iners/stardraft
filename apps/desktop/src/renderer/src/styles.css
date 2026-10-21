@@ -1241,6 +1241,12 @@ p.mention-text {
   overflow-wrap: anywhere;
 }
 
+/* 위치를 찾지 못한 근거. "근거 없음"과 같은 경고 색으로 위치 대신 보인다. */
+.section-body p.evidence-location.not-found {
+  color: var(--warn);
+  cursor: help;
+}
+
 /* 쓴 저장소와 찾을 수 없는 폴더. 폴더 이름 아래에 경로를 작게 둔다. */
 .repository-list {
   margin: 0;

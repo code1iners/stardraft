@@ -1,4 +1,5 @@
 import type { AgentPreferencesState } from '../agent/agent-preferences';
+import { withDefaultSecretPatterns } from '../agent/secret-patterns';
 import { FETCHING_CONTEXT_STEP, WRITING_DRAFT_STEP } from '../agent/progress-steps';
 import { activeMentions, mentionSetKey } from '../bundles/mention-bundle';
 import type { MentionBundles, RunPreparation } from '../bundles/mention-bundles';
@@ -16,6 +17,7 @@ import {
   type RunRecord,
   type RunResult,
 } from './draft';
+import { checkDraftOutput, type CheckedDraftOutput } from './draft-check';
 import { draftInputDocument, draftInstructions } from './draft-input';
 
 /** 초안 실행의 제한 시간(밀리초). 넘기면 프로세스 트리를 끝내고 "시간 초과"로 실패한다. 설정에서 바꿀 수 없다. */
@@ -90,12 +92,14 @@ interface RunningDraft {
   filesRead: number;
 }
 
-/** 에이전트 실행 한 번의 결과를 읽은 것. */
-type RunVerdict =
-  /** 초안을 받았다. */
-  | { kind: 'draft'; output: DraftOutput }
-  /** 실패했다. `retry`는 구조 실패처럼 한 번 더 실행할 실패인지 여부다. */
-  | { kind: 'failed'; reason: RunFailureReason; detail: string | null; retry: boolean };
+/** 실패한 실행의 결과. `retry`는 구조 실패처럼 한 번 더 실행할 실패인지 여부다. */
+type FailedVerdict = { kind: 'failed'; reason: RunFailureReason; detail: string | null; retry: boolean };
+
+/** 에이전트 실행 한 번의 결과를 읽은 것. 초안은 에이전트가 낸 그대로다. */
+type RunVerdict = { kind: 'draft'; output: DraftOutput } | FailedVerdict;
+
+/** 출력 검증까지 마친 결과. 초안은 내용 불일치를 고치고 근거 위치를 확인한 것이다. */
+type CheckedVerdict = { kind: 'draft'; output: CheckedDraftOutput } | FailedVerdict;
 
 /**
  * 초안 대기열. 생성 중 묶음을 하나씩 꺼내 초안 실행을 돌리는 직렬 대기열의 기본형이다(한 번에 하나만 실행한다).
@@ -251,11 +255,18 @@ export class DraftQueue {
     const runs: RunRecord[] = [];
     for (let attempt = 1; ; attempt += 1) {
       /** 실행 한 번의 결과와 실행 기록. */
-      const { verdict, record } = await this.runOnce(entry, agent, request, omitted);
-      runs.push(record);
-      if (entry.interruption) return this.afterInterruption(entry, runs);
+      const ran = await this.runOnce(entry, agent, request, omitted);
+      if (entry.interruption) return this.afterInterruption(entry, [...runs, ran.record]);
       // 구조 실패는 한 번 더 실행한다. 두 번째도 구조 실패면 실패로 둔다.
-      if (verdict.kind === 'failed' && verdict.retry && attempt < MAX_STRUCTURE_ATTEMPTS) continue;
+      if (ran.verdict.kind === 'failed' && ran.verdict.retry && attempt < MAX_STRUCTURE_ATTEMPTS) {
+        runs.push(ran.record);
+        continue;
+      }
+      /** 출력 검증까지 마친 결과와 실행 기록. */
+      const { verdict, record } = await checkVerdict(ran, repositories, request.secretPatterns);
+      // 검증하는 사이에 [취소]나 새 멘션으로 멈췄을 수 있으므로 기록의 결과는 검증 뒤에 정한다.
+      runs.push({ ...record, result: runResultOf(entry.interruption, verdict) });
+      if (entry.interruption) return this.afterInterruption(entry, runs);
 
       // 실행이 끝난 뒤 저장하기 전에도 새 멘션이 합쳐질 수 있으므로, 멘션 묶음이 저장하는 순간 멘션 위치를 다시 본다.
       /** 결과를 저장했는지 여부. */
@@ -438,8 +449,31 @@ function readVerdict(outcome: ExecutorOutcome): RunVerdict {
   }
 }
 
+/**
+ * 받은 초안에 출력 검증을 한다. 내용 불일치는 고친 초안으로 바꾸고 고친 내용을 실행 기록에 남긴다. 기록의 결과는 부르는 쪽이 정한다.
+ * 근거가 비밀 파일이면 결과 전체를 버리고 "비밀 파일을 근거로 듦" 실패로 바꾼다. 다시 실행하지 않는다.
+ * 초안이 아닌 결과는 그대로 돌려준다.
+ */
+async function checkVerdict(
+  ran: { verdict: RunVerdict; record: RunRecord },
+  repositories: readonly string[],
+  extraSecretPatterns: readonly string[],
+): Promise<{ verdict: CheckedVerdict; record: RunRecord }> {
+  if (ran.verdict.kind !== 'draft') return { verdict: ran.verdict, record: ran.record };
+  /** 출력 검증의 결과. 요구 고치기 재생성은 아직 없어 고친 요구가 없다. */
+  const check = await checkDraftOutput(ran.verdict.output, {
+    repositories,
+    secretPatterns: withDefaultSecretPatterns(extraSecretPatterns),
+    fixedRequirement: null,
+  });
+  if (check.kind === 'secret-evidence') {
+    return { verdict: { kind: 'failed', reason: 'secret-evidence', detail: null, retry: false }, record: { ...ran.record, fixes: check.fixes } };
+  }
+  return { verdict: { kind: 'draft', output: check.output }, record: { ...ran.record, fixes: check.fixes } };
+}
+
 /** 실행 기록의 결과. 앱이 실행을 멈췄으면 그 까닭(묶음이 바뀜, 그 밖에는 취소함)이고, 아니면 실행의 결과다. */
-function runResultOf(interruption: Interruption | null, verdict: RunVerdict): RunResult {
+function runResultOf(interruption: Interruption | null, verdict: RunVerdict | CheckedVerdict): RunResult {
   if (interruption) return interruption === 'bundle-changed' ? 'bundle-changed' : 'cancelled';
   return verdict.kind === 'draft' ? 'succeeded' : verdict.reason;
 }

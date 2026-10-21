@@ -8,6 +8,7 @@ import type {
   FlowEmployee,
   FlowPost,
   FlowProject,
+  FlowRemarkAuthorship,
   FlowReply,
   FlowReplyPage,
 } from '../ports/flow-api';
@@ -23,14 +24,20 @@ export const FAKE_ME: FlowEmployee = {
 /** 댓글과 함께 주는 대댓글 수. Flow의 `replyYn=Y`와 같다. */
 const REPLIES_WITH_COMMENT = 10;
 
+/** 가짜 Flow API가 들고 있는 게시물. 제목과 "Flow에서 열기" 주소는 주지 않으면 비어 있다. */
+export type FakeFlowPost = Pick<FlowPost, 'postId' | 'textComponents'> & Partial<Pick<FlowPost, 'title' | 'connectUrl'>>;
+
+/** 가짜 Flow API가 들고 있는 대댓글. 쓴 사람·시각·시스템 댓글 종류는 주지 않으면 비어 있다. */
+export type FakeFlowCommentReply = Pick<FlowReply, 'replyId' | 'contents'> & Partial<FlowRemarkAuthorship>;
+
 /** 가짜 Flow API가 들고 있는 댓글. 대댓글은 모두 들고 있다가 Flow처럼 처음 10개만 댓글과 함께 준다. */
-export interface FakeFlowComment {
+export interface FakeFlowComment extends Partial<FlowRemarkAuthorship> {
   /** 댓글 ID. */
   commentId: string;
   /** 글. */
   contents: string;
   /** 대댓글 전부. `replyId` 오름차순으로 둔다. */
-  replies?: FlowReply[];
+  replies?: FakeFlowCommentReply[];
 }
 
 /** 대본으로 정한 실패 하나. */
@@ -98,13 +105,21 @@ export class FakeFlowApi implements FlowApi {
   }
 
   /** 게시물을 둔다. 두지 않은 게시물은 지워진 것으로 보고 `404`로 답한다. */
-  addPost(post: FlowPost): void {
-    this.posts.set(post.postId, post);
+  addPost({ title = '', connectUrl = null, ...post }: FakeFlowPost): void {
+    this.posts.set(post.postId, { ...post, title, connectUrl });
   }
 
   /** 게시물에 댓글을 단다. 댓글은 단 순서대로 온다. */
   addComment(postId: string, comment: FakeFlowComment): void {
     this.comments.set(postId, [...(this.comments.get(postId) ?? []), comment]);
+  }
+
+  /** 댓글에 대댓글을 단다. 대댓글은 단 순서대로 온다. */
+  addReply(postId: string, commentId: string, reply: FakeFlowCommentReply): void {
+    /** 부모 댓글. */
+    const comment = this.comments.get(postId)?.find((item) => item.commentId === commentId);
+    if (!comment) throw new Error(`가짜 댓글 ${commentId}가 없습니다.`);
+    comment.replies = [...(comment.replies ?? []), reply];
   }
 
   /** `path`(`메서드 경로`, `?` 앞까지)로 오는 요청을 `times`번 `failure`로 실패시킨다. */
@@ -149,10 +164,11 @@ export class FakeFlowApi implements FlowApi {
       /** 이 쪽. */
       const page = pageOf(this.comments.get(postId) ?? [], cursor, this.commentPageSize);
       return {
-        comments: page.items.map(({ commentId, contents, replies = [] }) => ({
+        comments: page.items.map(({ commentId, contents, replies = [], ...authorship }) => ({
           commentId,
           contents,
-          replies: structuredClone(replies.slice(0, REPLIES_WITH_COMMENT)),
+          ...authorshipOf(authorship),
+          replies: replies.slice(0, REPLIES_WITH_COMMENT).map(replyOf),
           replyHasNext: replies.length > REPLIES_WITH_COMMENT,
         })),
         nextCursor: page.nextCursor,
@@ -167,7 +183,7 @@ export class FakeFlowApi implements FlowApi {
       if (!comment) return NOT_FOUND;
       /** 이 쪽. */
       const page = pageOf(comment.replies ?? [], cursor, this.replyPageSize);
-      return { replies: structuredClone(page.items), nextCursor: page.nextCursor };
+      return { replies: page.items.map(replyOf), nextCursor: page.nextCursor };
     });
   }
 
@@ -193,6 +209,16 @@ export class FakeFlowApi implements FlowApi {
     const value = respond();
     return value === NOT_FOUND ? { ok: false, failure: { kind: 'http', status: 404 } } : { ok: true, value };
   }
+}
+
+/** 주지 않은 쓴 사람·시각·시스템 댓글 종류를 빈 값으로 채운다. */
+function authorshipOf({ registerId = '', registeredDateTime = '', systemCode = '' }: Partial<FlowRemarkAuthorship>): FlowRemarkAuthorship {
+  return { registerId, registeredDateTime, systemCode };
+}
+
+/** 응답으로 줄 대댓글. */
+function replyOf({ replyId, contents, ...authorship }: FakeFlowCommentReply): FlowReply {
+  return { replyId, contents, ...authorshipOf(authorship) };
 }
 
 /** 없는 글을 조회했다는 표시. */

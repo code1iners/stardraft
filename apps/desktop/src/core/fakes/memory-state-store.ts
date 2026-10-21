@@ -1,5 +1,5 @@
-import { mentionLocationKey, type Mention, type MentionLocation } from '../detection/mention';
-import { compareAlarmIds } from '../flow/alarm-id';
+import { compareMentions, type MentionBundle, type UnsavedBundle } from '../bundles/mention-bundle';
+import { mentionLocationKey, type MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
 
@@ -9,8 +9,10 @@ export class MemoryStateStore implements StateStore {
   account: FlowEmployee | null = null;
   /** 저장한 기준점. */
   baselineAlarmId: string | null = null;
-  /** 저장한 멘션. 멘션 위치마다 하나다. */
-  private readonly mentions = new Map<string, Mention>();
+  /** 저장한 멘션 묶음. 묶음 ID마다 하나다. */
+  private readonly bundles = new Map<number, MentionBundle>();
+  /** 다음에 줄 묶음 ID. 지운 ID를 다시 쓰지 않는다. */
+  private nextBundleId = 1;
 
   async getAccount(): Promise<FlowEmployee | null> {
     return this.account && { ...this.account };
@@ -22,7 +24,7 @@ export class MemoryStateStore implements StateStore {
 
   async resetForAccount(account: FlowEmployee): Promise<void> {
     this.baselineAlarmId = null;
-    this.mentions.clear();
+    this.bundles.clear();
     this.account = { ...account };
   }
 
@@ -35,24 +37,51 @@ export class MemoryStateStore implements StateStore {
   }
 
   async hasMentionLocation(location: MentionLocation): Promise<boolean> {
-    return this.mentions.has(mentionLocationKey(location));
+    /** 찾는 멘션 위치. */
+    const key = mentionLocationKey(location);
+    return [...this.bundles.values()].some((bundle) => bundle.mentions.some((mention) => mentionLocationKey(mention) === key));
   }
 
-  async addDetectedMentions(mentions: readonly Mention[], baselineAlarmId: string): Promise<Mention[]> {
-    /** 새로 저장한 멘션. */
-    const added = mentions.filter((mention) => !this.mentions.has(mentionLocationKey(mention)));
-    for (const mention of added) this.mentions.set(mentionLocationKey(mention), { ...mention });
+  async listBundles(): Promise<MentionBundle[]> {
+    return [...this.bundles.values()].sort((a, b) => a.id - b.id).map(cloneBundle);
+  }
+
+  async saveDetectedBundles(bundles: readonly UnsavedBundle[], baselineAlarmId: string): Promise<MentionBundle[]> {
+    // SQLite 저장소처럼, 다른 묶음에 이미 든 멘션 위치가 있으면 아무것도 바꾸지 않고 실패한다.
+    for (const bundle of bundles) this.assertOwnLocations(bundle);
+
+    /** 저장한 묶음. */
+    const saved = bundles.map((bundle) => ({ ...cloneBundle(bundle as MentionBundle), id: bundle.id ?? this.nextBundleId++ }));
+    for (const bundle of saved) this.bundles.set(bundle.id, sortedMentions(bundle));
     this.baselineAlarmId = baselineAlarmId;
-    return added.map((mention) => ({ ...mention }));
+    return saved.map(cloneBundle);
   }
 
-  async listMentions(): Promise<Mention[]> {
-    return [...this.mentions.values()]
-      .sort((a, b) => a.registeredDateTime.localeCompare(b.registeredDateTime) || compareAlarmIds(a.alarmId, b.alarmId))
-      .map((mention) => ({ ...mention }));
+  async saveBundle(bundle: MentionBundle): Promise<void> {
+    if (!this.bundles.has(bundle.id)) throw new Error(`저장하지 않은 묶음 ${bundle.id}입니다.`);
+    this.assertOwnLocations(bundle);
+    this.bundles.set(bundle.id, sortedMentions(cloneBundle(bundle)));
   }
 
-  async countMentions(): Promise<number> {
-    return this.mentions.size;
+  /** 묶음의 멘션 위치가 다른 묶음에 이미 들어 있으면 실패한다. */
+  private assertOwnLocations(bundle: UnsavedBundle): void {
+    for (const other of this.bundles.values()) {
+      if (other.id === bundle.id) continue;
+      /** 다른 묶음의 멘션 위치. */
+      const taken = new Set(other.mentions.map(mentionLocationKey));
+      if (bundle.mentions.some((mention) => taken.has(mentionLocationKey(mention)))) {
+        throw new Error(`멘션 위치가 이미 묶음 ${other.id}에 있습니다.`);
+      }
+    }
   }
+}
+
+/** 묶음을 깊이 복사한다. 저장소 밖에서 바꿔도 저장한 값이 바뀌지 않게 한다. */
+function cloneBundle(bundle: MentionBundle): MentionBundle {
+  return structuredClone(bundle);
+}
+
+/** 멘션을 알림 시각 순서로 맞춘 묶음. */
+function sortedMentions(bundle: MentionBundle): MentionBundle {
+  return { ...bundle, mentions: [...bundle.mentions].sort(compareMentions) };
 }

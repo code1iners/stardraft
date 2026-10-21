@@ -36,6 +36,8 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, onboarding: event.onboarding });
       } else if (event.type === 'launch-at-login-changed') {
         setSnapshot((current) => current && { ...current, launchAtLogin: event.launchAtLogin });
+      } else if (event.type === 'review-changed') {
+        setSnapshot((current) => current && { ...current, review: event.review });
       }
     });
   }, []);

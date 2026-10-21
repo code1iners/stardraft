@@ -1,11 +1,12 @@
+import { bundlePlaceKey } from '../bundles/mention-bundle';
+import type { MentionBundles } from '../bundles/mention-bundles';
 import { compareAlarmIds, latestAlarmId } from '../flow/alarm-id';
 import { listMentionAlarmsAfter } from '../flow/mention-alarms';
-import { MentionJudge, type MentionJudgement } from '../flow/mention-judgement';
+import { MentionJudge, type MentionJudgement, type PlaceLookup } from '../flow/mention-judgement';
 import { isSameFlowUser } from '../flow/user-id';
 import { errorFields, type Logger } from '../logging/logger';
 import type { CancelScheduled, Clock } from '../ports/clock';
 import type { FlowAlarm, FlowApiFailure, FlowConnection } from '../ports/flow-api';
-import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
 import { mentionLocationKey, type Mention } from './mention';
 
@@ -23,10 +24,10 @@ const MIN_RETRY_DELAY_MS = 1_000;
 
 /** 멘션 감지에 필요한 포트. */
 export interface MentionDetectionOptions {
-  /** 기준점, 계정, 감지한 멘션을 두는 상태 저장소. */
+  /** 기준점과 계정을 두는 상태 저장소. */
   stateStore: StateStore;
-  /** 새 멘션을 알릴 OS 알림. */
-  notifier: Notifier;
+  /** 감지한 멘션을 넣을 멘션 묶음. 묶음이 트레이 숫자와 OS 알림을 올린다. */
+  bundles: MentionBundles;
   /** 폴링 주기와 72시간 범위를 재는 시계. */
   clock: Clock;
   /** 진단 로그. ID와 개수만 남긴다. */
@@ -48,8 +49,8 @@ type NextPoll =
 const NEXT_INTERVAL: NextPoll = { kind: 'interval' };
 
 /**
- * 멘션 감지: Flow 알림 목록을 60초마다 조회해 나를 직접 지목한 업무 멘션만 골라 `state.db`에 저장한다.
- * 새 멘션이 생기면 트레이 숫자를 올리고 OS 알림을 띄운다. Flow의 읽음 상태는 바꾸지 않는다(조회만 한다).
+ * 멘션 감지: Flow 알림 목록을 60초마다 조회해 나를 직접 지목한 업무 멘션만 골라 멘션 묶음에 넣는다.
+ * 묶음 자리마다 Flow에 이미 내 답이 있는지도 조회해 함께 넘긴다. Flow의 읽음 상태는 바꾸지 않는다(조회만 한다).
  */
 export class MentionDetection {
   /** 감지 상태. `key-rejected`는 Flow가 키를 거부해 폴링을 멈춘 상태다. */
@@ -67,32 +68,10 @@ export class MentionDetection {
   private cancelScheduled: CancelScheduled | null = null;
   /** 요청 한도에 걸려 이 시각(Unix epoch 밀리초) 전에는 조회하지 않는다. */
   private notBefore = 0;
-  /** 저장한 멘션 수. */
-  private mentionCount = 0;
   /** 그 글에서만 생기는 실패로 판정하지 못한 알림마다 이어진 실패 횟수. */
   private readonly judgeFailures = new Map<string, number>();
-  /** 트레이 숫자가 바뀔 때 부를 함수. */
-  private readonly listeners = new Set<(reviewCount: number) => void>();
 
   constructor(private readonly options: MentionDetectionOptions) {}
-
-  /** 저장된 멘션 수를 읽어 둔다. 앱이 시작할 때 한 번 부른다. */
-  async load(): Promise<void> {
-    this.mentionCount = await this.options.stateStore.countMentions();
-  }
-
-  /** 트레이에 보일 검토 대기 수. 지금은 감지한 멘션 수다. */
-  reviewCount(): number {
-    return this.mentionCount;
-  }
-
-  /** 트레이 숫자가 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
-  onChange(listener: (reviewCount: number) => void): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
 
   /**
    * 감지를 시작한다. 바로 조회하고 그 뒤 60초마다 조회한다. 돌려준 약속은 이번 조회가 끝나면 풀린다.
@@ -213,6 +192,8 @@ export class MentionDetection {
     let stoppedBy: FlowApiFailure | null = null;
     /** 알림의 receiverId가 키 확인 때 얻은 내 사용자 ID와 다른 알림 수. */
     let receiverMismatches = 0;
+    /** 내 사용자 ID들. 키 확인 때 얻은 ID와 판정을 통과한 알림의 receiverId다. 묶음 자리에서 내 답을 찾을 때 쓴다. */
+    const myIds = new Set([account.userId]);
     /** 멘션된 글을 조회해 판정한다. 같은 게시물의 댓글은 이번 조회에서 한 번만 받는다. */
     const judge = new MentionJudge(flow.api, account.userId);
 
@@ -229,7 +210,10 @@ export class MentionDetection {
         }
         decided.add(location);
         this.judgeFailures.delete(alarm.alarmId);
-        if (judgement.kind === 'mention') mentions.push(mentionOf(alarm, this.options.clock.now()));
+        if (judgement.kind === 'mention') {
+          mentions.push(mentionOf(alarm, judgement.text, this.options.clock.now()));
+          if (alarm.receiverId) myIds.add(alarm.receiverId);
+        }
         else if (judgement.kind === 'dropped') this.options.logger.info('detection.alarm-dropped', { alarmId: alarm.alarmId, reason: judgement.reason });
       }
       decidedUpTo = alarm.alarmId;
@@ -238,7 +222,7 @@ export class MentionDetection {
     // 내 ID는 알림의 receiverId로 판정한다. 키 확인 때 얻은 사용자 ID와 달라도 멘션을 잃지 않게 버리지 않고 알아챌 수 있게만 남긴다.
     if (receiverMismatches > 0) this.options.logger.warn('detection.receiver-mismatch', { alarmCount: receiverMismatches });
 
-    if (decidedUpTo !== null) await this.save(mentions, decidedUpTo, account.userId);
+    if (decidedUpTo !== null) await this.save(mentions, await lookupPlaces(judge, mentions, [...myIds]), decidedUpTo, account.userId);
     this.options.logger.info('detection.poll-finished', {
       alarmCount: alarms.length,
       mentionCount: mentions.length,
@@ -258,12 +242,11 @@ export class MentionDetection {
 
     await this.options.stateStore.setBaselineAlarmId(latestAlarmId(page.value.alarms) ?? '0');
     this.options.logger.info('detection.baseline-set', { alarmCount: page.value.alarms.length });
-    this.setCount(await this.options.stateStore.countMentions());
     return NEXT_INTERVAL;
   }
 
-  /** 판정을 통과한 멘션을 저장하고 기준점을 옮긴다. 새로 저장한 멘션이 있으면 트레이 숫자를 올리고 OS 알림을 띄운다. */
-  private async save(mentions: Mention[], baseline: string, userId: string): Promise<void> {
+  /** 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 묶음이 트레이 숫자를 바꾸고 OS 알림을 띄운다. */
+  private async save(mentions: Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baseline: string, userId: string): Promise<void> {
     // 조회하는 사이에 다른 계정의 키로 바뀌어 기록을 비웠으면, 옛 계정의 결과를 남기지 않는다.
     /** 지금 계정. */
     const current = await this.options.stateStore.getAccount();
@@ -272,11 +255,7 @@ export class MentionDetection {
       return;
     }
 
-    /** 새로 저장한 멘션. */
-    const added = await this.options.stateStore.addDetectedMentions(mentions, baseline);
-    if (added.length === 0) return;
-    this.setCount(await this.options.stateStore.countMentions());
-    this.options.notifier.notify(newMentionNotification(added));
+    await this.options.bundles.addDetected(mentions, lookups, baseline);
   }
 
   /** 알림 하나를 판정한다. 이미 기록한 멘션 위치에서 다시 온 알림은 글을 조회하지 않고 버린다(최소 기록 입구). */
@@ -324,16 +303,25 @@ export class MentionDetection {
     }
   }
 
-  /** 트레이 숫자를 바꾸고, 바뀌었으면 알린다. */
-  private setCount(count: number): void {
-    if (count === this.mentionCount) return;
-    this.mentionCount = count;
-    for (const listener of this.listeners) listener(count);
-  }
 }
 
-/** 판정을 통과한 알림으로 저장할 멘션을 만든다. */
-function mentionOf(alarm: FlowAlarm, detectedAt: number): Mention {
+/**
+ * 멘션이 든 묶음 자리마다 게시물 제목·주소와 내 답을 조회한다. 판정이 받은 글을 다시 쓴다.
+ * 조회하지 못한 자리는 내 답이 없는 것으로 넘기지 않고 모른다고(`null`) 넘긴다. 묶음은 그때 아는 답으로만 판정한다.
+ */
+async function lookupPlaces(judge: MentionJudge, mentions: readonly Mention[], myIds: readonly string[]): Promise<Map<string, PlaceLookup>> {
+  /** 자리마다 조회한 결과. */
+  const lookups = new Map<string, PlaceLookup>();
+  for (const mention of mentions) {
+    /** 묶음 자리. */
+    const place = bundlePlaceKey(mention);
+    if (!lookups.has(place)) lookups.set(place, await judge.lookupPlace(mention, myIds));
+  }
+  return lookups;
+}
+
+/** 판정을 통과한 알림과 멘션된 글의 내용으로 저장할 멘션을 만든다. */
+function mentionOf(alarm: FlowAlarm, text: string, detectedAt: number): Mention {
   return {
     postId: alarm.postId,
     remarkId: alarm.remarkId,
@@ -344,18 +332,6 @@ function mentionOf(alarm: FlowAlarm, detectedAt: number): Mention {
     senderName: alarm.registerName,
     registeredDateTime: alarm.registeredDateTime,
     detectedAt,
-  };
-}
-
-/** 새 멘션 OS 알림. 송신자 이름만 넣고 Flow 글 본문은 넣지 않는다. */
-function newMentionNotification(added: readonly Mention[]): AppNotification {
-  /** 가장 최근 멘션의 송신자 이름. */
-  const sender = added[added.length - 1]?.senderName ?? '';
-  if (added.length === 1) {
-    return { title: '새 멘션', body: sender ? `${sender}님이 나를 멘션했습니다.` : '나를 지목한 멘션이 왔습니다.' };
-  }
-  return {
-    title: `새 멘션 ${added.length}건`,
-    body: sender ? `${sender}님 외 ${added.length - 1}건의 멘션이 왔습니다.` : `나를 지목한 멘션 ${added.length}건이 왔습니다.`,
+    text,
   };
 }

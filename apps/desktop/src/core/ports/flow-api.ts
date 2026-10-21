@@ -65,12 +65,26 @@ export interface FlowTextComponent {
 export interface FlowPost {
   /** 게시물 ID. */
   postId: string;
+  /** 게시물 제목. 비어 있을 수 있다. */
+  title: string;
+  /** "Flow에서 열기" 주소. 게시물을 바로 연다. 없으면 `null`. */
+  connectUrl: string | null;
   /** 본문의 TEXT 컴포넌트. 본문이 JSON이 아니면 본문 전체를 글 조각 하나로 담는다. */
   textComponents: FlowTextComponent[];
 }
 
+/** 댓글과 대댓글이 함께 갖는, 누가 언제 썼는지에 관한 값. "이미 답함" 판정에 쓴다. */
+export interface FlowRemarkAuthorship {
+  /** 쓴 사람의 사용자 ID. 시스템 댓글이면 그 행동을 한 사람이다. 없으면 빈 문자열. */
+  registerId: string;
+  /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. 없으면 빈 문자열. */
+  registeredDateTime: string;
+  /** 시스템 댓글(제목 변경, 업무 상태 변경 등)의 종류. 사람이 쓴 글이면 빈 문자열이다. */
+  systemCode: string;
+}
+
 /** 대댓글 하나. */
-export interface FlowReply {
+export interface FlowReply extends FlowRemarkAuthorship {
   /** 대댓글 ID. */
   replyId: string;
   /** 글. 멘션 표기가 그대로 들어 있다. */
@@ -78,7 +92,7 @@ export interface FlowReply {
 }
 
 /** 댓글 하나. `GET /user/comments/{postId}?replyYn=Y` 응답에서 앱이 쓰는 값이다. */
-export interface FlowComment {
+export interface FlowComment extends FlowRemarkAuthorship {
   /** 댓글 ID. 알림의 `remarkId`와 같은 값이다. */
   commentId: string;
   /** 글. 멘션 표기가 그대로 들어 있다. */

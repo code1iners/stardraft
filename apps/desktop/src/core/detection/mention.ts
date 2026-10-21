@@ -25,6 +25,8 @@ export interface Mention extends MentionLocation {
   registeredDateTime: string;
   /** 앱이 감지한 시각(Unix epoch 밀리초). */
   detectedAt: number;
+  /** Flow 원문. 멘션이 일어난 글(본문·댓글·대댓글)의 내용이고 멘션 표기가 그대로 들어 있다. 작은 창 원문 영역에 보인다. */
+  text: string;
 }
 
 /** 멘션 위치를 한 문자열로 나타낸다. 같은 위치를 가려낼 때 쓴다. */

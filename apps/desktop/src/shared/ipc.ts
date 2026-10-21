@@ -316,6 +316,88 @@ export interface OnboardingSnapshot {
   start: DetectionStartSnapshot;
 }
 
+/** 멘션 묶음의 상태. 저장소 확인 필요, 무시함, 이미 답함이다. */
+export type BundleStatusSnapshot = 'repo-check-needed' | 'ignored' | 'already-answered';
+
+/** 펼친 창 목록의 묶음. 목록에 이 순서로 보인다. 검토 대기·생성 중·실패·처리됨이다. */
+export const BUNDLE_GROUPS = ['awaiting-review', 'generating', 'failed', 'processed'] as const;
+
+/** 펼친 창 목록의 묶음 하나. */
+export type BundleGroup = (typeof BUNDLE_GROUPS)[number];
+
+/** 멘션이 일어난 글의 종류. 게시물 본문, 댓글, 대댓글이다. */
+export type MentionPlaceSnapshot = 'post' | 'comment' | 'reply';
+
+/** 원문 글의 한 조각. 멘션 표기는 `@이름`으로 바꾸어 넘기고 Flow 사용자 ID는 넘기지 않는다. */
+export interface TextPartSnapshot {
+  /** 글. */
+  text: string;
+  /** 멘션 표기(`@이름`)인지 여부. 화면이 강조한다. */
+  mention: boolean;
+}
+
+/** 원문 영역의 멘션 하나. */
+export interface BundleMentionSnapshot {
+  /** 송신자 이름. 비어 있을 수 있다. */
+  senderName: string;
+  /** 멘션이 일어난 글의 종류. */
+  place: MentionPlaceSnapshot;
+  /** 멘션 시각(Unix epoch 밀리초). */
+  at: number;
+  /** Flow 원문. */
+  text: TextPartSnapshot[];
+}
+
+/** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
+export interface BundleSnapshot {
+  /** 묶음 ID. 명령에 실어 보낸다. */
+  id: number;
+  /** 상태. */
+  status: BundleStatusSnapshot;
+  /** 펼친 창 목록의 묶음. 처리됨이면 작은 창 대기열에 없다. */
+  group: BundleGroup;
+  /** 본문 묶음(`post`)인지 댓글 스레드 묶음(`thread`)인지. */
+  place: 'post' | 'thread';
+  /** Flow 프로젝트 이름. 모르면 `null`. */
+  projectTitle: string | null;
+  /** 게시물 제목. 모르면 빈 문자열. */
+  postTitle: string;
+  /** 원문 영역에 보일 멘션. 시간순이다. */
+  mentions: BundleMentionSnapshot[];
+  /** 송신자 이름. 중복 없이 처음 멘션한 순서다. */
+  senderNames: string[];
+  /** 합쳐진 새 멘션 수. 0보다 크면 "새 멘션 N건"을 보인다. */
+  newMentionCount: number;
+  /** 목록 행에 보일 시각. 가장 최근 멘션의 시각(Unix epoch 밀리초)이다. */
+  lastMentionAt: number;
+  /** 처리한 시각(Unix epoch 밀리초). 처리됨이 아니면 `null`. */
+  processedAt: number | null;
+  /** 처리됨에서 되돌릴 수 있는지 여부. */
+  canRestore: boolean;
+  /** "Flow에서 열기"로 열 주소가 있는지 여부. 주소는 main이 가지고 있다. */
+  canOpenInFlow: boolean;
+}
+
+/** 묶음을 보는 창. 작은 창(`compact`)과 펼친 창(`expanded`)이다. */
+export const REVIEW_WINDOWS = ['compact', 'expanded'] as const;
+
+/** 묶음을 보는 창 하나. */
+export type ReviewWindow = (typeof REVIEW_WINDOWS)[number];
+
+/** 머리를 눌러 접고 펴는 상세 영역. 원문과 저장소다. */
+export const REVIEW_SECTIONS = ['original', 'repository'] as const;
+
+/** 접고 펴는 상세 영역 하나. */
+export type ReviewSection = (typeof REVIEW_SECTIONS)[number];
+
+/** 작은 창과 펼친 창이 그릴 멘션 묶음 상태. */
+export interface ReviewSnapshot {
+  /** 묶음. 처리되지 않은 묶음이 작은 창 대기열 순서(가장 오래된 미처리 멘션 순)로 먼저 오고, 처리됨 묶음이 최근에 처리한 것부터 뒤에 온다. */
+  bundles: BundleSnapshot[];
+  /** 창마다 영역의 펼침 상태. 다른 묶음으로 넘어가도 유지한다. */
+  sections: Record<ReviewWindow, Record<ReviewSection, boolean>>;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -340,6 +422,8 @@ export interface AppSnapshot {
   onboarding: OnboardingSnapshot;
   /** 로그인 시 자동 시작이 켜져 있는지 여부. */
   launchAtLogin: boolean;
+  /** 멘션 묶음과 창마다 영역 펼침 상태. */
+  review: ReviewSnapshot;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -363,7 +447,11 @@ export type AppEvent =
   /** 필수 세 가지의 상태나 감지 시작 여부, [감지 시작]의 진행 상태가 바뀌었다. */
   | { type: 'onboarding-changed'; onboarding: OnboardingSnapshot }
   /** 로그인 시 자동 시작이 켜지거나 꺼졌다. */
-  | { type: 'launch-at-login-changed'; launchAtLogin: boolean };
+  | { type: 'launch-at-login-changed'; launchAtLogin: boolean }
+  /** 멘션 묶음이나 영역 펼침 상태가 바뀌었다. */
+  | { type: 'review-changed'; review: ReviewSnapshot }
+  /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
+  | { type: 'review-bundle-requested'; bundleId: number };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =
@@ -408,7 +496,19 @@ export type AppCommand =
   /** [감지 시작]. 필수 세 가지가 다 되기 전이거나 이미 시작했으면 main이 무시한다. */
   | { type: 'start-detection' }
   /** 로그인 시 자동 시작을 켜거나 끈다. */
-  | { type: 'set-launch-at-login'; enabled: boolean };
+  | { type: 'set-launch-at-login'; enabled: boolean }
+  /** 묶음을 무시한다. 처리됨이면 main이 무시한다. */
+  | { type: 'ignore-bundle'; bundleId: number }
+  /** 처리됨 묶음을 되돌린다. 되돌릴 수 없는 묶음이면 main이 무시한다. */
+  | { type: 'restore-bundle'; bundleId: number }
+  /** 묶음의 게시물을 Flow에서 연다. 주소는 main이 정한다. */
+  | { type: 'open-bundle-in-flow'; bundleId: number }
+  /** 작은 창을 닫고 펼친 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
+  | { type: 'expand-review'; bundleId: number | null }
+  /** 펼친 창을 닫고 작은 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
+  | { type: 'collapse-review'; bundleId: number | null }
+  /** 창의 영역을 접거나 편다. */
+  | { type: 'set-review-section'; window: ReviewWindow; section: ReviewSection; open: boolean };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -448,6 +548,21 @@ function isWorkFolderPathInput(value: unknown): value is string {
 /** 저장소 매핑 명령에 실을 수 있는 Flow 프로젝트 ID인지 확인한다. 참여 목록이나 매핑에 있는 ID인지는 main이 본다. */
 function isFlowProjectIdInput(value: unknown): value is string {
   return typeof value === 'string' && value !== '' && value.length <= FLOW_PROJECT_ID_MAX_LENGTH;
+}
+
+/** 묶음 명령에 실을 수 있는 묶음 ID인지 확인한다. 있는 묶음인지는 main이 본다. */
+function isBundleIdInput(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+/** 묶음을 보는 창 이름인지 확인한다. */
+function isReviewWindow(value: unknown): value is ReviewWindow {
+  return typeof value === 'string' && (REVIEW_WINDOWS as readonly string[]).includes(value);
+}
+
+/** 접고 펴는 영역 이름인지 확인한다. */
+function isReviewSection(value: unknown): value is ReviewSection {
+  return typeof value === 'string' && (REVIEW_SECTIONS as readonly string[]).includes(value);
 }
 
 /** 키 확인 명령에 실을 수 있는 키인지 확인한다. 앞뒤 공백 정리와 키 형식 판단은 main이 한다. */
@@ -491,6 +606,17 @@ export function parseAppCommand(value: unknown): AppCommand | null {
         : null;
     case 'set-launch-at-login':
       return typeof candidate.enabled === 'boolean' ? { type: 'set-launch-at-login', enabled: candidate.enabled } : null;
+    case 'ignore-bundle':
+    case 'restore-bundle':
+    case 'open-bundle-in-flow':
+      return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
+    case 'expand-review':
+    case 'collapse-review':
+      return candidate.bundleId === null || isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
+    case 'set-review-section':
+      return isReviewWindow(candidate.window) && isReviewSection(candidate.section) && typeof candidate.open === 'boolean'
+        ? { type: 'set-review-section', window: candidate.window, section: candidate.section, open: candidate.open }
+        : null;
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
     case 'check-agent':

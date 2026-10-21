@@ -4,7 +4,7 @@ import trayTemplateIcon from '../../resources/trayTemplate.png?asset';
 import type { TrayIndicator } from '../core/tray-indicator';
 import type { GlobalProblemText } from '../shared/global-problem-text';
 import type { SettingsSection } from '../shared/ipc';
-import { drawAlertBadge, drawSetupDot } from './tray-badge';
+import { countBadgeLabel, drawAlertBadge, drawCountBadge, drawSetupDot } from './tray-badge';
 
 /** 트레이 아이콘과 메뉴가 부르는 동작. */
 export interface TrayActions {
@@ -20,18 +20,29 @@ export interface TrayActions {
   quit: () => void;
 }
 
-/** Windows 아이콘에 그려 넣는 표시와 그 표시를 비트맵에 그리는 함수. */
-const WINDOWS_BADGES = { alert: drawAlertBadge, 'setup-needed': drawSetupDot } as const;
-
-/** Windows 아이콘에 그려 넣는 표시. */
-type WindowsBadge = keyof typeof WINDOWS_BADGES;
+/** Windows 아이콘에 그려 넣는 표시. `key`가 같으면 같은 그림이라 그린 아이콘을 다시 쓴다. */
+interface WindowsBadge {
+  /** 그린 아이콘을 다시 쓸 때 찾는 이름. */
+  key: string;
+  /** 정사각형 아이콘 비트맵에 표시를 그린 사본을 돌려준다. */
+  draw: (bitmap: Uint8Array, size: number) => Uint8Array;
+}
 
 /** macOS 메뉴 막대 제목에 쓰는 노란 점. 제목 글자는 ANSI 색을 받는다. */
 const MAC_SETUP_DOT = '\x1b[33m●\x1b[0m';
 
-/** 아이콘에 그려 넣어 보이는 표시인지 본다. 숫자 배지는 아직 그리지 않는다. */
-function isWindowsBadge(kind: TrayIndicator['kind']): kind is WindowsBadge {
-  return Object.hasOwn(WINDOWS_BADGES, kind);
+/** Windows 아이콘에 그려 넣을 표시. 덧붙일 표시가 없으면 `null`. */
+function windowsBadgeOf(indicator: TrayIndicator): WindowsBadge | null {
+  switch (indicator.kind) {
+    case 'alert':
+      return { key: 'alert', draw: drawAlertBadge };
+    case 'setup-needed':
+      return { key: 'setup-needed', draw: drawSetupDot };
+    case 'review-count':
+      return { key: `count-${countBadgeLabel(indicator.count)}`, draw: (bitmap, size) => drawCountBadge(bitmap, size, indicator.count) };
+    case 'none':
+      return null;
+  }
 }
 
 /** 트레이에 보일 앱 상태. */
@@ -48,8 +59,8 @@ export interface TrayView {
 function tooltipNote({ indicator, problem }: TrayView): string | null {
   if (problem) return problem.title;
   if (indicator.kind === 'setup-needed') return '설정 필요';
-  // Windows는 아직 아이콘에 숫자를 그리지 않으므로 툴팁으로도 검토 대기 수를 알린다.
-  if (indicator.kind === 'review-count') return `멘션 ${indicator.count}건`;
+  // Windows 숫자 배지는 10건부터 "9+"이므로 툴팁으로 정확한 수를 알린다.
+  if (indicator.kind === 'review-count') return `검토 대기 ${indicator.count}건`;
   return null;
 }
 
@@ -63,7 +74,7 @@ export class AppTray {
   /** 지금 보이는 상태. 오른쪽 클릭할 때 메뉴를 이 상태로 만든다. */
   private view: TrayView = { indicator: { kind: 'none' }, problem: null, canCheckNow: false };
   /** Windows 배지 아이콘. 표시마다 처음 쓸 때 만든다. */
-  private readonly badgedIcons = new Map<WindowsBadge, NativeImage>();
+  private readonly badgedIcons = new Map<string, NativeImage>();
 
   constructor(private readonly actions: TrayActions) {
     // macOS는 메뉴 막대 색에 맞춰 칠해지는 템플릿 이미지, Windows는 색이 있는 이미지를 쓴다.
@@ -88,25 +99,22 @@ export class AppTray {
     this.applyIndicator(view.indicator);
   }
 
-  /**
-   * 아이콘에 표시를 덧붙인다. macOS는 아이콘 옆 글자, Windows는 아이콘에 그린 배지다.
-   * Windows 숫자 배지는 검토 대기를 더하는 티켓이 그린다. 그전까지 숫자는 macOS에만 보인다.
-   */
+  /** 아이콘에 표시를 덧붙인다. macOS는 아이콘 옆 글자, Windows는 아이콘에 그린 배지다. */
   private applyIndicator(indicator: TrayIndicator): void {
     if (process.platform === 'darwin') {
       this.tray.setTitle(macTitle(indicator));
       return;
     }
-    this.tray.setImage(isWindowsBadge(indicator.kind) ? this.windowsBadgedIcon(indicator.kind) : trayIcon);
+    /** 그려 넣을 표시. */
+    const badge = windowsBadgeOf(indicator);
+    this.tray.setImage(badge ? this.windowsBadgedIcon(badge) : trayIcon);
   }
 
-  /** 색 아이콘의 오른쪽 아래에 빨간 "!" 배지나 노란 점을 그린 아이콘. 고해상도 화면용 2배 이미지에도 그린다. */
-  private windowsBadgedIcon(badge: WindowsBadge): NativeImage {
+  /** 색 아이콘의 오른쪽 아래에 빨간 "!" 배지, 노란 점, 숫자 배지를 그린 아이콘. 고해상도 화면용 2배 이미지에도 그린다. */
+  private windowsBadgedIcon({ key, draw }: WindowsBadge): NativeImage {
     /** 이미 만든 아이콘. */
-    const cached = this.badgedIcons.get(badge);
+    const cached = this.badgedIcons.get(key);
     if (cached) return cached;
-    /** 비트맵에 표시를 그리는 함수. */
-    const draw = WINDOWS_BADGES[badge];
 
     /** 배지를 그릴 원래 아이콘. `@2x` 파일도 함께 읽힌다. */
     const base = nativeImage.createFromPath(trayIcon);
@@ -119,7 +127,7 @@ export class AppTray {
       const size = Math.round(Math.sqrt(bitmap.length / 4));
       badged.addRepresentation({ scaleFactor, width: size, height: size, buffer: Buffer.from(draw(bitmap, size)) });
     }
-    this.badgedIcons.set(badge, badged);
+    this.badgedIcons.set(key, badged);
     return badged;
   }
 

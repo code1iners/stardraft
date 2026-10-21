@@ -138,6 +138,35 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'set-launch-at-login' })).toBeNull();
   });
 
+  it('묶음 무시·되돌리기·Flow에서 열기 명령은 묶음 ID(양의 정수)를 받는다', () => {
+    for (const type of ['ignore-bundle', 'restore-bundle', 'open-bundle-in-flow'] as const) {
+      expect(parseAppCommand({ type, bundleId: 3 })).toEqual({ type, bundleId: 3 });
+      expect(parseAppCommand({ type, bundleId: 0 })).toBeNull();
+      expect(parseAppCommand({ type, bundleId: 1.5 })).toBeNull();
+      expect(parseAppCommand({ type, bundleId: '3' })).toBeNull();
+      expect(parseAppCommand({ type })).toBeNull();
+    }
+  });
+
+  it('펼쳐 보기·접어 보기 명령은 보고 있던 묶음 ID나 null을 받는다', () => {
+    expect(parseAppCommand({ type: 'expand-review', bundleId: 3 })).toEqual({ type: 'expand-review', bundleId: 3 });
+    expect(parseAppCommand({ type: 'collapse-review', bundleId: null })).toEqual({ type: 'collapse-review', bundleId: null });
+    expect(parseAppCommand({ type: 'expand-review' })).toBeNull();
+    expect(parseAppCommand({ type: 'collapse-review', bundleId: -1 })).toBeNull();
+  });
+
+  it('영역 펼침 명령은 창과 영역 이름, 참·거짓을 받는다', () => {
+    expect(parseAppCommand({ type: 'set-review-section', window: 'compact', section: 'repository', open: true })).toEqual({
+      type: 'set-review-section',
+      window: 'compact',
+      section: 'repository',
+      open: true,
+    });
+    expect(parseAppCommand({ type: 'set-review-section', window: 'settings', section: 'repository', open: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-review-section', window: 'expanded', section: 'draft', open: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-review-section', window: 'expanded', section: 'original', open: 'yes' })).toBeNull();
+  });
+
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {
     expect(parseAppCommand({ type: 'open-settings', section: '../../etc' })).toBeNull();
     expect(parseAppCommand({ type: 'run-shell', command: 'rm -rf /' })).toBeNull();

@@ -19,6 +19,7 @@ export type {
   FlowEmployee,
   FlowPost,
   FlowReply,
+  FlowRemarkAuthorship,
   FlowReplyPage,
   FlowTextComponent,
 } from './flow-api';

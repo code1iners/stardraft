@@ -15,3 +15,8 @@ export function mentionPlaceOf({ postId, remarkId, replyId }: MentionLocation): 
   if (remarkId === NONE) return replyId === NONE ? 'post' : null;
   return replyId === NONE ? 'comment' : 'reply';
 }
+
+/** 멘션 묶음 자리가 게시물 본문인지 본다. 아니면 `remarkId`의 댓글 스레드다. */
+export function isPostBody({ remarkId }: Pick<MentionLocation, 'remarkId'>): boolean {
+  return remarkId === NONE;
+}

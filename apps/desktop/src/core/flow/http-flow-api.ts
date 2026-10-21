@@ -10,6 +10,7 @@ import type {
   FlowEmployee,
   FlowPost,
   FlowProject,
+  FlowRemarkAuthorship,
   FlowReply,
   FlowReplyPage,
   FlowTextComponent,
@@ -280,13 +281,16 @@ function readPost(data: unknown, requestedPostId: string): FlowPost | null {
   if (!isRecord(data)) return null;
   /** 게시물 ID. 응답에 없으면 요청한 ID다. */
   const postId = idString(data.postId) || requestedPostId;
-  if (data.contentJsonYn !== 'Y') return { postId, textComponents: [{ contents: rawString(data.content), mentions: [] }] };
+  /** 제목과 "Flow에서 열기" 주소. */
+  const heading = { title: trimmedString(data.title), connectUrl: trimmedString(data.connectUrl) || null };
+  if (data.contentJsonYn !== 'Y') return { postId, ...heading, textComponents: [{ contents: rawString(data.content), mentions: [] }] };
 
   /** 본문 JSON. 문자열로 오지만 이미 객체로 와도 읽는다. */
   const content = typeof data.content === 'string' ? parseJson(data.content) : data.content;
   if (!isRecord(content) || !Array.isArray(content.COMPS)) return null;
   return {
     postId,
+    ...heading,
     textComponents: content.COMPS.flatMap((component): FlowTextComponent[] => {
       if (!isRecord(component) || component.COMP_TYPE !== 'TEXT' || !isRecord(component.COMP_DETAIL)) return [];
       /** TEXT 컴포넌트의 내용. */
@@ -314,6 +318,7 @@ function readCommentPage(data: unknown): FlowCommentPage | null {
         {
           commentId,
           contents: rawString(item.contents),
+          ...readAuthorship(item),
           replies: Array.isArray(item.replies) ? readReplies(item.replies) : [],
           replyHasNext: item.replyHasNext === true || item.replyHasNext === 'Y',
         },
@@ -342,8 +347,17 @@ function readReplies(items: unknown[]): FlowReply[] {
     if (!isRecord(item)) return [];
     /** 대댓글 ID. */
     const replyId = idString(item.replyId);
-    return replyId ? [{ replyId, contents: rawString(item.contents) }] : [];
+    return replyId ? [{ replyId, contents: rawString(item.contents), ...readAuthorship(item) }] : [];
   });
+}
+
+/** 댓글이나 대댓글을 쓴 사람, 시각, 시스템 댓글 종류를 읽는다. 시각은 숫자로 와도 Flow 형식 문자열로 맞춘다. */
+function readAuthorship(item: Record<string, unknown>): FlowRemarkAuthorship {
+  return {
+    registerId: trimmedString(item.registerId),
+    registeredDateTime: idString(item.registeredDateTime),
+    systemCode: trimmedString(item.systemCode),
+  };
 }
 
 /** 목록 응답의 다음 쪽 커서. `hasNext`가 참이고 `lastCursor`가 있을 때만 있다. */

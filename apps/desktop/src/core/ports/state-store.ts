@@ -1,9 +1,10 @@
-import type { Mention, MentionLocation } from '../detection/mention';
+import type { MentionBundle, UnsavedBundle } from '../bundles/mention-bundle';
+import type { MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from './flow-api';
 
 /**
  * 상태 저장소 포트(`state.db`).
- * 계정과 기준점부터 시작해, 멘션 묶음·초안·게시 기록 같은 상태를 다루는 메서드를 차례로 더한다.
+ * 계정과 기준점, 멘션 묶음부터 시작해, 초안·게시 기록 같은 상태를 다루는 메서드를 차례로 더한다.
  */
 export interface StateStore {
   /** 키 확인에 성공한 계정. 없으면 `null`. */
@@ -21,16 +22,17 @@ export interface StateStore {
   setBaselineAlarmId(alarmId: string): Promise<void>;
   /**
    * 이 멘션 위치를 이미 기록해 두었는지 본다. 같은 멘션 위치에서 다시 온 알림은 글이 수정됐더라도 다시 감지하지 않는다.
-   * 지금은 감지한 멘션을 보고, 처리한 묶음의 최소 기록(ID와 상태만 남긴 기록)이 생기면 그것도 함께 본다.
+   * 지금은 묶음에 든 멘션을 보고, 처리한 묶음의 최소 기록(ID와 상태만 남긴 기록)이 생기면 그것도 함께 본다.
    */
   hasMentionLocation(location: MentionLocation): Promise<boolean>;
+  /** 저장한 멘션 묶음 전부. 묶음마다 멘션은 알림 시각 순서다. */
+  listBundles(): Promise<MentionBundle[]>;
   /**
-   * 판정을 통과한 멘션을 저장하고 기준점을 옮긴다. 둘을 한 트랜잭션으로 해서, 저장하지 못한 멘션을 기준점이 지나치지 않게 한다.
-   * 이미 기록한 멘션 위치는 건너뛰고, 새로 저장한 멘션만 돌려준다.
+   * 감지한 멘션을 넣은 묶음들을 저장하고 기준점을 옮긴다. 둘을 한 트랜잭션으로 해서, 저장하지 못한 멘션을 기준점이 지나치지 않게 한다.
+   * 묶음마다 묶음·멘션·내 답을 주어진 값으로 맞춘다. ID가 없는 새 묶음은 ID를 받는다. 저장한 묶음을 같은 순서로 돌려준다.
+   * 한 멘션 위치는 한 묶음에만 든다. 다른 묶음에 이미 든 멘션 위치를 주면 실패하고 아무것도 바꾸지 않는다.
    */
-  addDetectedMentions(mentions: readonly Mention[], baselineAlarmId: string): Promise<Mention[]>;
-  /** 저장한 멘션. 알림 시각 순서다. */
-  listMentions(): Promise<Mention[]>;
-  /** 저장한 멘션 수. 트레이 숫자에 쓴다. */
-  countMentions(): Promise<number>;
+  saveDetectedBundles(bundles: readonly UnsavedBundle[], baselineAlarmId: string): Promise<MentionBundle[]>;
+  /** 이미 저장한 묶음 하나를 주어진 값으로 맞춘다. 무시·되돌리기처럼 상태를 바꿀 때 쓴다. */
+  saveBundle(bundle: MentionBundle): Promise<void>;
 }

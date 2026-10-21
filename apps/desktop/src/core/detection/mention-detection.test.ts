@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { compareMentions, type BundledMention } from '../bundles/mention-bundle';
+import { MentionBundles } from '../bundles/mention-bundles';
 import { FakeClock } from '../fakes/fake-clock';
 import { FAKE_ME, FakeFlowApi } from '../fakes/fake-flow-api';
 import { MemoryStateStore } from '../fakes/memory-state-store';
@@ -40,6 +42,11 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+/** 상태 저장소의 묶음에 든 멘션. 알림 시각 순서다. */
+async function storedMentions(stateStore: MemoryStateStore): Promise<BundledMention[]> {
+  return (await stateStore.listBundles()).flatMap((bundle) => bundle.mentions).sort(compareMentions);
+}
+
 /** 알림 목록을 조회한 횟수. */
 function alarmRequests(flow: FakeFlowApi): number {
   return flow.requests.filter((request) => request.startsWith('GET /user/alarms')).length;
@@ -57,27 +64,29 @@ async function setup({ baseline = '100' as string | null } = {}) {
   const rejected = { count: 0 };
   /** 남긴 진단 로그 줄. */
   const logLines: string[] = [];
+  const logger = createLogger([{ write: (line) => logLines.push(line) }], clock);
+  const bundles = new MentionBundles({ stateStore, notifier, clock, logger, findMyAnswers: async () => null });
+  await bundles.load();
   const detection = new MentionDetection({
     stateStore,
-    notifier,
+    bundles,
     clock,
-    logger: createLogger([{ write: (line) => logLines.push(line) }], clock),
+    logger,
     connectFlow: () => ({ api: flow, reportKeyRejected: () => (rejected.count += 1) }),
   });
-  await detection.load();
   flow.addPost({ postId: POST_ID, textComponents: [{ contents: '본문', mentions: [] }] });
-  return { clock, flow, stateStore, notifier, rejected, logLines, detection };
+  return { clock, flow, stateStore, notifier, rejected, logLines, bundles, detection };
 }
 
 describe('멘션 감지: 폴링', () => {
   it('감지를 시작하면 바로 알림을 조회하고, 나를 지목한 댓글 멘션을 멘션 위치로 저장하고 트레이 숫자와 OS 알림을 올린다', async () => {
-    const { flow, stateStore, notifier, detection } = await setup();
+    const { flow, stateStore, notifier, bundles, detection } = await setup();
     flow.addComment(POST_ID, { commentId: '700', contents: `${MY_MARKUP} 재시도는 몇 번 하나요?` });
     flow.respondToListMentionAlarms([alarm('101', { remarkId: '700' })]);
 
     await detection.start();
 
-    expect(await stateStore.listMentions()).toEqual([
+    expect(await storedMentions(stateStore)).toEqual([
       {
         postId: POST_ID,
         remarkId: '700',
@@ -88,13 +97,15 @@ describe('멘션 감지: 폴링', () => {
         senderName: '보낸 사람',
         registeredDateTime: '20261020085900',
         detectedAt: NOW,
+        text: `${MY_MARKUP} 재시도는 몇 번 하나요?`,
+        answered: false,
       },
     ]);
-    expect(detection.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '새 멘션', body: '보낸 사람님이 나를 멘션했습니다.' }]);
+    expect(bundles.reviewCount()).toBe(1);
+    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: 1 }]);
     expect(stateStore.baselineAlarmId).toBe('101');
-    // 알림 목록은 readYn 없이 조회만 하고, 읽음 처리 API는 부르지 않는다.
-    expect(flow.requests).toEqual(['GET /user/alarms', `GET /user/comments/${POST_ID}`]);
+    // 알림 목록은 readYn 없이 조회만 하고, 읽음 처리 API는 부르지 않는다. 게시물은 묶음의 제목과 "Flow에서 열기" 주소를 읽으려고 조회한다.
+    expect(flow.requests).toEqual(['GET /user/alarms', `GET /user/comments/${POST_ID}`, `GET /user/posts/${POST_ID}`]);
   });
 
   it('감지 중에는 60초마다 알림 목록을 다시 조회한다', async () => {
@@ -177,7 +188,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
 
     await detection.start();
 
-    expect((await stateStore.listMentions()).map((mention) => mention.postId)).toEqual(['p1', 'p2']);
+    expect((await storedMentions(stateStore)).map((mention) => mention.postId)).toEqual(['p1', 'p2']);
     expect(stateStore.baselineAlarmId).toBe('103');
     expect(flow.requests.filter((request) => request.startsWith('GET /user/alarms'))).toEqual([
       'GET /user/alarms',
@@ -187,13 +198,13 @@ describe('멘션 감지: 기준점과 72시간', () => {
   });
 
   it('alarmId는 숫자 크기로 비교한다(자릿수가 많은 쪽이 크다)', async () => {
-    const { flow, stateStore, detection } = await setup({ baseline: '999' });
+    const { flow, stateStore, bundles, detection } = await setup({ baseline: '999' });
     addPostMentioningMe(flow, 'p1');
     flow.respondToListMentionAlarms([alarm('1000', { postId: 'p1' }), alarm('999')]);
 
     await detection.start();
 
-    expect(detection.reviewCount()).toBe(1);
+    expect(bundles.reviewCount()).toBe(1);
     expect(stateStore.baselineAlarmId).toBe('1000');
   });
 
@@ -211,7 +222,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
 
     await detection.start();
 
-    expect((await stateStore.listMentions()).map((mention) => mention.postId)).toEqual(['edge', 'recent']);
+    expect((await storedMentions(stateStore)).map((mention) => mention.postId)).toEqual(['edge', 'recent']);
     expect(flow.requests).not.toContain('GET /user/posts/old');
     expect(stateStore.baselineAlarmId).toBe('103');
   });
@@ -225,7 +236,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
     await detection.start();
 
     expect(flow.requests.filter((request) => request.startsWith('GET /user/alarms'))).toEqual(['GET /user/alarms']);
-    expect(await stateStore.countMentions()).toBe(1);
+    expect((await storedMentions(stateStore)).length).toBe(1);
   });
 
   it('쪽을 넘기는 사이에 새 알림이 와서 같은 알림이 두 번 와도 멘션은 하나만 저장하고 알림도 한 번 띄운다', async () => {
@@ -240,12 +251,12 @@ describe('멘션 감지: 기준점과 72시간', () => {
 
     await detection.start();
 
-    expect((await stateStore.listMentions()).map((mention) => [mention.postId, mention.alarmId])).toEqual([
+    expect((await storedMentions(stateStore)).map((mention) => [mention.postId, mention.alarmId])).toEqual([
       ['p1', '101'],
       ['p2', '102'],
       ['p3', '103'],
     ]);
-    expect(notifier.sent).toEqual([{ title: '새 멘션 3건', body: '보낸 사람님 외 2건의 멘션이 왔습니다.' }]);
+    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요 3건', body: '보낸 사람님 외 2건의 멘션이 왔습니다.', bundleId: 1 }]);
     // 한 번의 조회에서 같은 게시물은 한 번만 받는다.
     expect(flow.requests.filter((request) => request === 'GET /user/posts/p2')).toHaveLength(1);
   });
@@ -260,7 +271,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
 
     await detection.start();
 
-    expect(await stateStore.listMentions()).toEqual([
+    expect(await storedMentions(stateStore)).toEqual([
       expect.objectContaining({ remarkId: '700', alarmId: '101', registeredDateTime: '20261020080000' }),
     ]);
     expect(stateStore.baselineAlarmId).toBe('105');
@@ -274,7 +285,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
     await detection.start();
 
     expect(stateStore.baselineAlarmId).toBe('205');
-    expect(await stateStore.countMentions()).toBe(0);
+    expect((await storedMentions(stateStore)).length).toBe(0);
     expect(notifier.sent).toEqual([]);
     expect(flow.requests).toEqual(['GET /user/alarms']);
   });
@@ -290,7 +301,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
     clock.advance(60_000);
     await settle();
 
-    expect(await stateStore.countMentions()).toBe(1);
+    expect((await storedMentions(stateStore)).length).toBe(1);
   });
 });
 
@@ -300,7 +311,7 @@ async function detectOne(prepare: (flow: FakeFlowApi) => void, notice: FlowAlarm
   prepare(context.flow);
   context.flow.respondToListMentionAlarms([notice]);
   await context.detection.start();
-  return { ...context, stored: (await context.stateStore.listMentions()).map(({ postId, remarkId, replyId }) => [postId, remarkId, replyId]) };
+  return { ...context, stored: (await storedMentions(context.stateStore)).map(({ postId, remarkId, replyId }) => [postId, remarkId, replyId]) };
 }
 
 describe('멘션 감지: 나를 지목했는지 판정', () => {
@@ -457,7 +468,7 @@ describe('멘션 감지: 조용히 버리는 알림', () => {
 
     await context.detection.start();
 
-    expect((await context.stateStore.listMentions()).map((mention) => mention.postId)).toEqual(['kept']);
+    expect((await storedMentions(context.stateStore)).map((mention) => mention.postId)).toEqual(['kept']);
     expect(context.stateStore.baselineAlarmId).toBe('103');
   });
 
@@ -476,7 +487,7 @@ describe('멘션 감지: 조용히 버리는 알림', () => {
   });
 
   it('이미 기록한 멘션 위치에서 다시 온 알림은 글을 조회하지 않고 버리며, 트레이 숫자와 알림도 그대로다', async () => {
-    const { clock, flow, stateStore, notifier, detection } = await setup({ baseline: '100' });
+    const { clock, flow, stateStore, notifier, bundles, detection } = await setup({ baseline: '100' });
     flow.addComment(POST_ID, { commentId: '700', contents: `${MY_MARKUP} 질문` });
     flow.respondToListMentionAlarms([alarm('101', { remarkId: '700' })]);
     await detection.start();
@@ -485,8 +496,8 @@ describe('멘션 감지: 조용히 버리는 알림', () => {
     clock.advance(60_000);
     await settle();
 
-    expect(await stateStore.countMentions()).toBe(1);
-    expect(detection.reviewCount()).toBe(1);
+    expect((await storedMentions(stateStore)).length).toBe(1);
+    expect(bundles.reviewCount()).toBe(1);
     expect(notifier.sent).toHaveLength(1);
     expect(flow.requests.filter((request) => request.startsWith('GET /user/comments'))).toHaveLength(1);
     expect(stateStore.baselineAlarmId).toBe('102');
@@ -554,7 +565,7 @@ describe('멘션 감지: 오류', () => {
     expect(rejected.count).toBe(1);
     expect(alarmRequests(flow)).toBe(1);
     expect(stateStore.baselineAlarmId).toBe('101');
-    expect((await stateStore.listMentions()).map((mention) => mention.postId)).toEqual(['p1']);
+    expect((await storedMentions(stateStore)).map((mention) => mention.postId)).toEqual(['p1']);
   });
 
   it('429면 Retry-After만큼 기다렸다가 다시 조회하고, 그동안 "지금 확인"도 앞당기지 않는다', async () => {
@@ -599,7 +610,7 @@ describe('멘션 감지: 오류', () => {
 
     clock.advance(60_000);
     await settle();
-    expect(await stateStore.countMentions()).toBe(1);
+    expect((await storedMentions(stateStore)).length).toBe(1);
     expect(stateStore.baselineAlarmId).toBe('101');
   });
 
@@ -612,15 +623,15 @@ describe('멘션 감지: 오류', () => {
     flow.respondToListMentionAlarms([alarm('103', { postId: 'p3' }), alarm('102', { postId: 'p2' }), alarm('101', { postId: 'p1' })]);
 
     await detection.start();
-    expect((await stateStore.listMentions()).map((mention) => mention.postId)).toEqual(['p1']);
+    expect((await storedMentions(stateStore)).map((mention) => mention.postId)).toEqual(['p1']);
     expect(stateStore.baselineAlarmId).toBe('101');
     expect(flow.requests).not.toContain('GET /user/posts/p3');
 
     clock.advance(60_000);
     await settle();
-    expect((await stateStore.listMentions()).map((mention) => mention.postId)).toEqual(['p1', 'p2', 'p3']);
+    expect((await storedMentions(stateStore)).map((mention) => mention.postId)).toEqual(['p1', 'p2', 'p3']);
     expect(stateStore.baselineAlarmId).toBe('103');
-    expect(notifier.sent.map((sent) => sent.title)).toEqual(['새 멘션', '새 멘션 2건']);
+    expect(notifier.sent.map((sent) => sent.title)).toEqual(['저장소 확인 필요', '저장소 확인 필요 2건']);
   });
 
   it('판정 중 서버 오류(5xx)는 다음 주기에 다시 판정한다', async () => {
@@ -630,12 +641,12 @@ describe('멘션 감지: 오류', () => {
     flow.respondToListMentionAlarms([alarm('101', { postId: 'p1' })]);
 
     await detection.start();
-    expect(await stateStore.countMentions()).toBe(0);
+    expect((await storedMentions(stateStore)).length).toBe(0);
     expect(stateStore.baselineAlarmId).toBe('100');
 
     clock.advance(60_000);
     await settle();
-    expect(await stateStore.countMentions()).toBe(1);
+    expect((await storedMentions(stateStore)).length).toBe(1);
   });
 
   it('모르는 응답 모양이나 그 밖의 응답 코드로 판정하지 못한 알림은 다음 조회에서 다시 판정하고, 세 번 연속 실패하면 버리고 넘어간다', async () => {
@@ -649,12 +660,12 @@ describe('멘션 감지: 오류', () => {
     clock.advance(60_000);
     await settle();
     // 두 번째 실패까지는 그 알림에서 멈추므로 뒤의 멘션도 아직 저장하지 않는다.
-    expect(await stateStore.countMentions()).toBe(0);
+    expect((await storedMentions(stateStore)).length).toBe(0);
     expect(stateStore.baselineAlarmId).toBe('100');
 
     clock.advance(60_000);
     await settle();
-    expect((await stateStore.listMentions()).map((mention) => mention.postId)).toEqual(['p2']);
+    expect((await storedMentions(stateStore)).map((mention) => mention.postId)).toEqual(['p2']);
     expect(stateStore.baselineAlarmId).toBe('102');
     expect(flow.requests.filter((request) => request === 'GET /user/posts/broken')).toHaveLength(3);
     expect(logLines.some((line) => line.includes('"detection.alarm-given-up"') && line.includes('"101"'))).toBe(true);
@@ -672,7 +683,7 @@ describe('멘션 감지: 오류', () => {
     clock.advance(60_000);
     await settle();
 
-    expect(await stateStore.countMentions()).toBe(1);
+    expect((await storedMentions(stateStore)).length).toBe(1);
   });
 
   it('판정 중 429면 앞서 판정한 멘션을 저장하고 Retry-After 뒤에 나머지를 판정한다', async () => {
@@ -683,11 +694,11 @@ describe('멘션 감지: 오류', () => {
     flow.respondToListMentionAlarms([alarm('102', { postId: 'p2' }), alarm('101', { postId: 'p1' })]);
 
     await detection.start();
-    expect(await stateStore.countMentions()).toBe(1);
+    expect((await storedMentions(stateStore)).length).toBe(1);
 
     clock.advance(5_000);
     await settle();
-    expect(await stateStore.countMentions()).toBe(2);
+    expect((await storedMentions(stateStore)).length).toBe(2);
   });
 
   it('쓸 키가 없으면 조회하지 않고 다음 주기에 다시 본다', async () => {
@@ -698,11 +709,12 @@ describe('멘션 감지: 오류', () => {
     stateStore.baselineAlarmId = '100';
     /** 쓸 키가 있는지 여부. */
     let hasKey = false;
+    const logger = createLogger([], clock);
     const detection = new MentionDetection({
       stateStore,
-      notifier: new RecordingNotifier(),
+      bundles: new MentionBundles({ stateStore, notifier: new RecordingNotifier(), clock, logger, findMyAnswers: async () => null }),
       clock,
-      logger: createLogger([], clock),
+      logger,
       connectFlow: () => (hasKey ? { api: flow, reportKeyRejected: () => {} } : null),
     });
 

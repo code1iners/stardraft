@@ -1,5 +1,6 @@
 import { app, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 import { mkdir } from 'node:fs/promises';
+import type { MentionBundles } from '../core/bundles/mention-bundles';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
@@ -29,6 +30,8 @@ import {
 import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
 import type { AppWindows } from './app-windows';
 import { isAppRendererUrl } from './renderer-page';
+import type { ReviewSections } from './review-sections';
+import { flowUrlOf, reviewSnapshot, type ProjectLookup } from './review-snapshot';
 
 /** IPC가 부르는 main의 일. */
 export interface IpcServices {
@@ -52,6 +55,10 @@ export interface IpcServices {
   onboarding: Onboarding;
   /** "일반" 칸의 로그인 시 자동 시작. */
   launchAtLogin: LaunchAtLogin;
+  /** 작은 창과 펼친 창의 멘션 묶음. */
+  bundles: MentionBundles;
+  /** 작은 창과 펼친 창의 영역 펼침 상태. */
+  reviewSections: ReviewSections;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -94,19 +101,36 @@ export function registerIpc(services: IpcServices): void {
   );
   services.onboarding.onChange((state) => services.windows.broadcast({ type: 'onboarding-changed', onboarding: onboardingSnapshot(state) }));
   services.launchAtLogin.onChange((enabled) => services.windows.broadcast({ type: 'launch-at-login-changed', launchAtLogin: enabled }));
+  // 묶음이 바뀌거나 영역을 접고 펼 때, 그리고 참여 Flow 프로젝트 목록(프로젝트 이름과 주소)이 바뀔 때 묶음 상태를 다시 보낸다.
+  /** 묶음 상태를 열린 창에 알린다. */
+  const broadcastReview = () => services.windows.broadcast({ type: 'review-changed', review: currentReviewSnapshot(services) });
+  services.bundles.onChange(broadcastReview);
+  services.reviewSections.onChange(broadcastReview);
+  services.repoMappings.onChange(broadcastReview);
+}
+
+/** 지금 묶음 상태의 스냅숏. */
+function currentReviewSnapshot({ bundles, reviewSections, repoMappings }: IpcServices) {
+  return reviewSnapshot(bundles.state(), reviewSections.state(), projectLookup(repoMappings));
+}
+
+/** 참여 Flow 프로젝트 목록에서 Flow 프로젝트를 찾는 함수. 목록을 아직 받지 않았으면 언제나 `null`이다. */
+function projectLookup(repoMappings: RepoMappings): ProjectLookup {
+  /** 참여 Flow 프로젝트 목록의 상태. */
+  const projects = repoMappings.state().projects;
+  /** 받은 프로젝트. */
+  const loaded = projects.status === 'loaded' ? projects.projects : [];
+  return (projectId) => {
+    /** 찾은 프로젝트. */
+    const project = loaded.find((item) => item.projectId === projectId);
+    return project ? { title: project.title, projectUrl: project.projectUrl } : null;
+  };
 }
 
 /** 지금 앱 상태의 스냅숏. */
-function currentSnapshot({
-  flowAccount,
-  globalProblems,
-  agentConnection,
-  agentPreferences,
-  workFolders,
-  repoMappings,
-  onboarding,
-  launchAtLogin,
-}: IpcServices): AppSnapshot {
+function currentSnapshot(services: IpcServices): AppSnapshot {
+  /** 상태를 읽을 main의 일. */
+  const { flowAccount, globalProblems, agentConnection, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin } = services;
   return {
     appName: app.name,
     version: app.getVersion(),
@@ -119,14 +143,15 @@ function currentSnapshot({
     repoMappings: repoMappingsSnapshot(repoMappings.state()),
     onboarding: onboardingSnapshot(onboarding.state()),
     launchAtLogin: launchAtLogin.enabled(),
+    review: currentReviewSnapshot(services),
   };
 }
 
 /** 검사를 통과한 명령을 실행한다. */
-async function runCommand(
-  { windows, logger, flowAccount, agentConnection, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin }: IpcServices,
-  command: AppCommand,
-): Promise<void> {
+async function runCommand(services: IpcServices, command: AppCommand): Promise<void> {
+  /** 명령을 처리할 main의 일. */
+  const { windows, logger, flowAccount, agentConnection, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin, bundles, reviewSections } =
+    services;
   switch (command.type) {
     case 'open-settings':
       windows.openSettings(command.section);
@@ -191,6 +216,41 @@ async function runCommand(
     case 'set-launch-at-login':
       await launchAtLogin.set(command.enabled);
       return;
+    case 'ignore-bundle':
+      await bundles.ignore(command.bundleId);
+      return;
+    case 'restore-bundle':
+      await bundles.restore(command.bundleId);
+      return;
+    case 'open-bundle-in-flow':
+      await openBundleInFlow(services, command.bundleId);
+      return;
+    case 'expand-review':
+      windows.openReview(command.bundleId);
+      return;
+    case 'collapse-review':
+      await windows.collapseReview(command.bundleId);
+      return;
+    case 'set-review-section':
+      reviewSections.set(command.window, command.section, command.open);
+      return;
+  }
+}
+
+/** 묶음의 게시물을 기본 브라우저로 Flow에서 연다. 열 주소가 없거나 열지 못하면 로그만 남긴다. 주소는 로그에 남기지 않는다. */
+async function openBundleInFlow({ bundles, repoMappings, logger }: IpcServices, bundleId: number): Promise<void> {
+  /** 열 묶음. */
+  const bundle = bundles.get(bundleId);
+  /** 열 주소. */
+  const url = bundle && flowUrlOf(bundle, projectLookup(repoMappings));
+  if (!url) {
+    logger.warn('flow.open-skipped', { bundleId });
+    return;
+  }
+  try {
+    await shell.openExternal(url);
+  } catch (error) {
+    logger.warn('flow.open-failed', { bundleId, ...errorFields(error) });
   }
 }
 

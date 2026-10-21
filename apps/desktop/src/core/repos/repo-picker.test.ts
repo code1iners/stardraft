@@ -65,6 +65,8 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     repoCheck: null,
     userRepos: null,
     draft: null,
+    editedText: null,
+    removedRecipients: [],
     failure: null,
     runs: [],
     ...overrides,

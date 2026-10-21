@@ -377,6 +377,7 @@ describe('Flow 어댑터: 게시물 조회', () => {
         postId: '90000011',
         title: '가짜 제목',
         connectUrl: 'https://fake.flow.test/post/90000011',
+        registerId: '',
         registerName: '',
         registeredDateTime: '',
         textComponents: [
@@ -402,6 +403,7 @@ describe('Flow 어댑터: 게시물 조회', () => {
         postId: '5',
         title: '',
         connectUrl: null,
+        registerId: '',
         registerName: '',
         registeredDateTime: '',
         textComponents: [{ contents: '@[테스트 사용자](me@example.test) 평문 본문', mentions: [] }],
@@ -618,7 +620,7 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
 });
 
 describe('Flow 어댑터: 맥락에 쓰는 작성자와 첨부', () => {
-  it('게시물의 작성자 이름·시각과 첨부 파일 이름을 읽고, 이미지 첨부와 IMAGE 컴포넌트는 넣지 않는다', async () => {
+  it('게시물의 작성자 ID·이름·시각과 첨부 파일 이름을 읽고, 이미지 첨부와 IMAGE 컴포넌트는 넣지 않는다', async () => {
     const server = new FakeFlowServer();
     server.replyNext({
       status: 200,
@@ -645,6 +647,7 @@ describe('Flow 어댑터: 맥락에 쓰는 작성자와 첨부', () => {
         postId: '90000011',
         title: '가짜 제목',
         connectUrl: null,
+        registerId: 'sender@example.test',
         registerName: '보낸 사람',
         registeredDateTime: '20261020085000',
         textComponents: [{ contents: '본문', mentions: [] }],

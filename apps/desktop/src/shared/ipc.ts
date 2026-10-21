@@ -44,6 +44,12 @@ export const WORK_FOLDER_PATH_MAX_LENGTH = 4096;
 /** 저장소 매핑 명령이 받는 Flow 프로젝트 ID의 최대 길이. */
 export const FLOW_PROJECT_ID_MAX_LENGTH = 64;
 
+/** 초안 편집 명령이 받는 편집기 텍스트의 최대 길이. 게시 본문 상한(4,000)을 넘긴 텍스트도 저장해 안내를 보여야 하므로 그보다 넉넉하다. */
+export const DRAFT_TEXT_MAX_LENGTH = 100_000;
+
+/** 받는 사람 빼기 명령이 받는 이름의 최대 길이. */
+export const RECIPIENT_NAME_MAX_LENGTH = 200;
+
 /** "Flow 계정" 칸의 계정 카드에 보일 계정. */
 export interface FlowAccountProfile {
   /** 이름. */
@@ -425,7 +431,29 @@ export interface DraftSnapshot {
   autoSelection: AutoSelectionSnapshot | null;
   /** 쓴 저장소 구성을 그 Flow 프로젝트의 저장소 매핑과 견준 것. 저장소 영역의 연결 버튼 문구를 정한다. */
   mapping: MappingMatchSnapshot;
+  /** 편집기 텍스트. 편집했으면 편집본, 아니면 원래 초안의 문장을 이은 것이다(근거 번호 없음). */
+  editorText: string;
+  /** 편집했는지 여부. 참이면 근거 번호를 감추고 "원래 초안으로 되돌리기"를 보인다. */
+  edited: boolean;
+  /** 편집기를 고치고 받는 사람을 뺄 수 있는지 여부. 준비됨 묶음만 참이다. */
+  canEdit: boolean;
+  /** 받는 사람. 처음 멘션한 순서다. 사용자 ID는 main이 가지고 있다. */
+  recipients: RecipientSnapshot[];
+  /**
+   * 게시 본문에서 편집기 텍스트 앞에 붙는 받는 사람 표기와 공백의 길이(`String.length`). 받는 사람이 없으면 0이다.
+   * 글자 수는 이 값에 앞뒤 공백을 뗀 편집기 텍스트의 길이를 더한 것이다.
+   */
+  postBodyPrefixLength: number;
 }
+
+/** 받는 사람 한 명. */
+export interface RecipientSnapshot {
+  /** 이름. 비어 있을 수 있다. */
+  name: string;
+}
+
+/** 게시 본문 길이 상한(`String.length`). Flow 댓글 `contents`의 상한이고, 넘으면 편집기 아래에 안내를 보인다. */
+export const POST_BODY_CHAR_LIMIT = 4_000;
 
 /**
  * 저장소 구성을 Flow 프로젝트의 저장소 매핑과 견준 결과. `unmapped`면 "이 Flow 프로젝트에 연결",
@@ -700,6 +728,15 @@ export type AppCommand =
   | { type: 'link-bundle-repos'; bundleId: number }
   /** 묶음의 저장소 선택 창을 연다. 준비됨이나 저장소 확인 필요 묶음이 아니면 main이 무시한다. */
   | { type: 'open-repo-picker'; bundleId: number }
+  /** 준비됨 묶음의 편집기 텍스트를 편집본으로 저장한다. 원래 초안과 같으면 편집본을 지운다. 준비됨이 아니면 main이 무시한다. */
+  | { type: 'edit-draft'; bundleId: number; text: string }
+  /** "원래 초안으로 되돌리기". 준비됨 묶음의 편집본을 버린다. */
+  | { type: 'revert-draft-edit'; bundleId: number }
+  /**
+   * 준비됨 묶음의 받는 사람에서 한 사람을 뺀다. `index`는 화면에 보인 받는 사람 목록의 위치, `name`은 그 사람의 이름이다.
+   * 그사이 목록이 바뀌어 그 위치의 이름이 다르면 main이 무시한다. 사용자 ID는 main이 묶음에서 찾는다.
+   */
+  | { type: 'remove-recipient'; bundleId: number; index: number; name: string }
   /** 저장소 선택 창의 후보 하나를 체크하거나 뺀다. 후보에 없는 경로는 main이 받지 않는다. */
   | { type: 'set-repo-picker-checked'; path: string; checked: boolean }
   /** 저장소 선택 창의 "폴더 직접 고르기". 폴더 선택 창의 경로는 main이 받으므로 렌더러는 보내지 않는다. */
@@ -762,6 +799,16 @@ function isBundleIdInput(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
+/** 초안 편집 명령에 실을 수 있는 편집기 텍스트인지 확인한다. 빈 텍스트도 받는다. */
+function isDraftTextInput(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= DRAFT_TEXT_MAX_LENGTH;
+}
+
+/** 받는 사람 빼기 명령에 실을 수 있는 이름인지 확인한다. 이름이 비어 있는 받는 사람도 있으므로 빈 이름도 받는다. */
+function isRecipientNameInput(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= RECIPIENT_NAME_MAX_LENGTH;
+}
+
 /** 묶음을 보는 창 이름인지 확인한다. */
 function isReviewWindow(value: unknown): value is ReviewWindow {
   return typeof value === 'string' && (REVIEW_WINDOWS as readonly string[]).includes(value);
@@ -817,8 +864,15 @@ export function parseAppCommand(value: unknown): AppCommand | null {
         : null;
     case 'set-launch-at-login':
       return typeof candidate.enabled === 'boolean' ? { type: 'set-launch-at-login', enabled: candidate.enabled } : null;
+    case 'edit-draft':
+      return isBundleIdInput(candidate.bundleId) && isDraftTextInput(candidate.text) ? { type: 'edit-draft', bundleId: candidate.bundleId, text: candidate.text } : null;
+    case 'remove-recipient':
+      return isBundleIdInput(candidate.bundleId) && Number.isSafeInteger(candidate.index) && (candidate.index as number) >= 0 && isRecipientNameInput(candidate.name)
+        ? { type: 'remove-recipient', bundleId: candidate.bundleId, index: candidate.index as number, name: candidate.name }
+        : null;
     case 'ignore-bundle':
     case 'restore-bundle':
+    case 'revert-draft-edit':
     case 'cancel-generation':
     case 'retry-bundle':
     case 'open-bundle-in-flow':

@@ -1,4 +1,4 @@
-import { useState, type MouseEvent, type ReactNode } from 'react';
+import { useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import type {
   AutoSelectionSnapshot,
   BundleSnapshot,
@@ -24,6 +24,8 @@ import {
   LINKED_NOTE,
   linkButtonText,
   MENTION_PLACE_LABELS,
+  postBodyLength,
+  postBodyLengthText,
   postLine,
   PROCESSED_NOTES,
   reasonText,
@@ -252,6 +254,121 @@ function DraftBody({ draft }: DraftProps) {
           ))}
         </p>
       ))}
+    </div>
+  );
+}
+
+/** 초안 편집기에 넘기는 값. */
+interface DraftEditorProps extends DraftProps {
+  /** 초안이 있는 묶음 ID. 편집·되돌리기·받는 사람 빼기 명령에 실어 보낸다. */
+  bundleId: number;
+}
+
+/**
+ * 초안 영역 내용. 머리 바로 아래에 받는 사람 줄, 그 아래 편집기, 편집기 아래에 글자 수를 둔다.
+ * 고치지 않은 초안은 근거 번호가 붙은 글로 보이고, 누르거나 Enter를 치면 같은 자리에 편집기가 열린다. 고치면 근거 번호가 사라지고 "원래 초안으로 되돌리기"가 생긴다.
+ * 고칠 수 없는 묶음(처리됨 등)은 글로만 보인다.
+ */
+function DraftEditor({ bundleId, draft }: DraftEditorProps) {
+  /** 근거 번호가 붙은 글 대신 편집기를 열었는지 여부. 고치지 않고 벗어나면 다시 닫는다. */
+  const [editing, setEditing] = useState(false);
+  // 고칠 때마다 main에 저장하고 새 스냅숏을 받는다. 받기 전에 다음 글자를 쳐도 앞선 값으로 덮이지 않게 마지막으로 친 텍스트를 쓴다.
+  /** 마지막으로 친 편집기 텍스트. 치지 않았거나 되돌렸으면 `null`. */
+  const [typed, setTyped] = useState<string | null>(null);
+  /** 편집기 텍스트. */
+  const text = draft.canEdit && typed !== null ? typed : draft.editorText;
+  /** 편집기를 보일지 여부. 근거 번호가 붙은 글은 고치기 전에만 보인다. */
+  const showEditor = draft.canEdit && (editing || draft.edited);
+  /** 글자 수 줄. */
+  const length = postBodyLengthText(postBodyLength(draft.postBodyPrefixLength, text));
+
+  /** 근거 번호가 붙은 글 자리에 편집기를 연다. 고치지 않고 벗어나면 다시 번호가 붙은 글이 된다. */
+  const handleOpen = () => setEditing(true);
+  /** Enter를 치면 편집기를 연다. */
+  const handleOpenKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    setEditing(true);
+  };
+  /** 고친 텍스트를 편집본으로 저장한다. 원래 초안과 같아지면 main이 편집본을 지운다. */
+  const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    setTyped(event.target.value);
+    void window.stardraft.send({ type: 'edit-draft', bundleId, text: event.target.value });
+  };
+  /** 편집본을 버리고 근거 번호가 붙은 원래 초안으로 돌아간다. */
+  const handleRevert = () => {
+    setTyped(null);
+    setEditing(false);
+    void window.stardraft.send({ type: 'revert-draft-edit', bundleId });
+  };
+
+  return (
+    <>
+      <RecipientLine bundleId={bundleId} draft={draft} />
+      {showEditor ? (
+        <textarea
+          className="text-input draft-editor"
+          aria-label="초안"
+          value={text}
+          // 근거 번호가 붙은 글을 눌러 연 편집기는 바로 칠 수 있게 한다.
+          autoFocus={!draft.edited}
+          onChange={handleChange}
+          onBlur={() => setEditing(false)}
+        />
+      ) : draft.canEdit ? (
+        // 포커스만으로는 열지 않는다. 탭으로 지나가거나 근거 번호를 볼 때 번호가 사라지지 않게, 누르거나 Enter를 칠 때만 편집기를 연다.
+        <div className="draft-editor annotated" role="textbox" tabIndex={0} aria-label="초안" aria-multiline="true" onClick={handleOpen} onKeyDown={handleOpenKey}>
+          <DraftBody draft={draft} />
+        </div>
+      ) : draft.edited ? (
+        <div className="draft-text plain">{text}</div>
+      ) : (
+        <DraftBody draft={draft} />
+      )}
+      {draft.canEdit && (
+        <div className="draft-foot">
+          {draft.edited && (
+            <button type="button" className="btn link" onClick={handleRevert}>
+              원래 초안으로 되돌리기
+            </button>
+          )}
+          <span className="spacer" />
+          <span className={length.over ? 'small danger-text' : 'small muted'} role={length.over ? 'alert' : undefined}>
+            {length.text}
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * 받는 사람 줄. 테두리만 있는 작은 항목을 처음 멘션한 순서로 보이고, 고칠 수 있으면 항목마다 ×로 뺀다. 더하는 기능은 없다.
+ * 모두 빼면 멘션 없이 올린다고 알린다.
+ */
+function RecipientLine({ bundleId, draft }: DraftEditorProps) {
+  return (
+    <div className="recipient-line">
+      <span className="small muted">받는 사람</span>
+      {draft.recipients.length === 0 && <span className="small muted">없음 · 멘션 없이 올립니다</span>}
+      {draft.recipients.map((recipient, index) => {
+        /** 화면에 보일 이름. */
+        const name = recipient.name || '이름 없음';
+        /** 이 사람을 받는 사람에서 뺀다. 사용자 ID는 main이 위치와 이름으로 찾는다. */
+        const handleRemove = () => {
+          void window.stardraft.send({ type: 'remove-recipient', bundleId, index, name: recipient.name });
+        };
+        return (
+          <span key={index} className="recipient">
+            @{name}
+            {draft.canEdit && (
+              <button type="button" className="recipient-remove" aria-label={`${name} 빼기`} onClick={handleRemove}>
+                ×
+              </button>
+            )}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -540,7 +657,7 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
       {draft && (
         <>
           <ReviewSectionBlock windowKind={windowKind} section="draft" open={open.draft} title="초안">
-            <DraftBody draft={draft} />
+            <DraftEditor key={bundle.id} bundleId={bundle.id} draft={draft} />
           </ReviewSectionBlock>
           <ReviewSectionBlock windowKind={windowKind} section="evidence" open={open.evidence} title={`근거 ${draft.evidence.length}개`}>
             <EvidenceList draft={draft} />

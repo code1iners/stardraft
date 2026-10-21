@@ -17,8 +17,10 @@ const OTHER_COMMENT_LIMIT = 20;
 /** 다른 댓글마다 담는 대댓글 수. 댓글과 함께 받은 처음 10개다. */
 const OTHER_REPLY_LIMIT = 10;
 
-/** 맥락의 글 하나가 갖는 값. 게시물 본문, 댓글, 대댓글이 함께 갖는다. Flow 사용자 ID는 담지 않는다. */
+/** 맥락의 글 하나가 갖는 값. 게시물 본문, 댓글, 대댓글이 함께 갖는다. 쓴 사람의 사용자 ID는 받는 사람에만 쓰고 맥락 문서와 화면에는 넣지 않는다. */
 export interface ContextWriting {
+  /** 쓴 사람의 사용자 ID(`registerId`). Flow가 주지 않았으면 빈 문자열이다. 받는 사람이 생기기 전에 저장한 맥락에는 이 값이 없다. */
+  authorId?: string;
   /** 쓴 사람 이름. 비어 있을 수 있다. */
   authorName: string;
   /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. 없으면 빈 문자열. */
@@ -147,6 +149,7 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     fetchedAt: now,
     post: {
       title: post.value.title,
+      authorId: post.value.registerId,
       authorName: post.value.registerName,
       registeredDateTime: post.value.registeredDateTime,
       contents: post.value.textComponents.map(({ contents }) => contents).join('\n'),
@@ -210,10 +213,11 @@ function isHumanRemark(remark: FlowRemarkAuthorship): boolean {
   return remark.systemCode === '';
 }
 
-/** 댓글이나 대댓글을 맥락의 글로 바꾼다. 쓴 사람의 사용자 ID는 담지 않는다. 멘션 표시는 `markContextMentions`가 한다. */
+/** 댓글이나 대댓글을 맥락의 글로 바꾼다. 멘션 표시는 `markContextMentions`가 한다. */
 function remarkOf(id: string, remark: FlowRemarkAuthorship & { contents: string; attachments: string[] }): ContextRemark {
   return {
     id,
+    authorId: remark.registerId,
     authorName: remark.registerName,
     registeredDateTime: remark.registeredDateTime,
     contents: remark.contents,

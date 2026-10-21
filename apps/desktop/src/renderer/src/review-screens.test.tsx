@@ -264,6 +264,11 @@ const READY = bundle(4, {
     ],
     autoSelection: null,
     mapping: 'unmapped',
+    editorText: '실제 서비스에서는 다섯 번까지 다시 시도합니다. 시험 환경은 세 번으로 보입니다.\n\n설정을 바꾸면 다음 배포부터 적용됩니다.',
+    edited: false,
+    canEdit: true,
+    recipients: [{ name: '보낸 사람' }, { name: '다른 사람' }],
+    postBodyPrefixLength: 59,
   },
   run: { agent: 'claude-code', durationMs: 134_000, contextOmitted: true },
 });
@@ -619,5 +624,78 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     expect(markup).toMatch(/<button[^>]*disabled[^>]*>이 저장소로 만들기<\/button>/);
     expect(markup).toMatch(/<button[^>]*disabled[^>]*>이 Flow 프로젝트에 연결<\/button>/);
     expect(textIn(popoverMarkup(check, { bundleId: 21, status: 'loading' }))).toContain('작업 폴더에서 저장소를 찾는 중입니다.');
+  });
+});
+
+describe('초안 편집기와 받는 사람', () => {
+  /** 초안을 편집한 묶음. */
+  function edited(text: string): BundleSnapshot {
+    return { ...READY, draft: { ...READY.draft!, editorText: text, edited: true } };
+  }
+
+  it('초안 머리 바로 아래에 받는 사람 줄을 두고 사람마다 ×로 뺄 수 있게 하며, 그 아래 편집기에 근거 번호가 붙은 초안과 받는 사람 표기를 포함한 글자 수를 보인다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([READY])} />);
+
+    expect(text).toContain('받는 사람 @보낸 사람 × @다른 사람 ×');
+    expect(html).toContain('aria-label="보낸 사람 빼기"');
+    expect(html).toContain('aria-label="다른 사람 빼기"');
+    expect(text.indexOf('받는 사람 @보낸 사람')).toBeLessThan(text.indexOf('실제 서비스에서는 다섯 번까지 다시 시도합니다. ①'));
+    // 받는 사람 표기 59자와 편집기 텍스트 69자.
+    expect(text).toContain('글자 수 128 / 4,000');
+    expect(text).not.toContain('원래 초안으로 되돌리기');
+    // 받는 사람을 더하는 기능은 없다.
+    expect(text).not.toContain('받는 사람 추가');
+  });
+
+  it('편집한 초안은 근거 번호 없이 편집본을 편집기에 보이고 "원래 초안으로 되돌리기"를 둔다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.')])} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.')])} />);
+
+    expect(html).toContain('<textarea');
+    expect(html).toContain('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.');
+    expect(text).not.toContain('①');
+    expect(text).not.toContain('근거 없음');
+    expect(text).toContain('원래 초안으로 되돌리기');
+  });
+
+  it('게시 본문이 4,000자를 넘으면 편집기 아래에 Flow 댓글 길이 제한 안내를 보인다. 앞뒤 공백은 세지 않는다', () => {
+    // 받는 사람 표기 59자와 편집기 텍스트 4,061자를 더하면 4,120자다.
+    const over = textOf(<PopoverContent snapshot={snapshot([edited(`  ${'가'.repeat(4_061)}\n`)])} />);
+    const fits = textOf(<PopoverContent snapshot={snapshot([edited('가'.repeat(3_941))])} />);
+
+    expect(over).toContain('Flow 댓글 길이 제한을 넘었습니다 (4,120 / 4,000)');
+    expect(fits).toContain('글자 수 4,000 / 4,000');
+    expect(fits).not.toContain('Flow 댓글 길이 제한을 넘었습니다');
+  });
+
+  it('받는 사람을 모두 빼면 멘션 없이 올린다고 보이고, 글자 수는 편집기 텍스트만 센다', () => {
+    /** 받는 사람이 없는 묶음. */
+    const none = { ...READY, draft: { ...READY.draft!, recipients: [], postBodyPrefixLength: 0 } };
+    const text = textOf(<PopoverContent snapshot={snapshot([none])} />);
+
+    expect(text).toContain('받는 사람 없음 · 멘션 없이 올립니다');
+    expect(text).toContain('글자 수 69 / 4,000');
+  });
+
+  it('고칠 수 없는 묶음(처리됨)의 초안은 받는 사람을 뺄 수 없고 되돌리기도 없으며, 편집본은 글로만 보인다', () => {
+    /** 편집한 뒤 무시한 묶음. */
+    const ignored: BundleSnapshot = {
+      ...edited('고친 초안입니다.'),
+      status: 'ignored',
+      group: 'processed',
+      canRestore: true,
+      processedAt: Date.UTC(2026, 9, 20, 0, 0),
+      draft: { ...edited('고친 초안입니다.').draft!, canEdit: false },
+    };
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<ReviewContent snapshot={snapshot([ignored])} initialBundleId={4} />);
+
+    expect(html).toContain('고친 초안입니다.');
+    expect(html).not.toContain('<textarea');
+    expect(html).not.toContain('빼기"');
+    expect(html).not.toContain('원래 초안으로 되돌리기');
   });
 });

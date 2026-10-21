@@ -113,6 +113,8 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     repoCheck: null,
     userRepos: null,
     draft: null,
+    editedText: null,
+    removedRecipients: [],
     failure: null,
     runs: [],
     ...overrides,
@@ -257,15 +259,16 @@ describe('멘션 묶음', () => {
     /** 처음 조회한 맥락. */
     const context: BundleContext = {
       fetchedAt: 2_000,
-      post: { title: '가짜 게시물', authorName: '보낸 사람', registeredDateTime: '20261020085000', contents: '본문', attachments: ['설계서.pdf'], mention: false },
+      post: { title: '가짜 게시물', authorId: 'sender@example.test', authorName: '보낸 사람', registeredDateTime: '20261020085000', contents: '본문', attachments: ['설계서.pdf'], mention: false },
       targetThread: {
         id: '700',
+        authorId: 'sender@example.test',
         authorName: '보낸 사람',
         registeredDateTime: '20261020085900',
         contents: '@[테스트 사용자](me@example.test) 가짜 질문',
         attachments: [],
         mention: true,
-        replies: [{ id: '801', authorName: '동료', registeredDateTime: '20261020090000', contents: '대댓글', attachments: [], mention: false }],
+        replies: [{ id: '801', authorId: 'colleague@example.test', authorName: '동료', registeredDateTime: '20261020090000', contents: '대댓글', attachments: [], mention: false }],
       },
       otherComments: [],
     };
@@ -497,5 +500,47 @@ describe('멘션 묶음', () => {
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
     expect((await store.listBundles()).map(({ status, userRepos }) => ({ status, userRepos }))).toEqual([{ status: 'generating', userRepos: null }]);
+  });
+
+  it('편집본과 받는 사람에서 뺀 사람을 다시 열어도 그대로 읽는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles(
+      [
+        bundle([mention('101')], { status: 'ready', editedText: '고친 초안\n\n둘째 문단', removedRecipients: ['other@example.test', 'third@example.test'] }),
+        bundle([mention('102', { postId: '90000012' })]),
+      ],
+      '102',
+    );
+
+    /** 다시 연 저장소에서 읽은 묶음. */
+    const reopened = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
+
+    expect(reopened.map(({ editedText, removedRecipients }) => ({ editedText, removedRecipients }))).toEqual([
+      { editedText: '고친 초안\n\n둘째 문단', removedRecipients: ['other@example.test', 'third@example.test'] },
+      { editedText: null, removedRecipients: [] },
+    ]);
+  });
+
+  it('형식 9에서 올리면 이미 있던 묶음은 편집본과 뺀 받는 사람 없이 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 9로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 9), '0.0.9');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'ready', '가짜 게시물', NULL, 0, 1000, NULL)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ editedText, removedRecipients }) => ({ editedText, removedRecipients }))).toEqual([
+      { editedText: null, removedRecipients: [] },
+    ]);
   });
 });

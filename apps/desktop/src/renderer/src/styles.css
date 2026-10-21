@@ -1191,6 +1191,84 @@ p.mention-text {
   text-underline-offset: 3px;
 }
 
+/* 받는 사람 줄: 초안 머리 바로 아래, 테두리만 있는 작은 항목과 ×. */
+.recipient-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-bottom: 6px;
+}
+
+.recipient {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.recipient-remove {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.recipient-remove:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* 초안 편집기. 고치기 전에는 근거 번호가 붙은 글을 같은 테두리 안에 보이고, 누르면 텍스트 편집기가 된다. */
+.draft-editor {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.draft-editor.annotated {
+  cursor: text;
+}
+
+.draft-editor.annotated:focus {
+  outline: 2px solid #a9c2ec;
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+textarea.draft-editor {
+  height: auto;
+  min-height: 96px;
+  field-sizing: content;
+  line-height: 1.5;
+  resize: vertical;
+  user-select: text;
+}
+
+.draft-text.plain {
+  white-space: pre-wrap;
+}
+
+/* 편집기 아래: 왼쪽에 "원래 초안으로 되돌리기", 오른쪽에 글자 수나 길이 제한 안내. */
+.draft-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* 문장 뒤의 근거 번호(①②)와 "근거 없음". */
 .cite {
   margin-left: 2px;

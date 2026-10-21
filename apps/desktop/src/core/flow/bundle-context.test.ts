@@ -61,6 +61,7 @@ describe('맥락 수집: 본문 묶음', () => {
     flow.addPost({
       postId: POST_ID,
       title: '재시도 정책',
+      registerId: SENDER,
       registerName: '보낸 사람',
       registeredDateTime: '20261020085000',
       textComponents: [
@@ -84,6 +85,7 @@ describe('맥락 수집: 본문 묶음', () => {
       flow.addReply(POST_ID, lastId, {
         replyId: String(9000100 + index),
         contents: `대댓글 ${index}`,
+        registerId: 'colleague@example.test',
         registerName: '동료',
         registeredDateTime: at(41 + index),
         systemCode: index === 0 ? 'A00^^' : '',
@@ -99,6 +101,7 @@ describe('맥락 수집: 본문 묶음', () => {
     expect(context.fetchedAt).toBe(NOW);
     expect(context.post).toEqual({
       title: '재시도 정책',
+      authorId: SENDER,
       authorName: '보낸 사람',
       registeredDateTime: '20261020085000',
       contents: `${MY_MARKUP} 재시도는 몇 번인가요?\n둘째 문단`,
@@ -113,6 +116,7 @@ describe('맥락 수집: 본문 묶음', () => {
     expect(last.replies.map((reply) => reply.contents)).toEqual(Array.from({ length: 9 }, (_, index) => `대댓글 ${index + 1}`));
     expect(last.replies[0]).toEqual({
       id: '9000101',
+      authorId: 'colleague@example.test',
       authorName: '동료',
       registeredDateTime: at(42),
       contents: '대댓글 1',
@@ -130,7 +134,7 @@ describe('맥락 수집: 댓글 스레드 묶음', () => {
     flow.replyPageSize = 7;
     flow.addPost({ postId: POST_ID, title: '오류 문의', textComponents: [{ contents: '본문', mentions: [] }] });
     flow.addComment(POST_ID, { commentId: '900000101', contents: '앞선 다른 댓글', registeredDateTime: at(1) });
-    flow.addComment(POST_ID, { commentId: '900000102', contents: `${MY_MARKUP} 왜 실패하나요?`, registerName: '보낸 사람', registeredDateTime: at(2) });
+    flow.addComment(POST_ID, { commentId: '900000102', contents: `${MY_MARKUP} 왜 실패하나요?`, registerId: SENDER, registerName: '보낸 사람', registeredDateTime: at(2) });
     flow.addComment(POST_ID, { commentId: '900000103', contents: '뒤의 다른 댓글', registeredDateTime: at(3) });
     for (let index = 0; index < 25; index += 1) {
       flow.addReply(POST_ID, '900000102', {
@@ -156,7 +160,7 @@ describe('맥락 수집: 댓글 스레드 묶음', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const thread = result.context.targetThread!;
-    expect(thread).toMatchObject({ id: '900000102', authorName: '보낸 사람', mention: true });
+    expect(thread).toMatchObject({ id: '900000102', authorId: SENDER, authorName: '보낸 사람', mention: true });
     // 시스템 대댓글 하나를 뺀 24개다.
     expect(thread.replies).toHaveLength(24);
     expect(thread.replies.filter((reply) => reply.mention).map((reply) => reply.id)).toEqual(['9000220']);
@@ -224,7 +228,7 @@ describe('맥락 수집: 같은 조회에서 찾는 내 답', () => {
 
 /** 맥락의 글 하나. 기본은 멘션이 아닌 짧은 글이다. */
 function remark(id: string, contents: string, overrides: Partial<ContextRemark> = {}): ContextRemark {
-  return { id, authorName: '동료', registeredDateTime: '20261020081000', contents, attachments: [], mention: false, ...overrides };
+  return { id, authorId: 'colleague@example.test', authorName: '동료', registeredDateTime: '20261020081000', contents, attachments: [], mention: false, ...overrides };
 }
 
 /** 맥락의 댓글 하나. */
@@ -238,6 +242,7 @@ function context(overrides: Partial<BundleContext> = {}): BundleContext {
     fetchedAt: NOW,
     post: {
       title: '재시도 정책',
+      authorId: SENDER,
       authorName: '보낸 사람',
       registeredDateTime: '20261020085000',
       contents: '본문',
@@ -261,6 +266,7 @@ describe('맥락 문서', () => {
       context({
         post: {
           title: '오류 문의',
+          authorId: SENDER,
           authorName: '보낸 사람',
           registeredDateTime: '20261020080000',
           contents: `배포 뒤 오류가 납니다.\n@[다른 동료](other@example.test) 참고`,

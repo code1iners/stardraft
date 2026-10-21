@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
-import { activeMentions, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
+import { activeMentions, canEditDraft, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
+import { bundleRecipients, draftEditorText, postBody } from '../core/drafts/post-body';
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
@@ -96,7 +97,7 @@ export function bundleSnapshot(
     canRestore: isRestorable(bundle.status),
     canOpenInFlow: flowUrlOf(bundle, projectOf) !== null,
     thread: bundle.context ? threadEntries(bundle.context) : [],
-    draft: bundle.draft && draftSnapshot(bundle.draft, mappingOf(bundle.projectId, bundle.draft.repositories)),
+    draft: bundle.draft && draftSnapshot(bundle, bundle.draft, mappingOf(bundle.projectId, bundle.draft.repositories)),
     run: runLine(bundle),
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
     failure: bundle.failure && { ...bundle.failure },
@@ -106,9 +107,11 @@ export function bundleSnapshot(
 
 /**
  * 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘기고, 자동 선택으로 정했으면 그 내력도 넘긴다.
- * `mapping`은 그 구성을 저장소 매핑과 견준 것이다.
+ * `mapping`은 그 구성을 저장소 매핑과 견준 것이다. 편집기 텍스트와 받는 사람도 함께 넘기되, 받는 사람의 사용자 ID는 넘기지 않는다.
  */
-function draftSnapshot(draft: Draft, mapping: MappingMatch): DraftSnapshot {
+function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatch): DraftSnapshot {
+  /** 받는 사람. */
+  const recipients = bundleRecipients(bundle);
   return {
     requirement: { ...draft.requirement },
     paragraphs: draft.paragraphs.map((paragraph) => ({ sentences: paragraph.sentences.map((sentence) => ({ ...sentence, evidence: [...sentence.evidence] })) })),
@@ -124,6 +127,12 @@ function draftSnapshot(draft: Draft, mapping: MappingMatch): DraftSnapshot {
     repositories: draft.repositories.map((path) => ({ name: basename(path), path })),
     autoSelection: draft.autoSelection && { ...draft.autoSelection },
     mapping,
+    editorText: bundle.editedText ?? draftEditorText(draft),
+    edited: bundle.editedText !== null,
+    canEdit: canEditDraft(bundle.status),
+    recipients: recipients.map(({ name }) => ({ name })),
+    // 빈 편집기 텍스트의 게시 본문이 곧 받는 사람 표기와 이어 붙이는 공백이다.
+    postBodyPrefixLength: postBody(recipients, '').length,
   };
 }
 

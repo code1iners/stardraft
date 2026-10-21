@@ -69,6 +69,8 @@ export interface FlowPost {
   title: string;
   /** "Flow에서 열기" 주소. 게시물을 바로 연다. 없으면 `null`. */
   connectUrl: string | null;
+  /** 작성자의 사용자 ID. 없으면 빈 문자열. */
+  registerId: string;
   /** 작성자 이름. 없으면 빈 문자열. */
   registerName: string;
   /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. 없으면 빈 문자열. */

@@ -260,6 +260,15 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);
       return;
+    case 'edit-draft':
+      await bundles.editDraft(command.bundleId, command.text);
+      return;
+    case 'revert-draft-edit':
+      await bundles.revertDraftEdit(command.bundleId);
+      return;
+    case 'remove-recipient':
+      await bundles.removeRecipient(command.bundleId, command.index, command.name);
+      return;
     case 'link-bundle-repos':
       await repoPicker.linkBundle(command.bundleId);
       return;

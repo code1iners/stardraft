@@ -71,7 +71,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   /** 보이는 묶음과 대기열. */
   const { queue, selected, select, movedWhileViewing } = selection;
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패 토스트. */
-  const { toast, failedToasts, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
+  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 연다. 작은 창은 main이 닫는다. */
   const handleExpand = () => {
@@ -111,7 +111,15 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
           <EmptyDetection snapshot={snapshot} />
         </>
       )}
-      <ToastStack bundles={bundles} ignoreToast={toast} failedToasts={failedToasts} onRestore={restore} onCancelPost={cancelPost} />
+      <ToastStack
+        bundles={bundles}
+        ignoreToast={toast}
+        failedToasts={failedToasts}
+        stoppedToasts={stoppedToasts}
+        onRestore={restore}
+        onCancelPost={cancelPost}
+        onStoppedAction={followStopped}
+      />
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
     </>

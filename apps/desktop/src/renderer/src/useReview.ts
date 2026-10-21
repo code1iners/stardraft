@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { BundleSnapshot } from '../../shared/ipc';
-import { ignoredText } from './review-text';
+import type { AppEvent, BundleSnapshot, PostStopSnapshot } from '../../shared/ipc';
+import { ignoredText, postStoppedAction } from './review-text';
 
-/** 무시 토스트를 보이는 시간(밀리초). */
+/** 토스트(무시, 게시 실패, 멈춘 게시)를 보이는 시간(밀리초). */
 const TOAST_MS = 5_000;
 
 /** 카운트다운의 남은 초를 다시 셀 간격(밀리초). 초가 바뀌는 때를 크게 놓치지 않을 만큼 짧다. */
@@ -133,6 +133,16 @@ export interface FailedToastState {
   bundleId: number;
 }
 
+/** 게시를 누를 때의 확인으로 멈춘 게시의 토스트 하나. */
+export interface StoppedToastState {
+  /** 토스트를 가려내는 번호. */
+  key: number;
+  /** 게시를 멈춘 묶음 ID. */
+  bundleId: number;
+  /** 멈춘 까닭. */
+  stop: PostStopSnapshot;
+}
+
 /** 무시 토스트. 되돌리기로 살릴 묶음과 문구다. */
 export interface IgnoreToastState {
   /** 무시한 묶음 ID. */
@@ -147,6 +157,10 @@ export interface BundleActions {
   toast: IgnoreToastState | null;
   /** 보이는 게시 실패 토스트. 띄운 순서다. */
   failedToasts: FailedToastState[];
+  /** 보이는 멈춘 게시 토스트. 띄운 순서다. */
+  stoppedToasts: StoppedToastState[];
+  /** 멈춘 게시 토스트의 [되돌리기]나 [보기]를 눌렀다. 토스트를 닫고 그 묶음을 되돌리거나 보인다. */
+  followStopped: (toast: StoppedToastState) => void;
   /** 묶음을 무시하고 다음 묶음으로 넘어가며, 되돌릴 수 있는 토스트를 띄운다. */
   ignore: (bundle: BundleSnapshot) => void;
   /** 처리됨 묶음을 되돌리고 그 묶음을 보인다. */
@@ -169,21 +183,31 @@ export function useBundleActions({ select, leave }: Pick<BundleSelection, 'selec
   /** 무시 토스트. */
   const [toast, setToast] = useIgnoreToast();
   /** 게시 실패 토스트. */
-  const failedToasts = useFailedToasts();
+  const [failedToasts] = useEventToasts(failedToastOf);
+  /** 멈춘 게시 토스트. */
+  const [stoppedToasts, dismissStopped] = useEventToasts(stoppedToastOf);
+  /** 처리됨 묶음을 되돌리고 그 묶음을 보인다. */
+  const restore = (bundleId: number) => {
+    setToast(null);
+    select(bundleId);
+    void window.stardraft.send({ type: 'restore-bundle', bundleId });
+  };
 
   return {
     toast,
     failedToasts,
+    stoppedToasts,
+    followStopped: (stopped) => {
+      dismissStopped(stopped.key);
+      if (postStoppedAction(stopped.stop) === 'restore') restore(stopped.bundleId);
+      else select(stopped.bundleId);
+    },
     ignore: (bundle) => {
       leave(bundle.id);
       setToast({ bundleId: bundle.id, text: ignoredText(bundle) });
       void window.stardraft.send({ type: 'ignore-bundle', bundleId: bundle.id });
     },
-    restore: (bundleId) => {
-      setToast(null);
-      select(bundleId);
-      void window.stardraft.send({ type: 'restore-bundle', bundleId });
-    },
+    restore,
     cancel: (bundleId) => {
       void window.stardraft.send({ type: 'cancel-generation', bundleId });
     },
@@ -219,39 +243,54 @@ export function useSecondsLeft(endsAt: number | null): number | null {
   return endsAt === null ? null : Math.max(0, Math.ceil((endsAt - now) / 1_000));
 }
 
+/** main 알림에서 게시 실패 토스트의 값을 꺼낸다. 게시 실패 알림이 아니면 `null`. */
+function failedToastOf(event: AppEvent): Omit<FailedToastState, 'key'> | null {
+  return event.type === 'post-failed' ? { bundleId: event.bundleId } : null;
+}
+
+/** main 알림에서 멈춘 게시 토스트의 값을 꺼낸다. 멈춘 게시 알림이 아니면 `null`. */
+function stoppedToastOf(event: AppEvent): Omit<StoppedToastState, 'key'> | null {
+  return event.type === 'post-stopped' ? { bundleId: event.bundleId, stop: event.stop } : null;
+}
+
 /**
- * 게시 실패 토스트. main이 게시 실패를 알릴 때마다 하나씩 띄우고, 띄운 뒤 5초가 지나면 저절로 사라진다.
- * 묶음 상태가 아니라 알림을 따르므로 실패한 순간에 한 번만 뜨고, 창을 다시 열어도 다시 뜨지 않는다.
+ * main 알림을 따르는 토스트(게시 실패, 멈춘 게시). `pick`이 값을 꺼낸 알림마다 하나씩 띄우고, 띄운 뒤 5초가 지나거나 닫으면 사라진다.
+ * 묶음 상태가 아니라 알림을 따르므로 그 순간에 한 번만 뜨고, 창을 다시 열어도 다시 뜨지 않는다. `pick`은 모듈 수준의 함수여야 한다.
  */
-function useFailedToasts(): FailedToastState[] {
+function useEventToasts<T extends object>(pick: (event: AppEvent) => T | null): [(T & { key: number })[], (key: number) => void] {
   /** 보이는 토스트. */
-  const [toasts, setToasts] = useState<FailedToastState[]>([]);
+  const [toasts, setToasts] = useState<(T & { key: number })[]>([]);
 
-  useEffect(function showPostFailures() {
-    /** 다음 토스트 번호. */
-    let nextKey = 1;
-    /** 토스트마다 지우는 예약. */
-    const timers = new Set<ReturnType<typeof setTimeout>>();
-    /** 알림 구독을 푼다. */
-    const unsubscribe = window.stardraft.onEvent((event) => {
-      if (event.type !== 'post-failed') return;
-      /** 띄울 토스트. */
-      const toast = { key: nextKey++, bundleId: event.bundleId };
-      setToasts((current) => [...current, toast]);
-      /** 토스트를 지우는 예약. */
-      const timer = setTimeout(() => {
-        timers.delete(timer);
-        setToasts((current) => current.filter((item) => item.key !== toast.key));
-      }, TOAST_MS);
-      timers.add(timer);
-    });
-    return () => {
-      unsubscribe();
-      for (const timer of timers) clearTimeout(timer);
-    };
-  }, []);
+  useEffect(
+    function showEventToasts() {
+      /** 다음 토스트 번호. */
+      let nextKey = 1;
+      /** 토스트마다 지우는 예약. */
+      const timers = new Set<ReturnType<typeof setTimeout>>();
+      /** 알림 구독을 푼다. */
+      const unsubscribe = window.stardraft.onEvent((event) => {
+        /** 알림에서 꺼낸 값. */
+        const value = pick(event);
+        if (!value) return;
+        /** 띄울 토스트. */
+        const toast = { ...value, key: nextKey++ };
+        setToasts((current) => [...current, toast]);
+        /** 토스트를 지우는 예약. */
+        const timer = setTimeout(() => {
+          timers.delete(timer);
+          setToasts((current) => current.filter((item) => item.key !== toast.key));
+        }, TOAST_MS);
+        timers.add(timer);
+      });
+      return () => {
+        unsubscribe();
+        for (const timer of timers) clearTimeout(timer);
+      };
+    },
+    [pick],
+  );
 
-  return toasts;
+  return [toasts, (key) => setToasts((current) => current.filter((item) => item.key !== key))];
 }
 
 /** 무시 토스트. 띄운 뒤 5초가 지나면 저절로 사라진다. */

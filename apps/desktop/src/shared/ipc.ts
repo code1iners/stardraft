@@ -350,6 +350,15 @@ export type BundleStatusSnapshot =
  */
 export type PostFailureSnapshot = 'forbidden' | 'gone' | 'rejected' | 'rate-limited' | 'no-response';
 
+/**
+ * 게시를 누를 때의 확인이 게시를 멈춘 까닭. 이미 답함, 원문 사라짐, 또는 [게시]를 누를 때 화면에 없던 변화다.
+ * 변화면 확인이 끝나기 전에 합쳐진 새 멘션 수, 새로 생긴 글 수(나를 멘션한 글 포함), 원문 수정 여부, 새로 사라진 멘션 수를 넘긴다.
+ */
+export type PostStopSnapshot =
+  | { kind: 'already-answered' }
+  | { kind: 'source-gone' }
+  | { kind: 'changed'; newMentionCount: number; newWritingCount: number; edited: boolean; goneMentionCount: number };
+
 /** 게시 중 묶음의 단계. */
 export type PostingSnapshot =
   /** 게시 취소 카운트다운 중이다. `endsAt`(Unix epoch 밀리초)에 게시 요청을 보내고, 그 전까지 취소할 수 있다. */
@@ -761,7 +770,9 @@ export type AppEvent =
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
   | { type: 'review-bundle-requested'; bundleId: number }
   /** 묶음의 게시가 실패했다. 다른 묶음을 보고 있어도 토스트를 한 번 띄운다. */
-  | { type: 'post-failed'; bundleId: number };
+  | { type: 'post-failed'; bundleId: number }
+  /** 게시를 누를 때의 확인이 묶음의 게시를 멈췄다. 카운트다운 토스트 대신 "게시하지 않았습니다: …" 토스트를 한 번 띄운다. */
+  | { type: 'post-stopped'; bundleId: number; stop: PostStopSnapshot };
 
 /** 렌더러 → main 명령. */
 export type AppCommand =

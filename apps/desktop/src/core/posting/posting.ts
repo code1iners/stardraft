@@ -8,6 +8,8 @@ import type { FlowApiFailure, FlowApiResult, FlowConnection } from '../ports/flo
 
 /** 게시 취소 카운트다운(밀리초). [게시]를 누르고 이만큼 지나야 게시 요청을 보낸다. 설정에서 바꿀 수 없다. */
 export const POST_COUNTDOWN_MS = 5_000;
+/** 카운트다운이 끝난 뒤 게시를 누를 때의 확인이 끝나기를 기다려 주는 시간(밀리초). 이만큼 지나도 끝나지 않으면 그대로 게시한다. */
+export const POST_CHECK_GRACE_MS = 5_000;
 
 /** `429`에 `Retry-After`가 없을 때 다시 보내기 전에 기다리는 시간(밀리초). */
 const DEFAULT_RATE_LIMIT_DELAY_MS = 10_000;
@@ -32,23 +34,29 @@ export interface PostingOptions {
   logger: Logger;
 }
 
-/** 진행 중인 카운트다운. */
-interface Countdown {
-  /** 게시 요청을 보낼 시각(Unix epoch 밀리초). */
+/** [게시]를 누른 뒤 게시 요청을 보내기 전까지의 한 번의 시도. */
+interface Attempt {
+  /** 카운트다운이 끝나는 시각(Unix epoch 밀리초). */
   endsAt: number;
-  /** 게시 요청 예약을 지운다. */
+  /** 단계. 카운트다운 중(`countdown`)이거나, 카운트다운이 끝나 게시를 누를 때의 확인을 기다리는 중(`waiting`)이다. 취소는 카운트다운 중에만 된다. */
+  stage: 'countdown' | 'waiting';
+  /** 게시를 누를 때의 확인이 끝나 그대로 게시해도 되는지 여부. */
+  checked: boolean;
+  /** 지금 단계의 예약(카운트다운의 끝, 확인을 기다리는 시간의 끝)을 지운다. */
   cancel: CancelScheduled;
 }
 
 /**
- * 게시. [게시]를 누르면 묶음을 게시 중으로 두고 5초 카운트다운을 시작하며, 그동안 취소할 수 있다. 확인 단계는 없다.
- * 카운트다운이 끝나면 게시 요청을 보내기 직전에 게시 본문을 먼저 기록하고, 본문 묶음은 게시물의 새 댓글로, 댓글 스레드 묶음은 그 댓글의 대댓글로 올린다.
+ * 게시. [게시]를 누르면 묶음을 게시 중으로 두고 5초 카운트다운을 시작하며, 그동안 취소할 수 있다. 확인 창은 없다.
+ * 누르는 순간 게시를 누를 때의 확인(`MentionBundles.checkBeforePost`)을 시작한다. 확인이 게시를 멈추면 카운트다운도 멈춘다.
+ * 카운트다운이 끝날 때 확인이 끝나지 않았으면 5초를 더 기다리고, 그래도 끝나지 않으면 그대로 게시한다.
+ * 게시 요청을 보내기 직전에 게시 본문을 먼저 기록하고, 본문 묶음은 게시물의 새 댓글로, 댓글 스레드 묶음은 그 댓글의 대댓글로 올린다.
  * 성공하면 올라간 글의 ID를 기록하고 게시됨으로 둔다. 실패하면 응답에 따라 게시 실패로 두고 사유를 기록한다.
  * 올라갔는지 알 수 없으면(응답 없음, `5xx`) 그대로 다시 보내지 않고 그 자리를 다시 조회해 정한다(`checkOutcome`).
  */
 export class Posting {
-  /** 묶음마다 진행 중인 카운트다운. */
-  private readonly countdowns = new Map<number, Countdown>();
+  /** 묶음마다 게시 요청을 보내기 전의 시도. */
+  private readonly attempts = new Map<number, Attempt>();
   /** 카운트다운이 바뀔 때 부를 함수. */
   private readonly listeners = new Set<() => void>();
   /** 게시 실패가 될 때 부를 함수. */
@@ -56,45 +64,51 @@ export class Posting {
   /** 묶음마다 기다렸다가 할 일(`429` 뒤 다시 보내기, 올라갔는지 다시 확인하기)의 예약. */
   private readonly waits = new Map<number, CancelScheduled>();
 
-  constructor(private readonly options: PostingOptions) {}
+  constructor(private readonly options: PostingOptions) {
+    // 게시를 누를 때의 확인이 멈춘 게시(새 멘션이 합쳐진 경우 포함)는 보내지 않고 바로 다시 누를 수 있게 시도를 지운다.
+    options.bundles.onPostStopped((bundleId) => this.drop(bundleId));
+  }
 
   /**
-   * [게시]. 준비됨 묶음을 게시 중으로 두고 5초 뒤 게시 요청을 보내도록 예약한다.
+   * [게시]. 준비됨 묶음을 게시 중으로 두고 5초 뒤 게시 요청을 보내도록 예약하며, 게시를 누를 때의 확인을 시작한다.
    * 준비됨이 아니거나 게시할 수 없는 글(빈 편집기 텍스트, 4,000자 초과)이면 아무것도 하지 않는다.
    */
   async post(bundleId: number): Promise<void> {
-    if (this.countdowns.has(bundleId)) return;
+    if (this.attempts.has(bundleId)) return;
     // 게시 중이 되었다는 묶음 변경을 받은 화면이 카운트다운도 함께 보도록, 상태를 바꾸기 전에 카운트다운을 먼저 둔다.
-    /** 이 묶음의 카운트다운. */
-    const countdown: Countdown = {
+    /** 이번 시도. */
+    const attempt: Attempt = {
       endsAt: this.options.clock.now() + POST_COUNTDOWN_MS,
-      cancel: this.options.clock.after(POST_COUNTDOWN_MS, () => void this.sendSafely(bundleId)),
+      stage: 'countdown',
+      checked: false,
+      cancel: this.options.clock.after(POST_COUNTDOWN_MS, () => this.countdownEnded(bundleId, attempt)),
     };
-    this.countdowns.set(bundleId, countdown);
+    this.attempts.set(bundleId, attempt);
 
     if (await this.options.bundles.startPosting(bundleId)) {
       this.options.logger.info('posting.countdown-started', { bundleId });
       this.emit();
+      void this.check(bundleId, attempt);
       return;
     }
-    countdown.cancel();
-    this.countdowns.delete(bundleId);
+    attempt.cancel();
+    if (this.attempts.get(bundleId) === attempt) this.attempts.delete(bundleId);
   }
 
-  /** 카운트다운 중인 게시를 취소한다. 묶음은 준비됨으로 돌아간다. 카운트다운이 끝나 게시 요청을 보냈으면 아무것도 하지 않는다. */
+  /** 카운트다운 중인 게시를 취소한다. 묶음은 준비됨으로 돌아간다. 카운트다운이 끝났으면 아무것도 하지 않는다. */
   async cancel(bundleId: number): Promise<void> {
-    /** 취소할 카운트다운. */
-    const countdown = this.countdowns.get(bundleId);
-    if (!countdown) return;
-    countdown.cancel();
-    this.countdowns.delete(bundleId);
-    this.emit();
+    /** 취소할 시도. */
+    const attempt = this.attempts.get(bundleId);
+    if (attempt?.stage !== 'countdown') return;
+    this.drop(bundleId);
     await this.options.bundles.cancelPosting(bundleId);
   }
 
   /** 카운트다운이 끝나 게시 요청을 보낼 시각. 카운트다운 중이 아니면 `null`. */
   countdownEndsAt(bundleId: number): number | null {
-    return this.countdowns.get(bundleId)?.endsAt ?? null;
+    /** 묶음의 시도. */
+    const attempt = this.attempts.get(bundleId);
+    return attempt?.stage === 'countdown' ? attempt.endsAt : null;
   }
 
   /** 카운트다운이 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
@@ -107,8 +121,8 @@ export class Posting {
 
   /** 앱을 끝낼 때 카운트다운과 기다리던 일을 모두 멈춘다. 예약된 게시 요청은 보내지 않는다. */
   stop(): void {
-    for (const countdown of this.countdowns.values()) countdown.cancel();
-    this.countdowns.clear();
+    for (const attempt of this.attempts.values()) attempt.cancel();
+    this.attempts.clear();
     for (const cancel of this.waits.values()) cancel();
     this.waits.clear();
   }
@@ -178,6 +192,53 @@ export class Posting {
   }
 
   /**
+   * 게시를 누를 때의 확인을 하고 결과에 따라 시도를 이어 간다. 멈췄으면 시도는 멈춤 알림을 받을 때 지워진다.
+   * 그대로 게시해도 되면 카운트다운이 이미 끝나 기다리던 시도는 바로 게시 요청을 보낸다. 그사이 취소했거나 늦어서 결과 없이 게시했으면 아무것도 하지 않는다.
+   */
+  private async check(bundleId: number, attempt: Attempt): Promise<void> {
+    /** 확인 결과. 확인하다 예외가 나면 조회하지 못한 것으로 본다. */
+    const outcome = await this.options.bundles.checkBeforePost(bundleId).catch(() => 'unchecked' as const);
+    if (this.attempts.get(bundleId) !== attempt || (outcome !== 'passed' && outcome !== 'unchecked')) return;
+    attempt.checked = true;
+    if (attempt.stage === 'waiting') {
+      this.drop(bundleId);
+      await this.sendSafely(bundleId);
+    }
+  }
+
+  /** 카운트다운이 끝났다. 게시를 누를 때의 확인이 끝났으면 게시 요청을 보내고, 아니면 확인을 5초 더 기다린다. */
+  private countdownEnded(bundleId: number, attempt: Attempt): void {
+    if (this.attempts.get(bundleId) !== attempt) return;
+    if (attempt.checked) {
+      this.drop(bundleId);
+      void this.sendSafely(bundleId);
+      return;
+    }
+    attempt.stage = 'waiting';
+    attempt.cancel = this.options.clock.after(POST_CHECK_GRACE_MS, () => this.checkTimedOut(bundleId, attempt));
+    this.emit();
+  }
+
+  /** 카운트다운이 끝난 뒤 5초가 지나도 게시를 누를 때의 확인이 끝나지 않았다. 확인의 결과를 버리고 그대로 게시한다. */
+  private checkTimedOut(bundleId: number, attempt: Attempt): void {
+    if (this.attempts.get(bundleId) !== attempt) return;
+    this.options.logger.warn('posting.check-timed-out', { bundleId });
+    this.options.bundles.endPostCheck(bundleId);
+    this.drop(bundleId);
+    void this.sendSafely(bundleId);
+  }
+
+  /** 묶음의 시도를 지운다. 남은 예약도 지우고 듣는 쪽에 카운트다운이 바뀌었다고 알린다. */
+  private drop(bundleId: number): void {
+    /** 지울 시도. */
+    const attempt = this.attempts.get(bundleId);
+    if (!attempt) return;
+    attempt.cancel();
+    this.attempts.delete(bundleId);
+    this.emit();
+  }
+
+  /**
    * 카운트다운이 끝난 묶음의 게시 요청을 보내고, 도중에 예외가 나면 로그만 남긴다.
    * 보내기 전 기록을 남긴 뒤라면 묶음은 그 기록을 둔 채 게시 중으로 남는다. 올라갔는지 알 수 없기 때문이다.
    */
@@ -192,9 +253,6 @@ export class Posting {
 
   /** 카운트다운이 끝난 묶음의 게시 요청을 보낸다. 보내기 직전에 게시 본문을 먼저 기록한다. */
   private async send(bundleId: number): Promise<void> {
-    this.countdowns.delete(bundleId);
-    this.emit();
-
     if (!this.options.bundles.get(bundleId)) return;
     if (!this.options.connectFlow()) {
       await this.returnWithoutKey(bundleId);

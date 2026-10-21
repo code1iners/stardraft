@@ -180,11 +180,23 @@ export interface PostingRecord {
   /** 게시 실패의 사유. 게시 실패가 아니면 `null`. */
   failure: PostFailureReason | null;
   /**
-   * 이 글이 답한 멘션 위치. 게시를 누를 때 조회한 내용에 있던 멘션이고, 지금은 게시 요청을 보낼 때 묶음에 남은 멘션이다.
-   * 이 PC가 게시한 글은 이 멘션에만 답한 것으로 보고 "이미 답함"을 판정한다.
+   * 이 글이 답한 멘션 위치. 게시를 누를 때 조회한 내용에 있던 묶음의 멘션이다. 그 조회가 실패했거나 늦어 결과 없이 게시했으면
+   * 게시 요청을 보낼 때 묶음에 남은 멘션이다. 이 PC가 게시한 글은 이 멘션에만 답한 것으로 보고 "이미 답함"을 판정한다.
    */
   answeredMentions: MentionLocation[];
 }
+
+/** 게시를 누를 때의 확인이 게시를 멈춘 까닭. 창은 이것으로 "게시하지 않았습니다: …" 토스트를 띄운다. */
+export type PostStop =
+  /** Flow에 이미 내 답이 있어 "이미 답함"으로 옮겼다. */
+  | { kind: 'already-answered' }
+  /** 멘션이 모두 사라져 "원문 사라짐"으로 옮겼다. */
+  | { kind: 'source-gone' }
+  /**
+   * [게시]를 누를 때 화면에 없던 변화가 있어 준비됨으로 돌렸다. 확인이 끝나기 전에 합쳐진 새 멘션 수,
+   * 화면에 보이던 내용 뒤에 새로 생긴 글 수(나를 멘션한 글 포함), 원문 수정 여부, 새로 사라진 멘션 수다.
+   */
+  | { kind: 'changed'; newMentionCount: number; newWritingCount: number; edited: boolean; goneMentionCount: number };
 
 /** 이 PC가 게시한 글마다 그 글이 답한 멘션 위치(`mentionLocationKey`). 글의 ID(`commentId`·`replyId`)로 찾는다. */
 export type PostedAnswerRanges = ReadonlyMap<string, ReadonlySet<string>>;

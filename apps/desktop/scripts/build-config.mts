@@ -11,6 +11,8 @@ export type BuildEnvironment = {
 
 /** 번들 ID이자 Windows AppUserModelID. 앱의 `APP_ID`(`src/main/app-identity.ts`)와 같은 값이다. */
 export const APP_ID = 'app.squadify.stardraft';
+/** electron-builder 출력 폴더(데스크톱 앱 패키지 기준). */
+export const OUTPUT_DIR = 'release';
 /** 앱이 업데이트를 받는 GitHub 저장소 이름. */
 const RELEASE_REPO = 'stardraft';
 
@@ -39,9 +41,13 @@ function resolveReleaseOwner({ env, originUrl }: BuildEnvironment): string {
 const AZURE_AUTH_NAMES = ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'] as const;
 /** `win.azureSignOptions`의 각 칸을 채우는 환경 변수 이름. */
 const AZURE_SIGN_OPTION_NAMES = {
+  /** Artifact Signing 계정의 지역 엔드포인트. */
   endpoint: 'AZURE_SIGNING_ENDPOINT',
+  /** Artifact Signing 계정 이름. */
   codeSigningAccountName: 'AZURE_SIGNING_ACCOUNT_NAME',
+  /** 인증서 프로필 이름. */
   certificateProfileName: 'AZURE_SIGNING_CERTIFICATE_PROFILE_NAME',
+  /** 인증서에 적힌 서명 publisher 이름. */
   publisherName: 'AZURE_SIGNING_PUBLISHER_NAME',
 } as const;
 
@@ -77,10 +83,10 @@ function windowsSigning({ env }: BuildEnvironment): Pick<NonNullable<Configurati
 /** electron-builder 설정. */
 export function createBuildConfig(input: BuildEnvironment): Configuration {
   return {
+    // 앱 이름은 따로 두지 않고 package.json의 productName(Stardraft)을 쓴다.
     appId: APP_ID,
-    productName: 'Stardraft',
     directories: {
-      output: 'release',
+      output: OUTPUT_DIR,
       buildResources: 'build',
     },
     files: ['out/**', 'resources/**', 'package.json'],

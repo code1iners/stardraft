@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createAfterSign, type RunCommand, verifyMacBuild } from './mac-signature.mts';
 
+/** 앱의 번들 ID. */
+const IDENTIFIER = 'app.squadify.stardraft';
 /** 명시 DR로 다시 서명한 번들에 `codesign -d -r-`가 내는 출력. */
 const EXPLICIT_DR = 'designated => identifier "app.squadify.stardraft"\n';
 
@@ -29,7 +31,7 @@ describe('afterSign 훅', () => {
   it('macOS 빌드는 최상위 .app만 기존 엔타이틀먼트·플래그를 지킨 채 명시 DR로 다시 서명한다', async () => {
     const { calls, run } = fakeCodesign();
 
-    await createAfterSign('app.squadify.stardraft', run)(signContext('darwin'));
+    await createAfterSign(IDENTIFIER, run)(signContext('darwin'));
 
     expect(calls[0]).toEqual([
       'codesign',
@@ -48,7 +50,7 @@ describe('afterSign 훅', () => {
   it('다시 서명한 뒤 중첩 코드까지 서명 검증을 하고 최상위 DR을 읽어 본다', async () => {
     const { calls, run } = fakeCodesign();
 
-    await createAfterSign('app.squadify.stardraft', run)(signContext('darwin'));
+    await createAfterSign(IDENTIFIER, run)(signContext('darwin'));
 
     expect(calls.slice(1)).toEqual([
       ['codesign', ['--verify', '--deep', '--strict', '/build/mac-arm64/Stardraft.app']],
@@ -59,7 +61,7 @@ describe('afterSign 훅', () => {
   it('Windows 빌드에서는 codesign을 부르지 않는다', async () => {
     const { calls, run } = fakeCodesign();
 
-    await createAfterSign('app.squadify.stardraft', run)(signContext('win32'));
+    await createAfterSign(IDENTIFIER, run)(signContext('win32'));
 
     expect(calls).toEqual([]);
   });
@@ -67,7 +69,7 @@ describe('afterSign 훅', () => {
   it('최상위 DR이 명시 DR이 아니면 DMG·zip을 만들기 전에 빌드를 멈춘다', async () => {
     const { run } = fakeCodesign('# designated => cdhash H"0123456789abcdef0123456789abcdef01234567"\n');
 
-    await expect(createAfterSign('app.squadify.stardraft', run)(signContext('darwin'))).rejects.toThrow(
+    await expect(createAfterSign(IDENTIFIER, run)(signContext('darwin'))).rejects.toThrow(
       /designated => identifier "app\.squadify\.stardraft"/,
     );
   });
@@ -75,7 +77,7 @@ describe('afterSign 훅', () => {
   it('식별자가 다른 명시 DR도 받아들이지 않는다', async () => {
     const { run } = fakeCodesign('designated => identifier "app.squadify.other"\n');
 
-    await expect(createAfterSign('app.squadify.stardraft', run)(signContext('darwin'))).rejects.toThrow();
+    await expect(createAfterSign(IDENTIFIER, run)(signContext('darwin'))).rejects.toThrow();
   });
 
   it('서명 검증이 실패하면 빌드를 멈춘다', async () => {
@@ -85,7 +87,7 @@ describe('afterSign 훅', () => {
       return { stdout: EXPLICIT_DR, stderr: '' };
     };
 
-    await expect(createAfterSign('app.squadify.stardraft', run)(signContext('darwin'))).rejects.toThrow(
+    await expect(createAfterSign(IDENTIFIER, run)(signContext('darwin'))).rejects.toThrow(
       /nested code is modified or invalid/,
     );
   });
@@ -93,7 +95,7 @@ describe('afterSign 훅', () => {
 
 describe('macOS 빌드 산출물 검사', () => {
   /** 검사할 빌드. */
-  const build = { releaseDir: '/release', productName: 'Stardraft', version: '0.1.0', identifier: 'app.squadify.stardraft' };
+  const build = { releaseDir: '/release', productName: 'Stardraft', version: '0.1.0', identifier: IDENTIFIER };
 
   it('만든 .app과, zip을 ditto로 푼 .app을 같은 기준으로 검사하고 결과를 돌려준다', async () => {
     const { calls, run } = fakeCodesign();

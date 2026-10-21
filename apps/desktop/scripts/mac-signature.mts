@@ -5,12 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-/** 명령의 표준 출력과 표준 오류. */
-type CommandOutput = { stdout: string; stderr: string };
+/** 명령의 출력. */
+type CommandOutput = {
+  /** 표준 출력. */
+  stdout: string;
+  /** 표준 오류. */
+  stderr: string;
+};
 /** 명령을 실행하는 함수. 명령이 실패하면 거부한다. */
 export type RunCommand = (command: string, args: readonly string[]) => Promise<CommandOutput>;
 /** afterSign 훅이 electron-builder에게서 받는 값 중 쓰는 것. */
 type SignContext = Pick<AfterPackContext, 'electronPlatformName' | 'appOutDir'> & {
+  /** `.app` 이름을 정하는 앱 정보. */
   packager: { appInfo: { productFilename: string } };
 };
 

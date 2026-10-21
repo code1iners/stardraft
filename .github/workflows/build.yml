@@ -1,11 +1,8 @@
-# 데스크톱 앱 설치 파일을 macOS와 Windows에서 빌드해 워크플로 아티팩트로 올린다.
-# 손으로 돌리거나(workflow_dispatch), 태그 워크플로가 같은 빌드를 부른다(workflow_call). Release에는 올리지 않는다.
-# 부르는 쪽은 `secrets: inherit`로 Windows 서명 비밀값을 넘긴다.
+# 데스크톱 앱 설치 파일을 macOS와 Windows에서 빌드해 워크플로 아티팩트로 올린다. 손으로 돌리고, Release에는 올리지 않는다.
 name: Build
 
 on:
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
@@ -19,7 +16,7 @@ jobs:
         include:
           - os: macos-latest
             artifact: stardraft-mac-arm64
-          # Intel Mac(x64)은 만들지 않는다. 만들게 되면 Intel 러너 항목을 여기 더하고 mac.target의 arch에 x64를 넣는다.
+          # Intel Mac(x64)은 만들지 않는다. 만들게 되면 Intel 러너 항목을 여기 더하고, mac.target의 arch와 서명 검사의 arm64 경로도 함께 고친다.
           - os: windows-latest
             artifact: stardraft-win-x64
     runs-on: ${{ matrix.os }}

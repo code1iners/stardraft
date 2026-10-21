@@ -111,7 +111,7 @@ describe('Windows 서명 자리', () => {
   });
 
   it('일부만 있으면 서명 없이 빌드하지 않고 빠진 이름을 알려 준다', () => {
-    /** 로그인 비밀번호와 게시자 이름이 빠진 비밀값. */
+    /** 로그인 비밀번호와 서명 publisher 이름이 빠진 비밀값. */
     const partial = Object.fromEntries(
       Object.entries(azureSecrets).filter(([name]) => name !== 'AZURE_CLIENT_SECRET' && name !== 'AZURE_SIGNING_PUBLISHER_NAME'),
     );

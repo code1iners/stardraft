@@ -2,8 +2,8 @@ import { app, type BrowserWindow, type WebPreferences } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** 렌더러가 그리는 화면 종류. */
-export type RendererView = 'popover' | 'settings';
+/** 렌더러가 그리는 화면 종류. 작은 창, 설정 창, 펼친 창이다. */
+export type RendererView = 'popover' | 'settings' | 'review';
 
 /** 빌드된 렌더러 HTML 파일 경로. */
 const rendererIndexPath = join(__dirname, '../renderer/index.html');

@@ -1,0 +1,376 @@
+import { describe, expect, it } from 'vitest';
+import { MentionDetection } from '../detection/mention-detection';
+import { FakeClock } from '../fakes/fake-clock';
+import { FAKE_ME, FakeFlowApi } from '../fakes/fake-flow-api';
+import { MemoryStateStore } from '../fakes/memory-state-store';
+import { RecordingNotifier } from '../fakes/recording-notifier';
+import { createLogger } from '../logging/logger';
+import type { FlowAlarm } from '../ports/flow-api';
+import type { MentionBundle } from './mention-bundle';
+import { MentionBundles } from './mention-bundles';
+
+/** 지금 시각. 2026-10-20 09:00:00 한국 표준시(00:00:00 UTC). */
+const NOW = Date.UTC(2026, 9, 20, 0, 0, 0);
+/** 나(키 소유자)의 사용자 ID. */
+const ME = FAKE_ME.userId;
+/** 송신자. 실제 사람이 아니다. */
+const SENDER = 'sender@example.test';
+/** 다른 송신자. 실제 사람이 아니다. */
+const OTHER_SENDER = 'other@example.test';
+/** 멘션이 온 게시물. */
+const POST_ID = '90000011';
+/** 같은 Flow 프로젝트의 다른 게시물. */
+const OTHER_POST_ID = '90000012';
+/** 나를 지목한 표기. */
+const MY_MARKUP = `@[테스트 사용자](${ME})`;
+/** 폴링 주기(밀리초). */
+const POLL_MS = 60_000;
+
+/** 가짜 멘션 알림. 기본은 08:50에 온 본문 멘션이다. */
+function alarm(alarmId: string, overrides: Partial<FlowAlarm> = {}): FlowAlarm {
+  return {
+    alarmId,
+    projectId: '900001',
+    postId: POST_ID,
+    remarkId: '-1',
+    replyId: '-1',
+    receiverId: ME,
+    registerId: SENDER,
+    registerName: '보낸 사람',
+    registeredDateTime: '20261020085000',
+    ...overrides,
+  };
+}
+
+/** 가짜 시계가 부른 조회가 끝나도록 대기 중인 비동기 일을 모두 돌린다. 가짜 포트는 모두 바로 답한다. */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** 묶음을 비교하기 쉬운 모양으로 줄인다. 자리, 상태, 묶음에 남은 멘션(알림 ID)과 빠진 멘션. */
+function summary(bundle: MentionBundle) {
+  return {
+    place: [bundle.postId, bundle.remarkId],
+    status: bundle.status,
+    mentions: bundle.mentions.filter((mention) => !mention.answered).map((mention) => mention.alarmId),
+    answered: bundle.mentions.filter((mention) => mention.answered).map((mention) => mention.alarmId),
+  };
+}
+
+/** 가짜 포트로 멘션 감지와 멘션 묶음을 만든다. 기준점은 `'100'`, 계정은 가짜 키 소유자다. */
+async function setup() {
+  const clock = new FakeClock(NOW);
+  const flow = new FakeFlowApi();
+  const stateStore = new MemoryStateStore();
+  stateStore.account = { ...FAKE_ME };
+  stateStore.baselineAlarmId = '100';
+  const notifier = new RecordingNotifier();
+  const logger = createLogger([{ write: () => {} }], clock);
+  const bundles = new MentionBundles({ stateStore, notifier, clock, logger });
+  await bundles.load();
+  const detection = new MentionDetection({
+    stateStore,
+    bundles,
+    clock,
+    logger,
+    connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }),
+  });
+  flow.addPost({
+    postId: POST_ID,
+    title: '가짜 게시물',
+    connectUrl: 'https://fake.flow.test/post/90000011',
+    textComponents: [{ contents: '본문', mentions: [] }],
+  });
+  flow.addComment(POST_ID, { commentId: '700', contents: `${MY_MARKUP} 재시도는 몇 번 하나요?`, registerId: SENDER });
+
+  /** 새 알림을 맨 앞에 두고 한 번 조회한다. 처음이면 감지를 시작하고, 아니면 다음 주기까지 시간을 돌린다. */
+  let started = false;
+  const poll = async (...alarms: FlowAlarm[]) => {
+    for (const item of alarms) flow.addAlarm(item);
+    if (!started) {
+      started = true;
+      await detection.start();
+      return;
+    }
+    clock.advance(POLL_MS);
+    await settle();
+  };
+  return { clock, flow, stateStore, notifier, bundles, detection, poll };
+}
+
+describe('멘션 묶음: 묶음 키', () => {
+  it('댓글 멘션과 그 대댓글 멘션은 한 묶음, 본문 멘션은 게시물마다 한 묶음, 다른 댓글 스레드는 다른 묶음이다', async () => {
+    const { flow, bundles, poll } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 덧붙여 질문`, registerId: OTHER_SENDER });
+    flow.addComment(POST_ID, { commentId: '701', contents: `${MY_MARKUP} 다른 질문`, registerId: SENDER });
+    flow.addPost({ postId: OTHER_POST_ID, textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+    flow.addPost({
+      postId: POST_ID,
+      title: '가짜 게시물',
+      connectUrl: 'https://fake.flow.test/post/90000011',
+      textComponents: [{ contents: `${MY_MARKUP} 이 게시물 본문 질문`, mentions: [] }],
+    });
+
+    await poll(
+      alarm('101', { remarkId: '700', registeredDateTime: '20261020085000' }),
+      alarm('102', { remarkId: '700', replyId: '801', registerId: OTHER_SENDER, registerName: '다른 사람', registeredDateTime: '20261020085100' }),
+      alarm('103', { registeredDateTime: '20261020085200' }),
+      alarm('104', { postId: OTHER_POST_ID, registeredDateTime: '20261020085300' }),
+      alarm('105', { remarkId: '701', registeredDateTime: '20261020085400' }),
+    );
+
+    expect(bundles.state().map(summary)).toEqual([
+      { place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['101', '102'], answered: [] },
+      { place: [POST_ID, '-1'], status: 'repo-check-needed', mentions: ['103'], answered: [] },
+      { place: [OTHER_POST_ID, '-1'], status: 'repo-check-needed', mentions: ['104'], answered: [] },
+      { place: [POST_ID, '701'], status: 'repo-check-needed', mentions: ['105'], answered: [] },
+    ]);
+    /** 댓글 스레드 묶음. */
+    const thread = bundles.state()[0]!;
+    expect(thread.mentions.map(({ senderName, text }) => [senderName, text])).toEqual([
+      ['보낸 사람', `${MY_MARKUP} 재시도는 몇 번 하나요?`],
+      ['다른 사람', `${MY_MARKUP} 덧붙여 질문`],
+    ]);
+    expect([thread.postTitle, thread.connectUrl]).toEqual(['가짜 게시물', 'https://fake.flow.test/post/90000011']);
+    expect(bundles.state()[1]!.mentions[0]!.text).toBe(`${MY_MARKUP} 이 게시물 본문 질문`);
+  });
+});
+
+describe('멘션 묶음: 합치기', () => {
+  it('저장소 확인 필요 묶음에 같은 댓글 스레드의 새 멘션이 오면 합치고 "새 멘션 1건"을 세며, 알림은 다시 띄우지 않는다', async () => {
+    const { flow, notifier, bundles, poll } = await setup();
+    await poll(alarm('101', { remarkId: '700' }));
+
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: OTHER_SENDER });
+    await poll(alarm('102', { remarkId: '700', replyId: '801', registerId: OTHER_SENDER, registeredDateTime: '20261020085500' }));
+
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['101', '102'], answered: [] }]);
+    expect(bundles.state()[0]?.newMentionCount).toBe(1);
+    expect(bundles.reviewCount()).toBe(1);
+    expect(notifier.sent).toHaveLength(1);
+  });
+
+  it('처리됨 묶음에 새 멘션이 오면 새 묶음을 만들고, 처리됨 묶음을 되돌려도 두 묶음을 합치지 않는다. 그 뒤의 멘션은 가장 최근 묶음에 합친다', async () => {
+    const { flow, bundles, poll } = await setup();
+    await poll(alarm('101', { remarkId: '700' }));
+    /** 처음 묶음. */
+    const first = bundles.state()[0]!;
+    await bundles.ignore(first.id);
+
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 다시 질문`, registerId: SENDER });
+    await poll(alarm('102', { remarkId: '700', replyId: '801', registeredDateTime: '20261020085500' }));
+    await bundles.restore(first.id);
+    flow.addReply(POST_ID, '700', { replyId: '802', contents: `${MY_MARKUP} 또 질문`, registerId: SENDER });
+    await poll(alarm('103', { remarkId: '700', replyId: '802', registeredDateTime: '20261020085600' }));
+
+    expect(bundles.state().map((bundle) => [bundle.id, summary(bundle)])).toEqual([
+      [first.id, { place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['101'], answered: [] }],
+      [first.id + 1, { place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['102', '103'], answered: [] }],
+    ]);
+    expect(bundles.reviewCount()).toBe(2);
+  });
+});
+
+describe('멘션 묶음: 감지할 때의 이미 답함', () => {
+  it('댓글 스레드에 멘션보다 나중에 쓴 내 대댓글이 있으면 초안 없이 처리됨의 "이미 답함"이 되고, 트레이 숫자와 알림은 그대로다', async () => {
+    const { flow, notifier, bundles, poll } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '890', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085100' });
+
+    await poll(alarm('101', { remarkId: '700', registeredDateTime: '20261020085000' }));
+
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'already-answered', mentions: [], answered: ['101'] }]);
+    expect(bundles.state()[0]?.processedAt).toBe(NOW);
+    expect(bundles.reviewCount()).toBe(0);
+    expect(notifier.sent).toEqual([]);
+  });
+
+  it('본문 묶음은 게시물에 멘션보다 나중에 쓴 내 댓글만 답으로 본다. 대댓글과 다른 스레드의 글은 답이 아니다', async () => {
+    const { flow, bundles, poll } = await setup();
+    flow.addPost({ postId: OTHER_POST_ID, textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+    flow.addComment(OTHER_POST_ID, { commentId: '710', contents: '다른 사람 댓글', registerId: OTHER_SENDER, registeredDateTime: '20261020084000' });
+    flow.addReply(OTHER_POST_ID, '710', { replyId: '891', contents: '대댓글로 답함', registerId: ME, registeredDateTime: '20261020085100' });
+    flow.addPost({ postId: '90000013', textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+    flow.addComment('90000013', { commentId: '720', contents: '댓글로 답함', registerId: ME, registeredDateTime: '20261020085100' });
+
+    await poll(alarm('101', { postId: OTHER_POST_ID }), alarm('102', { postId: '90000013', registeredDateTime: '20261020085001' }));
+
+    expect(bundles.state().map(summary)).toEqual([
+      { place: [OTHER_POST_ID, '-1'], status: 'repo-check-needed', mentions: ['101'], answered: [] },
+      { place: ['90000013', '-1'], status: 'already-answered', mentions: [], answered: ['102'] },
+    ]);
+  });
+
+  it('시스템 댓글, 멘션보다 먼저 쓴 글, 같은 초에 쓴 글, 다른 사람의 글은 내 답으로 보지 않는다', async () => {
+    const { flow, bundles, poll } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '890', contents: '업무 상태 변경', registerId: ME, registeredDateTime: '20261020085500', systemCode: 'S45_2^^대기^^진행' });
+    flow.addReply(POST_ID, '700', { replyId: '891', contents: '먼저 쓴 글', registerId: ME, registeredDateTime: '20261020084900' });
+    flow.addReply(POST_ID, '700', { replyId: '892', contents: '같은 초', registerId: ME, registeredDateTime: '20261020085000' });
+    flow.addReply(POST_ID, '700', { replyId: '893', contents: '다른 사람 답', registerId: OTHER_SENDER, registeredDateTime: '20261020085500' });
+
+    await poll(alarm('101', { remarkId: '700', registeredDateTime: '20261020085000' }));
+
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['101'], answered: [] }]);
+  });
+
+  it('내가 마지막으로 답한 글보다 앞선 멘션만 묶음에서 빼고, 남은 멘션으로 묶음을 둔다', async () => {
+    const { flow, bundles, poll } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '890', contents: '첫 질문에 답함', registerId: ME, registeredDateTime: '20261020085100' });
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 이어서 질문`, registerId: SENDER });
+
+    await poll(
+      alarm('101', { remarkId: '700', registeredDateTime: '20261020085000' }),
+      alarm('102', { remarkId: '700', replyId: '801', registeredDateTime: '20261020085200' }),
+    );
+
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['102'], answered: ['101'] }]);
+  });
+
+  it('저장소 확인 필요 묶음에 새 멘션이 올 때 그 사이 쓴 내 답이 있으면, 앞선 멘션은 빼고 새 멘션만 남긴다', async () => {
+    const { flow, bundles, poll } = await setup();
+    await poll(alarm('101', { remarkId: '700', registeredDateTime: '20261020085000' }));
+
+    flow.addReply(POST_ID, '700', { replyId: '890', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085100' });
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 이어서 질문`, registerId: SENDER });
+    await poll(alarm('102', { remarkId: '700', replyId: '801', registeredDateTime: '20261020085200' }));
+
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['102'], answered: ['101'] }]);
+    expect(bundles.state()[0]?.newMentionCount).toBe(1);
+  });
+
+  it('처음 10개 뒤의 대댓글로 답했어도 대댓글 목록 API로 찾아 이미 답함으로 본다', async () => {
+    const { flow, bundles, poll } = await setup();
+    for (let index = 0; index < 10; index += 1) {
+      flow.addReply(POST_ID, '700', { replyId: String(810 + index), contents: `대댓글 ${index}`, registerId: OTHER_SENDER, registeredDateTime: '20261020084000' });
+    }
+    flow.addReply(POST_ID, '700', { replyId: '890', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085100' });
+
+    await poll(alarm('101', { remarkId: '700', registeredDateTime: '20261020085000' }));
+
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'already-answered', mentions: [], answered: ['101'] }]);
+  });
+
+  it('내 답을 조회하지 못하면 답하지 않은 것으로 보고 저장소 확인 필요로 올린다', async () => {
+    const { flow, bundles, poll } = await setup();
+    flow.addPost({ postId: OTHER_POST_ID, textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+    flow.addComment(OTHER_POST_ID, { commentId: '710', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085100' });
+    flow.failOn(`GET /user/comments/${OTHER_POST_ID}`, { kind: 'network' });
+
+    await poll(alarm('101', { postId: OTHER_POST_ID }));
+
+    expect(bundles.state().map(summary)).toEqual([{ place: [OTHER_POST_ID, '-1'], status: 'repo-check-needed', mentions: ['101'], answered: [] }]);
+  });
+});
+
+describe('멘션 묶음: 무시와 되돌리기', () => {
+  it('무시하면 처리됨의 "무시함"이 되어 트레이 숫자에서 빠지고, 되돌리면 저장소 확인 필요로 돌아온다', async () => {
+    const { clock, bundles, poll } = await setup();
+    await poll(alarm('101', { remarkId: '700' }));
+    /** 묶음 ID. */
+    const id = bundles.state()[0]!.id;
+
+    await bundles.ignore(id);
+    expect([bundles.state()[0]?.status, bundles.state()[0]?.processedAt, bundles.reviewCount()]).toEqual(['ignored', NOW, 0]);
+
+    clock.advance(1_000);
+    await bundles.restore(id);
+    expect([bundles.state()[0]?.status, bundles.state()[0]?.processedAt, bundles.reviewCount()]).toEqual(['repo-check-needed', null, 1]);
+  });
+
+  it('이미 답함에서 되돌리면 빠졌던 멘션이 다시 들고, 그때 있던 내 답은 이후 판정에서 빼서 같은 답으로 다시 처리됨이 되지 않는다', async () => {
+    const { flow, bundles, poll } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '890', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085100' });
+    await poll(alarm('101', { remarkId: '700', registeredDateTime: '20261020085000' }));
+    /** 이미 답함이 된 묶음. */
+    const answered = bundles.state()[0]!;
+
+    await bundles.restore(answered.id);
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['101'], answered: [] }]);
+    expect(bundles.state()[0]?.answers).toEqual([{ answerId: '890', registeredDateTime: '20261020085100', excluded: true }]);
+
+    // 다음 멘션이 와서 다시 판정해도 되돌릴 때 기록한 답은 세지 않는다.
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 이어서 질문`, registerId: SENDER });
+    await poll(alarm('102', { remarkId: '700', replyId: '801', registeredDateTime: '20261020085200' }));
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['101', '102'], answered: [] }]);
+
+    // 되돌린 뒤 새로 쓴 내 답은 센다.
+    flow.addReply(POST_ID, '700', { replyId: '891', contents: '다시 답함', registerId: ME, registeredDateTime: '20261020085300' });
+    flow.addReply(POST_ID, '700', { replyId: '802', contents: `${MY_MARKUP} 마지막 질문`, registerId: SENDER });
+    await poll(alarm('103', { remarkId: '700', replyId: '802', registeredDateTime: '20261020085400' }));
+    expect(bundles.state().map(summary)).toEqual([{ place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['103'], answered: ['101', '102'] }]);
+  });
+
+  it('처리됨이 아닌 묶음은 되돌리지 않고, 처리됨 묶음은 다시 무시하지 않으며, 없는 묶음은 아무것도 하지 않는다', async () => {
+    const { bundles, poll } = await setup();
+    await poll(alarm('101', { remarkId: '700' }));
+    /** 묶음 ID. */
+    const id = bundles.state()[0]!.id;
+
+    await bundles.restore(id);
+    await bundles.ignore(999);
+    expect(bundles.state()[0]?.status).toBe('repo-check-needed');
+
+    await bundles.ignore(id);
+    /** 처음 무시한 시각. */
+    const processedAt = bundles.state()[0]?.processedAt;
+    await bundles.ignore(id);
+    expect(bundles.state()[0]?.processedAt).toBe(processedAt);
+  });
+
+  it('무시와 되돌리기는 상태 저장소에 남아, 다시 읽어도 같다', async () => {
+    const { stateStore, notifier, clock, bundles, poll } = await setup();
+    await poll(alarm('101', { remarkId: '700' }));
+    await bundles.ignore(bundles.state()[0]!.id);
+
+    /** 같은 저장소를 다시 읽은 멘션 묶음. */
+    const reloaded = new MentionBundles({ stateStore, notifier, clock, logger: createLogger([], clock) });
+    await reloaded.load();
+
+    expect(reloaded.state()).toEqual(bundles.state());
+  });
+});
+
+describe('멘션 묶음: 대기열과 트레이 숫자', () => {
+  it('처리되지 않은 묶음을 가장 오래된 미처리 멘션 순으로 두고, 처리됨 묶음은 그 뒤에 최근에 처리한 것부터 둔다', async () => {
+    const { flow, clock, bundles, poll } = await setup();
+    flow.addComment(POST_ID, { commentId: '701', contents: `${MY_MARKUP} 질문`, registerId: SENDER });
+    flow.addComment(POST_ID, { commentId: '702', contents: `${MY_MARKUP} 질문`, registerId: SENDER });
+    flow.addComment(POST_ID, { commentId: '703', contents: `${MY_MARKUP} 질문`, registerId: SENDER });
+    await poll(
+      alarm('101', { remarkId: '703', registeredDateTime: '20261020084000' }),
+      alarm('102', { remarkId: '701', registeredDateTime: '20261020084500' }),
+    );
+    await poll(alarm('103', { remarkId: '702', registeredDateTime: '20261020085000' }), alarm('104', { remarkId: '700', registeredDateTime: '20261020083000' }));
+    /** 자리(댓글)로 찾은 묶음 ID. */
+    const idOf = (remarkId: string) => bundles.state().find((bundle) => bundle.remarkId === remarkId)!.id;
+    await bundles.ignore(idOf('703'));
+    clock.advance(1_000);
+    await bundles.ignore(idOf('702'));
+
+    expect(bundles.state().map((bundle) => [bundle.remarkId, bundle.status])).toEqual([
+      ['700', 'repo-check-needed'],
+      ['701', 'repo-check-needed'],
+      ['702', 'ignored'],
+      ['703', 'ignored'],
+    ]);
+    expect(bundles.reviewCount()).toBe(2);
+  });
+
+  it('한 번의 조회에서 새 묶음이 여럿이면 OS 알림을 하나만 띄우고, 누르면 대기열 첫 묶음을 연다. 묶음이 바뀌면 듣는 쪽에 알린다', async () => {
+    const { flow, notifier, bundles, poll } = await setup();
+    flow.addComment(POST_ID, { commentId: '701', contents: `${MY_MARKUP} 질문`, registerId: OTHER_SENDER });
+    /** 바뀐 횟수. */
+    let changes = 0;
+    bundles.onChange(() => (changes += 1));
+
+    await poll(
+      alarm('102', { remarkId: '701', registerName: '다른 사람', registeredDateTime: '20261020085100' }),
+      alarm('101', { remarkId: '700', registeredDateTime: '20261020085000' }),
+    );
+
+    /** 대기열 첫 묶음. */
+    const first = bundles.state()[0]!;
+    expect(first.remarkId).toBe('700');
+    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요 2건', body: '보낸 사람님 외 1건의 멘션이 왔습니다.', bundleId: first.id }]);
+    expect(changes).toBe(1);
+  });
+});

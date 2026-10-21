@@ -362,6 +362,7 @@ describe('Flow 어댑터: 게시물 조회', () => {
           { COMP_TYPE: 'TEXT', COMP_DETAIL: { CONTENTS: '둘째 문단' } },
         ),
         outContent: '테스트 사용자 확인 부탁',
+        connectUrl: 'https://fake.flow.test/post/90000011',
       }),
     });
 
@@ -371,6 +372,8 @@ describe('Flow 어댑터: 게시물 조회', () => {
       ok: true,
       value: {
         postId: '90000011',
+        title: '가짜 제목',
+        connectUrl: 'https://fake.flow.test/post/90000011',
         textComponents: [
           { contents: '@[테스트 사용자](me@example.test) 확인 부탁', mentions: ['me@example.test'] },
           { contents: '둘째 문단', mentions: [] },
@@ -389,7 +392,12 @@ describe('Flow 어댑터: 게시물 조회', () => {
 
     await expect(connect(server).getPost('5')).resolves.toEqual({
       ok: true,
-      value: { postId: '5', textComponents: [{ contents: '@[테스트 사용자](me@example.test) 평문 본문', mentions: [] }] },
+      value: {
+        postId: '5',
+        title: '',
+        connectUrl: null,
+        textComponents: [{ contents: '@[테스트 사용자](me@example.test) 평문 본문', mentions: [] }],
+      },
     });
   });
 
@@ -439,11 +447,21 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
             commentId: '900000021',
             contents: '@[테스트 사용자](me@example.test) 질문',
             registerId: 'sender@example.test',
+            registeredDateTime: '20261020085900',
             systemCode: '',
-            replies: [{ replyId: 9000081, parentCommentId: '900000021', contents: '대댓글' }],
+            replies: [
+              {
+                replyId: 9000081,
+                parentCommentId: '900000021',
+                contents: '대댓글',
+                registerId: 'me@example.test',
+                registeredDateTime: 20261020090100,
+                systemCode: null,
+              },
+            ],
             replyHasNext: true,
           },
-          { commentId: 900000022, contents: '시스템 댓글', systemCode: 'A00^^', replies: [], replyHasNext: false },
+          { commentId: 900000022, contents: '시스템 댓글', registerId: 'me@example.test', systemCode: 'A00^^', replies: [], replyHasNext: false },
           { contents: 'ID 없음' },
         ],
       }),
@@ -458,10 +476,23 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
           {
             commentId: '900000021',
             contents: '@[테스트 사용자](me@example.test) 질문',
-            replies: [{ replyId: '9000081', contents: '대댓글' }],
+            registerId: 'sender@example.test',
+            registeredDateTime: '20261020085900',
+            systemCode: '',
+            replies: [
+              { replyId: '9000081', contents: '대댓글', registerId: 'me@example.test', registeredDateTime: '20261020090100', systemCode: '' },
+            ],
             replyHasNext: true,
           },
-          { commentId: '900000022', contents: '시스템 댓글', replies: [], replyHasNext: false },
+          {
+            commentId: '900000022',
+            contents: '시스템 댓글',
+            registerId: 'me@example.test',
+            registeredDateTime: '',
+            systemCode: 'A00^^',
+            replies: [],
+            replyHasNext: false,
+          },
         ],
         nextCursor: '6',
       },
@@ -494,7 +525,14 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
         hasNext: true,
         lastCursor: 20,
         replies: [
-          { replyId: '9000090', parentCommentId: '900000021', contents: '열한째 대댓글' },
+          {
+            replyId: '9000090',
+            parentCommentId: '900000021',
+            contents: '열한째 대댓글',
+            registerId: 'me@example.test',
+            registeredDateTime: '20261020090500',
+            systemCode: '',
+          },
           { replyId: 9000091, contents: '@[테스트 사용자](me@example.test) 열두째' },
         ],
       }),
@@ -506,8 +544,8 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
       ok: true,
       value: {
         replies: [
-          { replyId: '9000090', contents: '열한째 대댓글' },
-          { replyId: '9000091', contents: '@[테스트 사용자](me@example.test) 열두째' },
+          { replyId: '9000090', contents: '열한째 대댓글', registerId: 'me@example.test', registeredDateTime: '20261020090500', systemCode: '' },
+          { replyId: '9000091', contents: '@[테스트 사용자](me@example.test) 열두째', registerId: '', registeredDateTime: '', systemCode: '' },
         ],
         nextCursor: '20',
       },
@@ -523,7 +561,7 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
 
     await expect(connect(server).listReplies('9', '8', null)).resolves.toEqual({
       ok: true,
-      value: { replies: [{ replyId: '1', contents: '하나' }], nextCursor: null },
+      value: { replies: [{ replyId: '1', contents: '하나', registerId: '', registeredDateTime: '', systemCode: '' }], nextCursor: null },
     });
     expect(server.requests[0]?.url).toBe('https://api.flow.team/user/comments/9/replies/8');
   });
@@ -537,7 +575,7 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
 
     await expect(connect(server).listReplies('9', '8', '20')).resolves.toEqual({
       ok: true,
-      value: { replies: [{ replyId: '1', contents: '하나' }], nextCursor: '30' },
+      value: { replies: [{ replyId: '1', contents: '하나', registerId: '', registeredDateTime: '', systemCode: '' }], nextCursor: '30' },
     });
   });
 });

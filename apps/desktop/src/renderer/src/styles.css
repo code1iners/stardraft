@@ -16,6 +16,7 @@
   --ok: #1e7438;
   --ok-bg: #e6f3ea;
   --warn: #8a5300;
+  --warn-bg: #fdf4de;
   --warn-dot: #d08a00;
   --hatch: repeating-linear-gradient(45deg, #eef0f3 0 10px, #e8ebef 10px 20px);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -180,8 +181,16 @@ html[data-platform='win32'] .popover {
 
 .popover-head {
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 줄 안에서 남은 폭을 채워 뒤 요소를 오른쪽으로 민다. */
+.spacer {
+  flex: 1;
 }
 
 .popover-body {
@@ -912,4 +921,366 @@ p.setup-tray-hint {
   margin: 0 0 6px;
   padding: 0 0 0 12px;
   list-style: none;
+}
+
+/* 멘션 묶음: 상태 태그. 확인이 필요한 상태는 노랑, 처리됨은 회색이다. */
+.tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.tag.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.tag.done {
+  background: #eceef1;
+  color: var(--muted);
+}
+
+/* 작은 창: 대기열 위치, ‹ › 이동, 상태 태그, 펼쳐 보기. */
+.review-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-btn {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.nav-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.queue-pos {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.review-body {
+  padding: 10px 16px 12px;
+}
+
+/* 상세 머리의 한 줄: 송신자 · 자리 · 시각. */
+p.review-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 작은 창 상세 머리의 둘째 줄: 게시물(길면 말줄임)과 Flow에서 열기. */
+p.post-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 2px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.post-line > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.post-line .btn.link {
+  flex: none;
+  font-size: 12px;
+}
+
+.review-meta strong {
+  color: var(--text);
+}
+
+.review-meta > * + *::before {
+  content: '·';
+  margin: 0 6px;
+  color: var(--muted);
+}
+
+/* 펼친 창 상세 머리의 둘째 줄. 좁으면 "Flow에서 열기"가 구분점 없이 다음 줄로 넘어간다. */
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+}
+
+.detail-meta .btn.link {
+  font-size: 12px;
+}
+
+/* 초안 위 알림 줄. 지금은 합쳐진 새 멘션 수다. */
+p.notice-line {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+/* 머리를 눌러 접고 펴는 상세 영역. */
+.review-section {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.section-toggle:hover {
+  color: var(--text);
+}
+
+.section-chevron {
+  width: 12px;
+  flex: none;
+}
+
+.section-detail {
+  font-weight: 400;
+}
+
+.section-body {
+  padding-bottom: 6px;
+}
+
+.section-body p {
+  margin: 0;
+}
+
+/* 원문 영역: 묶인 멘션을 시간순으로 쌓는다. */
+.mention-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mention-item + .mention-item {
+  margin-top: 8px;
+}
+
+.mention-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mention-meta strong {
+  color: var(--text);
+}
+
+.mention-meta > * + *::before {
+  content: '·';
+  margin: 0 6px;
+}
+
+p.mention-text {
+  margin: 2px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.mention-at {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 상세 바닥 줄. 왼쪽에 무시, 처리됨이면 안내와 되돌리기. */
+.review-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--side);
+}
+
+/* 무시한 직후 창 아래에 뜨는 토스트. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 60px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100% - 24px);
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #2a2d32;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transform: translateX(-50%);
+}
+
+.toast span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast .btn.link {
+  flex: none;
+  color: #9ec2ff;
+}
+
+/* 펼친 창: 왼쪽 목록(260px)과 오른쪽 상세. */
+.review-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.review-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.review-list {
+  flex: none;
+  width: 260px;
+  overflow: auto;
+  padding: 4px 0 8px;
+  border-right: 1px solid var(--border);
+  background: var(--side);
+}
+
+.list-group-head {
+  margin: 0;
+  padding: 10px 14px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.list-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 14px 8px 11px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.list-row:hover {
+  background: #eff1f3;
+}
+
+.list-row[aria-current='true'] {
+  border-left-color: var(--accent);
+  background: var(--sel);
+}
+
+.list-row-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.list-row-top strong,
+.list-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-row-sub {
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+p.list-note,
+p.list-empty {
+  margin: 6px 14px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.review-detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-title h2 {
+  margin: 0 0 2px;
+  font-size: 16px;
+}
+
+.detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 16px;
+}
+
+p.detail-empty {
+  margin: 24px 20px;
+  text-align: center;
 }

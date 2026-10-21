@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
-import type { Mention, MentionLocation } from '../detection/mention';
+import { compareMentions, type BundleStatus, type MentionBundle, type UnsavedBundle } from '../bundles/mention-bundle';
+import type { MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
 
@@ -48,6 +49,54 @@ export const STATE_MIGRATIONS: readonly string[] = [
     registered_date_time TEXT NOT NULL,
     detected_at INTEGER NOT NULL,
     PRIMARY KEY (post_id, remark_id, reply_id)
+  ) STRICT;
+  `,
+  // 4: 멘션 묶음과 묶음에 기록한 내 답. 멘션은 묶음에 들고 Flow 원문과 "이미 답함" 표시를 갖는다.
+  // 이미 감지한 멘션은 자리마다 저장소 확인 필요 묶음으로 옮긴다. 원문은 받아 둔 적이 없어 비워 둔다.
+  `
+  CREATE TABLE mention_bundle (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    post_title TEXT NOT NULL,
+    connect_url TEXT,
+    new_mention_count INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+  ) STRICT;
+  INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+    SELECT post_id, remark_id, min(project_id), 'repo-check-needed', '', NULL, 0, min(detected_at), NULL
+    FROM mention GROUP BY post_id, remark_id ORDER BY min(registered_date_time), post_id, remark_id;
+  CREATE TABLE mention_v4 (
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    reply_id TEXT NOT NULL,
+    bundle_id INTEGER NOT NULL REFERENCES mention_bundle (id),
+    project_id TEXT NOT NULL,
+    alarm_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_name TEXT NOT NULL,
+    registered_date_time TEXT NOT NULL,
+    detected_at INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    answered INTEGER NOT NULL,
+    PRIMARY KEY (post_id, remark_id, reply_id)
+  ) STRICT;
+  INSERT INTO mention_v4
+    SELECT m.post_id, m.remark_id, m.reply_id, b.id, m.project_id, m.alarm_id, m.sender_id, m.sender_name,
+      m.registered_date_time, m.detected_at, '', 0
+    FROM mention m JOIN mention_bundle b ON b.post_id = m.post_id AND b.remark_id = m.remark_id;
+  DROP TABLE mention;
+  ALTER TABLE mention_v4 RENAME TO mention;
+  CREATE INDEX mention_bundle_id ON mention (bundle_id);
+  CREATE TABLE bundle_answer (
+    bundle_id INTEGER NOT NULL REFERENCES mention_bundle (id) ON DELETE CASCADE,
+    answer_id TEXT NOT NULL,
+    registered_date_time TEXT NOT NULL,
+    excluded INTEGER NOT NULL,
+    PRIMARY KEY (bundle_id, answer_id)
   ) STRICT;
   `,
 ];
@@ -200,44 +249,123 @@ export class SqliteStateStore implements StateStore {
     );
   }
 
-  async addDetectedMentions(mentions: readonly Mention[], baselineAlarmId: string): Promise<Mention[]> {
-    /** 멘션 하나를 넣는 문장. 같은 멘션 위치가 있으면 넣지 않는다. */
-    const insert = this.db.prepare(
-      `INSERT INTO mention (post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at)
-       VALUES (@postId, @remarkId, @replyId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt)
-       ON CONFLICT DO NOTHING`,
+  async listBundles(): Promise<MentionBundle[]> {
+    /** 묶음마다 멘션. 알림 시각, 같으면 alarmId 크기 순서다. */
+    const mentions = groupBy(
+      this.db
+        .prepare(
+          `SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered
+           FROM mention ORDER BY bundle_id, registered_date_time, length(alarm_id), alarm_id`,
+        )
+        .all() as MentionRow[],
     );
-    return this.db.transaction(() => {
-      /** 새로 넣은 멘션. */
-      const added = mentions.filter((mention) => insert.run(mention).changes > 0);
-      this.writeBaseline(baselineAlarmId);
-      return added.map((mention) => ({ ...mention }));
-    })();
-  }
-
-  async listMentions(): Promise<Mention[]> {
-    /** 멘션 줄. 알림 시각, 같으면 alarmId 크기 순서다. */
-    const rows = this.db
-      .prepare(
-        `SELECT post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at
-         FROM mention ORDER BY registered_date_time, length(alarm_id), alarm_id`,
-      )
-      .all() as MentionRow[];
+    /** 묶음마다 기록한 내 답. 기록한 순서다. */
+    const answers = groupBy(
+      this.db.prepare('SELECT bundle_id, answer_id, registered_date_time, excluded FROM bundle_answer ORDER BY bundle_id, rowid').all() as AnswerRow[],
+    );
+    /** 묶음 줄. */
+    const rows = this.db.prepare('SELECT * FROM mention_bundle ORDER BY id').all() as BundleRow[];
     return rows.map((row) => ({
+      id: row.id,
       postId: row.post_id,
       remarkId: row.remark_id,
-      replyId: row.reply_id,
       projectId: row.project_id,
-      alarmId: row.alarm_id,
-      senderId: row.sender_id,
-      senderName: row.sender_name,
-      registeredDateTime: row.registered_date_time,
-      detectedAt: row.detected_at,
+      status: row.status as BundleStatus,
+      postTitle: row.post_title,
+      connectUrl: row.connect_url,
+      mentions: (mentions.get(row.id) ?? []).map((mention) => ({
+        postId: mention.post_id,
+        remarkId: mention.remark_id,
+        replyId: mention.reply_id,
+        projectId: mention.project_id,
+        alarmId: mention.alarm_id,
+        senderId: mention.sender_id,
+        senderName: mention.sender_name,
+        registeredDateTime: mention.registered_date_time,
+        detectedAt: mention.detected_at,
+        text: mention.text,
+        answered: mention.answered === 1,
+      })),
+      answers: (answers.get(row.id) ?? []).map((answer) => ({
+        answerId: answer.answer_id,
+        registeredDateTime: answer.registered_date_time,
+        excluded: answer.excluded === 1,
+      })),
+      newMentionCount: row.new_mention_count,
+      createdAt: row.created_at,
+      processedAt: row.processed_at,
     }));
   }
 
-  async countMentions(): Promise<number> {
-    return (this.db.prepare('SELECT count(*) AS count FROM mention').get() as { count: number }).count;
+  async saveDetectedBundles(bundles: readonly UnsavedBundle[], baselineAlarmId: string): Promise<MentionBundle[]> {
+    return this.db.transaction(() => {
+      /** 저장한 묶음. */
+      const saved = bundles.map((bundle) => this.writeBundle(bundle));
+      this.writeBaseline(baselineAlarmId);
+      return saved;
+    })();
+  }
+
+  async saveBundle(bundle: MentionBundle): Promise<void> {
+    this.db.transaction(() => this.writeBundle(bundle))();
+  }
+
+  /**
+   * 묶음 한 줄을 넣거나 바꾸고, 그 묶음의 멘션과 내 답을 주어진 값으로 맞춘다. 새 묶음은 ID를 받는다.
+   * 다른 묶음에 이미 든 멘션 위치는 기본 키가 막아 실패한다. 트랜잭션 안에서만 부른다.
+   */
+  private writeBundle(bundle: UnsavedBundle): MentionBundle {
+    /** 묶음 줄의 값. */
+    const values = {
+      postId: bundle.postId,
+      remarkId: bundle.remarkId,
+      projectId: bundle.projectId,
+      status: bundle.status,
+      postTitle: bundle.postTitle,
+      connectUrl: bundle.connectUrl,
+      newMentionCount: bundle.newMentionCount,
+      createdAt: bundle.createdAt,
+      processedAt: bundle.processedAt,
+    };
+    /** 묶음 ID. */
+    let id = bundle.id;
+    if (id === null) {
+      id = Number(
+        this.db
+          .prepare(
+            `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+             VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt)`,
+          )
+          .run(values).lastInsertRowid,
+      );
+    } else {
+      /** 바꾼 줄 수. */
+      const { changes } = this.db
+        .prepare(
+          `UPDATE mention_bundle SET post_id = @postId, remark_id = @remarkId, project_id = @projectId, status = @status, post_title = @postTitle,
+             connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt
+           WHERE id = @id`,
+        )
+        .run({ ...values, id });
+      if (changes === 0) throw new Error(`저장하지 않은 묶음 ${id}입니다.`);
+    }
+
+    this.db.prepare('DELETE FROM mention WHERE bundle_id = ?').run(id);
+    /** 멘션 하나를 넣는 문장. */
+    const insertMention = this.db.prepare(
+      `INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered)
+       VALUES (@postId, @remarkId, @replyId, @bundleId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt, @text, @answered)`,
+    );
+    for (const mention of bundle.mentions) insertMention.run({ ...mention, bundleId: id, answered: mention.answered ? 1 : 0 });
+
+    this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id = ?').run(id);
+    /** 내 답 하나를 넣는 문장. */
+    const insertAnswer = this.db.prepare(
+      'INSERT INTO bundle_answer (bundle_id, answer_id, registered_date_time, excluded) VALUES (@bundleId, @answerId, @registeredDateTime, @excluded)',
+    );
+    for (const answer of bundle.answers) insertAnswer.run({ ...answer, bundleId: id, excluded: answer.excluded ? 1 : 0 });
+
+    return { ...structuredClone(bundle), id, mentions: structuredClone(bundle.mentions).sort(compareMentions) };
   }
 
   /** 기준점 한 줄을 넣거나 바꾼다. */
@@ -250,8 +378,54 @@ export class SqliteStateStore implements StateStore {
   }
 }
 
+/** 묶음 ID마다 줄을 모은다. 줄 순서는 그대로다. */
+function groupBy<T extends { bundle_id: number }>(rows: readonly T[]): Map<number, T[]> {
+  /** 묶음 ID마다 모은 줄. */
+  const groups = new Map<number, T[]>();
+  for (const row of rows) groups.set(row.bundle_id, [...(groups.get(row.bundle_id) ?? []), row]);
+  return groups;
+}
+
+/** `mention_bundle` 표의 한 줄. */
+interface BundleRow {
+  /** 묶음 ID. */
+  id: number;
+  /** 게시물 ID. */
+  post_id: string;
+  /** 댓글 스레드 묶음이면 댓글 ID, 본문 묶음이면 `"-1"`. */
+  remark_id: string;
+  /** Flow 프로젝트 ID. */
+  project_id: string;
+  /** 묶음 상태. */
+  status: string;
+  /** 게시물 제목. */
+  post_title: string;
+  /** "Flow에서 열기" 주소. */
+  connect_url: string | null;
+  /** 합쳐진 새 멘션 수. */
+  new_mention_count: number;
+  /** 만든 시각(Unix epoch 밀리초). */
+  created_at: number;
+  /** 처리한 시각(Unix epoch 밀리초). */
+  processed_at: number | null;
+}
+
+/** `bundle_answer` 표의 한 줄. */
+interface AnswerRow {
+  /** 묶음 ID. */
+  bundle_id: number;
+  /** 내 답(댓글·대댓글)의 ID. */
+  answer_id: string;
+  /** 쓴 시각(Flow 형식). */
+  registered_date_time: string;
+  /** 되돌릴 때 빼기로 기록했으면 1. */
+  excluded: number;
+}
+
 /** `mention` 표의 한 줄. */
 interface MentionRow {
+  /** 든 묶음 ID. */
+  bundle_id: number;
   /** 게시물 ID. */
   post_id: string;
   /** 댓글 ID. 본문 멘션이면 `"-1"`. */
@@ -270,4 +444,8 @@ interface MentionRow {
   registered_date_time: string;
   /** 감지한 시각(Unix epoch 밀리초). */
   detected_at: number;
+  /** Flow 원문. */
+  text: string;
+  /** "이미 답함"으로 묶음에서 빠졌으면 1. */
+  answered: number;
 }

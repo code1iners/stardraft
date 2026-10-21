@@ -5,6 +5,7 @@ import { AgentConnection } from '../core/agent/agent-connection';
 import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
+import { MentionBundles } from '../core/bundles/mention-bundles';
 import { MentionDetection } from '../core/detection/mention-detection';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { errorFields } from '../core/logging/logger';
@@ -22,6 +23,7 @@ import { createAppLogger } from './app-logger';
 import { AppWindows } from './app-windows';
 import { globalProblemSnapshot, registerIpc } from './ipc';
 import { OsNotifier } from './os-notifier';
+import { ReviewSections } from './review-sections';
 import { hardenRenderers } from './security';
 import { systemClock } from './system-clock';
 import { AppTray, type TrayView } from './tray';
@@ -72,8 +74,8 @@ function start(): void {
     appData = await openDataOrQuit();
     if (!appData) return;
 
-    /** OS 알림. 누르면 작은 창을 띄운다. */
-    const notifier = new OsNotifier(() => windows?.openPopover(), logger);
+    /** OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 멘션 묶음이 있으면 그 묶음을 연다. */
+    const notifier = new OsNotifier((bundleId) => windows?.openPopover(bundleId), logger);
     /** 감지를 멈추게 하는 전역 문제. 알림을 누르면 띠가 보이는 작은 창을 띄운다. */
     const globalProblems = new GlobalProblems({
       notifier,
@@ -138,13 +140,18 @@ function start(): void {
     };
     const repoMappings = new RepoMappings({ settingsStore: appData.settingsStore, logger, connectFlow: connectCurrentFlow });
     await repoMappings.load();
+    /** 감지한 멘션 묶음. 작은 창 대기열, 펼친 창 목록, 트레이 숫자, 저장소 확인 필요 OS 알림이 따른다. */
+    const mentionBundles = new MentionBundles({ stateStore: appData.stateStore, notifier, clock: systemClock, logger });
+    await mentionBundles.load();
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
+    // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.
     /** 목록을 받은 계정의 사용자 ID. */
     let projectsAccountId = flowAccount.state().account?.userId ?? null;
     flowAccount.onChange(({ account }) => {
       if ((account?.userId ?? null) === projectsAccountId) return;
       projectsAccountId = account?.userId ?? null;
       void repoMappings.refresh();
+      void mentionBundles.load();
     });
     /** 설정 "일반" 칸의 로그인 시 자동 시작. [감지 시작]이 켠다. */
     const launchAtLogin = new LaunchAtLogin({ settingsStore: appData.settingsStore, logger, applyToSystem: applyLoginItem });
@@ -192,16 +199,17 @@ function start(): void {
       repoMappings,
       onboarding,
       launchAtLogin,
+      bundles: mentionBundles,
+      reviewSections: new ReviewSections(),
     });
-    /** 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. */
+    /** 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣는다. */
     const mentionDetection = new MentionDetection({
       stateStore: appData.stateStore,
-      notifier,
+      bundles: mentionBundles,
       clock: systemClock,
       logger,
       connectFlow: connectCurrentFlow,
     });
-    await mentionDetection.load();
     detection = mentionDetection;
     /** 폴링을 마지막으로 시작한 키. 같은 키로 거듭 시작하지 않으려고 둔다. */
     let detectionKey: string | null = null;
@@ -241,11 +249,11 @@ function start(): void {
     tray = appTray;
     /** 전역 문제, 감지 시작 여부, 검토 대기 수에 맞춰 트레이 표시를 바꾼다. */
     const refreshTray = () =>
-      appTray.show(trayView(globalProblems.current(), !onboarding.state().detectionStarted, mentionDetection.reviewCount()));
+      appTray.show(trayView(globalProblems.current(), !onboarding.state().detectionStarted, mentionBundles.reviewCount()));
     refreshTray();
     globalProblems.onChange(refreshTray);
     onboarding.onChange(refreshTray);
-    mentionDetection.onChange(refreshTray);
+    mentionBundles.onChange(refreshTray);
     // 감지를 시작하기 전이면 첫 실행처럼 필수 설정 전 작은 창을 트레이 옆에 띄운다. 메뉴 막대 앱이라 창이 없으면 앱을 놓친다.
     // 앱이 앞에 오지 않은 채 열면 작은 창이 포커스를 잃어 바로 닫히므로, 사용자가 직접 켠 이 경우에는 앞으로 가져온다.
     if (!onboarding.state().detectionStarted) {

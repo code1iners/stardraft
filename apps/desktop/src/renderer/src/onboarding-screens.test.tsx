@@ -47,6 +47,10 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
     repoMappings: { mappings: [], projects: { status: 'idle' } },
     onboarding,
     launchAtLogin: false,
+    review: {
+      bundles: [],
+      sections: { compact: { original: true, repository: false }, expanded: { original: true, repository: true } },
+    },
     ...overrides,
   };
 }

@@ -60,9 +60,7 @@ function run(overrides: Partial<RunRecord> = {}): RunRecord {
     lastStep: '파일 읽는 중: config.yml',
     fixes: [],
     omittedContextItems: 0,
-    costUsd: 0.5,
-    inputTokens: 100,
-    outputTokens: 20,
+    usage: { costUsd: 0.5, inputTokens: 100, outputTokens: 20 },
     ...overrides,
   };
 }

@@ -17,7 +17,7 @@ import type { ExecutorOutcome } from '../ports/executor';
 import type { FlowAlarm } from '../ports/flow-api';
 import { RepoMappings } from '../repos/repo-mappings';
 import { DRAFT_INSTRUCTIONS } from './draft-input';
-import { DraftQueue } from './draft-queue';
+import { draftAgentFrom, DraftQueue } from './draft-queue';
 
 /** 지금 시각. 2026-10-20 09:00:00 한국 표준시(00:00:00 UTC). */
 const NOW = Date.UTC(2026, 9, 20, 0, 0, 0);
@@ -102,6 +102,33 @@ function heldOutcome(): { outcome: Promise<ExecutorOutcome>; release: (outcome: 
   return { outcome, release };
 }
 
+/** 감지한 묶음을 저장하는 일을 붙잡아 둘 수 있는 상태 저장소. 저장이 끝나기 전에 다른 일이 줄을 서는 경우를 만든다. */
+class GatedStateStore extends MemoryStateStore {
+  /** 붙잡은 저장을 놓아 줄 함수. 붙잡지 않으면 `null`. */
+  private open: (() => void) | null = null;
+  /** 다음 저장을 붙잡을지 여부. */
+  private armed = false;
+
+  /** 다음 감지 저장을 놓아 줄 때까지 붙잡는다. */
+  holdNextDetection(): void {
+    this.armed = true;
+  }
+
+  /** 붙잡은 저장을 놓아 준다. */
+  releaseDetection(): void {
+    this.open?.();
+    this.open = null;
+  }
+
+  override async saveDetectedBundles(...args: Parameters<MemoryStateStore['saveDetectedBundles']>) {
+    if (this.armed) {
+      this.armed = false;
+      await new Promise<void>((resolve) => (this.open = resolve));
+    }
+    return super.saveDetectedBundles(...args);
+  }
+}
+
 /** 가짜 포트로 멘션 감지, 멘션 묶음, 초안 대기열을 만든다. 기준점은 `'100'`, 계정은 가짜 키 소유자다. */
 async function setup() {
   /** 매핑된 가짜 저장소 둘. */
@@ -112,7 +139,7 @@ async function setup() {
   const clock = new FakeClock(NOW);
   const flow = new FakeFlowApi();
   flow.respondToListParticipantProjects({ ok: true, value: [{ projectId: PROJECT_ID, title: '가짜 프로젝트', projectUrl: null }] });
-  const stateStore = new MemoryStateStore();
+  const stateStore = new GatedStateStore();
   stateStore.account = { ...FAKE_ME };
   stateStore.baselineAlarmId = '100';
   const settingsStore = new MemorySettingsStore({ repoMappings: { [PROJECT_ID]: [repos.a, repos.b] } });
@@ -142,7 +169,6 @@ async function setup() {
       agent.listeners.add(listener);
       return () => agent.listeners.delete(listener);
     },
-    resolveRepos: (projectId) => repoMappings.resolve(projectId),
     settingsStore,
     myName: () => FAKE_ME.name,
     projectTitle: (projectId) => repoMappings.projectTitle(projectId),
@@ -273,7 +299,7 @@ describe('초안 실행: 입력', () => {
     for (const userId of [ME, SENDER, OTHER_SENDER]) expect(input).not.toContain(userId);
   });
 
-  it('기본 지침 뒤에 추가 지침을 붙이고, 넘긴 저장소만 고르게 한 스키마와 함께 첫 저장소를 작업 폴더로, 나머지를 읽기 범위로 넘긴다. 제한 시간은 10분이다', async () => {
+  it('기본 지침 뒤에 추가 지침을 붙이고, 초안 실행 스키마와 함께 첫 저장소를 cwd로, 나머지를 읽기 범위로 넘긴다. 제한 시간은 10분이다', async () => {
     const { executor, repos, settingsStore, poll } = await setup();
     settingsStore.settings.extraInstructions = '  맺음말로 "확인 부탁드립니다"를 붙입니다.  ';
     settingsStore.settings.extraSecretPatterns = ['*.secret.yml'];
@@ -294,10 +320,12 @@ describe('초안 실행: 입력', () => {
       model: 'sonnet',
       timeoutMs: 10 * 60 * 1000,
     });
+    // 근거의 저장소는 문자열이면 받는다. 넘긴 저장소가 아닌 값은 구조 실패로 돌리지 않고 출력 검증이 다룬다.
     expect(request?.outputSchema).toMatchObject({
       required: ['requirement', 'paragraphs', 'evidence'],
-      properties: { evidence: { items: { properties: { repository: { enum: [repos.a, repos.b] } } } } },
+      properties: { evidence: { items: { required: ['id', 'explanation', 'repository', 'path', 'start_line', 'end_line'], properties: { repository: { type: 'string' } } } } },
     });
+    expect(JSON.stringify(request?.outputSchema)).not.toContain('enum');
   });
 });
 
@@ -495,6 +523,33 @@ describe('초안 실행: 생성 중 묶음의 변화', () => {
     ]);
   });
 
+  it('실행이 끝나 초안을 저장하기 직전에 새 멘션이 합쳐져도, 새 멘션이 빠진 초안을 저장하지 않고 처음부터 다시 만든다', async () => {
+    const { flow, executor, bundles, stateStore, repos, poll, clock } = await setup();
+    /** 끝나지 않고 기다리는 첫 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.b) } });
+    await poll(alarm('101'));
+
+    // 새 멘션을 합치는 저장을 붙잡아 둔 사이에 첫 실행이 끝나, 초안 저장이 합치기 뒤에 줄을 선다.
+    stateStore.holdNextDetection();
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registeredDateTime: '20261020085500' });
+    flow.addAlarm(alarm('102', { replyId: '801', registeredDateTime: '20261020085500' }));
+    clock.advance(POLL_MS);
+    await settle();
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+    stateStore.releaseDetection();
+    await settle();
+
+    /** 다시 만든 묶음. */
+    const [bundle] = bundles.state();
+    expect(executor.requests).toHaveLength(2);
+    expect(executor.requests[1]?.input).toContain('## 멘션 2건 (시간순, 마지막이 답할 대상)');
+    expect(bundle).toMatchObject({ status: 'ready', draft: { evidence: [{ repository: repos.b }] } });
+    expect(bundle?.runs.map((record) => record.result)).toEqual(['bundle-changed', 'succeeded']);
+  });
+
   it('생성 직전에 Flow에 이미 내 답이 있으면 실행하지 않고 "이미 답함"이 된다', async () => {
     const { flow, executor, bundles, notifier, poll, setConnected } = await setup();
     setConnected(false);
@@ -606,9 +661,7 @@ describe('초안 실행: 실행 기록', () => {
         lastStep: '파일 읽는 중: application-prod.yml',
         fixes: [],
         omittedContextItems: 1,
-        costUsd: 0.0123,
-        inputTokens: 5500,
-        outputTokens: 456,
+        usage: { costUsd: 0.0123, inputTokens: 5500, outputTokens: 456 },
       },
     ];
     expect(bundles.state()[0]?.runs).toEqual(expected);
@@ -621,7 +674,7 @@ describe('초안 실행: 실행 기록', () => {
 
     await poll(alarm('101'));
 
-    expect(bundles.state()[0]?.runs[0]).toMatchObject({ cliVersion: null, model: 'sonnet', costUsd: null, inputTokens: null, outputTokens: null });
+    expect(bundles.state()[0]?.runs[0]).toMatchObject({ cliVersion: null, model: 'sonnet', usage: null });
   });
 });
 
@@ -662,5 +715,20 @@ describe('초안 실행: 다시 시도와 되돌리기', () => {
     expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', processedAt: null, draft: ready!.draft });
     expect(bundles.get(failed!.id)).toMatchObject({ status: 'ready', failure: null, draft: { repositories: [repos.a, repos.b] } });
     expect(executor.requests).toHaveLength(3);
+  });
+});
+
+describe('초안 실행에 쓸 에이전트', () => {
+  it('기본 에이전트의 실행기와 그 에이전트에 고른 모델을 쓰고, 기본 모델이면 모델을 넘기지 않는다. 연결된 에이전트가 없거나 실행기가 없으면 기다린다', () => {
+    const claude = new FakeExecutor('claude-code');
+    /** 모델 선택 상자. */
+    const models = { 'claude-code': { options: [{ id: 'sonnet', label: 'Sonnet', unlisted: false }], selected: 'sonnet' } };
+
+    expect(draftAgentFrom({ connectedAgents: ['claude-code'], defaultAgent: 'claude-code', models }, [claude])).toEqual({ executor: claude, model: 'sonnet' });
+    expect(
+      draftAgentFrom({ connectedAgents: ['claude-code'], defaultAgent: 'claude-code', models: { 'claude-code': { options: [], selected: null } } }, [claude]),
+    ).toEqual({ executor: claude, model: null });
+    expect(draftAgentFrom({ connectedAgents: [], defaultAgent: null, models: {} }, [claude])).toBeNull();
+    expect(draftAgentFrom({ connectedAgents: ['codex'], defaultAgent: 'codex', models: {} }, [claude])).toBeNull();
   });
 });

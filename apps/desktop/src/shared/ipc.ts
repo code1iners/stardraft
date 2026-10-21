@@ -410,7 +410,7 @@ export interface DraftSnapshot {
   paragraphs: DraftParagraphSnapshot[];
   /** 근거. 에이전트가 낸 순서다. */
   evidence: EvidenceSnapshot[];
-  /** 쓴 저장소. 첫 저장소가 작업 폴더였다. */
+  /** 쓴 저장소. 첫 저장소가 실행의 cwd였다. */
   repositories: RepositorySnapshot[];
 }
 

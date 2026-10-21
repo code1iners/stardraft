@@ -243,7 +243,7 @@ describe('초안 실행에 쓸 저장소', () => {
     const { mappings } = await setup({ repoMappings: { '101': [web, api], '102': [api, gone] } }, null);
 
     await expect(mappings.resolve('101')).resolves.toEqual({ kind: 'mapped', repos: [web, api] });
-    await expect(mappings.resolve('102')).resolves.toEqual({ kind: 'missing', paths: [gone] });
+    await expect(mappings.resolve('102')).resolves.toEqual({ kind: 'missing-folders', paths: [gone] });
     await expect(mappings.resolve('103')).resolves.toEqual({ kind: 'unmapped' });
   });
 

@@ -197,7 +197,7 @@ describe('Claude Code 실행기: 인수 묶음', () => {
 });
 
 describe('Claude Code 실행기: 진행 단계', () => {
-  it('도구 사용 이벤트를 "파일 읽는 중: 파일 이름"과 "검색 중: 찾는 말"로 바꿔 알리고, 읽은 파일 수는 같은 파일을 한 번만 센다', async () => {
+  it('도구 사용 이벤트를 "파일 읽는 중: 파일 이름"과 "검색 중: 찾는 말"로 바꿔 알리고, 읽은 파일 수는 읽기 결과가 오면 늘린다. 같은 파일은 한 번, 거부된 읽기는 세지 않는다', async () => {
     const { runner, executor } = setup();
     answerCli(
       runner,
@@ -205,10 +205,15 @@ describe('Claude Code 실행기: 진행 단계', () => {
         0,
         stream(
           fakeClaudeEvent.init(),
-          fakeClaudeEvent.toolUse('/fake/work/repo-a/src/RetryConfig.kt'),
+          fakeClaudeEvent.toolUse('/fake/work/repo-a/src/RetryConfig.kt', 'toolu_1'),
+          fakeClaudeEvent.toolResult('toolu_1'),
           fakeClaudeEvent.tools({ name: 'Grep', input: { pattern: 'retry', path: '/fake/work/repo-a' } }, { name: 'Glob', input: { pattern: '**/*.yml' } }),
-          fakeClaudeEvent.toolUse('/fake/work/repo-a/src/RetryConfig.kt'),
-          fakeClaudeEvent.toolUse('C:\\fake\\work\\repo-b\\application-prod.yml'),
+          fakeClaudeEvent.toolUse('/fake/work/repo-a/src/RetryConfig.kt', 'toolu_2'),
+          fakeClaudeEvent.toolResult('toolu_2'),
+          fakeClaudeEvent.toolUse('/fake/work/repo-a/.env', 'toolu_3'),
+          fakeClaudeEvent.toolResult('toolu_3', { isError: true, content: 'Permission to read /fake/work/repo-a/.env has been denied.' }),
+          fakeClaudeEvent.toolUse('C:\\fake\\work\\repo-b\\application-prod.yml', 'toolu_4'),
+          fakeClaudeEvent.toolResult('toolu_4'),
           fakeClaudeEvent.tools({ name: 'StructuredOutput', input: { requirement: '가짜 요구' } }),
           fakeClaudeEvent.result({ structured_output: { requirement: '가짜 요구' } }),
         ),
@@ -220,10 +225,13 @@ describe('Claude Code 실행기: 진행 단계', () => {
     await executor.run(draftRequest({ onProgress: (step) => progress.push(step) }));
 
     expect(progress).toEqual([
+      { step: '파일 읽는 중: RetryConfig.kt', filesRead: 0 },
       { step: '파일 읽는 중: RetryConfig.kt', filesRead: 1 },
       { step: '검색 중: retry', filesRead: 1 },
       { step: '검색 중: **/*.yml', filesRead: 1 },
       { step: '파일 읽는 중: RetryConfig.kt', filesRead: 1 },
+      { step: '파일 읽는 중: .env', filesRead: 1 },
+      { step: '파일 읽는 중: application-prod.yml', filesRead: 1 },
       { step: '파일 읽는 중: application-prod.yml', filesRead: 2 },
     ]);
   });

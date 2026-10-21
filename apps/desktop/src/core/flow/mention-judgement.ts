@@ -1,14 +1,5 @@
 import type { MentionLocation } from '../detection/mention';
-import type {
-  FlowAlarm,
-  FlowApi,
-  FlowApiFailure,
-  FlowApiResult,
-  FlowComment,
-  FlowPost,
-  FlowRemarkAuthorship,
-  FlowReply,
-} from '../ports/flow-api';
+import type { FlowAlarm, FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowPost, FlowReply } from '../ports/flow-api';
 import { hasMentionMarkupFor } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
@@ -107,16 +98,14 @@ export class MentionJudge {
    * `myIds`는 내 사용자 ID들이다. 조회하지 못하면(머리 댓글이 지워진 경우 포함) `null`이다.
    */
   async myAnswers(place: RemarkPlace, myIds: readonly string[]): Promise<MyAnswer[] | null> {
-    /** 내가 쓴 사람의 글(시스템 댓글 제외)인지 본다. */
-    const mine = (remark: FlowRemarkAuthorship) => isMyRemark(remark, myIds);
     if (isPostBody(place)) {
       /** 게시물의 댓글. */
       const comments = await this.comments(place.postId);
-      return comments.kind === 'found' ? [...comments.value.values()].filter(mine).map((comment) => answerOf(comment.commentId, comment)) : null;
+      return comments.kind === 'found' ? myAnswersAmong([...comments.value.values()], myIds) : null;
     }
     /** 댓글 스레드의 대댓글 전부. */
     const replies = await this.threadReplies(place.postId, place.remarkId);
-    return replies.kind === 'found' ? replies.value.filter(mine).map((reply) => answerOf(reply.replyId, reply)) : null;
+    return replies.kind === 'found' ? myAnswersAmong(replies.value, myIds) : null;
   }
 
   /** 멘션 위치의 글을 조회해, 그 내용과 누구를 지목했는지 보는 함수를 돌려준다. */
@@ -223,16 +212,13 @@ function markupText(contents: string): { text: string; mentions: (userId: string
 }
 
 /**
- * 내가 쓴 사람의 글인지 본다. `myIds`는 내 사용자 ID들이다.
- * 시스템 댓글은 행동한 사람 명의로 오므로, 내 명의라도 내 답으로 보지 않는다.
+ * 묶음 자리에서 받은 글 가운데 내 답을 고른다. 본문 묶음이면 게시물의 댓글, 댓글 스레드 묶음이면 그 스레드의 대댓글을 넘긴다.
+ * `myIds`는 내 사용자 ID들이다. 시스템 댓글은 행동한 사람 명의로 오므로, 내 명의라도 내 답으로 보지 않는다.
  */
-export function isMyRemark(remark: FlowRemarkAuthorship, myIds: readonly string[]): boolean {
-  return remark.systemCode === '' && myIds.some((id) => isSameFlowUser(remark.registerId, id));
-}
-
-/** 내가 쓴 댓글이나 대댓글을 내 답으로 바꾼다. */
-export function answerOf(answerId: string, { registeredDateTime }: FlowRemarkAuthorship): MyAnswer {
-  return { answerId, registeredDateTime };
+export function myAnswersAmong(remarks: readonly (FlowComment | FlowReply)[], myIds: readonly string[]): MyAnswer[] {
+  return remarks
+    .filter((remark) => remark.systemCode === '' && myIds.some((id) => isSameFlowUser(remark.registerId, id)))
+    .map((remark) => ({ answerId: 'replyId' in remark ? remark.replyId : remark.commentId, registeredDateTime: remark.registeredDateTime }));
 }
 
 /** 조회한 값. */

@@ -1,8 +1,9 @@
 import { activeMentions, type MentionBundle } from '../bundles/mention-bundle';
+import type { MentionLocation } from '../detection/mention';
 import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowRemarkAuthorship, FlowReply } from '../ports/flow-api';
 import { compareAlarmIds } from './alarm-id';
 import { readableFlowTime } from './flow-time';
-import { answerOf, isMyRemark, type MyAnswer } from './mention-judgement';
+import { myAnswersAmong, type MyAnswer } from './mention-judgement';
 import { namedMentionText } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
@@ -66,6 +67,28 @@ export interface BundleContext {
 /** 맥락을 모으지 못한 이유. Flow API 실패이거나, 대상 댓글 스레드의 머리 댓글이 목록에 없다. */
 export type BundleContextFailure = FlowApiFailure | { kind: 'thread-gone' };
 
+/** 맥락을 모으지 못한 이유가 원문이 사라진 것인지 본다. 글이 지워졌거나(`404`), 볼 권한이 없거나(`403`), 머리 댓글이 지워졌으면 참이다. */
+export function isSourceGone(failure: BundleContextFailure): boolean {
+  return failure.kind === 'thread-gone' || (failure.kind === 'http' && (failure.status === 403 || failure.status === 404));
+}
+
+/**
+ * 멘션이 일어난 글을 맥락에서 찾는다. 본문 멘션이면 게시물, 댓글 멘션이면 대상 댓글 스레드의 머리 댓글, 대댓글 멘션이면 그 대댓글이다.
+ * 맥락에 없으면(지워진 대댓글 등) `null`.
+ */
+export function mentionWritingOf(context: BundleContext, mention: MentionLocation): ContextWriting | null {
+  switch (mentionPlaceOf(mention)) {
+    case 'post':
+      return context.post;
+    case 'comment':
+      return context.targetThread?.id === mention.remarkId ? context.targetThread : null;
+    case 'reply':
+      return context.targetThread?.replies.find((reply) => reply.id === mention.replyId) ?? null;
+    case null:
+      return null;
+  }
+}
+
 /**
  * 맥락을 모은 결과. 같은 조회에서 찾은 묶음 자리의 내 답도 함께 돌려준다. 초안을 만들기 직전의 "이미 답함" 판정에 쓴다.
  * 내 답은 본문 묶음이면 게시물에 쓴 내 댓글, 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다. 시스템 댓글은 들지 않는다.
@@ -105,7 +128,7 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   /** 대상 댓글 스레드. */
   let targetThread: ContextComment | null = null;
   /** 묶음 자리의 내 답. 본문 묶음이면 게시물에 쓴 내 댓글이다. */
-  let myAnswers = comments.filter((comment) => isMyRemark(comment, myIds)).map((comment) => answerOf(comment.commentId, comment));
+  let myAnswers = myAnswersAmong(comments, myIds);
   if (!postBody) {
     /** 대상 댓글 스레드의 머리 댓글. */
     const head = comments.find((comment) => comment.commentId === bundle.remarkId);
@@ -116,7 +139,7 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     /** 사람이 쓴 대댓글. 오래된 것부터다. */
     const humanReplies = replies.value.filter(isHumanRemark).sort(compareRemarks((reply) => reply.replyId));
     targetThread = { ...remarkOf(head.commentId, head), replies: humanReplies.map((reply) => remarkOf(reply.replyId, reply)) };
-    myAnswers = humanReplies.filter((reply) => isMyRemark(reply, myIds)).map((reply) => answerOf(reply.replyId, reply));
+    myAnswers = myAnswersAmong(humanReplies, myIds);
   }
 
   /** 멘션 표시를 하기 전의 맥락. */

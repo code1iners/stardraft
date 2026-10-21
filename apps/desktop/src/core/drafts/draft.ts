@@ -1,4 +1,4 @@
-import type { AgentId, ExecutorFailureReason, RunKind } from '../ports/executor';
+import type { AgentId, ExecutorFailureReason, ExecutorUsage, RunKind } from '../ports/executor';
 
 /** 에이전트가 이해한 요구. */
 export interface DraftRequirement {
@@ -28,7 +28,7 @@ export interface DraftEvidence {
   id: number;
   /** 근거를 쉬운 말로 적은 설명. */
   explanation: string;
-  /** 넘긴 저장소 가운데 하나(절대 경로). 에이전트가 적은 그대로다. */
+  /** 넘긴 저장소 가운데 하나(절대 경로). 에이전트가 적은 그대로이고, 넘긴 저장소인지는 출력 검증이 본다. */
   repository: string;
   /** 저장소 루트 기준 상대 경로. */
   path: string;
@@ -46,15 +46,22 @@ export interface Draft {
   paragraphs: DraftParagraph[];
   /** 근거. 에이전트가 낸 순서다. */
   evidence: DraftEvidence[];
-  /** 초안을 만들 때 읽기 범위로 넘긴 저장소(절대 경로). 첫 저장소가 작업 폴더다. */
+  /** 초안을 만들 때 읽기 범위로 넘긴 저장소(절대 경로). 첫 저장소가 실행의 cwd였다. */
   repositories: string[];
   /** 만든 시각(Unix epoch 밀리초). */
   createdAt: number;
 }
 
+/** 초안 실행 직전에 맥락을 조회하지 못한 사유. */
+export type ContextFailureReason =
+  /** Flow에서 멘션 묶음의 내용을 가져오지 못했다(연결 실패, 키 거부, 요청 한도, 서버 오류). */
+  | 'flow-unavailable'
+  /** Flow에서 원문을 찾지 못했다(지워짐, 볼 권한 없음, 머리 댓글 지워짐). */
+  | 'source-gone';
+
 /**
  * 묶음이 실패한 사유. 실행기가 알려 준 실패 이유(CLI 없음, 미로그인, 과부하 등)는 그대로 쓴다.
- * `flow-unavailable`과 `source-gone`은 초안 실행 전에 맥락을 조회하지 못한 것이고, `app-error`는 앱의 예외다.
+ * 맥락 조회 실패는 초안 실행 전에 일어난 것이고, `app-error`는 앱의 예외다.
  */
 export type DraftFailureReason =
   /** 취소함. 사용자가 생성을 취소했다. */
@@ -65,12 +72,9 @@ export type DraftFailureReason =
   | 'invalid-output'
   /** 빈 초안. 초안 문장이 하나도 없었다. */
   | 'empty-draft'
-  /** Flow에서 멘션 묶음의 내용을 가져오지 못했다(연결 실패, 키 거부, 요청 한도, 서버 오류). */
-  | 'flow-unavailable'
-  /** Flow에서 원문을 찾지 못했다(지워짐, 볼 권한 없음, 머리 댓글 지워짐). */
-  | 'source-gone'
   /** 앱 안에서 예상하지 못한 오류가 났다. */
   | 'app-error'
+  | ContextFailureReason
   | ExecutorFailureReason;
 
 /** 묶음이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
@@ -84,7 +88,7 @@ export interface DraftFailure {
 }
 
 /** 에이전트를 실행해서 생긴 실패 사유. 맥락을 조회하지 못한 실패는 실행 전에 일어나므로 들지 않는다. */
-export type RunFailureReason = Exclude<DraftFailureReason, 'flow-unavailable' | 'source-gone'>;
+export type RunFailureReason = Exclude<DraftFailureReason, ContextFailureReason>;
 
 /**
  * 실행 하나의 결과. 성공, 묶음이 바뀌어 멈춤, 또는 실패 사유다.
@@ -119,12 +123,8 @@ export interface RunRecord {
   fixes: string[];
   /** 맥락에서 길이 상한 때문에 뺀 항목 수. */
   omittedContextItems: number;
-  /** 비용(미국 달러). 에이전트가 알려 줄 때만 있다. */
-  costUsd: number | null;
-  /** 입력 토큰 수. 에이전트가 알려 줄 때만 있다. */
-  inputTokens: number | null;
-  /** 출력 토큰 수. 에이전트가 알려 줄 때만 있다. */
-  outputTokens: number | null;
+  /** 에이전트가 알려 준 비용과 토큰 수. 알려 주지 않았으면 `null`. */
+  usage: ExecutorUsage | null;
 }
 
 /** 초안 실행의 구조화 출력을 앱이 읽은 것. 근거의 줄 번호 이름만 바꿨다. */
@@ -133,9 +133,9 @@ export type DraftOutput = Pick<Draft, 'requirement' | 'paragraphs' | 'evidence'>
 /**
  * 초안 실행의 출력 스키마. `--json-schema`로 강제한다.
  * Codex의 `--output-schema`에도 쓸 수 있게 모든 속성을 `required`로 두고 다른 속성을 받지 않는다.
- * 근거의 `repository`는 넘긴 저장소 가운데 하나만 받는다.
+ * 근거의 `repository`는 문자열이면 받는다. 넘긴 저장소가 아닌 값은 구조 실패로 돌리지 않고 출력 검증이 위치를 찾을 수 없는 근거로 다룬다.
  */
-export function draftOutputSchema(repositories: readonly string[]): Record<string, unknown> {
+export function draftOutputSchema(): Record<string, unknown> {
   return objectSchema({
     requirement: objectSchema({ text: { type: 'string' }, summary: { type: 'string' } }),
     paragraphs: {
@@ -152,7 +152,7 @@ export function draftOutputSchema(repositories: readonly string[]): Record<strin
       items: objectSchema({
         id: { type: 'integer' },
         explanation: { type: 'string' },
-        repository: { type: 'string', enum: [...repositories] },
+        repository: { type: 'string' },
         path: { type: 'string' },
         start_line: { type: 'integer' },
         end_line: { type: 'integer' },

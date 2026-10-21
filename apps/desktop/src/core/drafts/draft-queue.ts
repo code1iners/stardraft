@@ -1,14 +1,21 @@
+import type { AgentPreferencesState } from '../agent/agent-preferences';
 import { FETCHING_CONTEXT_STEP, WRITING_DRAFT_STEP } from '../agent/progress-steps';
-import { activeMentions, type MentionBundle } from '../bundles/mention-bundle';
+import { activeMentions, mentionSetKey } from '../bundles/mention-bundle';
 import type { MentionBundles, RunPreparation } from '../bundles/mention-bundles';
-import { mentionLocationKey } from '../detection/mention';
 import { contextDocument, omittedItemCount } from '../flow/bundle-context';
 import { errorFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { Executor, ExecutorOutcome, ExecutorReport, ExecutorRunRequest } from '../ports/executor';
 import type { SettingsStore } from '../ports/settings-store';
-import type { RepoResolution } from '../repos/repo-mappings';
-import { draftOutputSchema, readDraftOutput, sentenceCount, type DraftOutput, type RunFailureReason, type RunRecord } from './draft';
+import {
+  draftOutputSchema,
+  readDraftOutput,
+  sentenceCount,
+  type DraftOutput,
+  type RunFailureReason,
+  type RunRecord,
+  type RunResult,
+} from './draft';
 import { draftInputDocument, draftInstructions } from './draft-input';
 
 /** 초안 실행의 제한 시간(밀리초). 넘기면 프로세스 트리를 끝내고 "시간 초과"로 실패한다. 설정에서 바꿀 수 없다. */
@@ -24,6 +31,19 @@ export interface DraftAgent {
   model: string | null;
 }
 
+/**
+ * 초안 실행에 쓸 에이전트를 고른다. 기본 에이전트의 실행기와 그 에이전트에 고른 모델이다.
+ * 연결된 에이전트가 없거나(기본 에이전트가 없음) 기본 에이전트의 실행기가 없으면 `null`이고, 초안 대기열은 기다린다.
+ */
+export function draftAgentFrom(preferences: AgentPreferencesState, executors: readonly Executor[]): DraftAgent | null {
+  /** 기본 에이전트. */
+  const agent = preferences.defaultAgent;
+  /** 기본 에이전트의 실행기. */
+  const executor = agent === null ? undefined : executors.find((candidate) => candidate.agent === agent);
+  if (agent === null || !executor) return null;
+  return { executor, model: preferences.models[agent]?.selected ?? null };
+}
+
 /** 생성 중 묶음의 진행. 작은 창과 펼친 창에 진행 단계 한 줄과 읽은 파일 수로 보인다. */
 export type DraftProgress =
   /** 대기열에서 차례를 기다린다. 에이전트 연결을 기다리는 것도 여기에 든다. */
@@ -33,14 +53,12 @@ export type DraftProgress =
 
 /** 초안 대기열에 필요한 것. */
 export interface DraftQueueOptions {
-  /** 생성 중 묶음을 찾고 실행 결과를 맡길 멘션 묶음. */
+  /** 생성 중 묶음을 찾고 실행 결과를 맡길 멘션 묶음. 실행 직전의 저장소 매핑 확인도 맡는다. */
   bundles: MentionBundles;
   /** 지금 실행에 쓸 에이전트. 에이전트 연결이 없으면 `null`이고, 대기열은 연결될 때까지 기다린다. */
   agent: () => DraftAgent | null;
   /** 에이전트 연결이나 기본 에이전트·모델이 바뀔 때마다 `listener`를 부르게 한다. 돌려준 함수를 부르면 그만 부른다. */
   onAgentChange: (listener: () => void) => () => void;
-  /** Flow 프로젝트의 저장소 매핑을 지금 폴더 상태로 확인한다. */
-  resolveRepos: (projectId: string) => Promise<RepoResolution>;
   /** 추가 지침과 추가 비밀 파일 패턴을 읽는 설정 저장소. 실행마다 새로 읽어 다음 실행부터 바뀐 값을 쓴다. */
   settingsStore: SettingsStore;
   /** 답변 명의자인 내 이름. 모르면 `null`. */
@@ -64,7 +82,7 @@ interface RunningDraft {
   abort: AbortController;
   /** 앱이 실행을 멈춘 까닭. 멈추지 않았으면 `null`. */
   interruption: Interruption | null;
-  /** 실행을 시작할 때 묶음에 든 멘션 위치. 실행 중에 바뀌면(새 멘션이 합쳐짐) 처음부터 다시 만든다. 시작하기 전이면 `null`. */
+  /** 실행을 시작할 때 묶음에 든 멘션 위치(`mentionSetKey`). 실행 중에 바뀌면(새 멘션이 합쳐짐) 처음부터 다시 만든다. 시작하기 전이면 `null`. */
   mentionSet: string | null;
   /** 마지막 진행 단계. */
   step: string;
@@ -76,18 +94,8 @@ interface RunningDraft {
 type RunVerdict =
   /** 초안을 받았다. */
   | { kind: 'draft'; output: DraftOutput }
-  /** 구조 실패. 구조화 출력이 없거나 초안 실행 스키마 모양이 아니다. 1회 다시 시도한다. */
-  | { kind: 'structure-failure'; detail: string }
-  /** 다시 시도하지 않는 실패. */
-  | { kind: 'failed'; reason: RunFailureReason; detail: string | null };
-
-/** 실행 한 번을 마친 결과와 그 실행 기록. */
-interface RunAttempt {
-  /** 결과를 읽은 것. */
-  verdict: RunVerdict;
-  /** 실행 기록. */
-  record: RunRecord;
-}
+  /** 실패했다. `retry`는 구조 실패처럼 한 번 더 실행할 실패인지 여부다. */
+  | { kind: 'failed'; reason: RunFailureReason; detail: string | null; retry: boolean };
 
 /**
  * 초안 대기열. 생성 중 묶음을 하나씩 꺼내 초안 실행을 돌리는 직렬 대기열의 기본형이다(한 번에 하나만 실행한다).
@@ -154,7 +162,7 @@ export class DraftQueue {
       return;
     }
     if (!this.waiting.includes(bundleId)) return;
-    await this.options.bundles.markFailed(bundleId, { reason: 'cancelled', detail: null, lastStep: null }, []);
+    await this.options.bundles.markFailed(bundleId, { reason: 'cancelled', detail: null, lastStep: null }, [], null);
   }
 
   /** 묶음 상태에 대기열을 맞추고, 실행 중인 묶음이 바뀌었으면 실행을 멈춘다. */
@@ -180,7 +188,7 @@ export class DraftQueue {
     /** 지금 묶음. */
     const bundle = this.options.bundles.get(entry.bundleId);
     if (!bundle || bundle.status !== 'generating') return false;
-    return entry.mentionSet === null || mentionSetOf(bundle) === entry.mentionSet;
+    return entry.mentionSet === null || mentionSetKey(bundle) === entry.mentionSet;
   }
 
   /** 실행하고 있지 않고 에이전트 연결이 있으면 대기열 맨 앞 묶음을 실행한다. */
@@ -215,19 +223,15 @@ export class DraftQueue {
     /** 실행할 묶음. */
     const bundle = this.options.bundles.get(entry.bundleId);
     if (!bundle || bundle.status !== 'generating') return;
-    entry.mentionSet = mentionSetOf(bundle);
+    /** 실행을 시작할 때 묶음에 든 멘션 위치. */
+    const mentionSet = mentionSetKey(bundle);
+    entry.mentionSet = mentionSet;
 
-    // 기다리는 사이에 저장소 매핑이 지워졌거나 폴더가 사라졌을 수 있으므로 실행 직전에 다시 확인한다.
-    /** 저장소 매핑을 확인한 결과. */
-    const resolution = await this.options.resolveRepos(bundle.projectId);
+    // 기다리는 사이에 저장소 매핑이 지워졌거나 폴더가 사라졌으면 멘션 묶음이 저장소 확인 필요로 올린다.
+    /** 읽을 저장소. 저장소 확인 필요가 되었으면 `null`. */
+    const repositories = await this.options.bundles.reposForRun(entry.bundleId);
     if (entry.interruption) return this.afterInterruption(entry, []);
-    if (resolution.kind !== 'mapped') {
-      await this.options.bundles.markRepoCheckNeeded(
-        entry.bundleId,
-        resolution.kind === 'missing' ? { kind: 'missing-folders', paths: resolution.paths } : null,
-      );
-      return;
-    }
+    if (!repositories) return;
 
     // 맥락을 새로 조회하고, 그 사이 Flow에 내 답이 생겼으면 실행하지 않는다.
     /** 실행 직전 준비의 결과. */
@@ -235,42 +239,46 @@ export class DraftQueue {
     if (entry.interruption) return this.afterInterruption(entry, []);
     if (prepared.kind === 'skipped' || prepared.kind === 'answered') return;
     if (prepared.kind === 'unavailable') {
-      await this.options.bundles.markFailed(entry.bundleId, { reason: prepared.reason, detail: null, lastStep: entry.step }, []);
+      /** 실패로 두었는지 여부. 그사이 새 멘션이 합쳐졌으면 처음부터 다시 만든다. */
+      const failed = await this.options.bundles.markFailed(entry.bundleId, { reason: prepared.reason, detail: null, lastStep: entry.step }, [], mentionSet);
+      if (!failed) await this.restartAfterChange(entry, []);
       return;
     }
 
     /** 실행기에 넘길 요청과 맥락에서 뺀 항목 수. */
-    const { request, omitted } = await this.draftRequest(prepared, resolution.repos, agent);
+    const { request, omitted } = await this.draftRequest(prepared, repositories, agent);
     /** 이번 생성에서 남긴 실행 기록. */
     const runs: RunRecord[] = [];
     for (let attempt = 1; ; attempt += 1) {
-      /** 실행 한 번의 결과. */
+      /** 실행 한 번의 결과와 실행 기록. */
       const { verdict, record } = await this.runOnce(entry, agent, request, omitted);
       runs.push(record);
       if (entry.interruption) return this.afterInterruption(entry, runs);
       // 구조 실패는 한 번 더 실행한다. 두 번째도 구조 실패면 실패로 둔다.
-      if (verdict.kind === 'structure-failure' && attempt < MAX_STRUCTURE_ATTEMPTS) continue;
+      if (verdict.kind === 'failed' && verdict.retry && attempt < MAX_STRUCTURE_ATTEMPTS) continue;
 
-      if (verdict.kind === 'draft') {
-        await this.options.bundles.saveDraft(
-          entry.bundleId,
-          { ...verdict.output, repositories: [...resolution.repos], createdAt: this.options.clock.now() },
-          runs,
-        );
-      } else {
-        await this.options.bundles.markFailed(
-          entry.bundleId,
-          verdict.kind === 'structure-failure'
-            ? { reason: 'invalid-output', detail: verdict.detail, lastStep: entry.step }
-            : { reason: verdict.reason, detail: verdict.detail, lastStep: entry.step },
-          runs,
-        );
-      }
+      // 실행이 끝난 뒤 저장하기 전에도 새 멘션이 합쳐질 수 있으므로, 멘션 묶음이 저장하는 순간 멘션 위치를 다시 본다.
+      /** 결과를 저장했는지 여부. */
+      const finished =
+        verdict.kind === 'draft'
+          ? await this.options.bundles.saveDraft(
+              entry.bundleId,
+              { ...verdict.output, repositories: [...repositories], createdAt: this.options.clock.now() },
+              runs,
+              mentionSet,
+            )
+          : await this.options.bundles.markFailed(
+              entry.bundleId,
+              { reason: verdict.reason, detail: verdict.detail, lastStep: entry.step },
+              runs,
+              mentionSet,
+            );
+      if (!finished) await this.restartAfterChange(entry, [...runs.slice(0, -1), { ...record, result: 'bundle-changed' }]);
       return;
     }
   }
 
-  /** 초안 실행의 요청을 만든다. 지침과 비밀 파일 패턴은 실행마다 설정에서 새로 읽는다. 첫 저장소가 작업 폴더다. */
+  /** 초안 실행의 요청을 만든다. 지침과 비밀 파일 패턴은 실행마다 설정에서 새로 읽는다. 첫 저장소가 cwd가 된다. */
   private async draftRequest(
     prepared: Extract<RunPreparation, { kind: 'prepared' }>,
     repositories: readonly string[],
@@ -294,7 +302,7 @@ export class DraftQueue {
         kind: 'draft',
         instructions: draftInstructions(settings.extraInstructions),
         input,
-        outputSchema: draftOutputSchema(repositories),
+        outputSchema: draftOutputSchema(),
         readRoots: [...repositories],
         secretPatterns: [...settings.extraSecretPatterns],
         model: agent.model,
@@ -310,7 +318,7 @@ export class DraftQueue {
     agent: DraftAgent,
     request: Omit<ExecutorRunRequest, 'signal' | 'onProgress'>,
     omitted: number,
-  ): Promise<RunAttempt> {
+  ): Promise<{ verdict: RunVerdict; record: RunRecord }> {
     this.setProgress(entry, WRITING_DRAFT_STEP, 0);
     /** 시작 시각. */
     const startedAt = this.options.clock.now();
@@ -329,7 +337,7 @@ export class DraftQueue {
     }
 
     /** 결과를 읽은 것. */
-    const verdict: RunVerdict = report ? readVerdict(report.outcome) : { kind: 'failed', reason: 'app-error', detail: null };
+    const verdict: RunVerdict = report ? readVerdict(report.outcome) : { kind: 'failed', reason: 'app-error', detail: null, retry: false };
     /** 실행 기록. 앱이 실행을 멈췄으면 그 까닭이 결과다. */
     const record: RunRecord = {
       kind: 'draft',
@@ -338,14 +346,12 @@ export class DraftQueue {
       model: report?.model ?? agent.model,
       startedAt,
       finishedAt: this.options.clock.now(),
-      result: entry.interruption ? (entry.interruption === 'bundle-changed' ? 'bundle-changed' : 'cancelled') : resultOf(verdict),
+      result: runResultOf(entry.interruption, verdict),
       detail: verdict.kind === 'draft' ? null : verdict.detail,
       lastStep: entry.step,
       fixes: [],
       omittedContextItems: omitted,
-      costUsd: report?.usage?.costUsd ?? null,
-      inputTokens: report?.usage?.inputTokens ?? null,
-      outputTokens: report?.usage?.outputTokens ?? null,
+      usage: report?.usage ?? null,
     };
     this.options.logger.info('draft.run-finished', {
       bundleId: entry.bundleId,
@@ -357,17 +363,16 @@ export class DraftQueue {
   }
 
   /**
-   * 앱이 멈춘 실행을 정리한다. [취소]면 "취소함" 실패, 묶음이 바뀌었으면 기록만 남기고 생성 중으로 남았을 때 대기열 맨 앞에서 처음부터 다시 만든다.
+   * 앱이 멈춘 실행을 정리한다. [취소]면 "취소함" 실패, 묶음이 바뀌었으면 처음부터 다시 만든다.
    * 앱을 끝내는 중이면 상태 저장소를 건드리지 않는다.
    */
   private async afterInterruption(entry: RunningDraft, runs: RunRecord[]): Promise<void> {
     switch (entry.interruption) {
       case 'user':
-        await this.options.bundles.markFailed(entry.bundleId, { reason: 'cancelled', detail: null, lastStep: entry.step }, runs);
+        await this.options.bundles.markFailed(entry.bundleId, { reason: 'cancelled', detail: null, lastStep: entry.step }, runs, null);
         return;
       case 'bundle-changed':
-        await this.options.bundles.addRuns(entry.bundleId, runs);
-        if (this.status === 'started' && this.options.bundles.get(entry.bundleId)?.status === 'generating') this.waiting.unshift(entry.bundleId);
+        await this.restartAfterChange(entry, runs);
         return;
       case 'app-quit':
       case null:
@@ -375,12 +380,18 @@ export class DraftQueue {
     }
   }
 
+  /** 묶음이 바뀌어 멈춘 생성을 정리한다. 실행 기록을 남기고, 생성 중으로 남았으면(새 멘션이 합쳐짐) 대기열 맨 앞에서 처음부터 다시 만든다. */
+  private async restartAfterChange(entry: RunningDraft, runs: RunRecord[]): Promise<void> {
+    await this.options.bundles.addRuns(entry.bundleId, runs);
+    if (this.status === 'started' && this.options.bundles.get(entry.bundleId)?.status === 'generating') this.waiting.unshift(entry.bundleId);
+  }
+
   /** 예상하지 못한 오류로 실행이 끝나면 묶음을 실패로 두어 생성 중에 멈춰 있지 않게 한다. */
   private async failAfterCrash(entry: RunningDraft, error: unknown): Promise<void> {
     this.options.logger.error('draft.generation-crashed', { bundleId: entry.bundleId, ...errorFields(error) });
     if (this.status !== 'started') return;
     try {
-      await this.options.bundles.markFailed(entry.bundleId, { reason: 'app-error', detail: null, lastStep: entry.step }, []);
+      await this.options.bundles.markFailed(entry.bundleId, { reason: 'app-error', detail: null, lastStep: entry.step }, [], null);
     } catch (saveError) {
       this.options.logger.error('draft.failure-save-failed', { bundleId: entry.bundleId, ...errorFields(saveError) });
     }
@@ -406,40 +417,29 @@ export class DraftQueue {
   }
 }
 
-/** 묶음에 든 멘션 위치를 한 문자열로 나타낸다. 이미 답함으로 빠진 멘션도 넣어, 판정이 바뀌어도 같은 값이다. */
-function mentionSetOf(bundle: MentionBundle): string {
-  return bundle.mentions.map(mentionLocationKey).sort().join('\n');
-}
-
-/** 실행기의 결과를 읽는다. 구조화 출력은 초안 실행 스키마 모양인지와 문장이 있는지만 본다. */
+/** 실행기의 결과를 읽는다. 구조화 출력은 초안 실행 스키마 모양인지와 문장이 있는지만 본다. 구조 실패만 다시 실행한다. */
 function readVerdict(outcome: ExecutorOutcome): RunVerdict {
   switch (outcome.type) {
     case 'completed': {
       /** 앱이 읽은 초안. 스키마 모양이 아니면 `null`. */
       const output = readDraftOutput(outcome.output);
-      if (!output) return { kind: 'structure-failure', detail: '구조화 출력이 초안 실행 스키마 모양이 아닙니다.' };
-      if (sentenceCount(output) === 0) return { kind: 'failed', reason: 'empty-draft', detail: null };
+      if (!output) return { kind: 'failed', reason: 'invalid-output', detail: '구조화 출력이 초안 실행 스키마 모양이 아닙니다.', retry: true };
+      if (sentenceCount(output) === 0) return { kind: 'failed', reason: 'empty-draft', detail: null, retry: false };
       return { kind: 'draft', output };
     }
     case 'invalid-output':
-      return { kind: 'structure-failure', detail: outcome.detail };
+      return { kind: 'failed', reason: 'invalid-output', detail: outcome.detail, retry: true };
     case 'timed-out':
-      return { kind: 'failed', reason: 'timed-out', detail: null };
+      return { kind: 'failed', reason: 'timed-out', detail: null, retry: false };
     case 'cancelled':
-      return { kind: 'failed', reason: 'cancelled', detail: null };
+      return { kind: 'failed', reason: 'cancelled', detail: null, retry: false };
     case 'failed':
-      return { kind: 'failed', reason: outcome.reason, detail: outcome.detail };
+      return { kind: 'failed', reason: outcome.reason, detail: outcome.detail, retry: false };
   }
 }
 
-/** 실행 결과를 실행 기록의 결과로 바꾼다. */
-function resultOf(verdict: RunVerdict): RunRecord['result'] {
-  switch (verdict.kind) {
-    case 'draft':
-      return 'succeeded';
-    case 'structure-failure':
-      return 'invalid-output';
-    case 'failed':
-      return verdict.reason;
-  }
+/** 실행 기록의 결과. 앱이 실행을 멈췄으면 그 까닭(묶음이 바뀜, 그 밖에는 취소함)이고, 아니면 실행의 결과다. */
+function runResultOf(interruption: Interruption | null, verdict: RunVerdict): RunResult {
+  if (interruption) return interruption === 'bundle-changed' ? 'bundle-changed' : 'cancelled';
+  return verdict.kind === 'draft' ? 'succeeded' : verdict.reason;
 }

@@ -54,9 +54,9 @@ export interface RepoMappingsState {
 export type RepoResolution =
   /** 저장소 매핑이 없다. */
   | { kind: 'unmapped' }
-  /** 연결된 폴더 가운데 없는 것이 있다. 자동 선택으로 넘어가지 않고 저장소 확인 필요로 올린다. */
-  | { kind: 'missing'; paths: string[] }
-  /** 연결된 폴더가 모두 있다. 연결한 순서이고 첫 저장소가 작업 폴더가 된다. */
+  /** 연결된 폴더 가운데 없는 것이 있다. 자동 선택으로 넘어가지 않고 저장소 확인 필요로 올린다. `paths`는 없는 폴더다. */
+  | { kind: 'missing-folders'; paths: string[] }
+  /** 연결된 폴더가 모두 있다. 연결한 순서이고 첫 저장소가 초안 실행의 cwd가 된다. */
   | { kind: 'mapped'; repos: string[] };
 
 /** 저장소 매핑에 필요한 것. */
@@ -146,7 +146,7 @@ export class RepoMappings {
     const found = await Promise.all(paths.map((path) => isFolder(path)));
     /** 없는 폴더. */
     const missing = paths.filter((_, index) => !found[index]);
-    return missing.length > 0 ? { kind: 'missing', paths: missing } : { kind: 'mapped', repos: [...paths] };
+    return missing.length > 0 ? { kind: 'missing-folders', paths: missing } : { kind: 'mapped', repos: [...paths] };
   }
 
   /**

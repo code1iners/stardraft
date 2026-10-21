@@ -326,9 +326,7 @@ describe('멘션 묶음', () => {
       lastStep: '파일 읽는 중: config.yml',
       fixes: [],
       omittedContextItems: 2,
-      costUsd: 0.01,
-      inputTokens: 100,
-      outputTokens: 20,
+      usage: { costUsd: 0.01, inputTokens: 100, outputTokens: 20 },
     };
     /** 저장한 묶음. */
     const [ready, failed] = await store.saveDetectedBundles(
@@ -337,7 +335,7 @@ describe('멘션 묶음', () => {
         bundle([mention('102')], {
           status: 'failed',
           failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
-          runs: [{ ...run, result: 'timed-out', costUsd: null, inputTokens: null, outputTokens: null }],
+          runs: [{ ...run, result: 'timed-out', usage: null }],
         }),
         bundle([mention('103', { postId: '90000012' })], { repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }),
       ],
@@ -354,7 +352,7 @@ describe('멘션 묶음', () => {
         draft: null,
         failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
         repoCheck: null,
-        runs: [{ ...run, result: 'timed-out', costUsd: null, inputTokens: null, outputTokens: null }],
+        runs: [{ ...run, result: 'timed-out', usage: null }],
       },
       { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] }, runs: [] },
     ]);

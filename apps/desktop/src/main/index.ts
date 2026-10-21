@@ -8,7 +8,7 @@ import { FlowAccount } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { collectBundleContext } from '../core/flow/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
-import { DraftQueue } from '../core/drafts/draft-queue';
+import { draftAgentFrom, DraftQueue } from '../core/drafts/draft-queue';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { MentionJudge } from '../core/flow/mention-judgement';
 import { errorFields } from '../core/logging/logger';
@@ -180,13 +180,8 @@ function start(): void {
     /** 초안 대기열. 생성 중 묶음을 기본 에이전트로 하나씩 실행하고, 에이전트 연결이 없으면 연결될 때까지 기다린다. */
     const draftQueue = new DraftQueue({
       bundles: mentionBundles,
-      agent: () => {
-        /** 기본 에이전트와 모델 선택. */
-        const preferences = agentPreferences.state();
-        // 지금은 Claude Code 실행기만 있다. 연결 확인을 통과했고 기본 에이전트일 때만 실행한다.
-        if (!agentConnection.isConnected() || preferences.defaultAgent !== agentConnection.executor.agent) return null;
-        return { executor: agentConnection.executor, model: preferences.models[agentConnection.executor.agent]?.selected ?? null };
-      },
+      // 지금은 Claude Code 실행기만 있다. 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
+      agent: () => draftAgentFrom(agentPreferences.state(), [agentConnection.executor]),
       onAgentChange: (listener) => {
         /** 구독을 끊는 함수. */
         const unsubscribes = [agentConnection.onChange(listener), agentPreferences.onChange(listener)];
@@ -194,7 +189,6 @@ function start(): void {
           for (const unsubscribe of unsubscribes) unsubscribe();
         };
       },
-      resolveRepos: (projectId) => repoMappings.resolve(projectId),
       settingsStore: appData.settingsStore,
       myName: () => flowAccount.state().account?.name || null,
       projectTitle: (projectId) => repoMappings.projectTitle(projectId),

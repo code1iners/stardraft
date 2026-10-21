@@ -69,7 +69,7 @@ export class ClaudeCodeExecutor implements Executor {
     /** 띄울 CLI와 환경. */
     const launch = this.options.launch();
     if (!launch) return { outcome: failed('cli-missing', 'Claude Code CLI를 아직 찾지 못했습니다.'), cliVersion: null, model: null, usage: null };
-    /** 작업 폴더가 될 첫 저장소와 `--add-dir`로 붙일 나머지. */
+    /** cwd가 될 첫 저장소와 `--add-dir`로 붙일 나머지. */
     const [cwd, ...extraRoots] = request.readRoots;
     if (cwd === undefined) throw new Error('읽을 디렉터리가 없습니다.');
 
@@ -138,7 +138,10 @@ function claudeRunArgs(request: ExecutorRunRequest, instructionsFile: string, ex
   ];
 }
 
-/** stream-json 줄을 받아 앱이 쓰는 값만 모으고, 도구 사용 이벤트를 진행 단계로 알린다. JSON이 아닌 줄은 건너뛴다. */
+/**
+ * stream-json 줄을 받아 앱이 쓰는 값만 모으고, 도구 사용 이벤트를 진행 단계로 알린다. JSON이 아닌 줄은 건너뛴다.
+ * 읽은 파일 수는 Read 결과가 오류 없이 돌아왔을 때 센다. 비밀 파일처럼 거부된 읽기는 세지 않는다.
+ */
 class ClaudeStreamReader {
   /** 첫 `system/init` 이벤트가 알려 준 CLI 버전. */
   cliVersion: string | null = null;
@@ -148,10 +151,14 @@ class ClaudeStreamReader {
   apiError: string | null = null;
   /** 마지막 `result` 메시지. */
   result: Record<string, unknown> | null = null;
-  /** Read 도구로 읽은 파일 경로. 같은 파일은 한 번만 센다. */
+  /** 읽기에 성공한 파일 경로. 같은 파일은 한 번만 센다. */
   private readonly filesRead = new Set<string>();
+  /** 결과를 기다리는 Read 호출. 도구 호출 ID → 파일 경로. */
+  private readonly pendingReads = new Map<string, string>();
+  /** 마지막으로 알린 진행 단계. 읽은 파일 수만 바뀔 때 같은 단계로 다시 알린다. */
+  private lastStep: string | null = null;
 
-  /** `onProgress`는 도구를 부를 때마다 진행 단계로 부른다. */
+  /** `onProgress`는 도구를 부를 때와 읽은 파일 수가 늘 때마다 진행 단계로 부른다. */
   constructor(private readonly onProgress: (progress: ExecutorProgress) => void) {}
 
   /** 표준 출력 한 줄을 읽는다. */
@@ -164,7 +171,10 @@ class ClaudeStreamReader {
       if (typeof event.model === 'string') this.model = event.model;
     } else if (event.type === 'assistant') {
       if (typeof event.error === 'string') this.apiError = event.error;
-      this.readToolUses(event.message);
+      // 한 메시지에 도구 여럿이 함께 올 수 있다.
+      for (const block of contentBlocks(event.message)) if (block.type === 'tool_use') this.readToolUse(block);
+    } else if (event.type === 'user') {
+      for (const block of contentBlocks(event.message)) if (block.type === 'tool_result') this.readToolResult(block);
     } else if (event.type === 'result') {
       this.result = event;
     }
@@ -174,7 +184,7 @@ class ClaudeStreamReader {
   usage(): ExecutorUsage | null {
     if (!this.result) return null;
     /** 토큰 수. */
-    const tokens = typeof this.result.usage === 'object' && this.result.usage !== null ? (this.result.usage as Record<string, unknown>) : {};
+    const tokens = asRecord(this.result.usage) ?? {};
     /** 캐시를 거치지 않은 입력 토큰 수. 없으면 입력 토큰 수를 모른다. */
     const input = numberOrNull(tokens.input_tokens);
     return {
@@ -185,32 +195,47 @@ class ClaudeStreamReader {
     };
   }
 
-  /** assistant 메시지가 부른 도구를 차례로 진행 단계로 바꾼다. 한 메시지에 도구 여럿이 함께 올 수 있다. */
-  private readToolUses(message: unknown): void {
-    /** 메시지 내용 조각. */
-    const content = typeof message === 'object' && message !== null ? (message as Record<string, unknown>).content : null;
-    if (!Array.isArray(content)) return;
-    for (const block of content) {
-      /** 도구 호출 조각. */
-      const use = typeof block === 'object' && block !== null ? (block as Record<string, unknown>) : null;
-      if (use?.type !== 'tool_use') continue;
-      /** 도구 입력. */
-      const input = typeof use.input === 'object' && use.input !== null ? (use.input as Record<string, unknown>) : {};
-      /** 이 도구 호출의 진행 단계. 화면에 보일 일이 아니면(구조화 출력 등) `null`. */
-      const step = this.stepOf(use.name, input);
-      if (step !== null) this.onProgress({ step, filesRead: this.filesRead.size });
+  /** 도구 호출 하나를 진행 단계로 알린다. 화면에 보일 일이 아니면(구조화 출력 등) 알리지 않는다. Read 호출은 결과가 올 때 셀 수 있게 기억한다. */
+  private readToolUse(use: Record<string, unknown>): void {
+    /** 도구 입력. */
+    const input = asRecord(use.input) ?? {};
+    /** 이 도구 호출의 진행 단계. */
+    let step: string | null = null;
+    if (use.name === 'Read' && typeof input.file_path === 'string') {
+      if (typeof use.id === 'string') this.pendingReads.set(use.id, input.file_path);
+      step = readingFileStep(input.file_path);
+    } else if ((use.name === 'Grep' || use.name === 'Glob') && typeof input.pattern === 'string') {
+      step = searchingStep(input.pattern);
     }
+    if (step === null) return;
+    this.lastStep = step;
+    this.onProgress({ step, filesRead: this.filesRead.size });
   }
 
-  /** 도구 이름과 입력으로 진행 단계를 정한다. 읽은 파일도 여기서 센다. */
-  private stepOf(name: unknown, input: Record<string, unknown>): string | null {
-    if (name === 'Read' && typeof input.file_path === 'string') {
-      this.filesRead.add(input.file_path);
-      return readingFileStep(input.file_path);
-    }
-    if ((name === 'Grep' || name === 'Glob') && typeof input.pattern === 'string') return searchingStep(input.pattern);
-    return null;
+  /** Read 결과가 오류 없이 돌아오면 읽은 파일 수를 늘려 알린다. 처음 읽은 파일만 센다. */
+  private readToolResult(result: Record<string, unknown>): void {
+    /** 결과가 짝을 이룬 도구 호출 ID. */
+    const useId = typeof result.tool_use_id === 'string' ? result.tool_use_id : null;
+    /** 그 호출이 읽은 파일. Read 호출이 아니면 없다. */
+    const path = useId === null ? undefined : this.pendingReads.get(useId);
+    if (useId === null || path === undefined) return;
+    this.pendingReads.delete(useId);
+    if (result.is_error === true || this.filesRead.has(path)) return;
+    this.filesRead.add(path);
+    if (this.lastStep !== null) this.onProgress({ step: this.lastStep, filesRead: this.filesRead.size });
   }
+}
+
+/** 메시지의 내용 조각. 객체가 아닌 조각은 건너뛴다. */
+function contentBlocks(message: unknown): Record<string, unknown>[] {
+  /** 메시지 내용. */
+  const content = asRecord(message)?.content;
+  return Array.isArray(content) ? content.map(asRecord).filter((block) => block !== null) : [];
+}
+
+/** 배열이 아닌 객체면 필드를 읽을 수 있게, 아니면 `null`. */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 /**
@@ -275,9 +300,7 @@ function numberOrNull(value: unknown): number | null {
 /** JSON 객체 한 줄을 푼다. 객체가 아니면 `null`. */
 function parseObject(line: string): Record<string, unknown> | null {
   try {
-    /** 푼 값. */
-    const parsed: unknown = JSON.parse(line);
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    return asRecord(JSON.parse(line));
   } catch {
     return null;
   }

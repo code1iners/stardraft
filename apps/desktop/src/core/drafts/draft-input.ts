@@ -1,5 +1,5 @@
 import type { BundledMention } from '../bundles/mention-bundle';
-import type { BundleContext, ContextWriting } from '../flow/bundle-context';
+import { mentionWritingOf, type BundleContext } from '../flow/bundle-context';
 import { readableFlowTime } from '../flow/flow-time';
 import { namedMentionText } from '../flow/mention-markup';
 import { mentionPlaceOf, type MentionPlace } from '../flow/mention-place';
@@ -60,7 +60,7 @@ export interface DraftInputSource {
   myName: string | null;
   /** Flow 프로젝트 이름. 모르면 `null`. */
   projectTitle: string | null;
-  /** 읽을 저장소(절대 경로). 첫 저장소가 작업 폴더다. */
+  /** 읽을 저장소(절대 경로). 첫 저장소가 실행의 cwd다. */
   repositories: readonly string[];
 }
 
@@ -78,7 +78,7 @@ const PLACE_LABELS: Record<MentionPlace, string> = {
  * 멘션 표기는 이름 표기로 바꿔 Flow 사용자 ID를 넘기지 않는다. API 키는 이 문서와 상관이 없다.
  */
 export function draftInputDocument(source: DraftInputSource): string {
-  /** 마지막 멘션의 위치. 답할 대상이다. */
+  /** 마지막 멘션의 순번. 답할 대상이다. */
   const lastIndex = source.mentions.length - 1;
   return [
     'Stardraft 초안 실행 입력입니다. 지침에 따라 "# 데이터"의 멘션 가운데 [답할 대상]에 답하는 초안을 쓰세요.',
@@ -100,7 +100,10 @@ export function draftInputDocument(source: DraftInputSource): string {
   ].join('\n');
 }
 
-/** 멘션 하나의 줄. 머리 줄(송신자·시각·위치) 아래에 지금 글을 들여 쓴다. */
+/**
+ * 멘션 하나의 줄. 머리 줄(송신자·시각·멘션 위치) 아래에 멘션이 일어난 글의 지금 내용을 들여 쓴다.
+ * 지금 내용은 방금 조회한 맥락에서 찾고, 찾지 못하면(지워진 대댓글 등) 감지할 때 받은 글을 쓴다. 그 글이 사라진 일은 변화 감시가 다룬다.
+ */
 function mentionLines(mention: BundledMention, index: number, target: boolean, context: BundleContext): string[] {
   /** 멘션이 일어난 글의 종류. */
   const place = mentionPlaceOf(mention) ?? 'post';
@@ -108,23 +111,12 @@ function mentionLines(mention: BundledMention, index: number, target: boolean, c
   const time = readableFlowTime(mention.registeredDateTime);
   /** 머리 줄. */
   const head = [`${mention.senderName || '이름 없음'}`, ...(time ? [time] : []), PLACE_LABELS[place]].join(' · ');
+  /** 멘션이 일어난 글의 지금 내용. */
+  const text = mentionWritingOf(context, mention)?.contents ?? mention.text;
   return [
     `${index + 1}. ${target ? '[답할 대상] ' : ''}${head}`,
-    ...namedMentionText(currentText(mention, place, context))
+    ...namedMentionText(text)
       .split('\n')
       .map((line) => `   ${line}`),
   ];
-}
-
-/**
- * 멘션이 일어난 글의 지금 내용. 방금 조회한 맥락에서 찾는다.
- * 맥락에서 찾지 못하면(지워진 대댓글 등) 감지할 때 받은 글을 쓴다. 그 글이 사라진 일은 변화 감시가 다룬다.
- */
-function currentText(mention: BundledMention, place: MentionPlace, context: BundleContext): string {
-  /** 맥락에서 찾은 글. */
-  let found: ContextWriting | undefined;
-  if (place === 'post') found = context.post;
-  else if (place === 'comment' && context.targetThread?.id === mention.remarkId) found = context.targetThread;
-  else if (place === 'reply') found = context.targetThread?.replies.find((reply) => reply.id === mention.replyId);
-  return found?.contents ?? mention.text;
 }

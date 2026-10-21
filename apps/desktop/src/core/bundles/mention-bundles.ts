@@ -1,6 +1,6 @@
-import { markContextMentions, type BundleContext, type BundleContextFailure, type BundleContextResult } from '../flow/bundle-context';
+import { isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
 import { mentionLocationKey, type Mention } from '../detection/mention';
-import type { Draft, DraftFailure, RunRecord } from '../drafts/draft';
+import type { ContextFailureReason, Draft, DraftFailure, RunRecord } from '../drafts/draft';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
@@ -17,11 +17,11 @@ import {
   isProcessed,
   isRestorable,
   judgeAnswered,
+  mentionSetKey,
   type BundlePlace,
   type BundleStatus,
   type MentionBundle,
   type RecordedAnswer,
-  type RepoCheck,
   type UnsavedBundle,
 } from './mention-bundle';
 
@@ -39,7 +39,7 @@ export interface MentionBundlesOptions {
   findMyAnswers: (place: BundlePlace) => Promise<MyAnswer[] | null>;
   /** 지금 키로 묶음의 맥락과 묶음 자리의 내 답을 Flow에서 새로 조회한다. 쓸 키가 없으면 `null`. */
   collectContext: (bundle: MentionBundle) => Promise<BundleContextResult | null>;
-  /** Flow 프로젝트의 저장소 매핑을 지금 폴더 상태로 확인한다. 초안 없는 묶음을 생성 중으로 올릴지 정한다. */
+  /** Flow 프로젝트의 저장소 매핑을 지금 폴더 상태로 확인한다. 초안 없는 묶음을 생성 중으로 올릴지 정하고, 초안 실행 직전에 다시 확인한다. */
   resolveRepos: (projectId: string) => Promise<RepoResolution>;
 }
 
@@ -49,8 +49,8 @@ export type RunPreparation =
   | { kind: 'prepared'; bundle: MentionBundle; context: BundleContext }
   /** Flow에 이미 내 답이 있어 초안 없이 처리됨의 "이미 답함"으로 옮겼다. */
   | { kind: 'answered' }
-  /** 맥락을 조회하지 못했다. `source-gone`은 원문이 지워졌거나 볼 수 없는 것이다. */
-  | { kind: 'unavailable'; reason: 'flow-unavailable' | 'source-gone' }
+  /** 맥락을 조회하지 못했다. */
+  | { kind: 'unavailable'; reason: ContextFailureReason }
   /** 묶음이 없거나 더는 생성 중이 아니다. */
   | { kind: 'skipped' };
 
@@ -250,7 +250,7 @@ export class MentionBundles {
     const result = await this.options.collectContext(structuredClone(bundle)).catch(() => null);
     if (!result?.ok) {
       this.options.logger.warn('bundle.context-failed', { bundleId, reason: result ? result.failure.kind : 'no-key' });
-      return { kind: 'unavailable', reason: result ? unavailableReason(result.failure) : 'flow-unavailable' };
+      return { kind: 'unavailable', reason: result && isSourceGone(result.failure) ? 'source-gone' : 'flow-unavailable' };
     }
 
     // 조회하는 사이에 새 멘션이 합쳐졌을 수 있으므로 줄에 들어가 지금 값으로 판정한다.
@@ -284,41 +284,77 @@ export class MentionBundles {
   }
 
   /**
-   * 생성 중 묶음을 초안 없이 저장소 확인 필요로 올리고 OS 알림을 띄운다. 초안 실행 직전에 저장소 매핑이 없어졌거나 폴더가 사라졌을 때 쓴다.
-   * `repoCheck`는 사유이고, 저장소 매핑이 없어서면 `null`이다.
+   * 초안 실행 직전에 저장소 매핑을 지금 폴더 상태로 다시 확인한다. 기다리는 사이에 매핑이 지워졌거나 폴더가 사라졌을 수 있다.
+   * 폴더가 모두 있으면 읽을 저장소를 돌려준다. 아니면 생성 중 묶음을 초안 없이 저장소 확인 필요로 올리고 OS 알림을 띄운 뒤 `null`을 돌려준다.
    */
-  async markRepoCheckNeeded(bundleId: number, repoCheck: RepoCheck | null): Promise<void> {
-    /** 바꾼 묶음. 생성 중이 아니었으면 `null`. */
-    const changed = await this.change(bundleId, 'bundle.repo-check-needed', (bundle) =>
-      bundle.status === 'generating' ? { ...bundle, status: 'repo-check-needed', repoCheck } : null,
+  async reposForRun(bundleId: number): Promise<string[] | null> {
+    /** 실행할 묶음. */
+    const bundle = this.bundles.find((item) => item.id === bundleId);
+    if (!bundle || bundle.status !== 'generating') return null;
+    /** 저장소 매핑을 확인한 결과. */
+    const resolution = await this.options.resolveRepos(bundle.projectId);
+    if (resolution.kind === 'mapped') return resolution.repos;
+
+    /** 저장소 확인 필요가 된 묶음. 그사이 생성 중이 아니게 되었으면 `null`. */
+    const changed = await this.change(bundleId, 'bundle.repo-check-needed', (latest) =>
+      latest.status === 'generating' ? { ...latest, ...statusWithoutDraft(resolution) } : null,
     );
     if (changed) this.options.notifier.notify(repoCheckNotification([changed]));
+    return null;
   }
 
-  /** 생성 중 묶음에 초안 실행이 만든 초안과 실행 기록을 담아 준비됨으로 옮기고 OS 알림을 띄운다. */
-  async saveDraft(bundleId: number, draft: Draft, runs: readonly RunRecord[]): Promise<void> {
-    /** 바꾼 묶음. 생성 중이 아니었으면 `null`. */
-    const changed = await this.change(bundleId, 'bundle.draft-ready', (bundle) =>
-      bundle.status === 'generating'
-        ? { ...bundle, status: 'ready', draft: structuredClone(draft), failure: null, runs: [...bundle.runs, ...structuredClone(runs)] }
-        : null,
-    );
+  /**
+   * 생성 중 묶음에 초안 실행이 만든 초안과 실행 기록을 담아 준비됨으로 옮기고 OS 알림을 띄운다.
+   * `mentionSet`은 실행을 시작할 때의 멘션 위치(`mentionSetKey`)다. 그 뒤 새 멘션이 합쳐졌으면 새 멘션이 빠진 초안이므로 저장하지 않는다.
+   * 저장했으면 참이고, 생성 중이 아니거나 멘션이 바뀌었으면 거짓이다.
+   */
+  async saveDraft(bundleId: number, draft: Draft, runs: readonly RunRecord[], mentionSet: string): Promise<boolean> {
+    /** 준비됨이 된 묶음. */
+    const changed = await this.finishGeneration(bundleId, 'bundle.draft-ready', runs, mentionSet, () => ({
+      status: 'ready',
+      draft: structuredClone(draft),
+      failure: null,
+    }));
     if (changed) this.options.notifier.notify(draftReadyNotification(changed));
+    return changed !== null;
   }
 
-  /** 생성 중 묶음을 실패로 옮기고 실행 기록을 더한다. 실패 화면에 사유와 마지막 단계가 보인다. */
-  async markFailed(bundleId: number, failure: DraftFailure, runs: readonly RunRecord[]): Promise<void> {
-    await this.change(bundleId, 'bundle.generation-failed', (bundle) =>
-      bundle.status === 'generating'
-        ? { ...bundle, status: 'failed', failure: { ...failure }, runs: [...bundle.runs, ...structuredClone(runs)] }
-        : null,
-    );
+  /**
+   * 생성 중 묶음을 실패로 옮기고 실행 기록을 더한다. 실패 화면에 사유와 마지막 단계가 보인다.
+   * `mentionSet`을 주면 실행을 시작한 뒤 새 멘션이 합쳐졌을 때 실패로 두지 않는다(처음부터 다시 만들 묶음이다). [취소]처럼 언제나 실패로 둘 때는 `null`이다.
+   * 실패로 두었으면 참이고, 아니면 거짓이다.
+   */
+  async markFailed(bundleId: number, failure: DraftFailure, runs: readonly RunRecord[], mentionSet: string | null): Promise<boolean> {
+    /** 실패가 된 묶음. */
+    const changed = await this.finishGeneration(bundleId, 'bundle.generation-failed', runs, mentionSet, () => ({
+      status: 'failed',
+      failure: { ...failure },
+    }));
+    return changed !== null;
   }
 
   /** 상태는 그대로 두고 실행 기록만 더한다. 묶음이 바뀌어 멈춘 실행을 남길 때 쓴다. */
   async addRuns(bundleId: number, runs: readonly RunRecord[]): Promise<void> {
     if (runs.length === 0) return;
     await this.change(bundleId, 'bundle.runs-recorded', (bundle) => ({ ...bundle, runs: [...bundle.runs, ...structuredClone(runs)] }));
+  }
+
+  /**
+   * 생성 중 묶음의 생성을 끝낸다. 실행 기록을 더하고 `update`가 돌려준 값으로 상태를 바꾼다.
+   * `mentionSet`을 주면 실행을 시작할 때의 멘션 위치와 지금이 같을 때만 바꾼다. 바꿨으면 바꾼 묶음, 바꾸지 않았으면 `null`.
+   */
+  private finishGeneration(
+    bundleId: number,
+    event: string,
+    runs: readonly RunRecord[],
+    mentionSet: string | null,
+    update: () => Pick<MentionBundle, 'status'> & Partial<MentionBundle>,
+  ): Promise<MentionBundle | null> {
+    return this.change(bundleId, event, (bundle) => {
+      if (bundle.status !== 'generating') return null;
+      if (mentionSet !== null && mentionSetKey(bundle) !== mentionSet) return null;
+      return { ...bundle, ...update(), runs: [...bundle.runs, ...structuredClone(runs)] };
+    });
   }
 
   /** 실패 묶음을 [다시 시도]한다. 생성 중으로 돌아가 초안 대기열에 들어가고, 합쳐진 새 멘션도 이번 초안에 들어간다. */
@@ -444,7 +480,7 @@ function statusWithoutDraft(resolution: RepoResolution): Pick<MentionBundle, 'st
   switch (resolution.kind) {
     case 'mapped':
       return { status: 'generating', repoCheck: null };
-    case 'missing':
+    case 'missing-folders':
       return { status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: [...resolution.paths] } };
     case 'unmapped':
       return { status: 'repo-check-needed', repoCheck: null };
@@ -502,13 +538,6 @@ function excludeAnswers(recorded: readonly RecordedAnswer[], current: readonly M
     ...recorded.map((answer) => ({ ...answer, excluded: true })),
     ...current.filter((answer) => !recordedIds.has(answer.answerId)).map((answer) => ({ ...answer, excluded: true })),
   ];
-}
-
-/** 맥락을 조회하지 못한 이유를 실패 사유로 바꾼다. 글이 지워졌거나 볼 권한이 없거나 머리 댓글이 지워졌으면 원문을 찾을 수 없는 것이다. */
-function unavailableReason(failure: BundleContextFailure): 'flow-unavailable' | 'source-gone' {
-  if (failure.kind === 'thread-gone') return 'source-gone';
-  if (failure.kind === 'http' && (failure.status === 403 || failure.status === 404)) return 'source-gone';
-  return 'flow-unavailable';
 }
 
 /** 묶음에서 답할 멘션(가장 최근 멘션)의 송신자 이름. 모르면 빈 문자열. */

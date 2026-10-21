@@ -1,5 +1,5 @@
 import type { BundleContext } from '../flow/bundle-context';
-import type { Mention, MentionLocation } from '../detection/mention';
+import { mentionLocationKey, type Mention, type MentionLocation } from '../detection/mention';
 import type { Draft, DraftFailure, RunRecord } from '../drafts/draft';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
@@ -132,6 +132,14 @@ export type UnsavedBundle = Omit<MentionBundle, 'id'> & { id: number | null };
 /** 묶음 자리를 한 문자열로 나타낸다. 같은 자리를 가려낼 때 쓴다. */
 export function bundlePlaceKey({ postId, remarkId }: BundlePlace): string {
   return JSON.stringify([postId, remarkId]);
+}
+
+/**
+ * 묶음에 든 멘션 위치 전부를 한 문자열로 나타낸다. 이미 답함으로 빠진 멘션도 넣어, 판정이 바뀌어도 같은 값이다.
+ * 초안 실행을 시작한 뒤 새 멘션이 합쳐졌는지 가려낼 때 쓴다.
+ */
+export function mentionSetKey(bundle: Pick<MentionBundle, 'mentions'>): string {
+  return bundle.mentions.map(mentionLocationKey).sort().join('\n');
 }
 
 /** 두 멘션을 알림 시각, 같으면 `alarmId` 크기로 비교한다. */

@@ -77,11 +77,11 @@ export function bundleSnapshot(bundle: MentionBundle, projectOf: ProjectLookup, 
     run: runLine(bundle),
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
     failure: bundle.failure && { ...bundle.failure },
-    repoCheck: bundle.repoCheck && { kind: bundle.repoCheck.kind, paths: [...bundle.repoCheck.paths] },
+    repoCheck: bundle.repoCheck && structuredClone(bundle.repoCheck),
   };
 }
 
-/** 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘긴다. */
+/** 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘기고, 자동 선택으로 정했으면 그 내력도 넘긴다. */
 function draftSnapshot(draft: Draft): DraftSnapshot {
   return {
     requirement: { ...draft.requirement },
@@ -96,6 +96,7 @@ function draftSnapshot(draft: Draft): DraftSnapshot {
       located,
     })),
     repositories: draft.repositories.map((path) => ({ name: basename(path), path })),
+    autoSelection: draft.autoSelection && { ...draft.autoSelection },
   };
 }
 

@@ -404,6 +404,13 @@ export interface RepositorySnapshot {
   path: string;
 }
 
+/** 자동 선택으로 초안의 저장소를 정한 내력. 저장소 영역에 자동으로 고른 이유로 보인다. */
+export type AutoSelectionSnapshot =
+  /** 작업 폴더에서 찾은 후보가 하나라 선택 실행 없이 그 저장소를 썼다. */
+  | { kind: 'single-candidate' }
+  /** 선택 실행이 골랐다. `reason`이 비어 있으면 "이유 없음"으로 보인다. */
+  | { kind: 'chosen'; reason: string };
+
 /** 초안 실행이 만든 초안. */
 export interface DraftSnapshot {
   /** 에이전트가 이해한 요구. `summary`는 목록 행에 보인다. */
@@ -414,6 +421,8 @@ export interface DraftSnapshot {
   evidence: EvidenceSnapshot[];
   /** 쓴 저장소. 첫 저장소가 실행의 cwd였다. */
   repositories: RepositorySnapshot[];
+  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑으로 정했으면 `null`. */
+  autoSelection: AutoSelectionSnapshot | null;
 }
 
 /** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"처럼 보인다. 비용은 넘기지 않는다. */
@@ -459,15 +468,18 @@ export interface FailureSnapshot {
   detail: string | null;
   /** 실패할 때의 마지막 진행 단계. 없으면 `null`. */
   lastStep: string | null;
+  /** 실패한 실행의 종류. 선택 실행이나 초안 실행이고, 실행을 시작하기 전에 실패했으면 `null`. */
+  runKind: 'selection' | 'draft' | null;
 }
 
-/** 저장소 확인 필요의 사유. 연결된 저장소 폴더를 찾을 수 없음이다. */
-export interface RepoCheckSnapshot {
-  /** 사유의 종류. */
-  kind: 'missing-folders';
-  /** 찾을 수 없는 폴더의 절대 경로. */
-  paths: string[];
-}
+/** 저장소 확인 필요의 사유. */
+export type RepoCheckSnapshot =
+  /** 연결된 저장소 폴더를 찾을 수 없음. `paths`는 찾을 수 없는 폴더의 절대 경로다. */
+  | { kind: 'missing-folders'; paths: string[] }
+  /** 자동 선택을 하려 했지만 작업 폴더에서 저장소를 찾지 못함. */
+  | { kind: 'no-candidates' }
+  /** 선택 실행이 저장소를 확신하지 못했거나 코드와 무관한 멘션이라고 판정함. 사유와 에이전트가 짚은 후보(작업 폴더 안의 이름과 경로)다. */
+  | { kind: 'unsure' | 'unrelated'; reason: string; candidates: RepositorySnapshot[] };
 
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
@@ -510,7 +522,7 @@ export interface BundleSnapshot {
   generation: GenerationSnapshot | null;
   /** 생성이 실패한 까닭. 실패가 아니면 `null`. */
   failure: FailureSnapshot | null;
-  /** 저장소 확인 필요의 사유. 사유가 없으면(저장소 매핑이 없음) `null`. */
+  /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
   repoCheck: RepoCheckSnapshot | null;
 }
 

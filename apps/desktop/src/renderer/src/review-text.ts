@@ -4,8 +4,10 @@ import type {
   BundleStatusSnapshot,
   DraftFailureReasonSnapshot,
   EvidenceSnapshot,
+  FailureSnapshot,
   GenerationSnapshot,
   MentionPlaceSnapshot,
+  RepoCheckSnapshot,
   RunLineSnapshot,
 } from '../../shared/ipc';
 import { AGENT_NAMES } from './AgentSection';
@@ -88,8 +90,9 @@ export function ignoredText(bundle: BundleSnapshot): string {
 /**
  * 실패 사유마다 실패 화면에 보일 오류 문장. 개발자가 아닌 사람도 읽을 수 있게 쓴다.
  * 일시적 실패(구조 실패, 과부하, 네트워크 오류)는 자동으로 한 번 더 실행한 뒤에야 실패가 되므로 두 번 시도했다고 함께 적는다.
+ * 화면은 `failureText`로 읽는다.
  */
-export const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
+const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
   cancelled: '취소함: 초안 만들기를 취소했습니다.',
   'timed-out': '에이전트가 10분 안에 끝내지 못해 멈췄습니다.',
   'invalid-output': '에이전트가 정해진 형식으로 답하지 않았습니다. 두 번 시도했습니다.',
@@ -107,8 +110,27 @@ export const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
   'agent-error': '에이전트가 오류로 끝났습니다.',
 };
 
-/** 매핑된 폴더가 없어 저장소 확인 필요가 된 묶음의 사유. */
-export const MISSING_FOLDERS_TEXT = '연결된 저장소 폴더를 찾을 수 없음';
+/** 선택 실행이 제한 시간(5분) 안에 끝나지 않아 실패한 묶음의 오류 문장. 초안 실행의 시간 초과(10분)와 구분한다. */
+const SELECTION_TIMED_OUT_TEXT = '에이전트가 5분 안에 저장소를 고르지 못해 멈췄습니다.';
+
+/** 실패 화면에 보일 오류 문장. 사유마다 정해 두고, 선택 실행의 시간 초과만 선택 실행의 제한 시간으로 적는다. */
+export function failureText(failure: FailureSnapshot): string {
+  if (failure.reason === 'timed-out' && failure.runKind === 'selection') return SELECTION_TIMED_OUT_TEXT;
+  return FAILURE_REASON_TEXT[failure.reason];
+}
+
+/** 저장소 확인 필요의 사유마다 저장소 영역 첫 줄에 보일 문장. */
+export const REPO_CHECK_TEXT: Record<RepoCheckSnapshot['kind'], string> = {
+  'missing-folders': '연결된 저장소 폴더를 찾을 수 없음',
+  'no-candidates': '작업 폴더에서 저장소를 찾지 못함',
+  unsure: '에이전트가 저장소를 확신하지 못함',
+  unrelated: '에이전트가 코드와 무관한 멘션으로 판정함',
+};
+
+/** 선택 실행이 적은 이유. 에이전트가 비워 두었으면 "이유 없음"이다. */
+export function reasonText(reason: string): string {
+  return reason === '' ? '이유 없음' : reason;
+}
 
 /** 걸린 시간을 보인다. 1분이 넘으면 "2분 14초", 넘지 않으면 "45초"다. */
 export function formatDuration(durationMs: number): string {

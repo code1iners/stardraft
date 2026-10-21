@@ -43,6 +43,17 @@ export interface DraftEvidence {
   located: boolean;
 }
 
+/** 자동 선택으로 초안의 저장소를 정한 내력. 저장소 영역에 자동으로 고른 이유로 보인다. */
+export type AutoSelection =
+  /** 작업 폴더에서 찾은 후보가 하나라 선택 실행 없이 그 저장소를 썼다. */
+  | { kind: 'single-candidate' }
+  /** 선택 실행이 골랐다. */
+  | {
+      kind: 'chosen';
+      /** 선택 실행이 적은 이유. 에이전트가 비워 두었으면 빈 문자열이고 화면에는 "이유 없음"으로 보인다. */
+      reason: string;
+    };
+
 /** 초안 실행이 만든 초안(원래 초안). 요구, 문단과 문장, 근거를 담는다. */
 export interface Draft {
   /** 에이전트가 이해한 요구. */
@@ -53,6 +64,8 @@ export interface Draft {
   evidence: DraftEvidence[];
   /** 초안을 만들 때 읽기 범위로 넘긴 저장소(절대 경로). 첫 저장소가 실행의 cwd였다. */
   repositories: string[];
+  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑으로 정했으면 `null`. 자동 선택 결과는 매핑으로 저장하지 않는다. */
+  autoSelection: AutoSelection | null;
   /** 만든 시각(Unix epoch 밀리초). */
   createdAt: number;
 }
@@ -84,6 +97,9 @@ export type DraftFailureReason =
   | ContextFailureReason
   | ExecutorFailureReason;
 
+/** 묶음 하나를 만들 때 돌리는 실행의 종류. 선택 실행과 초안 실행이다. */
+export type GenerationRunKind = Exclude<RunKind, 'check'>;
+
 /** 묶음이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
 export interface DraftFailure {
   /** 사유. */
@@ -92,6 +108,8 @@ export interface DraftFailure {
   detail: string | null;
   /** 실패할 때의 마지막 진행 단계. 실행을 시작하기 전이면 `null`. */
   lastStep: string | null;
+  /** 실패한 실행의 종류. 실행을 시작하기 전에 실패했으면(맥락 조회 실패, 기다리는 중 취소 등) `null`. */
+  runKind: GenerationRunKind | null;
 }
 
 /** 에이전트를 실행해서 생긴 실패 사유. 맥락을 조회하지 못한 실패는 실행 전에 일어나므로 들지 않는다. */
@@ -174,8 +192,8 @@ export function draftOutputSchema(): Record<string, unknown> {
   });
 }
 
-/** 모든 속성이 `required`이고 다른 속성을 받지 않는 객체 스키마. */
-function objectSchema(properties: Record<string, unknown>): Record<string, unknown> {
+/** 모든 속성이 `required`이고 다른 속성을 받지 않는 객체 스키마. 선택 실행의 출력 스키마도 같은 모양을 쓴다. */
+export function objectSchema(properties: Record<string, unknown>): Record<string, unknown> {
   return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false };
 }
 

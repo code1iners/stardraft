@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type {
+  AutoSelectionSnapshot,
   BundleSnapshot,
   BundleStatusSnapshot,
   DraftSnapshot,
@@ -17,19 +18,20 @@ import {
   BUNDLE_STATUS_TAGS,
   circledNumber,
   evidenceLocation,
-  FAILURE_REASON_TEXT,
+  failureText,
   formatMentionTime,
   generationStepText,
   MENTION_PLACE_LABELS,
-  MISSING_FOLDERS_TEXT,
   postLine,
   PROCESSED_NOTES,
+  reasonText,
+  REPO_CHECK_TEXT,
   runLineText,
   senderLine,
 } from './review-text';
 import type { IgnoreToastState } from './useReview';
 
-/** 저장소 매핑이 없는 저장소 확인 필요 묶음의 저장소 영역 안내. 저장소를 고르는 창이 생기면 사유·후보·[저장소를 골라 만들기]가 들어간다. */
+/** 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 된 묶음의 저장소 영역 안내. */
 const NO_REPOSITORY_NOTE = '아직 이 묶음에 쓸 저장소를 정하지 않았습니다.';
 
 /** 상태 태그에 넘기는 값. */
@@ -280,13 +282,13 @@ function EvidenceList({ draft }: DraftProps) {
   );
 }
 
-/** 쓴 저장소 목록에 넘기는 값. */
+/** 저장소 목록에 넘기는 값. */
 interface RepositoryListProps {
-  /** 쓴 저장소. */
+  /** 보일 저장소. */
   repositories: DraftSnapshot['repositories'];
 }
 
-/** 저장소 영역 내용. 초안을 만들 때 읽은 저장소의 폴더 이름과 경로다. */
+/** 저장소 목록. 저장소마다 이름과 그 아래 경로다. 초안을 만들 때 읽은 저장소와 에이전트가 짚은 후보에 쓴다. */
 function RepositoryList({ repositories }: RepositoryListProps) {
   return (
     <ul className="repository-list">
@@ -300,27 +302,115 @@ function RepositoryList({ repositories }: RepositoryListProps) {
   );
 }
 
+/** 초안의 저장소 영역에 넘기는 값. */
+interface DraftRepositoriesProps {
+  /** 그릴 초안. */
+  draft: DraftSnapshot;
+}
+
+/** 준비된 묶음의 저장소 영역 내용. 초안을 만들 때 읽은 저장소와, 자동 선택으로 정했으면 그 까닭을 보인다. */
+function DraftRepositories({ draft }: DraftRepositoriesProps) {
+  return (
+    <>
+      <RepositoryList repositories={draft.repositories} />
+      {draft.autoSelection && <AutoSelectionNote autoSelection={draft.autoSelection} />}
+    </>
+  );
+}
+
+/** 자동 선택의 까닭에 넘기는 값. */
+interface AutoSelectionNoteProps {
+  /** 자동 선택의 내력. */
+  autoSelection: AutoSelectionSnapshot;
+}
+
+/** 자동으로 고른 저장소의 까닭. 선택 실행이 골랐으면 그 이유를, 후보가 하나였으면 그렇게 썼다고 보인다. */
+function AutoSelectionNote({ autoSelection }: AutoSelectionNoteProps) {
+  if (autoSelection.kind === 'single-candidate') {
+    return <p className="small muted repo-subhead">작업 폴더에서 찾은 저장소가 하나라 그 저장소를 썼습니다.</p>;
+  }
+  return (
+    <>
+      <p className="small muted repo-subhead">자동으로 고른 이유</p>
+      <ReasonText reason={autoSelection.reason} />
+    </>
+  );
+}
+
+/** 선택 실행의 이유에 넘기는 값. */
+interface ReasonTextProps {
+  /** 에이전트가 적은 이유. 비어 있을 수 있다. */
+  reason: string;
+}
+
+/** 선택 실행이 적은 이유. 비어 있으면 "이유 없음"을 흐리게 보인다. */
+function ReasonText({ reason }: ReasonTextProps) {
+  return <p className={reason === '' ? 'muted' : undefined}>{reasonText(reason)}</p>;
+}
+
 /** 저장소 확인 필요 사유에 넘기는 값. */
 interface RepoCheckBodyProps {
-  /** 사유. 저장소 매핑이 없어서면 `null`. */
+  /** 사유. 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
   repoCheck: RepoCheckSnapshot | null;
 }
 
-/** 저장소 확인 필요 묶음의 저장소 영역 내용. 매핑된 폴더가 사라졌으면 사유와 그 폴더를, 매핑이 없으면 안내를 보인다. */
+/** 저장소 확인 필요 묶음의 저장소 영역 내용. 사유와 그 내용 아래에 [저장소를 골라 만들기]를 둔다. */
 function RepoCheckBody({ repoCheck }: RepoCheckBodyProps) {
-  if (!repoCheck) return <p className="small muted">{NO_REPOSITORY_NOTE}</p>;
   return (
     <>
-      <p className="warning-text">{MISSING_FOLDERS_TEXT}</p>
-      <ul className="repository-list">
-        {repoCheck.paths.map((path) => (
-          <li key={path}>
-            <span className="small muted">{path}</span>
-          </li>
-        ))}
-      </ul>
+      <RepoCheckReason repoCheck={repoCheck} />
+      <div className="repo-check-actions">
+        {/* 저장소 선택 창이 생기기 전이라 꺼 둔다. */}
+        <button type="button" className="btn" disabled title="저장소 선택 창은 아직 준비되지 않았습니다.">
+          저장소를 골라 만들기
+        </button>
+      </div>
     </>
   );
+}
+
+/**
+ * 저장소 확인 필요의 사유. 매핑된 폴더가 사라졌으면 그 폴더를, 작업 폴더에 후보가 없으면 확인할 곳을,
+ * 선택 실행이 고르지 않았으면 에이전트의 사유와 짚은 후보를 보인다.
+ */
+function RepoCheckReason({ repoCheck }: RepoCheckBodyProps) {
+  if (!repoCheck) return <p className="small muted">{NO_REPOSITORY_NOTE}</p>;
+  switch (repoCheck.kind) {
+    case 'missing-folders':
+      return (
+        <>
+          <p className="warning-text">{REPO_CHECK_TEXT[repoCheck.kind]}</p>
+          <ul className="repository-list">
+            {repoCheck.paths.map((path) => (
+              <li key={path}>
+                <span className="small muted">{path}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      );
+    case 'no-candidates':
+      return (
+        <>
+          <p className="warning-text">{REPO_CHECK_TEXT[repoCheck.kind]}</p>
+          <p className="small muted">설정의 "저장소" 칸에서 작업 폴더를 확인하세요.</p>
+        </>
+      );
+    case 'unsure':
+    case 'unrelated':
+      return (
+        <>
+          <p className="warning-text">{REPO_CHECK_TEXT[repoCheck.kind]}</p>
+          <ReasonText reason={repoCheck.reason} />
+          {repoCheck.candidates.length > 0 && (
+            <>
+              <p className="small muted repo-subhead">에이전트가 짚은 후보</p>
+              <RepositoryList repositories={repoCheck.candidates} />
+            </>
+          )}
+        </>
+      );
+  }
 }
 
 /** 진행 영역에 넘기는 값. */
@@ -349,7 +439,7 @@ interface FailureBodyProps {
 function FailureBody({ failure }: FailureBodyProps) {
   return (
     <div className="failure-box">
-      <strong>{FAILURE_REASON_TEXT[failure.reason]}</strong>
+      <strong>{failureText(failure)}</strong>
       {failure.detail && <p className="failure-detail">{failure.detail}</p>}
       {failure.lastStep && <p className="failure-detail">마지막 단계: {failure.lastStep}</p>}
     </div>
@@ -379,10 +469,10 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
   const handleToggleThread = () => setThreadBundleId((current) => (current === bundle.id ? null : bundle.id));
   /** 초안. 생성 중이면 새로 만들고 있으므로 보이지 않는다. */
   const draft = bundle.status === 'generating' ? null : bundle.draft;
-  /** 저장소 영역. 초안을 만들 때 쓴 저장소나 저장소 확인 필요 사유를 보인다. */
+  /** 저장소 영역. 초안을 만들 때 쓴 저장소와 자동으로 고른 까닭, 또는 저장소 확인 필요 사유를 보인다. */
   const repository = (draft || bundle.status === 'repo-check-needed') && (
     <ReviewSectionBlock windowKind={windowKind} section="repository" open={open.repository} title="저장소">
-      {draft ? <RepositoryList repositories={draft.repositories} /> : <RepoCheckBody repoCheck={bundle.repoCheck} />}
+      {draft ? <DraftRepositories draft={draft} /> : <RepoCheckBody repoCheck={bundle.repoCheck} />}
     </ReviewSectionBlock>
   );
 

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { BundledMention, UnsavedBundle } from '../bundles/mention-bundle';
+import type { BundledMention, RepoCheck, UnsavedBundle } from '../bundles/mention-bundle';
 import type { Draft, RunRecord } from '../drafts/draft';
 import type { BundleContext } from '../flow/bundle-context';
 import type { FlowEmployee } from '../ports/flow-api';
@@ -301,7 +301,7 @@ describe('멘션 묶음', () => {
     expect((await store.listBundles()).map((item) => [item.postTitle, item.context])).toEqual([['가짜 게시물', null]]);
   });
 
-  it('초안 실행의 결과(초안, 실패 사유, 저장소 확인 필요 사유, 실행 기록)를 다시 열어도 그대로 읽는다', async () => {
+  it('초안 실행의 결과(초안과 자동 선택의 내력, 실패 사유와 실패한 실행, 저장소 확인 필요 사유, 실행 기록)를 다시 열어도 그대로 읽는다', async () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
@@ -311,8 +311,11 @@ describe('멘션 묶음', () => {
       paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }] }],
       evidence: [{ id: 1, explanation: '운영 설정에서 횟수를 5로 정합니다.', repository: '/fake/repo-a', path: 'config.yml', startLine: 88, endLine: 88, located: false }],
       repositories: ['/fake/repo-a', '/fake/repo-b'],
+      autoSelection: { kind: 'chosen', reason: '재시도 설정을 묻고 있어 서버 저장소를 골랐습니다.' },
       createdAt: 2_000,
     };
+    /** 선택 실행이 확신하지 못한 사유. */
+    const unsure: RepoCheck = { kind: 'unsure', reason: '어느 저장소인지 알 수 없습니다.', candidates: [{ name: 'team/api', path: '/fake/work/team/api' }] };
     /** 저장할 실행 기록. */
     const run: RunRecord = {
       kind: 'draft',
@@ -334,12 +337,14 @@ describe('멘션 묶음', () => {
         bundle([mention('101', { remarkId: '700' })], { status: 'ready', draft, runs: [run] }),
         bundle([mention('102')], {
           status: 'failed',
-          failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
-          runs: [{ ...run, result: 'timed-out', usage: null }],
+          failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry', runKind: 'selection' },
+          runs: [{ ...run, kind: 'selection', result: 'timed-out', usage: null }],
         }),
         bundle([mention('103', { postId: '90000012' })], { repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }),
+        bundle([mention('104', { postId: '90000013' })], { repoCheck: { kind: 'no-candidates' } }),
+        bundle([mention('105', { postId: '90000014' })], { repoCheck: unsure }),
       ],
-      '103',
+      '105',
     );
 
     /** 다시 연 저장소에서 읽은 묶음. */
@@ -350,11 +355,13 @@ describe('멘션 묶음', () => {
       {
         status: 'failed',
         draft: null,
-        failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
+        failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry', runKind: 'selection' },
         repoCheck: null,
-        runs: [{ ...run, result: 'timed-out', usage: null }],
+        runs: [{ ...run, kind: 'selection', result: 'timed-out', usage: null }],
       },
       { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] }, runs: [] },
+      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'no-candidates' }, runs: [] },
+      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: unsure, runs: [] },
     ]);
     expect([ready?.id, failed?.id]).toEqual([1, 2]);
   });
@@ -409,8 +416,43 @@ describe('멘션 묶음', () => {
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
     expect((await store.listBundles()).map((bundle) => bundle.draft)).toEqual([
-      { ...draft, evidence: draft.evidence.map((item) => ({ ...item, located: true })) },
+      { ...draft, evidence: draft.evidence.map((item) => ({ ...item, located: true })), autoSelection: null },
       null,
+    ]);
+  });
+
+  it('형식 7에서 올리면 이미 있던 초안은 자동 선택의 내력 없이(저장소 매핑으로 만든 초안), 실패는 실패한 실행의 종류 없이 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 7로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 7), '0.0.9');
+    /** 자동 선택 전의 초안. `autoSelection`이 없다. */
+    const draft = {
+      requirement: { text: '요구', summary: '요약' },
+      paragraphs: [{ sentences: [{ text: '문장', evidence: [1] }] }],
+      evidence: [{ id: 1, explanation: '근거', repository: '/fake/repo-a', path: 'a.yml', startLine: 1, endLine: 1, located: true }],
+      repositories: ['/fake/repo-a'],
+      createdAt: 2_000,
+    };
+    /** 자동 선택 전의 실패. `runKind`가 없다. */
+    const failure = { reason: 'timed-out', detail: null, lastStep: '초안 쓰는 중' };
+    /** 묶음 하나를 넣는다. */
+    const insert = old.prepare(
+      `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at, context, draft, failure)
+       VALUES (?, '-1', '900001', ?, '가짜 게시물', NULL, 0, 1000, NULL, NULL, ?, ?)`,
+    );
+    insert.run('90000011', 'ready', JSON.stringify(draft), null);
+    insert.run('90000012', 'failed', null, JSON.stringify(failure));
+    insert.run('90000013', 'repo-check-needed', null, null);
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ draft: saved, failure: failed }) => ({ draft: saved, failure: failed }))).toEqual([
+      { draft: { ...draft, autoSelection: null }, failure: null },
+      { draft: null, failure: { ...failure, runKind: null } },
+      { draft: null, failure: null },
     ]);
   });
 });

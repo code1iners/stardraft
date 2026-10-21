@@ -121,6 +121,13 @@ export const STATE_MIGRATIONS: readonly string[] = [
              FROM json_each(draft, '$.evidence')))
    WHERE draft IS NOT NULL;
   `,
+  // 8: 자동 선택. 초안에 자동 선택의 내력(`autoSelection`), 실패에 실패한 실행의 종류(`runKind`)를 둔다.
+  // 자동 선택 전에 만든 초안은 저장소 매핑으로 만든 것이라 내력이 없고, 그때의 실패는 어느 실행에서 났는지 남기지 않았다.
+  // 저장소 확인 필요의 새 사유는 `repo_check` JSON에 그대로 담기므로 열을 바꾸지 않는다.
+  `
+  UPDATE mention_bundle SET draft = json_set(draft, '$.autoSelection', json('null')) WHERE draft IS NOT NULL;
+  UPDATE mention_bundle SET failure = json_set(failure, '$.runKind', json('null')) WHERE failure IS NOT NULL;
+  `,
 ];
 
 /** 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록이다. */

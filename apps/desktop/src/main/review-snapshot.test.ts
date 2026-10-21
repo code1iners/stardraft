@@ -247,6 +247,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
             { id: 2, explanation: '넘기지 않은 저장소의 근거', repository: '/fake/elsewhere/other', path: 'a.ts', startLine: 1, endLine: 1, located: false },
           ],
           repositories: ['/fake/work/billing-api', '/fake/work/billing-web'],
+          autoSelection: null,
           createdAt: 144_000,
         },
         runs: [run({ result: 'invalid-output', startedAt: 1_000, finishedAt: 9_000 }), run({ omittedContextItems: 3 })],
@@ -274,6 +275,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
         { name: 'billing-api', path: '/fake/work/billing-api' },
         { name: 'billing-web', path: '/fake/work/billing-web' },
       ],
+      autoSelection: null,
     });
     expect(snapshot.run).toEqual({ agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
     expect(JSON.stringify(snapshot)).not.toContain('costUsd');
@@ -288,12 +290,12 @@ describe('묶음 스냅숏: 초안 실행', () => {
     expect(bundleSnapshot(bundle({ status: 'ready' }), () => null, () => running).generation).toBeNull();
   });
 
-  it('실패 묶음은 사유·오류 원문·마지막 단계와 실패한 실행의 실행 줄을 넘기고, 저장소 확인 필요 묶음은 찾을 수 없는 폴더를 넘긴다', () => {
+  it('실패 묶음은 사유·오류 원문·마지막 단계·실패한 실행의 종류와 실패한 실행의 실행 줄을 넘기고, 저장소 확인 필요 묶음은 찾을 수 없는 폴더를 넘긴다', () => {
     /** 실패 묶음의 스냅숏. */
     const failed = bundleSnapshot(
       bundle({
         status: 'failed',
-        failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
+        failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry', runKind: 'selection' },
         runs: [run({ result: 'timed-out', startedAt: 0, finishedAt: 600_000 })],
       }),
       () => null,
@@ -303,11 +305,59 @@ describe('묶음 스냅숏: 초안 실행', () => {
 
     expect(failed).toMatchObject({
       group: 'failed',
-      failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
+      failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry', runKind: 'selection' },
       run: { agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
       draft: null,
     });
     expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'] });
+  });
+});
+
+describe('묶음 스냅숏: 자동 선택', () => {
+  it('자동 선택으로 정하지 못한 저장소 확인 필요 묶음은 선택 실행의 사유와 짚은 후보(작업 폴더 안 이름과 경로)를, 후보가 없으면 그 사유를 넘긴다', () => {
+    /** 선택 실행이 확신하지 못한 묶음의 스냅숏. */
+    const unsure = bundleSnapshot(
+      bundle({
+        repoCheck: {
+          kind: 'unsure',
+          reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽인지 알 수 없습니다.',
+          candidates: [
+            { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
+            { name: 'billing-api', path: '/fake/work/billing-api' },
+          ],
+        },
+      }),
+      () => null,
+    );
+
+    expect(unsure.repoCheck).toEqual({
+      kind: 'unsure',
+      reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽인지 알 수 없습니다.',
+      candidates: [
+        { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
+        { name: 'billing-api', path: '/fake/work/billing-api' },
+      ],
+    });
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'no-candidates' } }), () => null).repoCheck).toEqual({ kind: 'no-candidates' });
+  });
+
+  it('자동 선택으로 만든 준비됨 묶음의 초안은 자동 선택의 내력(선택 실행의 이유, 후보가 하나였음)을 넘긴다', () => {
+    /** 초안 하나. */
+    const draft = {
+      requirement: { text: '요구', summary: '요약' },
+      paragraphs: [{ sentences: [{ text: '문장입니다.', evidence: [] }] }],
+      evidence: [],
+      repositories: ['/fake/work/billing-api'],
+      createdAt: 144_000,
+    };
+
+    expect(
+      bundleSnapshot(bundle({ status: 'ready', draft: { ...draft, autoSelection: { kind: 'chosen', reason: '서버 설정을 묻고 있습니다.' } } }), () => null).draft
+        ?.autoSelection,
+    ).toEqual({ kind: 'chosen', reason: '서버 설정을 묻고 있습니다.' });
+    expect(bundleSnapshot(bundle({ status: 'ready', draft: { ...draft, autoSelection: { kind: 'single-candidate' } } }), () => null).draft?.autoSelection).toEqual({
+      kind: 'single-candidate',
+    });
   });
 });
 

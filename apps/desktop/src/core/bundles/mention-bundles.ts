@@ -22,6 +22,7 @@ import {
   type BundleStatus,
   type MentionBundle,
   type RecordedAnswer,
+  type RepoCheck,
   type UnsavedBundle,
 } from './mention-bundle';
 
@@ -42,6 +43,12 @@ export interface MentionBundlesOptions {
   /** Flow 프로젝트의 저장소 매핑을 지금 폴더 상태로 확인한다. 초안 없는 묶음을 생성 중으로 올릴지 정하고, 초안 실행 직전에 다시 확인한다. */
   resolveRepos: (projectId: string) => Promise<RepoResolution>;
 }
+
+/**
+ * 생성을 시작할 때 저장소 매핑을 확인한 결과. 매핑의 폴더가 모두 있으면 그 저장소(`mapped`)를 읽고,
+ * 매핑이 없으면(`unmapped`) 작업 폴더에서 자동 선택으로 저장소를 정한다.
+ */
+export type RunRepos = Exclude<RepoResolution, { kind: 'missing-folders' }>;
 
 /** 초안 실행 직전 준비의 결과. */
 export type RunPreparation =
@@ -124,7 +131,7 @@ export class MentionBundles {
   /**
    * 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 둘은 함께 저장한다.
    * 같은 자리에 처리되지 않은 묶음이 있으면 합치고, 없거나 처리됨뿐이면 새 묶음을 만든다.
-   * 새 묶음은 저장소 매핑의 폴더가 모두 있으면 생성 중, 매핑이 없거나 폴더가 없으면 저장소 확인 필요로 올린다.
+   * 새 묶음은 저장소 매핑의 폴더가 모두 있거나 매핑이 없으면(자동 선택) 생성 중, 매핑된 폴더가 없으면 저장소 확인 필요로 올린다.
    * 자리마다 `lookups`의 내 답으로 "이미 답함"을 판정하고, 모든 멘션이 빠진 묶음은 초안 없이 이미 답함으로 둔다.
    * 새로 저장소 확인 필요가 된 묶음이 있으면 OS 알림을 하나 띄운다.
    */
@@ -308,16 +315,17 @@ export class MentionBundles {
   }
 
   /**
-   * 초안 실행 직전에 저장소 매핑을 지금 폴더 상태로 다시 확인한다. 기다리는 사이에 매핑이 지워졌거나 폴더가 사라졌을 수 있다.
-   * 폴더가 모두 있으면 읽을 저장소를 돌려준다. 아니면 생성 중 묶음을 초안 없이 저장소 확인 필요로 올리고 OS 알림을 띄운 뒤 `null`을 돌려준다.
+   * 생성을 시작할 때 저장소 매핑을 지금 폴더 상태로 다시 확인한다. 기다리는 사이에 매핑이 생겼거나 지워졌거나 폴더가 사라졌을 수 있다.
+   * 폴더가 모두 있으면 읽을 저장소를, 매핑이 없으면 자동 선택으로 정하라고 돌려준다.
+   * 매핑된 폴더가 하나라도 없으면 자동 선택으로 넘어가지 않고, 생성 중 묶음을 초안 없이 저장소 확인 필요로 올리고 OS 알림을 띄운 뒤 `null`을 돌려준다.
    */
-  async reposForRun(bundleId: number): Promise<string[] | null> {
+  async reposForRun(bundleId: number): Promise<RunRepos | null> {
     /** 실행할 묶음. */
     const bundle = this.bundles.find((item) => item.id === bundleId);
     if (!bundle || bundle.status !== 'generating') return null;
     /** 저장소 매핑을 확인한 결과. */
     const resolution = await this.options.resolveRepos(bundle.projectId);
-    if (resolution.kind === 'mapped') return resolution.repos;
+    if (resolution.kind !== 'missing-folders') return resolution;
 
     /** 저장소 확인 필요가 된 묶음. 그사이 생성 중이 아니게 되었으면 `null`. */
     const changed = await this.change(bundleId, 'bundle.repo-check-needed', (latest) =>
@@ -325,6 +333,21 @@ export class MentionBundles {
     );
     if (changed) this.options.notifier.notify(repoCheckNotification([changed]));
     return null;
+  }
+
+  /**
+   * 생성 중 묶음을 초안 없이 저장소 확인 필요로 옮기고 실행 기록을 더한 뒤 OS 알림을 띄운다. 자동 선택으로 저장소를 정하지 못했을 때 쓴다.
+   * `mentionSet`은 생성을 시작할 때의 멘션 위치다. 그 뒤 새 멘션이 합쳐졌으면 처음부터 다시 만들 묶음이므로 옮기지 않는다.
+   * 옮겼으면 참이고, 생성 중이 아니거나 멘션이 바뀌었으면 거짓이다.
+   */
+  async markRepoCheckNeeded(bundleId: number, repoCheck: RepoCheck, runs: readonly RunRecord[], mentionSet: string): Promise<boolean> {
+    /** 저장소 확인 필요가 된 묶음. */
+    const changed = await this.finishGeneration(bundleId, 'bundle.repo-check-needed', runs, mentionSet, () => ({
+      status: 'repo-check-needed',
+      repoCheck: structuredClone(repoCheck),
+    }));
+    if (changed) this.options.notifier.notify(repoCheckNotification([changed]));
+    return changed !== null;
   }
 
   /**
@@ -398,7 +421,7 @@ export class MentionBundles {
 
   /**
    * 무시함이나 이미 답함에서 되돌린다. 초안이 있으면 그대로 준비됨이 되고, 없으면 새로 만들도록 생성 중으로 올린다.
-   * 초안이 없는데 저장소 매핑이 없거나 폴더가 사라졌으면 저장소 확인 필요로 돌아간다.
+   * 초안이 없는데 매핑된 폴더가 사라졌으면 저장소 확인 필요로 돌아간다. 매핑이 없으면 생성 중으로 올라 자동 선택부터 한다.
    * 이미 답함에서 되돌리면 그때 Flow에 있는 내 답을 새로 조회해 이후 "이미 답함" 판정에서 빼기로 기록한다.
    * 같은 답으로 다시 처리됨이 되지 않게 하려는 것이고, 그 답으로 빠졌던 멘션도 다시 든다. 조회하지 못하면 판정 때 기록한 답만 뺀다.
    * 무시함에서 되돌리면 답을 빼지 않아, 이미 답한 앞선 멘션은 빠진 채로 둔다.
@@ -497,17 +520,16 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
 }
 
 /**
- * 초안이 없는 묶음이 저장소 매핑에 따라 갈 상태. 매핑의 폴더가 모두 있으면 초안을 만들러 생성 중으로 간다.
- * 매핑이 없으면 자동 선택이 생기기 전까지 사유 없이, 폴더가 사라졌으면 "연결된 저장소 폴더를 찾을 수 없음" 사유로 저장소 확인 필요다.
+ * 초안이 없는 묶음이 저장소 매핑에 따라 갈 상태. 매핑의 폴더가 모두 있거나 매핑이 없으면(자동 선택) 초안을 만들러 생성 중으로 간다.
+ * 매핑된 폴더가 사라졌으면 자동 선택으로 넘어가지 않고 "연결된 저장소 폴더를 찾을 수 없음" 사유로 저장소 확인 필요다.
  */
 function statusWithoutDraft(resolution: RepoResolution): Pick<MentionBundle, 'status' | 'repoCheck'> {
   switch (resolution.kind) {
     case 'mapped':
+    case 'unmapped':
       return { status: 'generating', repoCheck: null };
     case 'missing-folders':
       return { status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: [...resolution.paths] } };
-    case 'unmapped':
-      return { status: 'repo-check-needed', repoCheck: null };
   }
 }
 

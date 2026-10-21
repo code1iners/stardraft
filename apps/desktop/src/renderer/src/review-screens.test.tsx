@@ -262,6 +262,7 @@ const READY = bundle(4, {
       { name: 'billing-api', path: '/fake/work/billing-api' },
       { name: 'billing-web', path: '/fake/work/billing-web' },
     ],
+    autoSelection: null,
   },
   run: { agent: 'claude-code', durationMs: 134_000, contextOmitted: true },
 });
@@ -277,7 +278,7 @@ const GENERATING = bundle(5, {
 const FAILED = bundle(6, {
   status: 'failed',
   group: 'failed',
-  failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
+  failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry', runKind: 'draft' },
   run: { agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
 });
 
@@ -346,7 +347,7 @@ describe('작은 창: 초안 실행', () => {
     const text = textOf(<PopoverContent snapshot={snapshot([FAILED])} />);
     const withDetail = textOf(
       <PopoverContent
-        snapshot={snapshot([bundle(8, { status: 'failed', group: 'failed', failure: { reason: 'agent-error', detail: 'Claude usage limit reached.', lastStep: null } })])}
+        snapshot={snapshot([bundle(8, { status: 'failed', group: 'failed', failure: { reason: 'agent-error', detail: 'Claude usage limit reached.', lastStep: null, runKind: 'draft' } })])}
       />,
     );
 
@@ -365,7 +366,7 @@ describe('작은 창: 초안 실행', () => {
     ['네트워크 오류', 'network', '모델 서버에 연결하지 못했습니다.'],
   ] as const)('일시적 실패(%s)로 실패한 묶음은 자동으로 한 번 더 시도한 뒤라는 것을 함께 보인다', (_label, reason, sentence) => {
     const text = textOf(
-      <PopoverContent snapshot={snapshot([bundle(12, { status: 'failed', group: 'failed', failure: { reason, detail: null, lastStep: '초안 쓰는 중' } })])} />,
+      <PopoverContent snapshot={snapshot([bundle(12, { status: 'failed', group: 'failed', failure: { reason, detail: null, lastStep: '초안 쓰는 중', runKind: 'draft' } })])} />,
     );
 
     expect(text).toContain(`${sentence} 두 번 시도했습니다.`);
@@ -373,7 +374,7 @@ describe('작은 창: 초안 실행', () => {
 
   it('비밀 파일을 근거로 들어 실패한 묶음은 그 사유를 보이고 초안을 보이지 않는다', () => {
     const text = textOf(
-      <PopoverContent snapshot={snapshot([bundle(11, { status: 'failed', group: 'failed', failure: { reason: 'secret-evidence', detail: null, lastStep: '초안 쓰는 중' } })])} />,
+      <PopoverContent snapshot={snapshot([bundle(11, { status: 'failed', group: 'failed', failure: { reason: 'secret-evidence', detail: null, lastStep: '초안 쓰는 중', runKind: 'draft' } })])} />,
     );
 
     expect(text).toContain('비밀 파일을 근거로 듦');
@@ -391,6 +392,107 @@ describe('작은 창: 초안 실행', () => {
     expect(text).toContain('연결된 저장소 폴더를 찾을 수 없음');
     expect(text).toContain('/fake/work/gone');
     expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+  });
+});
+
+describe('저장소 확인 필요와 자동 선택', () => {
+  /** 저장소 영역을 편 작은 창의 영역 펼침 상태. */
+  const repositoryOpen = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
+
+  /** 저장소 영역을 편 작은 창에 묶음 하나를 그린 마크업. */
+  function popoverMarkup(item: BundleSnapshot): string {
+    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], sections: repositoryOpen } })} />);
+  }
+
+  /** 저장소 영역을 편 작은 창에 묶음 하나를 그린 글자. 마크업이 바꾼 따옴표는 되돌린다. */
+  function popoverText(item: BundleSnapshot): string {
+    return popoverMarkup(item).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').replaceAll('&quot;', '"');
+  }
+
+  it('선택 실행이 확신하지 못한 묶음은 저장소 영역에 에이전트의 사유와 짚은 후보를 보이고, [저장소를 골라 만들기]·[Flow에서 열기]·[무시]를 둔다', () => {
+    /** 선택 실행이 확신하지 못한 묶음. */
+    const unsure = bundle(13, {
+      repoCheck: {
+        kind: 'unsure',
+        reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽을 묻는지 알 수 없습니다.',
+        candidates: [
+          { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
+          { name: 'billing-api', path: '/fake/work/billing-api' },
+        ],
+      },
+    });
+    /** 마크업. */
+    const markup = popoverMarkup(unsure);
+    /** 글자. */
+    const text = popoverText(unsure);
+
+    expect(text).toContain('저장소 확인 필요');
+    expect(text).toContain('에이전트가 저장소를 확신하지 못함');
+    expect(text).toContain('재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽을 묻는지 알 수 없습니다.');
+    expect(text).toContain('에이전트가 짚은 후보');
+    expect(text).toContain('team/billing-web /fake/work/team/billing-web');
+    expect(text).toContain('billing-api /fake/work/billing-api');
+    expect(text).toContain('Flow에서 열기');
+    expect(text).toContain('무시');
+    // 저장소 선택 창이 생기기 전이라 버튼은 꺼 둔다.
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>저장소를 골라 만들기<\/button>/);
+    expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+  });
+
+  it('코드와 무관한 멘션으로 판정한 묶음은 그 사유를 보이고, 사유가 비어 있으면 "이유 없음"을, 짚은 후보가 없으면 후보 목록을 보이지 않는다', () => {
+    /** 코드와 무관하다고 판정한 묶음. */
+    const unrelated = bundle(14, { repoCheck: { kind: 'unrelated', reason: '', candidates: [] } });
+    /** 글자. */
+    const text = popoverText(unrelated);
+
+    expect(text).toContain('에이전트가 코드와 무관한 멘션으로 판정함');
+    expect(text).toContain('이유 없음');
+    expect(text).not.toContain('에이전트가 짚은 후보');
+    expect(text).toContain('저장소를 골라 만들기');
+  });
+
+  it('작업 폴더에서 저장소를 찾지 못한 묶음은 그 사유와 작업 폴더를 확인하라는 안내를 보인다', () => {
+    /** 후보가 없던 묶음. */
+    const none = bundle(15, { repoCheck: { kind: 'no-candidates' } });
+    /** 글자. */
+    const text = popoverText(none);
+
+    expect(text).toContain('작업 폴더에서 저장소를 찾지 못함');
+    expect(text).toContain('설정의 "저장소" 칸에서 작업 폴더를 확인하세요.');
+    expect(text).toContain('저장소를 골라 만들기');
+  });
+
+  it('자동 선택으로 만든 준비됨 묶음은 저장소 영역에 쓴 저장소와 자동으로 고른 이유를 보인다. 이유가 비어 있으면 "이유 없음", 후보가 하나였으면 그렇게 썼다고 보인다', () => {
+    /** 선택 실행이 고른 묶음. */
+    const chosen = bundle(16, { ...READY, id: 16, draft: { ...READY.draft!, autoSelection: { kind: 'chosen', reason: '재시도 설정을 묻고 있어 서버 저장소를 골랐습니다.' } } });
+    /** 이유 없이 고른 묶음. */
+    const noReason = bundle(17, { ...READY, id: 17, draft: { ...READY.draft!, autoSelection: { kind: 'chosen', reason: '' } } });
+    /** 후보가 하나였던 묶음. */
+    const single = bundle(18, { ...READY, id: 18, draft: { ...READY.draft!, autoSelection: { kind: 'single-candidate' } } });
+    /** 펼친 창에 그린 글자. */
+    const textFor = (item: BundleSnapshot) => textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={item.id} />);
+
+    expect(textFor(chosen)).toContain('/fake/work/billing-web');
+    expect(textFor(chosen)).toContain('자동으로 고른 이유 재시도 설정을 묻고 있어 서버 저장소를 골랐습니다.');
+    expect(textFor(noReason)).toContain('자동으로 고른 이유 이유 없음');
+    expect(textFor(single)).toContain('작업 폴더에서 찾은 저장소가 하나라 그 저장소를 썼습니다.');
+    expect(textFor(READY)).not.toContain('자동으로 고른 이유');
+  });
+
+  it('선택 실행이 5분 제한 시간을 넘겨 실패한 묶음은 저장소를 고르지 못했다고 보인다', () => {
+    /** 선택 실행이 시간 초과로 실패한 묶음. */
+    const failed = bundle(19, {
+      ...FAILED,
+      id: 19,
+      failure: { reason: 'timed-out', detail: null, lastStep: '파일 읽는 중: README.md', runKind: 'selection' },
+      run: { agent: 'claude-code', durationMs: 300_000, contextOmitted: false },
+    });
+    /** 글자. */
+    const text = textOf(<PopoverContent snapshot={snapshot([failed])} />);
+
+    expect(text).toContain('에이전트가 5분 안에 저장소를 고르지 못해 멈췄습니다.');
+    expect(text).not.toContain('10분');
+    expect(text).toContain('마지막 단계: 파일 읽는 중: README.md');
   });
 });
 

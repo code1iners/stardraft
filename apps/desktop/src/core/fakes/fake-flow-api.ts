@@ -1,4 +1,16 @@
-import type { FlowAlarm, FlowAlarmPage, FlowApi, FlowApiResult, FlowEmployee, FlowProject } from '../ports/flow-api';
+import type {
+  FlowAlarm,
+  FlowAlarmPage,
+  FlowApi,
+  FlowApiFailure,
+  FlowApiResult,
+  FlowCommentPage,
+  FlowEmployee,
+  FlowPost,
+  FlowProject,
+  FlowReply,
+  FlowReplyPage,
+} from '../ports/flow-api';
 
 /** 가짜 Flow API가 기본으로 쓰는 키 소유자. 실제 사람이나 회사가 아니다. */
 export const FAKE_ME: FlowEmployee = {
@@ -8,19 +20,56 @@ export const FAKE_ME: FlowEmployee = {
   email: 'me@example.test',
 };
 
+/** 댓글과 함께 주는 대댓글 수. Flow의 `replyYn=Y`와 같다. */
+const REPLIES_WITH_COMMENT = 10;
+
+/** 가짜 Flow API가 들고 있는 댓글. 대댓글은 모두 들고 있다가 Flow처럼 처음 10개만 댓글과 함께 준다. */
+export interface FakeFlowComment {
+  /** 댓글 ID. */
+  commentId: string;
+  /** 글. */
+  contents: string;
+  /** 대댓글 전부. `replyId` 오름차순으로 둔다. */
+  replies?: FlowReply[];
+}
+
+/** 대본으로 정한 실패 하나. */
+interface ScriptedFailure {
+  /** 실패시킬 요청의 경로(`?` 앞). */
+  path: string;
+  /** 돌려줄 실패. */
+  failure: FlowApiFailure;
+  /** 남은 횟수. */
+  remaining: number;
+}
+
 /**
- * 메모리 안의 데이터로 응답하는 Flow API.
- * 응답 코드는 대본으로 바꿀 수 있고, 받은 요청은 `requests`에 남는다.
+ * 메모리 안의 알림·게시물·댓글·대댓글로 응답하는 Flow API.
+ * 목록은 Flow처럼 커서(앞에서부터 센 위치)로 나눠 준다. 응답 코드는 대본으로 바꿀 수 있고, 받은 요청은 `requests`에 남는다.
  */
 export class FakeFlowApi implements FlowApi {
   /** 받은 요청을 `메서드 경로` 형식으로 받은 순서대로 쌓는다. */
   readonly requests: string[] = [];
+  /** 알림 목록 한 쪽의 크기. */
+  alarmPageSize = 20;
+  /** 댓글 목록 한 쪽의 크기. */
+  commentPageSize = 100;
+  /** 대댓글 목록 한 쪽의 크기. */
+  replyPageSize = 20;
   /** `getMe`가 돌려줄 응답. */
   private meResult: FlowApiResult<FlowEmployee> = { ok: true, value: FAKE_ME };
   /** `listParticipantProjects`가 돌려줄 응답. */
   private projectsResult: FlowApiResult<FlowProject[]> = { ok: true, value: [] };
-  /** `listMentionAlarms`가 첫 쪽으로 돌려줄 응답. */
-  private alarmsResult: FlowApiResult<FlowAlarmPage> = { ok: true, value: { alarms: [], nextCursor: null } };
+  /** 알림 목록. Flow처럼 최신 알림이 앞이다. */
+  private alarms: FlowAlarm[] = [];
+  /** 게시물. */
+  private readonly posts = new Map<string, FlowPost>();
+  /** 게시물마다 댓글. */
+  private readonly comments = new Map<string, FakeFlowComment[]>();
+  /** 대본으로 정한 실패. */
+  private failures: ScriptedFailure[] = [];
+  /** 요청을 받을 때 응답하기 전에 할 일. 요청 문자열마다 한 번씩 한다. */
+  private readonly hooks = new Map<string, () => void>();
 
   /** `getMe`가 앞으로 돌려줄 응답을 바꾼다. */
   respondToGetMe(result: FlowApiResult<FlowEmployee>): void {
@@ -32,9 +81,40 @@ export class FakeFlowApi implements FlowApi {
     this.projectsResult = result;
   }
 
-  /** `listMentionAlarms`가 앞으로 돌려줄 응답을 바꾼다. 알림 배열을 주면 다음 쪽이 없는 한 쪽으로 돌려준다. */
+  /**
+   * 알림 목록 응답을 바꾼다. 알림 배열(최신이 앞)을 주면 그 목록으로 쪽을 나눠 답한다.
+   * 실패를 주면 바꿀 때까지 알림 목록 조회가 그 실패로 끝난다.
+   */
   respondToListMentionAlarms(result: FlowApiResult<FlowAlarmPage> | FlowAlarm[]): void {
-    this.alarmsResult = Array.isArray(result) ? { ok: true, value: { alarms: result, nextCursor: null } } : result;
+    this.failures = this.failures.filter((scripted) => scripted.path !== 'GET /user/alarms');
+    if (Array.isArray(result)) this.alarms = [...result];
+    else if (result.ok) this.alarms = [...result.value.alarms];
+    else this.failOn('GET /user/alarms', result.failure);
+  }
+
+  /** 새 알림이 왔다. 알림 목록 맨 앞에 둔다. */
+  addAlarm(alarm: FlowAlarm): void {
+    this.alarms.unshift(alarm);
+  }
+
+  /** 게시물을 둔다. 두지 않은 게시물은 지워진 것으로 보고 `404`로 답한다. */
+  addPost(post: FlowPost): void {
+    this.posts.set(post.postId, post);
+  }
+
+  /** 게시물에 댓글을 단다. 댓글은 단 순서대로 온다. */
+  addComment(postId: string, comment: FakeFlowComment): void {
+    this.comments.set(postId, [...(this.comments.get(postId) ?? []), comment]);
+  }
+
+  /** `path`(`메서드 경로`, `?` 앞까지)로 오는 요청을 `times`번 `failure`로 실패시킨다. */
+  failOn(path: string, failure: FlowApiFailure, times = Number.POSITIVE_INFINITY): void {
+    this.failures.push({ path, failure, remaining: times });
+  }
+
+  /** `request`(요청 문자열 전체)가 오면 응답하기 전에 `action`을 한 번 한다. 쪽을 넘기는 사이에 새 알림이 오는 경우를 만든다. */
+  whenRequested(request: string, action: () => void): void {
+    this.hooks.set(request, action);
   }
 
   async getMe(): Promise<FlowApiResult<FlowEmployee>> {
@@ -48,7 +128,81 @@ export class FakeFlowApi implements FlowApi {
   }
 
   async listMentionAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>> {
-    this.requests.push(cursor === null ? 'GET /user/alarms' : `GET /user/alarms?cursor=${cursor}`);
-    return this.alarmsResult;
+    return this.answer('GET /user/alarms', cursor, () => {
+      /** 이 쪽. */
+      const page = pageOf(this.alarms, cursor, this.alarmPageSize);
+      return { alarms: page.items, nextCursor: page.nextCursor };
+    });
   }
+
+  async getPost(postId: string): Promise<FlowApiResult<FlowPost>> {
+    return this.answer(`GET /user/posts/${postId}`, null, () => {
+      /** 조회한 게시물. */
+      const post = this.posts.get(postId);
+      return post ? structuredClone(post) : NOT_FOUND;
+    });
+  }
+
+  async listComments(postId: string, cursor: string | null): Promise<FlowApiResult<FlowCommentPage>> {
+    return this.answer(`GET /user/comments/${postId}`, cursor, () => {
+      if (!this.posts.has(postId)) return NOT_FOUND;
+      /** 이 쪽. */
+      const page = pageOf(this.comments.get(postId) ?? [], cursor, this.commentPageSize);
+      return {
+        comments: page.items.map(({ commentId, contents, replies = [] }) => ({
+          commentId,
+          contents,
+          replies: structuredClone(replies.slice(0, REPLIES_WITH_COMMENT)),
+          replyHasNext: replies.length > REPLIES_WITH_COMMENT,
+        })),
+        nextCursor: page.nextCursor,
+      };
+    });
+  }
+
+  async listReplies(postId: string, commentId: string, cursor: string | null): Promise<FlowApiResult<FlowReplyPage>> {
+    return this.answer(`GET /user/comments/${postId}/replies/${commentId}`, cursor, () => {
+      /** 부모 댓글. */
+      const comment = this.posts.has(postId) ? this.comments.get(postId)?.find((item) => item.commentId === commentId) : undefined;
+      if (!comment) return NOT_FOUND;
+      /** 이 쪽. */
+      const page = pageOf(comment.replies ?? [], cursor, this.replyPageSize);
+      return { replies: structuredClone(page.items), nextCursor: page.nextCursor };
+    });
+  }
+
+  /** 요청을 남기고, 대본의 실패가 있으면 그 실패를, 없으면 `respond`의 값으로 답한다. */
+  private answer<T>(path: string, cursor: string | null, respond: () => T | typeof NOT_FOUND): FlowApiResult<T> {
+    /** 남길 요청 문자열. */
+    const request = cursor === null ? path : `${path}?cursor=${cursor}`;
+    this.requests.push(request);
+    /** 응답하기 전에 할 일. */
+    const hook = this.hooks.get(request);
+    if (hook) {
+      this.hooks.delete(request);
+      hook();
+    }
+
+    /** 이 요청에 걸린 실패. */
+    const scripted = this.failures.find((failure) => failure.path === path && failure.remaining > 0);
+    if (scripted) {
+      scripted.remaining -= 1;
+      return { ok: false, failure: scripted.failure };
+    }
+    /** 대본이 없을 때의 응답. */
+    const value = respond();
+    return value === NOT_FOUND ? { ok: false, failure: { kind: 'http', status: 404 } } : { ok: true, value };
+  }
+}
+
+/** 없는 글을 조회했다는 표시. */
+const NOT_FOUND = Symbol('not-found');
+
+/** 목록에서 `cursor`(앞에서부터 센 위치) 뒤의 한 쪽을 자른다. */
+function pageOf<T>(items: readonly T[], cursor: string | null, size: number): { items: T[]; nextCursor: string | null } {
+  /** 이 쪽의 시작 위치. */
+  const start = cursor === null ? 0 : Number(cursor);
+  /** 다음 쪽의 시작 위치. */
+  const end = start + size;
+  return { items: items.slice(start, end), nextCursor: end < items.length ? String(end) : null };
 }

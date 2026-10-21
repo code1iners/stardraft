@@ -275,6 +275,7 @@ describe('Flow 어댑터: 멘션 알림 목록 조회', () => {
               replyId: '-1',
               receiverId: 'me@example.test',
               registerId: 'sender@example.test',
+              registerName: ' 보낸 사람 ',
               registeredDateTime: '20261019093000',
             },
           ],
@@ -296,6 +297,7 @@ describe('Flow 어댑터: 멘션 알림 목록 조회', () => {
             replyId: '-1',
             receiverId: 'me@example.test',
             registerId: 'sender@example.test',
+            registerName: '보낸 사람',
             registeredDateTime: '20261019093000',
           },
         ],
@@ -333,5 +335,209 @@ describe('Flow 어댑터: 멘션 알림 목록 조회', () => {
     const server = new FakeFlowServer();
 
     await expect(connect(server).listMentionAlarms(null)).resolves.toEqual({ ok: false, failure: { kind: 'unauthorized' } });
+  });
+});
+
+/** 게시물 본문 `content`의 JSON 문자열. 실호출에서 본 컴포넌트 모양(`COMPS`·`COMP_TYPE`·`COMP_DETAIL`)을 따른다. */
+function postContent(...components: unknown[]): string {
+  return JSON.stringify({ COMPS: components });
+}
+
+describe('Flow 어댑터: 게시물 조회', () => {
+  it('GET /user/posts/{postId}를 부르고, 본문 JSON의 TEXT 컴포넌트에서 CONTENTS와 MENTIONS를 꺼낸다(이미지 등은 건너뜀)', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({
+        projectId: '900001',
+        postId: '90000011',
+        title: '가짜 제목',
+        contentJsonYn: 'Y',
+        content: postContent(
+          {
+            COMP_TYPE: 'TEXT',
+            COMP_DETAIL: { CONTENTS: '@[테스트 사용자](me@example.test) 확인 부탁', MENTIONS: ['me@example.test'], HASHTAGS: [] },
+          },
+          { COMP_TYPE: 'IMAGE', COMP_DETAIL: { FILE_NM: 'fake.png' } },
+          { COMP_TYPE: 'TEXT', COMP_DETAIL: { CONTENTS: '둘째 문단' } },
+        ),
+        outContent: '테스트 사용자 확인 부탁',
+      }),
+    });
+
+    const result = await connect(server).getPost('90000011');
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        postId: '90000011',
+        textComponents: [
+          { contents: '@[테스트 사용자](me@example.test) 확인 부탁', mentions: ['me@example.test'] },
+          { contents: '둘째 문단', mentions: [] },
+        ],
+      },
+    });
+    expect(server.requests.map(({ method, url }) => [method, url])).toEqual([['GET', 'https://api.flow.team/user/posts/90000011']]);
+  });
+
+  it('본문이 JSON이 아니면(contentJsonYn이 Y가 아님) 본문 전체를 글 조각 하나로 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({ postId: 5, contentJsonYn: 'N', content: '@[테스트 사용자](me@example.test) 평문 본문' }),
+    });
+
+    await expect(connect(server).getPost('5')).resolves.toEqual({
+      ok: true,
+      value: { postId: '5', textComponents: [{ contents: '@[테스트 사용자](me@example.test) 평문 본문', mentions: [] }] },
+    });
+  });
+
+  it('본문이 JSON이라면서 읽을 수 없으면 응답 모양이 다르다고 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext(
+      { status: 200, body: flowEnvelope({ postId: '5', contentJsonYn: 'Y', content: '{깨진 JSON' }) },
+      { status: 200, body: flowEnvelope({ postId: '5', contentJsonYn: 'Y', content: JSON.stringify({ NOT_COMPS: [] }) }) },
+    );
+    const api = connect(server);
+
+    await expect(api.getPost('5')).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+    await expect(api.getPost('5')).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+  });
+
+  it('지워졌거나(404) 권한이 없으면(403) 응답 코드를 담아 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 404 }, { status: 403 });
+    const api = connect(server);
+
+    await expect(api.getPost('5')).resolves.toEqual({ ok: false, failure: { kind: 'http', status: 404 } });
+    await expect(api.getPost('5')).resolves.toEqual({ ok: false, failure: { kind: 'http', status: 403 } });
+  });
+
+  it('ID는 경로에 넣을 수 있게 인코딩한다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 404 });
+
+    await connect(server).getPost('a/b');
+
+    expect(server.requests[0]?.url).toBe('https://api.flow.team/user/posts/a%2Fb');
+  });
+});
+
+describe('Flow 어댑터: 댓글·대댓글 조회', () => {
+  it('GET /user/comments/{postId}?replyYn=Y로 댓글과 처음 대댓글을 받고, 대댓글이 더 있는지(replyHasNext)를 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({
+        hasNext: true,
+        lastCursor: 6,
+        comments: [
+          {
+            projectId: '900001',
+            postId: '90000011',
+            commentId: '900000021',
+            contents: '@[테스트 사용자](me@example.test) 질문',
+            registerId: 'sender@example.test',
+            systemCode: '',
+            replies: [{ replyId: 9000081, parentCommentId: '900000021', contents: '대댓글' }],
+            replyHasNext: true,
+          },
+          { commentId: 900000022, contents: '시스템 댓글', systemCode: 'A00^^', replies: [], replyHasNext: false },
+          { contents: 'ID 없음' },
+        ],
+      }),
+    });
+
+    const result = await connect(server).listComments('90000011', null);
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        comments: [
+          {
+            commentId: '900000021',
+            contents: '@[테스트 사용자](me@example.test) 질문',
+            replies: [{ replyId: '9000081', contents: '대댓글' }],
+            replyHasNext: true,
+          },
+          { commentId: '900000022', contents: '시스템 댓글', replies: [], replyHasNext: false },
+        ],
+        nextCursor: '6',
+      },
+    });
+    expect(server.requests.map(({ method, url }) => [method, url])).toEqual([
+      ['GET', 'https://api.flow.team/user/comments/90000011?replyYn=Y'],
+    ]);
+  });
+
+  it('cursor를 주면 그 쪽을 받고, hasNext가 거짓이면 다음 커서가 없다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ hasNext: false, lastCursor: 0, comments: [] }) });
+
+    await expect(connect(server).listComments('90000011', '6')).resolves.toEqual({ ok: true, value: { comments: [], nextCursor: null } });
+    expect(server.requests[0]?.url).toBe('https://api.flow.team/user/comments/90000011?replyYn=Y&cursor=6');
+  });
+
+  it('댓글 배열이 없는 응답은 응답 모양이 다르다고 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ hasNext: false }) });
+
+    await expect(connect(server).listComments('1', null)).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+  });
+
+  it('GET /user/comments/{postId}/replies/{commentId}로 대댓글 한 쪽을 받고, 다음 쪽 커서를 돌려준다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({
+        hasNext: true,
+        lastCursor: 20,
+        replies: [
+          { replyId: '9000090', parentCommentId: '900000021', contents: '열한째 대댓글' },
+          { replyId: 9000091, contents: '@[테스트 사용자](me@example.test) 열두째' },
+        ],
+      }),
+    });
+
+    const result = await connect(server).listReplies('90000011', '900000021', '10');
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        replies: [
+          { replyId: '9000090', contents: '열한째 대댓글' },
+          { replyId: '9000091', contents: '@[테스트 사용자](me@example.test) 열두째' },
+        ],
+        nextCursor: '20',
+      },
+    });
+    expect(server.requests.map(({ method, url }) => [method, url])).toEqual([
+      ['GET', 'https://api.flow.team/user/comments/90000011/replies/900000021?cursor=10'],
+    ]);
+  });
+
+  it('대댓글 목록이 다른 이름의 배열로 와도 replyId가 든 배열을 읽는다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope({ hasNext: false, items: [{ replyId: '1', contents: '하나' }] }) });
+
+    await expect(connect(server).listReplies('9', '8', null)).resolves.toEqual({
+      ok: true,
+      value: { replies: [{ replyId: '1', contents: '하나' }], nextCursor: null },
+    });
+    expect(server.requests[0]?.url).toBe('https://api.flow.team/user/comments/9/replies/8');
+  });
+
+  it('대댓글 목록이 알림 목록처럼 한 겹 더 감싸여 와도 읽고, 그 안의 커서를 쓴다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({ replies: { hasNext: true, lastCursor: 30, replies: [{ replyId: '1', contents: '하나' }] } }),
+    });
+
+    await expect(connect(server).listReplies('9', '8', '20')).resolves.toEqual({
+      ok: true,
+      value: { replies: [{ replyId: '1', contents: '하나' }], nextCursor: '30' },
+    });
   });
 });

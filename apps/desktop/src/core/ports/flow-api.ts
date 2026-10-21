@@ -39,6 +39,8 @@ export interface FlowAlarm {
   receiverId: string;
   /** 멘션한 사람(송신자)의 사용자 ID. */
   registerId: string;
+  /** 송신자 이름. 비어 있을 수 있다. */
+  registerName: string;
   /** 알림 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. */
   registeredDateTime: string;
 }
@@ -47,6 +49,58 @@ export interface FlowAlarm {
 export interface FlowAlarmPage {
   /** 이 쪽의 알림. Flow가 준 순서(`alarmId` 내림차순) 그대로다. */
   alarms: FlowAlarm[];
+  /** 다음 쪽을 받을 커서. 마지막 쪽이면 `null`. */
+  nextCursor: string | null;
+}
+
+/** 게시물 본문의 글 조각. 본문 `content` JSON의 TEXT 컴포넌트 하나다. */
+export interface FlowTextComponent {
+  /** 글(`CONTENTS`). 멘션 표기 `@[이름](사용자 ID)`가 그대로 들어 있다. */
+  contents: string;
+  /** 지목한 사용자 ID 목록(`MENTIONS`). `@전체`는 `ALL`로 온다. */
+  mentions: string[];
+}
+
+/** 게시물 하나. `GET /user/posts/{postId}` 응답에서 앱이 쓰는 값이다. */
+export interface FlowPost {
+  /** 게시물 ID. */
+  postId: string;
+  /** 본문의 TEXT 컴포넌트. 본문이 JSON이 아니면 본문 전체를 글 조각 하나로 담는다. */
+  textComponents: FlowTextComponent[];
+}
+
+/** 대댓글 하나. */
+export interface FlowReply {
+  /** 대댓글 ID. */
+  replyId: string;
+  /** 글. 멘션 표기가 그대로 들어 있다. */
+  contents: string;
+}
+
+/** 댓글 하나. `GET /user/comments/{postId}?replyYn=Y` 응답에서 앱이 쓰는 값이다. */
+export interface FlowComment {
+  /** 댓글 ID. 알림의 `remarkId`와 같은 값이다. */
+  commentId: string;
+  /** 글. 멘션 표기가 그대로 들어 있다. */
+  contents: string;
+  /** 댓글과 함께 받은 대댓글. Flow는 처음 10개까지만 준다(`replyId` 오름차순). */
+  replies: FlowReply[];
+  /** 함께 받은 대댓글 뒤에 대댓글이 더 있는지 여부. 있으면 대댓글 목록 API로 넘겨 받는다. */
+  replyHasNext: boolean;
+}
+
+/** 댓글 목록 한 쪽. */
+export interface FlowCommentPage {
+  /** 이 쪽의 댓글. */
+  comments: FlowComment[];
+  /** 다음 쪽을 받을 커서. 마지막 쪽이면 `null`. */
+  nextCursor: string | null;
+}
+
+/** 대댓글 목록 한 쪽. */
+export interface FlowReplyPage {
+  /** 이 쪽의 대댓글. `replyId` 오름차순이다. */
+  replies: FlowReply[];
   /** 다음 쪽을 받을 커서. 마지막 쪽이면 `null`. */
   nextCursor: string | null;
 }
@@ -81,6 +135,12 @@ export interface FlowApi {
    * 읽은 알림도 받고, Flow의 읽음 상태는 바꾸지 않는다.
    */
   listMentionAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>>;
+  /** 게시물 하나를 조회한다. 지워졌으면 `404`, 볼 권한이 없으면 `403`으로 실패한다. */
+  getPost(postId: string): Promise<FlowApiResult<FlowPost>>;
+  /** 게시물의 댓글 목록 한 쪽을 대댓글(댓글마다 처음 10개)과 함께 조회한다. `cursor`가 `null`이면 첫 쪽이다. */
+  listComments(postId: string, cursor: string | null): Promise<FlowApiResult<FlowCommentPage>>;
+  /** 댓글 하나의 대댓글 목록 한 쪽을 `replyId` 오름차순으로 조회한다. `cursor`가 `null`이면 첫 쪽이다. */
+  listReplies(postId: string, commentId: string, cursor: string | null): Promise<FlowApiResult<FlowReplyPage>>;
 }
 
 /** 지금 키로 부르는 Flow. 키를 바꾸면 새로 만든다. */

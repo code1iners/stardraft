@@ -25,6 +25,7 @@ function alarm(alarmId: string): FlowAlarm {
     replyId: '-1',
     receiverId: 'me@example.test',
     registerId: 'sender@example.test',
+    registerName: '보낸 사람',
     registeredDateTime: '20261019093000',
   };
 }

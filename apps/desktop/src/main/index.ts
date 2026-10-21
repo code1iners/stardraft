@@ -1,10 +1,11 @@
-import { app, dialog, Menu, net, safeStorage } from 'electron';
+import { app, dialog, Menu, net, powerMonitor, safeStorage } from 'electron';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { AgentConnection } from '../core/agent/agent-connection';
 import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
+import { MentionDetection } from '../core/detection/mention-detection';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { errorFields } from '../core/logging/logger';
 import { LaunchAtLogin } from '../core/onboarding/launch-at-login';
@@ -31,6 +32,8 @@ let tray: AppTray | null = null;
 let windows: AppWindows | null = null;
 /** 형식 검사를 마친 설정과 상태 저장소. */
 let appData: AppData | null = null;
+/** 멘션 감지. 끝낼 때 폴링을 멈춘다. */
+let detection: MentionDetection | null = null;
 
 applyAppIdentity();
 
@@ -53,6 +56,8 @@ function start(): void {
   app.on('window-all-closed', () => {});
   // 끝낼 때 state.db를 닫아 WAL 내용을 본 파일에 반영한다.
   app.on('will-quit', () => {
+    // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
+    detection?.stop();
     appData?.close();
     appData = null;
   });
@@ -161,7 +166,7 @@ function start(): void {
         /** 에이전트 연결 확인의 진행 상태. */
         const agentProgress = agentConnection.state().progress.status;
         return {
-          keyVerified: flowAccount.state().account !== null && globalProblems.current()?.problem.cause !== 'flow-key',
+          keyVerified: flowAccount.state().account !== null && !globalProblems.has('flow-key'),
           // 시작할 때 연결 확인이 돌기 전(idle)도 확인 중으로 본다.
           agent: agentProgress === 'connected' ? 'connected' : agentProgress === 'failed' ? 'not-connected' : 'checking',
           workFolderCount: workFolders.state().folders.length,
@@ -188,6 +193,39 @@ function start(): void {
       onboarding,
       launchAtLogin,
     });
+    /** 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. */
+    const mentionDetection = new MentionDetection({
+      stateStore: appData.stateStore,
+      notifier,
+      clock: systemClock,
+      logger,
+      connectFlow: connectCurrentFlow,
+    });
+    await mentionDetection.load();
+    detection = mentionDetection;
+    /** 폴링을 마지막으로 시작한 키. 같은 키로 거듭 시작하지 않으려고 둔다. */
+    let detectionKey: string | null = null;
+    /**
+     * 감지를 시작했고 쓸 수 있는 키가 있으면 폴링을 시작한다. [감지 시작] 직후, 앱 시작 때 저장된 키를 읽은 뒤,
+     * 키를 새로 확인했을 때(다른 계정이면 기준점을 다시 잡음), "키 확인 필요"가 풀렸을 때 바로 조회하며 시작한다.
+     */
+    const syncDetection = () => {
+      /** 지금 쓰는 키. "키 확인 필요"가 있으면 쓰지 않는다. */
+      const apiKey = globalProblems.has('flow-key') ? null : flowAccount.apiKey();
+      if (!onboarding.state().detectionStarted || apiKey === null) {
+        detectionKey = null;
+        return;
+      }
+      if (apiKey === detectionKey) return;
+      detectionKey = apiKey;
+      void mentionDetection.start();
+    };
+    onboarding.onChange(syncDetection);
+    flowAccount.onChange(syncDetection);
+    globalProblems.onChange(syncDetection);
+    // 잠자기에서 깨어나면 밀린 멘션을 바로 조회한다.
+    powerMonitor.on('resume', () => void mentionDetection.checkNow());
+
     // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
     // 참여 Flow 프로젝트 목록은 "저장소" 칸을 열 때 받는다.
     void workFolders.refresh();
@@ -197,14 +235,17 @@ function start(): void {
       togglePopover: () => appWindows.togglePopover(),
       openPopover: () => appWindows.openPopover(),
       openSettings: (section) => appWindows.openSettings(section),
+      checkNow: () => void mentionDetection.checkNow(),
       quit: () => app.quit(),
     });
     tray = appTray;
-    /** 전역 문제와 감지 시작 여부에 맞춰 트레이 표시를 바꾼다. */
-    const refreshTray = () => appTray.show(trayView(globalProblems.current(), !onboarding.state().detectionStarted));
+    /** 전역 문제, 감지 시작 여부, 검토 대기 수에 맞춰 트레이 표시를 바꾼다. */
+    const refreshTray = () =>
+      appTray.show(trayView(globalProblems.current(), !onboarding.state().detectionStarted, mentionDetection.reviewCount()));
     refreshTray();
     globalProblems.onChange(refreshTray);
     onboarding.onChange(refreshTray);
+    mentionDetection.onChange(refreshTray);
     // 감지를 시작하기 전이면 첫 실행처럼 필수 설정 전 작은 창을 트레이 옆에 띄운다. 메뉴 막대 앱이라 창이 없으면 앱을 놓친다.
     // 앱이 앞에 오지 않은 채 열면 작은 창이 포커스를 잃어 바로 닫히므로, 사용자가 직접 켠 이 경우에는 앞으로 가져온다.
     if (!onboarding.state().detectionStarted) {
@@ -213,7 +254,11 @@ function start(): void {
     }
 
     // 저장된 키는 트레이를 띄운 뒤에 읽는다. 업데이트 뒤에는 키체인 재허용을 묻고 답할 때까지 끝나지 않기 때문이다.
-    flowAccount.checkStoredKey().catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)));
+    // 키를 읽으면 감지를 시작한 앱은 바로 알림을 조회한다.
+    flowAccount
+      .checkStoredKey()
+      .then(syncDetection)
+      .catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)));
     // 앱을 시작할 때 에이전트 연결을 확인한다(작동 확인 포함). 끊겨 있으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
     void agentConnection.check();
   });
@@ -229,11 +274,12 @@ function loginShellPath(): string {
   }
 }
 
-/** 전역 문제와 감지 시작 여부에 맞춘 트레이 표시. 검토 대기 수는 멘션 묶음을 더하는 티켓이 넘긴다. */
-function trayView(current: ActiveGlobalProblem | null, setupNeeded: boolean): TrayView {
+/** 전역 문제, 감지 시작 여부, 검토 대기 수에 맞춘 트레이 표시. */
+function trayView(current: ActiveGlobalProblem | null, setupNeeded: boolean, reviewCount: number): TrayView {
   return {
-    indicator: trayIndicator({ hasGlobalProblem: current !== null, reviewCount: 0, setupNeeded }),
+    indicator: trayIndicator({ hasGlobalProblem: current !== null, reviewCount, setupNeeded }),
     problem: current && problemText(current.problem),
+    canCheckNow: !setupNeeded,
   };
 }
 

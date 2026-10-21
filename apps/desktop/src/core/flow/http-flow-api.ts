@@ -1,5 +1,19 @@
 import type { Clock } from '../ports/clock';
-import type { FlowAlarm, FlowAlarmPage, FlowApi, FlowApiFailure, FlowApiResult, FlowEmployee, FlowProject } from '../ports/flow-api';
+import type {
+  FlowAlarm,
+  FlowAlarmPage,
+  FlowApi,
+  FlowApiFailure,
+  FlowApiResult,
+  FlowComment,
+  FlowCommentPage,
+  FlowEmployee,
+  FlowPost,
+  FlowProject,
+  FlowReply,
+  FlowReplyPage,
+  FlowTextComponent,
+} from '../ports/flow-api';
 
 /** Flow 공개 API 주소. 모든 회사가 같은 주소를 쓰므로 설정으로 받지 않는다. 코드에서 이 주소는 여기에만 둔다. */
 const FLOW_API_BASE_URL = 'https://api.flow.team';
@@ -82,6 +96,52 @@ export class HttpFlowApi implements FlowApi {
 
     /** data에서 읽은 한 쪽. */
     const page = readAlarmPage(result.value);
+    return page ? { ok: true, value: page } : UNEXPECTED_RESPONSE;
+  }
+
+  /**
+   * `GET /user/posts/{postId}`로 게시물을 받는다.
+   * 실호출에서 본문 `content`는 컴포넌트 배열(`COMPS`)을 담은 JSON 문자열이었고(`contentJsonYn: "Y"`), 글은 TEXT 컴포넌트에 있었다.
+   */
+  async getPost(postId: string): Promise<FlowApiResult<FlowPost>> {
+    /** 응답 봉투의 data를 읽은 결과. */
+    const result = await this.get(`/user/posts/${encodeURIComponent(postId)}`);
+    if (!result.ok) return result;
+
+    /** data에서 읽은 게시물. */
+    const post = readPost(result.value, postId);
+    return post ? { ok: true, value: post } : UNEXPECTED_RESPONSE;
+  }
+
+  /**
+   * `GET /user/comments/{postId}?replyYn=Y`로 댓글 한 쪽을 댓글마다 처음 10개의 대댓글과 함께 받는다.
+   * 응답은 `data` 아래의 `hasNext`·`lastCursor`·`comments[]`이고, 댓글마다 `replies[]`와 `replyHasNext`가 온다.
+   */
+  async listComments(postId: string, cursor: string | null): Promise<FlowApiResult<FlowCommentPage>> {
+    /** 이번 쪽의 경로. */
+    const path = `/user/comments/${encodeURIComponent(postId)}?replyYn=Y${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
+    /** 응답 봉투의 data를 읽은 결과. */
+    const result = await this.get(path);
+    if (!result.ok) return result;
+
+    /** data에서 읽은 한 쪽. */
+    const page = readCommentPage(result.value);
+    return page ? { ok: true, value: page } : UNEXPECTED_RESPONSE;
+  }
+
+  /**
+   * `GET /user/comments/{postId}/replies/{commentId}`로 대댓글 한 쪽을 `replyId` 오름차순으로 받는다.
+   * 문서는 항목 필드만 밝히고 data 안의 위치는 밝히지 않는다(실호출은 안 함). 그래서 `replyId`가 든 배열을 읽는다.
+   */
+  async listReplies(postId: string, commentId: string, cursor: string | null): Promise<FlowApiResult<FlowReplyPage>> {
+    /** 이번 쪽의 경로. */
+    const path = `/user/comments/${encodeURIComponent(postId)}/replies/${encodeURIComponent(commentId)}${cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`}`;
+    /** 응답 봉투의 data를 읽은 결과. */
+    const result = await this.get(path);
+    if (!result.ok) return result;
+
+    /** data에서 읽은 한 쪽. */
+    const page = readReplyPage(result.value);
     return page ? { ok: true, value: page } : UNEXPECTED_RESPONSE;
   }
 
@@ -188,9 +248,6 @@ function readAlarmPage(data: unknown): FlowAlarmPage | null {
   /** `hasNext`·`lastCursor`·`alarms[]`를 담은 객체. */
   const list = isRecord(data) ? data.alarms : null;
   if (!isRecord(list) || !Array.isArray(list.alarms)) return null;
-
-  /** 다음 쪽 커서. `hasNext`가 참이고 `lastCursor`가 있을 때만 있다. */
-  const lastCursor = list.hasNext === true ? idString(list.lastCursor) : '';
   return {
     alarms: list.alarms.flatMap((item): FlowAlarm[] => {
       if (!isRecord(item)) return [];
@@ -206,12 +263,87 @@ function readAlarmPage(data: unknown): FlowAlarmPage | null {
           replyId: idString(item.replyId),
           receiverId: trimmedString(item.receiverId),
           registerId: trimmedString(item.registerId),
+          registerName: trimmedString(item.registerName),
           registeredDateTime: idString(item.registeredDateTime),
         },
       ];
     }),
-    nextCursor: lastCursor || null,
+    nextCursor: nextCursorOf(list),
   };
+}
+
+/**
+ * 게시물 data에서 본문의 TEXT 컴포넌트를 읽는다. 본문을 읽을 수 없으면 `null`.
+ * `contentJsonYn`이 `"Y"`가 아니면 본문 전체를 글 조각 하나로 본다. 멘션 표기 판정은 그 글에서 한다.
+ */
+function readPost(data: unknown, requestedPostId: string): FlowPost | null {
+  if (!isRecord(data)) return null;
+  /** 게시물 ID. 응답에 없으면 요청한 ID다. */
+  const postId = idString(data.postId) || requestedPostId;
+  if (data.contentJsonYn !== 'Y') return { postId, textComponents: [{ contents: rawString(data.content), mentions: [] }] };
+
+  /** 본문 JSON. 문자열로 오지만 이미 객체로 와도 읽는다. */
+  const content = typeof data.content === 'string' ? parseJson(data.content) : data.content;
+  if (!isRecord(content) || !Array.isArray(content.COMPS)) return null;
+  return {
+    postId,
+    textComponents: content.COMPS.flatMap((component): FlowTextComponent[] => {
+      if (!isRecord(component) || component.COMP_TYPE !== 'TEXT' || !isRecord(component.COMP_DETAIL)) return [];
+      /** TEXT 컴포넌트의 내용. */
+      const detail = component.COMP_DETAIL;
+      return [
+        {
+          contents: rawString(detail.CONTENTS),
+          mentions: Array.isArray(detail.MENTIONS) ? detail.MENTIONS.map(idString).filter(Boolean) : [],
+        },
+      ];
+    }),
+  };
+}
+
+/** 댓글 목록 한 쪽을 읽는다. `data.comments` 배열이 없으면 `null`. */
+function readCommentPage(data: unknown): FlowCommentPage | null {
+  if (!isRecord(data) || !Array.isArray(data.comments)) return null;
+  return {
+    comments: data.comments.flatMap((item): FlowComment[] => {
+      if (!isRecord(item)) return [];
+      /** 댓글 ID. 없으면 멘션 위치와 맞춰 볼 수 없으므로 건너뛴다. */
+      const commentId = idString(item.commentId);
+      if (!commentId) return [];
+      return [
+        {
+          commentId,
+          contents: rawString(item.contents),
+          replies: Array.isArray(item.replies) ? readReplies(item.replies) : [],
+          replyHasNext: item.replyHasNext === true || item.replyHasNext === 'Y',
+        },
+      ];
+    }),
+    nextCursor: nextCursorOf(data),
+  };
+}
+
+/** 대댓글 목록 한 쪽을 읽는다. 대댓글 배열을 찾지 못하면 `null`. */
+function readReplyPage(data: unknown): FlowReplyPage | null {
+  /** 대댓글 항목 배열. data 자체가 배열이거나 data 바로 아래의 배열이다. */
+  const items = Array.isArray(data) ? data : isRecord(data) ? listIn(Object.values(data), 'replyId') : null;
+  if (!items) return null;
+  return { replies: readReplies(items), nextCursor: nextCursorOf(data) };
+}
+
+/** 대댓글 항목들을 읽는다. `replyId`가 없는 항목은 건너뛴다. */
+function readReplies(items: unknown[]): FlowReply[] {
+  return items.flatMap((item): FlowReply[] => {
+    if (!isRecord(item)) return [];
+    /** 대댓글 ID. */
+    const replyId = idString(item.replyId);
+    return replyId ? [{ replyId, contents: rawString(item.contents) }] : [];
+  });
+}
+
+/** 목록 응답의 다음 쪽 커서. `hasNext`가 참이고 `lastCursor`가 있을 때만 있다. */
+function nextCursorOf(data: unknown): string | null {
+  return (isRecord(data) && data.hasNext === true && idString(data.lastCursor)) || null;
 }
 
 /** 참여 Flow 프로젝트 목록 한 쪽. */
@@ -225,11 +357,8 @@ interface ProjectPage {
 /** 참여 Flow 프로젝트 목록 한 쪽을 읽는다. 프로젝트 배열을 찾지 못하면 `null`. */
 function readProjectPage(data: unknown): ProjectPage | null {
   /** 프로젝트 항목 배열. data 자체가 배열이거나 data 바로 아래의 배열이다. */
-  const items = Array.isArray(data) ? data : isRecord(data) ? projectArrayIn(Object.values(data)) : null;
+  const items = Array.isArray(data) ? data : isRecord(data) ? listIn(Object.values(data), 'projectId') : null;
   if (!items) return null;
-
-  /** 다음 쪽 커서. `hasNext`가 참이고 `lastCursor`가 있을 때만 있다. */
-  const lastCursor = isRecord(data) && data.hasNext === true ? idString(data.lastCursor) : '';
   return {
     projects: items.flatMap((item) => {
       if (!isRecord(item)) return [];
@@ -238,29 +367,41 @@ function readProjectPage(data: unknown): ProjectPage | null {
       if (!projectId) return [];
       return [{ projectId, title: trimmedString(item.title), projectUrl: trimmedString(item.projectUrl) || null }];
     }),
-    nextCursor: lastCursor || null,
+    nextCursor: nextCursorOf(data),
   };
 }
 
 /**
- * data 바로 아래 값 가운데 프로젝트 배열을 고른다. `projectId`가 든 배열을 먼저 고르고,
+ * data 바로 아래 값 가운데 목록 배열을 고른다. 항목에 `idField`가 든 배열을 먼저 고르고,
  * 없으면 배열이 하나뿐일 때만 그 배열을 빈 목록으로 본다. 관련 없는 빈 배열을 목록으로 잘못 읽지 않기 위해서다.
  */
-function projectArrayIn(values: unknown[]): unknown[] | null {
+function listIn(values: unknown[], idField: string): unknown[] | null {
   /** data 바로 아래의 배열. */
   const arrays = values.filter((value): value is unknown[] => Array.isArray(value));
-  return arrays.find((array) => array.some(hasProjectId)) ?? (arrays.length === 1 ? (arrays[0] ?? null) : null);
-}
-
-/** 프로젝트 ID가 든 항목인지 본다. */
-function hasProjectId(item: unknown): boolean {
-  return isRecord(item) && idString(item.projectId) !== '';
+  return (
+    arrays.find((array) => array.some((item) => isRecord(item) && idString(item[idField]) !== '')) ??
+    (arrays.length === 1 ? (arrays[0] ?? null) : null)
+  );
 }
 
 /** 문자열이나 숫자로 온 ID를 문자열로 바꾼다. 없으면 빈 문자열. */
 function idString(value: unknown): string {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return trimmedString(value);
+}
+
+/** 문자열이면 그대로, 아니면 빈 문자열. Flow 글은 앞뒤 공백과 줄바꿈도 내용이라 자르지 않는다. */
+function rawString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/** JSON 문자열을 읽는다. 읽을 수 없으면 `null`. */
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /** 문자열이면 앞뒤 공백을 뺀 값, 아니면 빈 문자열. */

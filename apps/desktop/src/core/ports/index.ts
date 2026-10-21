@@ -7,7 +7,21 @@ export type {
   ExecutorRunRequest,
   RunKind,
 } from './executor';
-export type { FlowAlarm, FlowAlarmPage, FlowApi, FlowConnection, FlowApiFailure, FlowApiResult, FlowEmployee } from './flow-api';
+export type {
+  FlowAlarm,
+  FlowAlarmPage,
+  FlowApi,
+  FlowApiFailure,
+  FlowApiResult,
+  FlowComment,
+  FlowCommentPage,
+  FlowConnection,
+  FlowEmployee,
+  FlowPost,
+  FlowReply,
+  FlowReplyPage,
+  FlowTextComponent,
+} from './flow-api';
 export type { AppNotification, Notifier } from './notifier';
 export type { SecretReadResult, SecretStore } from './secret-store';
 export { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from './settings-store';

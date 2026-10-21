@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
+import type { Mention, MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
 
@@ -33,6 +34,21 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ALTER TABLE account ADD COLUMN division TEXT NOT NULL DEFAULT '';
   ALTER TABLE account ADD COLUMN email TEXT NOT NULL DEFAULT '';
   UPDATE account SET name = user_id, email = user_id;
+  `,
+  // 3: 판정을 통과한 멘션. 멘션 위치로 식별하므로 같은 위치는 한 줄이다.
+  `
+  CREATE TABLE mention (
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    reply_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    alarm_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_name TEXT NOT NULL,
+    registered_date_time TEXT NOT NULL,
+    detected_at INTEGER NOT NULL,
+    PRIMARY KEY (post_id, remark_id, reply_id)
+  ) STRICT;
   `,
 ];
 
@@ -174,10 +190,84 @@ export class SqliteStateStore implements StateStore {
   }
 
   async setBaselineAlarmId(alarmId: string): Promise<void> {
+    this.writeBaseline(alarmId);
+  }
+
+  async hasMentionLocation({ postId, remarkId, replyId }: MentionLocation): Promise<boolean> {
+    return (
+      this.db.prepare('SELECT 1 FROM mention WHERE post_id = ? AND remark_id = ? AND reply_id = ?').get(postId, remarkId, replyId) !==
+      undefined
+    );
+  }
+
+  async addDetectedMentions(mentions: readonly Mention[], baselineAlarmId: string): Promise<Mention[]> {
+    /** 멘션 하나를 넣는 문장. 같은 멘션 위치가 있으면 넣지 않는다. */
+    const insert = this.db.prepare(
+      `INSERT INTO mention (post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at)
+       VALUES (@postId, @remarkId, @replyId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt)
+       ON CONFLICT DO NOTHING`,
+    );
+    return this.db.transaction(() => {
+      /** 새로 넣은 멘션. */
+      const added = mentions.filter((mention) => insert.run(mention).changes > 0);
+      this.writeBaseline(baselineAlarmId);
+      return added.map((mention) => ({ ...mention }));
+    })();
+  }
+
+  async listMentions(): Promise<Mention[]> {
+    /** 멘션 줄. 알림 시각, 같으면 alarmId 크기 순서다. */
+    const rows = this.db
+      .prepare(
+        `SELECT post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at
+         FROM mention ORDER BY registered_date_time, length(alarm_id), alarm_id`,
+      )
+      .all() as MentionRow[];
+    return rows.map((row) => ({
+      postId: row.post_id,
+      remarkId: row.remark_id,
+      replyId: row.reply_id,
+      projectId: row.project_id,
+      alarmId: row.alarm_id,
+      senderId: row.sender_id,
+      senderName: row.sender_name,
+      registeredDateTime: row.registered_date_time,
+      detectedAt: row.detected_at,
+    }));
+  }
+
+  async countMentions(): Promise<number> {
+    return (this.db.prepare('SELECT count(*) AS count FROM mention').get() as { count: number }).count;
+  }
+
+  /** 기준점 한 줄을 넣거나 바꾼다. */
+  private writeBaseline(alarmId: string): void {
     this.db
       .prepare(
         'INSERT INTO detection (id, baseline_alarm_id) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET baseline_alarm_id = excluded.baseline_alarm_id',
       )
       .run(alarmId);
   }
+}
+
+/** `mention` 표의 한 줄. */
+interface MentionRow {
+  /** 게시물 ID. */
+  post_id: string;
+  /** 댓글 ID. 본문 멘션이면 `"-1"`. */
+  remark_id: string;
+  /** 대댓글 ID. 대댓글 멘션이 아니면 `"-1"`. */
+  reply_id: string;
+  /** Flow 프로젝트 ID. */
+  project_id: string;
+  /** 멘션을 알린 알림 ID. */
+  alarm_id: string;
+  /** 송신자의 사용자 ID. */
+  sender_id: string;
+  /** 송신자 이름. */
+  sender_name: string;
+  /** 알림 시각(Flow 형식). */
+  registered_date_time: string;
+  /** 감지한 시각(Unix epoch 밀리초). */
+  detected_at: number;
 }

@@ -1,3 +1,4 @@
+import type { Mention, MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from './flow-api';
 
 /**
@@ -18,4 +19,18 @@ export interface StateStore {
   getBaselineAlarmId(): Promise<string | null>;
   /** 기준점을 저장한다. */
   setBaselineAlarmId(alarmId: string): Promise<void>;
+  /**
+   * 이 멘션 위치를 이미 기록해 두었는지 본다. 같은 멘션 위치에서 다시 온 알림은 글이 수정됐더라도 다시 감지하지 않는다.
+   * 지금은 감지한 멘션을 보고, 처리한 묶음의 최소 기록(ID와 상태만 남긴 기록)이 생기면 그것도 함께 본다.
+   */
+  hasMentionLocation(location: MentionLocation): Promise<boolean>;
+  /**
+   * 판정을 통과한 멘션을 저장하고 기준점을 옮긴다. 둘을 한 트랜잭션으로 해서, 저장하지 못한 멘션을 기준점이 지나치지 않게 한다.
+   * 이미 기록한 멘션 위치는 건너뛰고, 새로 저장한 멘션만 돌려준다.
+   */
+  addDetectedMentions(mentions: readonly Mention[], baselineAlarmId: string): Promise<Mention[]>;
+  /** 저장한 멘션. 알림 시각 순서다. */
+  listMentions(): Promise<Mention[]>;
+  /** 저장한 멘션 수. 트레이 숫자에 쓴다. */
+  countMentions(): Promise<number>;
 }

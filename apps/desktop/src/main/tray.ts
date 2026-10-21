@@ -14,6 +14,8 @@ export interface TrayActions {
   openPopover: () => void;
   /** 메뉴 "설정…"과 전역 문제 항목. 칸을 주면 그 칸을 연다. */
   openSettings: (section?: SettingsSection) => void;
+  /** 메뉴 "지금 확인". Flow 알림을 바로 조회한다. */
+  checkNow: () => void;
   /** 메뉴 "종료". */
   quit: () => void;
 }
@@ -38,12 +40,16 @@ export interface TrayView {
   indicator: TrayIndicator;
   /** 오른쪽 클릭 메뉴 맨 위에 둘 전역 문제의 문구. 없으면 `null`. */
   problem: GlobalProblemText | null;
+  /** 메뉴 "지금 확인"을 누를 수 있는지 여부. 감지를 시작하기 전에는 끈다. */
+  canCheckNow: boolean;
 }
 
 /** 표시마다 툴팁에 덧붙이는 말. */
 function tooltipNote({ indicator, problem }: TrayView): string | null {
   if (problem) return problem.title;
   if (indicator.kind === 'setup-needed') return '설정 필요';
+  // Windows는 아직 아이콘에 숫자를 그리지 않으므로 툴팁으로도 검토 대기 수를 알린다.
+  if (indicator.kind === 'review-count') return `멘션 ${indicator.count}건`;
   return null;
 }
 
@@ -55,7 +61,7 @@ export class AppTray {
   /** 트레이 아이콘. 이 객체가 붙잡고 있어야 가비지 컬렉션으로 사라지지 않는다. */
   private readonly tray: Tray;
   /** 지금 보이는 상태. 오른쪽 클릭할 때 메뉴를 이 상태로 만든다. */
-  private view: TrayView = { indicator: { kind: 'none' }, problem: null };
+  private view: TrayView = { indicator: { kind: 'none' }, problem: null, canCheckNow: false };
   /** Windows 배지 아이콘. 표시마다 처음 쓸 때 만든다. */
   private readonly badgedIcons = new Map<WindowsBadge, NativeImage>();
 
@@ -132,6 +138,7 @@ export class AppTray {
           ] satisfies MenuItemConstructorOptions[])
         : []),
       { label: '창 열기', click: actions.openPopover },
+      { label: '지금 확인', enabled: this.view.canCheckNow, click: actions.checkNow },
       { label: '설정…', click: () => actions.openSettings() },
       { type: 'separator' },
       { label: '종료', click: actions.quit },

@@ -2,7 +2,7 @@ export { claudeNotLoggedInStream, claudeStream, claudeSuccessStream, fakeClaudeE
 export { FakeClock } from './fake-clock';
 export { FakeEncryption } from './fake-encryption';
 export { FakeExecutor, type ScriptedRun } from './fake-executor';
-export { FAKE_ME, FakeFlowApi } from './fake-flow-api';
+export { FAKE_ME, FakeFlowApi, type FakeFlowComment } from './fake-flow-api';
 export { exited, FakeProcessRunner, type FakeProcessReply } from './fake-process-runner';
 export { FakeFlowServer, flowEnvelope, type FakeFlowReply, type FakeFlowRequest } from './fake-flow-server';
 export { MemorySecretStore } from './memory-secret-store';

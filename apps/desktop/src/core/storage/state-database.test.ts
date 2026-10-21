@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Mention } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
 import { openStateDatabase, SqliteStateStore, STATE_MIGRATIONS } from './state-database';
 
@@ -70,5 +71,76 @@ describe('다른 계정으로 처음부터 시작', () => {
     expect(readFileSync(path).includes(oldBody)).toBe(false);
     expect(readFileSync(`${path}-wal`).includes(oldBody)).toBe(false);
     db.close();
+  });
+});
+
+/** 가짜 멘션. 실제 사람이나 글이 아니다. */
+function mention(alarmId: string, overrides: Partial<Mention> = {}): Mention {
+  return {
+    postId: '90000011',
+    remarkId: '-1',
+    replyId: '-1',
+    projectId: '900001',
+    alarmId,
+    senderId: 'sender@example.test',
+    senderName: '보낸 사람',
+    registeredDateTime: '20261020085900',
+    detectedAt: 1_000,
+    ...overrides,
+  };
+}
+
+describe('감지한 멘션', () => {
+  it('멘션을 멘션 위치로 저장하고 기준점을 옮기며, 다시 열어도 그대로 읽힌다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const store = new SqliteStateStore(db);
+
+    /** 새로 저장한 멘션. */
+    const added = await store.addDetectedMentions(
+      [mention('102', { remarkId: '700', registeredDateTime: '20261020085000' }), mention('101', { remarkId: '700', replyId: '801' })],
+      '103',
+    );
+    db.close();
+
+    /** 다시 연 저장소. */
+    const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    expect(added.map((item) => item.alarmId)).toEqual(['102', '101']);
+    expect(await reopened.getBaselineAlarmId()).toBe('103');
+    expect(await reopened.listMentions()).toEqual([
+      mention('102', { remarkId: '700', registeredDateTime: '20261020085000' }),
+      mention('101', { remarkId: '700', replyId: '801' }),
+    ]);
+    expect(await reopened.countMentions()).toBe(2);
+    expect(await reopened.hasMentionLocation({ postId: '90000011', remarkId: '700', replyId: '801' })).toBe(true);
+    expect(await reopened.hasMentionLocation({ postId: '90000011', remarkId: '700', replyId: '802' })).toBe(false);
+  });
+
+  it('이미 기록한 멘션 위치는 다시 저장하지 않고, 새로 저장한 멘션만 돌려준다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.addDetectedMentions([mention('101')], '101');
+
+    /** 두 번째로 저장한 멘션. */
+    const added = await store.addDetectedMentions([mention('105', { senderName: '다른 이름' }), mention('106', { postId: 'p2' })], '106');
+
+    expect(added.map((item) => item.alarmId)).toEqual(['106']);
+    expect((await store.listMentions()).map((item) => [item.postId, item.alarmId, item.senderName])).toEqual([
+      ['90000011', '101', '보낸 사람'],
+      ['p2', '106', '보낸 사람'],
+    ]);
+    expect(await store.getBaselineAlarmId()).toBe('106');
+  });
+
+  it('다른 계정으로 처음부터 시작하면 감지한 멘션도 지운다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setAccount(OLD_ACCOUNT);
+    await store.addDetectedMentions([mention('101')], '101');
+
+    await store.resetForAccount(NEW_ACCOUNT);
+
+    expect(await store.countMentions()).toBe(0);
+    expect(await store.hasMentionLocation(mention('101'))).toBe(false);
+    expect(await store.getBaselineAlarmId()).toBeNull();
   });
 });

@@ -1,9 +1,9 @@
-import type { MentionBundle, PostFailureReason, PostingRecord } from '../bundles/mention-bundle';
+import { isPostOutcomePending, type MentionBundle, type PostFailureReason, type UnconfirmedPostReason } from '../bundles/mention-bundle';
 import type { MentionBundles } from '../bundles/mention-bundles';
 import { MentionJudge, type MyWritingsLookup } from '../flow/mention-judgement';
 import { isPostBody } from '../flow/mention-place';
 import type { Logger } from '../logging/logger';
-import type { CancelScheduled, Clock } from '../ports/clock';
+import { waitAtMost, type CancelScheduled, type Clock } from '../ports/clock';
 import type { FlowApiFailure, FlowApiResult, FlowConnection } from '../ports/flow-api';
 
 /** 게시 취소 카운트다운(밀리초). [게시]를 누르고 이만큼 지나야 게시 요청을 보낸다. 설정에서 바꿀 수 없다. */
@@ -65,8 +65,8 @@ export class Posting {
   private readonly failureListeners = new Set<(bundleId: number) => void>();
   /** 묶음마다 기다렸다가 할 일(`429` 뒤 다시 보내기, 올라갔는지 다시 확인하기)의 예약. */
   private readonly waits = new Map<number, CancelScheduled>();
-  /** 게시 요청을 보내고 그 결과를 기록하기까지의 일. 앱을 끌 때 응답을 기다린다. */
-  private readonly sending = new Set<Promise<void>>();
+  /** 보낸 게시 요청마다 응답을 받아 결과를 기록하기까지의 일. 앱을 끌 때 응답을 기다린다. */
+  private readonly pendingSends = new Set<Promise<void>>();
   /** 앱을 끝내며 멈췄는지 여부. 멈춘 뒤에는 새 카운트다운과 기다렸다가 할 일을 두지 않는다. */
   private stopped = false;
 
@@ -137,13 +137,10 @@ export class Posting {
     this.attempts.clear();
     for (const cancel of this.waits.values()) cancel();
     this.waits.clear();
-    if (this.sending.size === 0) return;
+    if (this.pendingSends.size === 0) return;
 
-    this.options.logger.info('posting.waiting-before-quit', { count: this.sending.size });
-    /** 기다리는 시간의 끝 예약을 지우는 함수. */
-    let cancel: CancelScheduled = () => {};
-    await Promise.race([Promise.all(this.sending), new Promise<void>((resolve) => (cancel = this.options.clock.after(QUIT_RESPONSE_WAIT_MS, resolve)))]);
-    cancel();
+    this.options.logger.info('posting.waiting-before-quit', { count: this.pendingSends.size });
+    await waitAtMost(this.options.clock, Promise.all(this.pendingSends), QUIT_RESPONSE_WAIT_MS);
   }
 
   /**
@@ -153,7 +150,7 @@ export class Posting {
    */
   recoverAfterRestart(): void {
     for (const bundle of this.options.bundles.state()) {
-      if (!isOutcomePending(bundle)) continue;
+      if (!isPostOutcomePending(bundle)) continue;
       this.options.logger.info('posting.check-after-restart', { bundleId: bundle.id });
       this.checkOutcome(bundle.id, 'app-quit').catch(() => this.options.logger.error('posting.crashed', { bundleId: bundle.id }));
     }
@@ -163,16 +160,16 @@ export class Posting {
    * 올라갔는지 알 수 없는 게시(보내기 전 기록만 있고 결과가 없는 게시 중 묶음)를 정한다.
    * 그 자리(본문 묶음은 게시물의 댓글, 댓글 스레드 묶음은 그 스레드의 대댓글)를 다시 조회해, 이 PC가 기록한 적 없는 내 글 가운데
    * 게시 본문과 똑같은 글을 찾는다. Flow는 보낸 문자열을 그대로 저장하므로 시각이 아니라 내용으로 찾는다.
-   * 찾으면 그 ID로 게시됨, 못 찾으면 `notFound` 사유로 게시 실패다. 자리가 지워졌거나 볼 수 없게 되었으면 그 사유로 게시 실패다.
+   * 찾으면 그 ID로 게시됨, 못 찾으면 `notFoundReason` 사유로 게시 실패다. 자리가 지워졌거나 볼 수 없게 되었으면 그 사유로 게시 실패다.
    * 조회하지 못하면 게시 중으로 둔 채 잠시 뒤 다시 확인한다. 그대로 다시 보내면 중복 댓글이 남을 수 있고 REST에는 댓글 삭제가 없기 때문이다.
-   * @param notFound 같은 글을 못 찾았을 때의 사유. 응답이 없었으면 "Flow가 응답하지 않았습니다", 응답을 받기 전에 앱이 꺼졌으면 "앱이 꺼져서 게시하지 못했습니다"다.
+   * @param notFoundReason 같은 글을 못 찾았을 때의 사유. 응답이 없었으면 "Flow가 응답하지 않았습니다", 응답을 받기 전에 앱이 꺼졌으면 "앱이 꺼져서 게시하지 못했습니다"다.
    */
-  async checkOutcome(bundleId: number, notFound: PostFailureReason = 'no-response'): Promise<void> {
+  async checkOutcome(bundleId: number, notFoundReason: UnconfirmedPostReason = 'no-response'): Promise<void> {
     this.cancelWait(bundleId);
     /** 확인할 묶음. */
     const bundle = this.options.bundles.get(bundleId);
     // 결과를 모르는 게시가 아니면 확인하지 않는다.
-    if (!bundle || !isOutcomePending(bundle)) return;
+    if (!bundle || !isPostOutcomePending(bundle)) return;
     /** 보낸 게시 본문. */
     const body = bundle.posting.body;
 
@@ -182,7 +179,7 @@ export class Posting {
     const myUserId = this.options.myUserId();
     if (!flow || !myUserId) {
       this.options.logger.warn('posting.check-postponed', { bundleId, reason: 'no-key' });
-      this.waitThen(bundleId, CHECK_RETRY_MS, () => this.checkOutcome(bundleId, notFound));
+      this.waitThen(bundleId, CHECK_RETRY_MS, () => this.checkOutcome(bundleId, notFoundReason));
       return;
     }
     /** 그 자리의 내 글. 조회가 예외로 끝나면 조회하지 못한 것으로 본다. */
@@ -200,7 +197,7 @@ export class Posting {
           await this.options.bundles.markPosted(bundleId, match.answerId);
           return;
         }
-        await this.fail(bundleId, notFound);
+        await this.fail(bundleId, notFoundReason);
         return;
       }
       case 'dropped':
@@ -211,7 +208,7 @@ export class Posting {
         const failure = lookup.failure;
         this.options.logger.warn('posting.check-postponed', { bundleId, reason: failure.kind });
         if (failure.kind === 'unauthorized') flow.reportKeyRejected();
-        this.waitThen(bundleId, checkRetryDelayMs(failure), () => this.checkOutcome(bundleId, notFound));
+        this.waitThen(bundleId, checkRetryDelayMs(failure), () => this.checkOutcome(bundleId, notFoundReason));
         return;
       }
     }
@@ -283,8 +280,8 @@ export class Posting {
         // 예외 문구에 게시 본문이나 Flow 글이 섞일 수 있어 로그에는 남기지 않는다.
         this.options.logger.error('posting.crashed', { bundleId });
       })
-      .finally(() => this.sending.delete(task));
-    this.sending.add(task);
+      .finally(() => this.pendingSends.delete(task));
+    this.pendingSends.add(task);
     return task;
   }
 
@@ -404,11 +401,6 @@ export class Posting {
   private emit(): void {
     for (const listener of this.listeners) listener();
   }
-}
-
-/** 게시 요청을 보냈지만 올라갔는지 아직 모르는 게시 중 묶음인지 본다. 보내기 전 기록은 있고 결과(올라간 글의 ID, 실패 사유)가 없다. */
-function isOutcomePending(bundle: MentionBundle): bundle is MentionBundle & { posting: PostingRecord } {
-  return bundle.status === 'posting' && bundle.posting !== null && bundle.posting.postedId === null && bundle.posting.failure === null;
 }
 
 /**

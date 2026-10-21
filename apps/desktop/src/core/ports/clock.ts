@@ -12,3 +12,17 @@ export interface Clock {
   /** `delayMs` 뒤에 `callback`을 한 번 부른다. */
   after(delayMs: number, callback: () => void): CancelScheduled;
 }
+
+/**
+ * `task`가 끝나기를 시계로 잰 `limitMs`까지만 기다린다. 시간이 지나도 `task`는 멈추지 않고 그대로 이어진다.
+ * `task`가 실패해도 기다림은 끝난 것으로 본다. 앱을 끝낼 때 진행 중인 일을 잠깐만 기다려 줄 때 쓴다.
+ */
+export async function waitAtMost(clock: Clock, task: Promise<unknown>, limitMs: number): Promise<void> {
+  /** 기다리는 시간의 끝 예약을 지우는 함수. */
+  let cancel: CancelScheduled = () => {};
+  await Promise.race([task.then(noop, noop), new Promise<void>((resolve) => (cancel = clock.after(limitMs, resolve)))]);
+  cancel();
+}
+
+/** 아무것도 하지 않는다. */
+function noop(): void {}

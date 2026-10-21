@@ -882,7 +882,7 @@ describe('다시 켜기', () => {
     ]);
   });
 
-  it('앱을 끌 때 남긴 초안 대기열을 다시 열어도 순서와 자리 그대로 읽고, 다시 남기면 앞서 남긴 것을 바꾼다', async () => {
+  it('남긴 초안 대기열을 다시 열어도 순서와 자리 그대로 읽고, 다시 남기면 앞서 남긴 것을 바꾼다', async () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));

@@ -127,6 +127,31 @@ export type DraftFailureReason =
 /** 묶음 하나를 만들 때 돌리는 실행의 종류. 선택 실행과 초안 실행이다. */
 export type GenerationRunKind = Exclude<RunKind, 'check'>;
 
+/**
+ * 초안 대기열에서 묶음이 들어가는 자리. 앞 자리일수록 먼저 실행하고, 같은 자리끼리는 들어온 순서대로 실행한다.
+ * - `resume`: 바로 이어서 돌아야 하는 묶음. 끊긴 생성을 처음부터 다시 하는 묶음(실행 중에 새 멘션이 합쳐짐, 전역 실패나 Flow에 닿지 못해 멈춤,
+ *   앱이 꺼지며 끊음)이다. 맨 앞이다.
+ * - `user`: 사용자가 누른 행동(다시 시도, 되돌리기)으로 생성 중이 된 묶음. 감지한 묶음보다 앞이다.
+ * - `auto`: 감지했거나 앱을 켤 때 이미 생성 중이던 묶음. 끝에 들어간다.
+ */
+export const QUEUE_PRIORITIES = ['resume', 'user', 'auto'] as const;
+
+/** 초안 대기열에서 묶음이 들어가는 자리. */
+export type QueuePriority = (typeof QUEUE_PRIORITIES)[number];
+
+/** 대기열 자리인지 본다. 저장한 값을 읽을 때 쓴다. */
+export function isQueuePriority(value: string): value is QueuePriority {
+  return (QUEUE_PRIORITIES as readonly string[]).includes(value);
+}
+
+/** 초안 대기열에서 차례를 기다리는 묶음. 앱이 꺼진 뒤 다시 켤 때 같은 순서로 돌도록 이 모양으로 남긴다. */
+export interface QueuedDraft {
+  /** 묶음 ID. */
+  bundleId: number;
+  /** 들어간 자리. */
+  priority: QueuePriority;
+}
+
 /** 묶음이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
 export interface DraftFailure {
   /** 사유. */

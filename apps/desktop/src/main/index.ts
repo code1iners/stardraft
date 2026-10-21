@@ -217,7 +217,7 @@ function start(): void {
       flowKeyUsable: () => flowAccount.apiKey() !== null && !globalProblems.has('flow-key'),
       onFlowKeyChange: (listener) => unsubscribeAll([globalProblems.onChange(listener), flowAccount.onChange(listener)]),
       settingsStore: appData.settingsStore,
-      // 앱을 끌 때 대기열을 남기고, 다시 켤 때 그 순서와 자리로 돈다.
+      // 대기열을 바뀔 때마다 남겨, 앱이 꺼진 뒤 다시 켤 때 그 순서와 자리로 돈다.
       stateStore: appData.stateStore,
       myName: () => flowAccount.state().account?.name || null,
       projectTitle: (projectId) => repoMappings.projectTitle(projectId),

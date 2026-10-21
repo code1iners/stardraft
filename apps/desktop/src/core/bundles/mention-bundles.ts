@@ -2,7 +2,7 @@ import { isSourceGone, markContextMentions, type BundleContext, type BundleConte
 import { mentionLocationKey, mentionLocationOf, type Mention, type MentionLocation } from '../detection/mention';
 import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
-import type { Logger } from '../logging/logger';
+import { errorFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
@@ -21,6 +21,7 @@ import {
   compareBundles,
   compareMentions,
   countsForReview,
+  isBeforePostRequest,
   isProcessed,
   isAutoProcessed,
   isDraftTouched,
@@ -154,24 +155,28 @@ export class MentionBundles {
    */
   recoverAfterRestart(): Promise<void> {
     return this.lane.run(async () => {
-      /** 지울 시험 묶음의 ID. */
-      const trialIds = this.bundles.filter((bundle) => bundle.trial).map((bundle) => bundle.id);
-      if (trialIds.length > 0) {
-        await this.options.stateStore.deleteBundles(trialIds);
-        this.bundles = this.bundles.filter((bundle) => !bundle.trial);
-        this.options.logger.info('bundle.trials-deleted', { count: trialIds.length });
-      }
-
-      /** 게시하지 않고 준비됨으로 돌린 묶음. */
-      const returned = this.bundles
-        .filter((bundle) => bundle.status === 'posting' && bundle.posting === null)
+      // 시험 묶음을 지우다 실패해도 카운트다운 중이던 묶음이 게시 중에 갇히지 않게 이것을 먼저 한다.
+      /** 카운트다운 중이었다가 게시하지 않고 준비됨으로 돌린 묶음. 시험 묶음도 지우기 전까지는 같게 돌린다. */
+      const returnedToReady = this.bundles
+        .filter(isBeforePostRequest)
         .map((bundle): MentionBundle => ({ ...bundle, status: 'ready', quitDuringCountdown: true }));
-      for (const bundle of returned) {
+      for (const bundle of returnedToReady) {
         await this.options.stateStore.saveBundle(bundle);
         this.bundles = this.bundles.map((item) => (item.id === bundle.id ? bundle : item));
         this.options.logger.info('bundle.posting-stopped-by-quit', { bundleId: bundle.id });
       }
-      if (trialIds.length > 0 || returned.length > 0) this.emit();
+
+      /** 지울 시험 묶음의 ID. */
+      const trialIds = this.bundles.filter((bundle) => bundle.trial).map((bundle) => bundle.id);
+      try {
+        if (trialIds.length > 0) await this.options.stateStore.deleteBundles(trialIds);
+        this.bundles = this.bundles.filter((bundle) => !bundle.trial);
+        if (trialIds.length > 0) this.options.logger.info('bundle.trials-deleted', { count: trialIds.length });
+      } catch (error) {
+        // 지우지 못한 시험 묶음은 그대로 보이고 다음에 켤 때 다시 지운다.
+        this.options.logger.error('bundle.trials-delete-failed', { count: trialIds.length, ...errorFields(error) });
+      }
+      if (trialIds.length > 0 || returnedToReady.length > 0) this.emit();
     });
   }
 

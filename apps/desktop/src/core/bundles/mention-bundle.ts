@@ -191,6 +191,19 @@ export interface PostingRecord {
   answeredMentions: MentionLocation[];
 }
 
+/** 응답이 없어 그 자리를 다시 조회해 정하는 게시가, 같은 글을 찾지 못했을 때의 게시 실패 사유. 응답 없음이나 앱 종료다. */
+export type UnconfirmedPostReason = Extract<PostFailureReason, 'no-response' | 'app-quit'>;
+
+/** 게시 요청을 보내기 전의 게시 중 묶음인지 본다. 카운트다운 중이거나, 카운트다운이 끝나 게시를 누를 때의 확인을 기다리는 중이다. */
+export function isBeforePostRequest(bundle: Pick<MentionBundle, 'status' | 'posting'>): boolean {
+  return bundle.status === 'posting' && bundle.posting === null;
+}
+
+/** 게시 요청을 보냈지만 올라갔는지 아직 모르는 게시 중 묶음인지 본다. 보내기 전 기록은 있고 결과(올라간 글의 ID, 실패 사유)가 없다. */
+export function isPostOutcomePending<T extends Pick<MentionBundle, 'status' | 'posting'>>(bundle: T): bundle is T & { posting: PostingRecord } {
+  return bundle.status === 'posting' && bundle.posting !== null && bundle.posting.postedId === null && bundle.posting.failure === null;
+}
+
 /** 게시를 누를 때의 확인이 게시를 멈춘 까닭. 창은 이것으로 "게시하지 않았습니다: …" 토스트를 띄운다. */
 export type PostStop =
   /** Flow에 이미 내 답이 있어 "이미 답함"으로 옮겼다. */

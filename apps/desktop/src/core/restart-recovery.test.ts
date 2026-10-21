@@ -324,7 +324,7 @@ describe('다시 켜기: 생성 중이던 묶음', () => {
     usage: null,
   };
 
-  it('앱을 끌 때 남긴 대기열의 순서와 자리 그대로 돌아와, 끊긴 실행의 묶음부터 처음부터 다시 만든다. 남긴 대기열은 한 번만 쓴다', async () => {
+  it('앱이 꺼지기 전에 남긴 대기열의 순서와 자리 그대로 돌아와, 끊긴 실행의 묶음부터 처음부터 다시 만든다. 다 만들면 남긴 대기열도 빈다', async () => {
     const env = await environment([
       seededBundle('700', '101', { status: 'generating' }),
       seededBundle('701', '102', { status: 'generating' }),
@@ -349,7 +349,7 @@ describe('다시 켜기: 생성 중이던 묶음', () => {
     await expect(env.stateStore.getDraftQueue()).resolves.toEqual([]);
   });
 
-  it('남긴 대기열이 없으면(앱이 정리하지 못하고 꺼짐) 생성 중 묶음을 작은 창 순서로 넣는다', async () => {
+  it('남긴 대기열이 없으면(읽지 못했거나 대기열을 남기기 전의 형식) 생성 중 묶음을 작은 창 순서로 넣는다', async () => {
     const env = await environment([seededBundle('701', '102', { status: 'generating' }), seededBundle('700', '101', { status: 'generating' })]);
     for (const summary of ['첫째', '둘째']) env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repo, summary) } });
 
@@ -399,6 +399,28 @@ describe('끌 때: 생성 중인 실행', () => {
       ['701', 'ready', '첫째'],
     ]);
     expect(restarted.bundles.get(2)?.runs.map(({ result }) => result)).toEqual(['app-quit', 'succeeded']);
+  });
+});
+
+describe('정리하지 못하고 꺼진 앱(강제 종료, Windows 종료·로그아웃)', () => {
+  it('끌 때의 정리가 없어도 실행 중이던 묶음이 맨 앞, 기다리던 묶음은 그 순서와 자리 그대로 처음부터 다시 돈다', async () => {
+    const env = await environment([
+      seededBundle('700', '101', { status: 'failed', failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'draft' } }),
+      seededBundle('701', '102', { status: 'generating' }),
+    ]);
+    env.executor.script({ outcome: 'wait-for-abort' });
+    const app = await launch(env);
+    // 댓글 701의 초안을 만드는 사이에 댓글 700을 [다시 시도]했다. 그 뒤 앱이 정리 없이 꺼졌다.
+    await app.drafts.retry(1);
+    await settle();
+
+    for (const summary of ['첫째', '둘째']) env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repo, summary) } });
+    const restarted = await launch(env);
+
+    expect(summaries(restarted.bundles)).toEqual([
+      ['700', 'ready', '둘째'],
+      ['701', 'ready', '첫째'],
+    ]);
   });
 });
 
@@ -511,6 +533,27 @@ describe('다시 켜기: 진행 중이던 시험 묶음', () => {
     await expect(env.stateStore.listMinimalRecords()).resolves.toEqual([]);
     await expect(env.stateStore.hasMentionLocation({ postId: POST_ID, remarkId: '700', replyId: '-1' })).resolves.toBe(false);
     expect(env.executor.requests).toEqual([]);
+  });
+
+  it('시험 묶음을 지우지 못해도 카운트다운 중이던 묶음은 준비됨으로 돌아오고, 다음에 켤 때 다시 지운다', async () => {
+    const env = await environment([
+      seededBundle('700', '101', { status: 'ready', trial: true, draft: draftOf('/fake/repo') }),
+      seededBundle('701', '102', { status: 'posting', draft: draftOf('/fake/repo') }),
+    ]);
+    /** 원래 묶음 지우기. */
+    const deleteBundles = env.stateStore.deleteBundles.bind(env.stateStore);
+    env.stateStore.deleteBundles = async () => {
+      throw new Error('가짜 디스크 오류');
+    };
+
+    const { bundles } = await launch(env);
+    expect(bundles.state().map(({ remarkId, status, trial }) => [remarkId, status, trial])).toEqual([
+      ['700', 'ready', true],
+      ['701', 'ready', false],
+    ]);
+
+    env.stateStore.deleteBundles = deleteBundles;
+    expect((await launch(env)).bundles.state().map(({ remarkId }) => remarkId)).toEqual(['701']);
   });
 });
 

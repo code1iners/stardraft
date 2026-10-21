@@ -6,7 +6,7 @@ import { activeMentions, mentionSetKey, type MentionBundle, type RepoCheck } fro
 import type { MentionBundles, RegenerationRequest, RunPreparation } from '../bundles/mention-bundles';
 import { contextDocument, omittedItemCount } from '../flow/bundle-context';
 import { errorFields, type Logger } from '../logging/logger';
-import type { CancelScheduled, Clock } from '../ports/clock';
+import { waitAtMost, type CancelScheduled, type Clock } from '../ports/clock';
 import type { Executor, ExecutorOutcome, ExecutorReport, ExecutorRunRequest } from '../ports/executor';
 import type { SettingsStore } from '../ports/settings-store';
 import type { StateStore } from '../ports/state-store';
@@ -20,6 +20,8 @@ import {
   type DraftFailureReason,
   type DraftOutput,
   type GenerationRunKind,
+  type QueuedDraft,
+  type QueuePriority,
   type RunFailureReason,
   type RunRecord,
   type RunResult,
@@ -100,7 +102,7 @@ export interface DraftQueueOptions {
   onFlowKeyChange: (listener: () => void) => () => void;
   /** 추가 지침과 추가 비밀 파일 패턴을 읽는 설정 저장소. 실행마다 새로 읽어 다음 실행부터 바뀐 값을 쓴다. */
   settingsStore: SettingsStore;
-  /** 앱을 끌 때 대기열을 남기고 다시 켤 때 읽는 상태 저장소. */
+  /** 대기열이 바뀔 때마다 남기고 다시 켤 때 읽는 상태 저장소. */
   stateStore: Pick<StateStore, 'getDraftQueue' | 'setDraftQueue'>;
   /** 답변 명의자인 내 이름. 모르면 `null`. */
   myName: () => string | null;
@@ -115,28 +117,8 @@ export interface DraftQueueOptions {
 /** 앱이 실행을 멈춘 까닭. `user`는 [취소], `bundle-changed`는 묶음이 바뀜, `app-quit`은 앱 종료다. */
 type Interruption = 'user' | 'bundle-changed' | 'app-quit';
 
-/** 대기열에서 묶음이 들어가는 자리. 앞 자리일수록 먼저 실행하고, 같은 자리끼리는 들어온 순서대로 실행한다. */
-export type QueuePriority =
-  /**
-   * 바로 이어서 돌아야 하는 묶음. 끊긴 생성을 처음부터 다시 하는 묶음(실행 중에 새 멘션이 합쳐짐, 전역 실패나 Flow에 닿지 못해 멈춤,
-   * 앱을 끄며 끊음)이다. 맨 앞이다.
-   */
-  | 'resume'
-  /** 사용자가 누른 행동(다시 시도, 되돌리기)으로 생성 중이 된 묶음. 감지한 묶음보다 앞이다. */
-  | 'user'
-  /** 감지했거나 앱을 켤 때 이미 생성 중이던 묶음. 끝에 들어간다. */
-  | 'auto';
-
 /** 자리의 순서. 작을수록 앞이다. */
 const PRIORITY_ORDER: Readonly<Record<QueuePriority, number>> = { resume: 0, user: 1, auto: 2 };
-
-/** 차례를 기다리는 묶음. 앱을 끌 때 이 모양으로 남긴다. */
-export interface QueuedDraft {
-  /** 묶음 ID. */
-  bundleId: number;
-  /** 들어간 자리. */
-  priority: QueuePriority;
-}
 
 /**
  * 대기열을 멈추게 한 까닭. `agent`는 에이전트를 쓸 수 없음(전역 실패), `flow-key`는 Flow 키를 쓸 수 없음("키 확인 필요")이고,
@@ -245,10 +227,12 @@ export class DraftQueue {
   private readonly changeCounts: Record<NotifiedCause, number> = { agent: 0, 'flow-key': 0 };
   /** Flow에 닿지 못해 멈춘 대기열을 다시 보는 예약을 지우는 함수. 예약이 없으면 `null`. */
   private cancelFlowRetry: CancelScheduled | null = null;
-  /** 대기열 상태. `starting`은 앱을 끌 때 남긴 대기열을 읽는 중이고, `stopped`면 새 실행을 시작하지 않는다. */
+  /** 대기열 상태. `starting`은 앱이 꺼지기 전에 남긴 대기열을 읽는 중이고, `stopped`면 새 실행을 시작하지 않는다. */
   private status: 'idle' | 'starting' | 'started' | 'stopped' = 'idle';
   /** 실행 직전 확인부터 생성이 끝날 때까지의 일. 앱을 끌 때 끊은 실행의 기록을 기다린다. 없으면 `null`. */
   private runTask: Promise<void> | null = null;
+  /** 마지막으로 남긴 대기열의 JSON. 대기열이 바뀐 때만 다시 남긴다. */
+  private savedQueueJson: string | null = null;
   /** 묶음, 에이전트 연결, Flow 키 구독을 끊는 함수. */
   private readonly unsubscribes: (() => void)[] = [];
   /** 진행이 바뀔 때 부를 함수. */
@@ -257,14 +241,15 @@ export class DraftQueue {
   constructor(private readonly options: DraftQueueOptions) {}
 
   /**
-   * 대기열을 시작한다. 앱을 끌 때 남긴 대기열이 있으면 그 순서와 자리 그대로 먼저 넣는다(끊긴 실행의 묶음이 맨 앞이다).
+   * 대기열을 시작한다. 앱이 꺼지기 전에 남긴 대기열이 있으면 그 순서와 자리 그대로 먼저 넣는다(끊긴 실행의 묶음이 맨 앞이다).
    * 남긴 대기열에 없는 생성 중 묶음은 작은 창 대기열 순서로 끝에 넣고, 그 뒤 묶음과 에이전트 연결, Flow 키가 바뀔 때마다 다시 본다.
    * 감지해서 새로 생성 중이 된 묶음은 대기열 끝에, 사용자 행동으로 생성 중이 된 묶음은 감지한 묶음보다 앞에 들어간다.
+   * 대기열은 바뀔 때마다 남겨, 끌 때의 정리 없이 꺼져도(강제 종료, Windows 종료·로그아웃) 다시 켤 때 같은 순서로 돈다.
    */
   async start(): Promise<void> {
     if (this.status !== 'idle') return;
     this.status = 'starting';
-    /** 앱을 끌 때 남긴 대기열. 읽지 못하면 없는 것으로 보고 작은 창 순서로 넣는다. */
+    /** 앱이 꺼지기 전에 남긴 대기열. 읽지 못하면 없는 것으로 보고 작은 창 순서로 넣는다. */
     const saved = await this.options.stateStore.getDraftQueue().catch((error: unknown) => {
       this.options.logger.error('draft.saved-queue-read-failed', errorFields(error));
       return [];
@@ -274,19 +259,18 @@ export class DraftQueue {
     this.status = 'started';
     // 더는 생성 중이 아닌 묶음은 바로 아래 `sync`가 뺀다.
     for (const { bundleId, priority } of saved) this.enqueue(bundleId, priority);
-    // 남긴 대기열은 한 번만 쓴다. 정리하지 못하고 꺼진 뒤에 켤 때 옛 순서를 다시 쓰지 않게 비운다.
-    if (saved.length > 0) this.saveQueue([]);
     this.unsubscribes.push(
       this.options.bundles.onChange(() => this.sync()),
       this.options.onAgentChange(() => this.conditionChanged('agent')),
       this.options.onFlowKeyChange(() => this.conditionChanged('flow-key')),
     );
     this.sync();
+    this.saveQueueIfChanged();
   }
 
   /**
    * 대기열을 멈춘다. 앱을 끝낼 때 부른다. 실행 중인 실행은 끊어 프로세스 트리를 끝내고, 묶음은 생성 중으로 둔다.
-   * 지금 대기열을 남겨 다시 켤 때 그 순서와 자리로 돌게 한다. 끊은 실행의 묶음은 맨 앞이다.
+   * 멈출 때의 대기열을 남겨 다시 켤 때 그 순서와 자리로 돌게 한다. 끊은 실행의 묶음은 맨 앞이다.
    * 끊은 실행이 "앱 종료로 중단" 기록을 남기기를 최대 5초 기다린다.
    */
   async stop(): Promise<void> {
@@ -300,11 +284,10 @@ export class DraftQueue {
     // 시작하기 전이면 앞서 남긴 대기열을 아직 쓰지 않았으므로 그대로 둔다.
     if (before !== 'started') return;
 
-    /** 남길 대기열. 실행하던 묶음이 맨 앞이다. */
-    const queue: QueuedDraft[] = [...(this.running ? [{ bundleId: this.running.bundleId, priority: 'resume' as const }] : []), ...this.waiting];
+    // 멈춘 뒤에는 대기열을 다시 남기지 않으므로, 끊은 실행이 끝나 실행 중인 묶음이 비기 전에 지금 대기열을 남긴다.
+    this.saveQueue(this.currentQueue());
     if (this.running) this.interrupt(this.running, 'app-quit');
-    this.saveQueue(queue);
-    await this.waitForRun(QUIT_RECORD_WAIT_MS);
+    if (this.runTask) await waitAtMost(this.options.clock, this.runTask, QUIT_RECORD_WAIT_MS);
   }
 
   /** 생성 중 묶음의 진행. 대기열에 없으면 `null`. */
@@ -432,19 +415,28 @@ export class DraftQueue {
     this.runTask = task;
   }
 
+  /** 지금 대기열. 실행 중인 묶음이 맨 앞(바로 이어서 돌 자리)이고 기다리는 묶음이 그 뒤다. */
+  private currentQueue(): QueuedDraft[] {
+    return [...(this.running ? [{ bundleId: this.running.bundleId, priority: 'resume' as const }] : []), ...this.waiting];
+  }
+
+  /** 대기열이 돌고 있고 마지막으로 남긴 뒤에 바뀌었으면 남긴다. */
+  private saveQueueIfChanged(): void {
+    if (this.status !== 'started') return;
+    /** 지금 대기열. */
+    const queue = this.currentQueue();
+    /** 지금 대기열의 JSON. */
+    const json = JSON.stringify(queue);
+    if (json === this.savedQueueJson) return;
+    this.saveQueue(queue);
+  }
+
   /** 대기열을 남긴다. 남기지 못하면 로그만 남기고, 다시 켤 때 작은 창 순서로 넣는다. */
   private saveQueue(queue: readonly QueuedDraft[]): void {
+    this.savedQueueJson = JSON.stringify(queue);
     this.options.stateStore.setDraftQueue(queue).catch((error: unknown) => this.options.logger.error('draft.queue-save-failed', errorFields(error)));
   }
 
-  /** 실행 중인 생성이 끝나기를 `limitMs`까지 기다린다. 생성이 없으면 바로 돌아온다. */
-  private async waitForRun(limitMs: number): Promise<void> {
-    if (!this.runTask) return;
-    /** 기다리는 시간의 끝 예약을 지우는 함수. */
-    let cancel: CancelScheduled = () => {};
-    await Promise.race([this.runTask, new Promise<void>((resolve) => (cancel = this.options.clock.after(limitMs, resolve)))]);
-    cancel();
-  }
 
   /** 다음 묶음을 시작할 수 있는지 본다. 이미 실행 중이거나 기다리는 묶음이 없으면 거짓이다. */
   private canStart(): boolean {
@@ -914,8 +906,9 @@ export class DraftQueue {
     this.emit();
   }
 
-  /** 듣는 쪽에 진행이 바뀌었다고 알린다. */
+  /** 듣는 쪽에 진행이 바뀌었다고 알린다. 실행 중인 묶음이나 기다리는 순서가 바뀌었으면 대기열을 남긴다. */
   private emit(): void {
+    this.saveQueueIfChanged();
     for (const listener of this.listeners) listener();
   }
 }

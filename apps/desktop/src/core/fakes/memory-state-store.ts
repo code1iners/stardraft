@@ -1,6 +1,6 @@
 import { compareMentions, type MentionBundle, type MinimalRecord, type UnsavedBundle } from '../bundles/mention-bundle';
 import { mentionLocationKey, type MentionLocation } from '../detection/mention';
-import type { QueuedDraft } from '../drafts/draft-queue';
+import type { QueuedDraft } from '../drafts/draft';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
 
@@ -16,7 +16,7 @@ export class MemoryStateStore implements StateStore {
   private readonly records = new Map<number, MinimalRecord>();
   /** 다음에 줄 묶음 ID. 지운 ID를 다시 쓰지 않는다. */
   private nextBundleId = 1;
-  /** 앱을 끌 때 남긴 초안 대기열. */
+  /** 마지막으로 남긴 초안 대기열. */
   private draftQueue: QueuedDraft[] = [];
 
   async getAccount(): Promise<FlowEmployee | null> {

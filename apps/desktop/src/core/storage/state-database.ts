@@ -10,8 +10,7 @@ import {
   type RepoCheck,
   type UnsavedBundle,
 } from '../bundles/mention-bundle';
-import type { Draft, DraftFailure, Regeneration, RunRecord } from '../drafts/draft';
-import type { QueuePriority, QueuedDraft } from '../drafts/draft-queue';
+import { isQueuePriority, type Draft, type DraftFailure, type QueuedDraft, type Regeneration, type RunRecord } from '../drafts/draft';
 import type { BundleContext } from '../flow/bundle-context';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
@@ -196,7 +195,8 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ) STRICT;
   `,
   // 15: 다시 켜기. 묶음마다 카운트다운 중에 앱이 꺼져 준비됨으로 돌렸는지와 시험 묶음인지를 두고,
-  // 앱을 끌 때 남긴 초안 대기열(실행할 순서, 묶음, 대기열 자리)을 둔다. 대기열은 다시 켤 때 읽고 비우므로 묶음과 외래 키로 묶지 않는다.
+  // 마지막으로 남긴 초안 대기열(실행할 순서, 묶음, 대기열 자리)을 둔다. 대기열은 바뀔 때마다 통째로 바꿔 쓰고,
+  // 다시 켤 때 생성 중이 아닌 묶음은 건너뛰므로 묶음과 외래 키로 묶지 않는다.
   // 이미 있던 묶음은 시험 묶음이 아니고 카운트다운 중에 꺼진 적이 없으며, 남긴 대기열은 없다.
   `
   ALTER TABLE mention_bundle ADD COLUMN quit_during_countdown INTEGER NOT NULL DEFAULT 0;
@@ -631,7 +631,8 @@ export class SqliteStateStore implements StateStore {
   async getDraftQueue(): Promise<QueuedDraft[]> {
     /** 남긴 대기열의 줄. 실행할 순서다. */
     const rows = this.db.prepare('SELECT bundle_id, priority FROM draft_queue ORDER BY position').all() as { bundle_id: number; priority: string }[];
-    return rows.map((row) => ({ bundleId: row.bundle_id, priority: row.priority as QueuePriority }));
+    // 표의 검사가 자리를 막아 두지만, 이 앱이 모르는 자리가 있으면 그 줄만 빼고 작은 창 순서에 맡긴다.
+    return rows.flatMap(({ bundle_id: bundleId, priority }) => (isQueuePriority(priority) ? [{ bundleId, priority }] : []));
   }
 
   async setDraftQueue(queue: readonly QueuedDraft[]): Promise<void> {

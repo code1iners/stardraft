@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/ipc';
+import type { AppSnapshot, BundleSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
@@ -1023,9 +1023,41 @@ describe('게시 실패', () => {
   });
 
   it('게시 실패 토스트는 "게시하지 못했습니다: 송신자님 멘션"이다', () => {
-    const text = textOf(<ToastStack bundles={[POST_FAILED]} ignoreToast={null} failedToasts={[{ key: 1, bundleId: 11 }]} onRestore={() => {}} onCancelPost={() => {}} />);
+    const text = textOf(<ToastStack bundles={[POST_FAILED]} ignoreToast={null} failedToasts={[{ key: 1, bundleId: 11 }]} stoppedToasts={[]} onRestore={() => {}} onCancelPost={() => {}} onStoppedAction={() => {}} />);
 
     expect(text).toContain('게시하지 못했습니다: 보낸 사람, 다른 사람님 멘션');
+  });
+});
+
+describe('게시를 누를 때의 확인으로 멈춘 게시', () => {
+  /** 멈춘 묶음 하나를 토스트 자리에 그린 글. */
+  function stoppedText(stop: PostStopSnapshot): string {
+    return textOf(
+      <ToastStack
+        bundles={[READY]}
+        ignoreToast={null}
+        failedToasts={[]}
+        stoppedToasts={[{ key: 1, bundleId: READY.id, stop }]}
+        onRestore={() => {}}
+        onCancelPost={() => {}}
+        onStoppedAction={() => {}}
+      />,
+    );
+  }
+
+  it('이미 답함으로 멈추면 "게시하지 않았습니다: Flow에 이미 내 답이 있음"과 [되돌리기]를 보인다', () => {
+    expect(stoppedText({ kind: 'already-answered' })).toBe(' 게시하지 않았습니다: Flow에 이미 내 답이 있음 되돌리기 ');
+  });
+
+  it('원문 사라짐으로 멈추면 "게시하지 않았습니다: Flow에서 멘션이 사라짐"과 [되돌리기]를 보인다', () => {
+    expect(stoppedText({ kind: 'source-gone' })).toBe(' 게시하지 않았습니다: Flow에서 멘션이 사라짐 되돌리기 ');
+  });
+
+  it('화면에 없던 변화로 멈추면 "게시하지 않았습니다: 새 글 1건"과 [보기]를 보이고, 변화가 여럿이면 알림 줄처럼 잇는다', () => {
+    expect(stoppedText({ kind: 'changed', newMentionCount: 0, newWritingCount: 1, edited: false, goneMentionCount: 0 })).toBe(' 게시하지 않았습니다: 새 글 1건 보기 ');
+    expect(stoppedText({ kind: 'changed', newMentionCount: 1, newWritingCount: 2, edited: true, goneMentionCount: 1 })).toBe(
+      ' 게시하지 않았습니다: 새 멘션 1건 · 새 글 2건 · 원문 수정됨 · 멘션 1건 사라짐 보기 ',
+    );
   });
 });
 

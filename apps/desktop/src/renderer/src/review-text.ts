@@ -10,6 +10,7 @@ import {
   type MappingMatchSnapshot,
   type MentionPlaceSnapshot,
   type PostFailureSnapshot,
+  type PostStopSnapshot,
   type RepoCheckSnapshot,
   type RepoChoiceGroupSnapshot,
   type RunLineSnapshot,
@@ -155,6 +156,34 @@ export const POST_FAILURE_TEXT: Record<PostFailureSnapshot, string> = {
 /** 게시 실패 토스트 문구. 예: 게시하지 못했습니다: 김철수님 멘션 */
 export function postFailedToastText(bundle: BundleSnapshot): string {
   return `게시하지 못했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
+}
+
+/**
+ * 게시를 누를 때의 확인이 게시를 멈춘 토스트 문구. 예: "게시하지 않았습니다: Flow에 이미 내 답이 있음", "게시하지 않았습니다: 새 글 1건".
+ * 화면에 없던 변화가 여럿이면 알림 줄처럼 " · "로 잇는다.
+ */
+export function postStoppedToastText(stop: PostStopSnapshot): string {
+  switch (stop.kind) {
+    case 'already-answered':
+      return '게시하지 않았습니다: Flow에 이미 내 답이 있음';
+    case 'source-gone':
+      return '게시하지 않았습니다: Flow에서 멘션이 사라짐';
+    case 'changed': {
+      /** 이을 변화. */
+      const parts = [
+        stop.newMentionCount > 0 ? `새 멘션 ${stop.newMentionCount}건` : null,
+        stop.newWritingCount > 0 ? `새 글 ${stop.newWritingCount}건` : null,
+        stop.edited ? '원문 수정됨' : null,
+        stop.goneMentionCount > 0 ? `멘션 ${stop.goneMentionCount}건 사라짐` : null,
+      ].filter((part) => part !== null);
+      return `게시하지 않았습니다: ${parts.join(' · ')}`;
+    }
+  }
+}
+
+/** 멈춘 게시 토스트의 행동. 처리됨으로 옮겨졌으면 되돌리기, 준비됨으로 돌아왔으면 그 묶음 보기다. */
+export function postStoppedAction(stop: PostStopSnapshot): 'restore' | 'show' {
+  return stop.kind === 'changed' ? 'show' : 'restore';
 }
 
 /**

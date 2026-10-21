@@ -316,9 +316,10 @@ describe('게시: 검토 대기와 트레이 숫자', () => {
 });
 
 describe('게시: 게시 중에 들어온 새 멘션', () => {
-  it('카운트다운 중 같은 댓글 스레드에 새 멘션이 오면 합치지 않고 새 묶음이 되며, 게시는 그대로 진행한다', async () => {
+  it('게시를 누를 때의 확인이 끝난 뒤 카운트다운 중 같은 댓글 스레드에 새 멘션이 오면 합치지 않고 새 묶음이 되며, 게시는 그대로 진행한다', async () => {
     const { clock, flow, bundles, detection, posting, bundleId } = await setup('thread');
     await posting.post(bundleId);
+    await settle();
     flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registerName: '김철수', registeredDateTime: '20261020090005' });
     flow.addAlarm(alarm('102', { remarkId: '700', replyId: '801', registeredDateTime: '20261020090005' }));
 
@@ -482,8 +483,10 @@ describe('게시 실패: 올라갔는지 알 수 없을 때의 확인', () => {
   it('응답을 받지 못했지만 Flow에 올라갔으면, 그 자리를 다시 조회해 게시 본문과 똑같은 내 글을 찾아 그 ID로 게시됨이 된다. 다시 보내지 않는다', async () => {
     for (const failure of [{ kind: 'network' as const }, { kind: 'http' as const, status: 502 }, { kind: 'unexpected-response' as const }]) {
       const { clock, flow, bundles, posting, bundleId } = await setup('thread');
-      // 같은 스레드에 내가 앞서 쓴 다른 글이 있다.
-      flow.addReply(POST_ID, '700', { replyId: '710', contents: '다른 내용의 내 글', registerId: ME, registeredDateTime: '20261020085900' });
+      // 게시 요청을 보낼 때 같은 스레드에 내가 앞서 쓴 다른 글이 있다. [게시]를 누를 때 있었으면 게시를 누를 때의 확인이 이미 답함으로 멈춘다.
+      flow.whenRequested(`POST /user/comments/${POST_ID}/replies/700`, () =>
+        flow.addReply(POST_ID, '700', { replyId: '710', contents: '다른 내용의 내 글', registerId: ME, registeredDateTime: '20261020085900' }),
+      );
       flow.loseResponseOn(`POST /user/comments/${POST_ID}/replies/700`, failure);
 
       await posting.post(bundleId);
@@ -523,8 +526,11 @@ describe('게시 실패: 올라갔는지 알 수 없을 때의 확인', () => {
     const { clock, flow, bundles, posting, bundleId } = await setup('thread');
     /** 게시 본문. */
     const body = `@[김철수](${SENDER}) ${DRAFT_TEXT}`;
-    flow.addReply(POST_ID, '700', { replyId: '711', contents: `${body} `, registerId: ME, registeredDateTime: '20261020085900' });
-    flow.addReply(POST_ID, '700', { replyId: '712', contents: body, registerId: SENDER, registeredDateTime: '20261020085900' });
+    // 게시 요청을 보낼 때 생긴 글이다. [게시]를 누를 때 있었으면 게시를 누를 때의 확인이 멈춘다.
+    flow.whenRequested(`POST /user/comments/${POST_ID}/replies/700`, () => {
+      flow.addReply(POST_ID, '700', { replyId: '711', contents: `${body} `, registerId: ME, registeredDateTime: '20261020085900' });
+      flow.addReply(POST_ID, '700', { replyId: '712', contents: body, registerId: SENDER, registeredDateTime: '20261020085900' });
+    });
     flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'network' }, 1);
 
     await posting.post(bundleId);
@@ -560,7 +566,8 @@ describe('게시 실패: 올라갔는지 알 수 없을 때의 확인', () => {
   it('다시 조회하지 못하면 게시 결과 확인 중으로 둔 채 60초 뒤 다시 확인해 정한다', async () => {
     const { clock, flow, bundles, posting, bundleId } = await setup('post');
     flow.loseResponseOn(`POST /user/comments/${POST_ID}`, { kind: 'network' });
-    flow.failOn(`GET /user/comments/${POST_ID}`, { kind: 'network' }, 1);
+    // 게시를 누를 때의 확인이 아니라 게시 요청 뒤의 다시 조회를 실패시킨다.
+    flow.whenRequested(`POST /user/comments/${POST_ID}`, () => flow.failOn(`GET /user/comments/${POST_ID}`, { kind: 'network' }, 1));
 
     await posting.post(bundleId);
     clock.advance(COUNTDOWN_MS);
@@ -591,10 +598,13 @@ describe('게시 실패: 올라갔는지 알 수 없을 때의 확인', () => {
 
   it('다시 조회할 때 대댓글 목록이 412(댓글이 존재하지 않음)를 주면 머리 댓글이 지워진 것으로 보고 게시 실패(지워짐)가 된다', async () => {
     const { clock, flow, bundles, posting, bundleId } = await setup('thread');
-    // 대댓글이 10개를 넘어야 대댓글 목록 API를 부른다.
-    for (let index = 0; index < 11; index += 1) flow.addReply(POST_ID, '700', { replyId: String(901 + index), contents: `대댓글 ${index}` });
     flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'network' }, 1);
-    flow.failOn(`GET /user/comments/${POST_ID}/replies/700`, { kind: 'http', status: 412 });
+    // 게시 요청 뒤의 다시 조회에서 대댓글 목록 API를 부르게 대댓글을 10개 넘게 달고 412를 준다.
+    // [게시]를 누를 때 있었으면 게시를 누를 때의 확인이 새 글이나 원문 사라짐으로 멈춘다.
+    flow.whenRequested(`POST /user/comments/${POST_ID}/replies/700`, () => {
+      for (let index = 0; index < 11; index += 1) flow.addReply(POST_ID, '700', { replyId: String(901 + index), contents: `대댓글 ${index}` });
+      flow.failOn(`GET /user/comments/${POST_ID}/replies/700`, { kind: 'http', status: 412 });
+    });
 
     await posting.post(bundleId);
     clock.advance(COUNTDOWN_MS);
@@ -606,7 +616,7 @@ describe('게시 실패: 올라갔는지 알 수 없을 때의 확인', () => {
   it('다시 조회할 때 게시물을 볼 수 없게 되었으면(403) 게시 실패(권한 없음)가 된다', async () => {
     const { clock, flow, bundles, posting, bundleId } = await setup('post');
     flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'network' }, 1);
-    flow.failOn(`GET /user/comments/${POST_ID}`, { kind: 'http', status: 403 }, 1);
+    flow.whenRequested(`POST /user/comments/${POST_ID}`, () => flow.failOn(`GET /user/comments/${POST_ID}`, { kind: 'http', status: 403 }, 1));
 
     await posting.post(bundleId);
     clock.advance(COUNTDOWN_MS);
@@ -620,10 +630,13 @@ describe('게시 실패: 올라갔는지 알 수 없을 때의 확인', () => {
     flow.loseResponseOn(`POST /user/comments/${POST_ID}`, { kind: 'network' });
     /** 원래 댓글 목록 조회. */
     const listComments = flow.listComments.bind(flow);
-    flow.listComments = async () => {
-      flow.listComments = listComments;
-      throw new Error('연결이 끊김');
-    };
+    // 게시를 누를 때의 확인이 아니라 게시 요청 뒤의 다시 조회를 예외로 끝낸다.
+    flow.whenRequested(`POST /user/comments/${POST_ID}`, () => {
+      flow.listComments = async () => {
+        flow.listComments = listComments;
+        throw new Error('연결이 끊김');
+      };
+    });
 
     await posting.post(bundleId);
     clock.advance(COUNTDOWN_MS);

@@ -331,6 +331,8 @@ describe('변화 감시: 내 답이 생김', () => {
     /** 게시 카운트다운 중인 묶음. */
     const posting = await setup('thread');
     await posting.posting.post(posting.bundleId);
+    // 게시를 누를 때의 확인이 끝난 뒤에 생긴 답이다. 확인 전에 생겼으면 그 확인이 멈춘다.
+    await settle();
     posting.flow.addReply(POST_ID, '700', { replyId: '801', contents: '직접 답했습니다', registerId: ME, registeredDateTime: '20261020090100' });
     await posting.detection.checkNow();
     await settle();
@@ -544,6 +546,8 @@ describe('변화 감시: 이 PC가 게시한 글이 답한 범위', () => {
     const context = await setup('thread');
     const { clock, flow, bundles, detection, bundleId, poll } = context;
     await postBundle(context, bundleId, '20261020090010');
+    // 게시를 누를 때의 확인이 끝난 뒤에 온 멘션이다.
+    await settle();
     flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: COLLEAGUE, registerName: '이영희', registeredDateTime: '20261020090005' });
     flow.addAlarm(alarm('102', { remarkId: '700', replyId: '801', registerId: COLLEAGUE, registeredDateTime: '20261020090005' }));
     await detection.checkNow();

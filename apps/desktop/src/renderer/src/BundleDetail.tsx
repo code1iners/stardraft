@@ -32,6 +32,8 @@ import {
   postBodyLengthText,
   POST_FAILURE_TEXT,
   postFailedToastText,
+  postStoppedAction,
+  postStoppedToastText,
   postLine,
   postingFooterText,
   PROCESSED_NOTES,
@@ -41,7 +43,7 @@ import {
   senderLine,
   WRITING_CHANGE_LABELS,
 } from './review-text';
-import { useSecondsLeft, type FailedToastState, type IgnoreToastState } from './useReview';
+import { useSecondsLeft, type FailedToastState, type IgnoreToastState, type StoppedToastState } from './useReview';
 
 /** 문체 검사에 걸린 문장과 근거 설명 옆에 작게 붙이는 말. */
 const DEVELOPER_TERMS_NOTE = '개발자 용어가 있을 수 있음';
@@ -1267,17 +1269,22 @@ interface ToastStackProps {
   ignoreToast: IgnoreToastState | null;
   /** 보이는 게시 실패 토스트. 띄운 순서다. */
   failedToasts: readonly FailedToastState[];
+  /** 보이는 멈춘 게시 토스트. 띄운 순서다. */
+  stoppedToasts: readonly StoppedToastState[];
   /** 무시 토스트의 [되돌리기]를 눌렀다. */
   onRestore: (bundleId: number) => void;
   /** 카운트다운 토스트의 [취소]를 눌렀다. */
   onCancelPost: (bundleId: number) => void;
+  /** 멈춘 게시 토스트의 [되돌리기]나 [보기]를 눌렀다. */
+  onStoppedAction: (toast: StoppedToastState) => void;
 }
 
 /**
- * 창 아래 토스트 자리. 카운트다운 토스트, 게시 실패 토스트, 무시 토스트 순으로 쌓는다. 띄울 토스트가 없으면 그리지 않는다.
- * 카운트다운 토스트는 main의 묶음 상태를, 게시 실패 토스트는 main의 실패 알림을 따르므로 다른 묶음을 보고 있어도 뜬다.
+ * 창 아래 토스트 자리. 카운트다운 토스트, 멈춘 게시 토스트, 게시 실패 토스트, 무시 토스트 순으로 쌓는다. 띄울 토스트가 없으면 그리지 않는다.
+ * 카운트다운 토스트는 main의 묶음 상태를, 멈춘 게시·게시 실패 토스트는 main의 알림을 따르므로 다른 묶음을 보고 있어도 뜬다.
+ * 게시를 누를 때의 확인이 게시를 멈추면 카운트다운 토스트가 사라지고 그 자리에 멈춘 게시 토스트가 뜬다.
  */
-export function ToastStack({ bundles, ignoreToast, failedToasts, onRestore, onCancelPost }: ToastStackProps) {
+export function ToastStack({ bundles, ignoreToast, failedToasts, stoppedToasts, onRestore, onCancelPost, onStoppedAction }: ToastStackProps) {
   /** 카운트다운 중인 묶음과 카운트다운이 끝날 시각. */
   const countdowns = bundles.flatMap((bundle) => (bundle.posting?.phase === 'countdown' ? [{ bundle, endsAt: bundle.posting.endsAt }] : []));
   /** 게시 실패 토스트와 그 묶음. 그사이 사라진 묶음은 뺀다. */
@@ -1286,11 +1293,19 @@ export function ToastStack({ bundles, ignoreToast, failedToasts, onRestore, onCa
     const bundle = bundles.find((item) => item.id === toast.bundleId);
     return bundle ? [{ key: toast.key, bundle }] : [];
   });
-  if (countdowns.length === 0 && failures.length === 0 && !ignoreToast) return null;
+  if (countdowns.length === 0 && stoppedToasts.length === 0 && failures.length === 0 && !ignoreToast) return null;
   return (
     <div className="toast-stack">
       {countdowns.map(({ bundle, endsAt }) => (
         <CountdownToast key={`${bundle.id}-${endsAt}`} bundle={bundle} endsAt={endsAt} onCancel={() => onCancelPost(bundle.id)} />
+      ))}
+      {stoppedToasts.map((toast) => (
+        <div key={toast.key} className="toast" role="status">
+          <span>{postStoppedToastText(toast.stop)}</span>
+          <button type="button" className="btn link" onClick={() => onStoppedAction(toast)}>
+            {postStoppedAction(toast.stop) === 'restore' ? '되돌리기' : '보기'}
+          </button>
+        </div>
       ))}
       {failures.map(({ key, bundle }) => (
         <div key={key} className="toast" role="alert">

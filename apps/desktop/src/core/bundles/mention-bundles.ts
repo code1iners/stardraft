@@ -1,5 +1,5 @@
 import { isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
-import { mentionLocationKey, mentionLocationOf, type Mention } from '../detection/mention';
+import { mentionLocationKey, mentionLocationOf, type Mention, type MentionLocation } from '../detection/mention';
 import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
@@ -10,6 +10,7 @@ import { bundleRecipients, draftEditorText, isPostable, postableBody } from '../
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
+import { unseenChanges } from './bundle-changes';
 import {
   activeMentions,
   bundlePlaceKey,
@@ -33,6 +34,7 @@ import {
   type MentionBundle,
   type PostedAnswerRanges,
   type PostFailureReason,
+  type PostStop,
   type RecordedAnswer,
   type RepoCheck,
   type UnsavedBundle,
@@ -93,6 +95,23 @@ export type RunPreparation =
   | { kind: 'skipped' };
 
 /**
+ * 게시를 누를 때의 확인 결과.
+ * - `passed`: 조회했고 멈출 까닭이 없다. 그대로 게시한다.
+ * - `unchecked`: 조회하지 못했다(쓸 키 없음, 네트워크 오류, `5xx`, `429`, `401`, 예외). 이 확인은 안전망이라 그대로 게시한다.
+ * - `stopped`: 게시를 멈추고 묶음을 옮겼다. 멈춤 알림(`onPostStopped`)이 함께 간다.
+ * - `skipped`: 묶음이 더는 이 확인을 기다리는 게시 중이 아니다(취소, 새 멘션이 합쳐져 멈춤, 늦어서 결과 없이 게시함).
+ */
+export type PostCheckOutcome = 'passed' | 'unchecked' | 'stopped' | 'skipped';
+
+/** 게시 중 묶음의 게시를 누를 때의 확인. 메모리에만 두어, 앱이 꺼져 카운트다운이 끊기면 함께 버린다. */
+interface PostCheck {
+  /** 확인이 끝났는지 여부. 끝난 뒤 들어온 멘션은 합치지 않고 새 묶음이 된다. */
+  finished: boolean;
+  /** 조회한 내용에 있던 묶음의 멘션 위치. 이 PC가 게시한 글이 답한 범위로 저장한다. 조회하지 못했으면 `null`. */
+  answeredMentions: MentionLocation[] | null;
+}
+
+/**
  * 멘션 묶음. 감지한 멘션을 묶음 자리(`postId`, `remarkId`)로 묶고, 초안 실행의 결과와 무시·되돌리기를 저장한다.
  * 작은 창 대기열, 펼친 창 목록, 트레이 표시, OS 알림이 이 상태를 따른다. 초안 실행은 초안 대기열이 돌리고 결과를 여기에 맡긴다.
  * 묶음을 바꾸는 일은 감지, 초안 대기열, 사용자 행동이 서로 끼어들지 않게 맡긴 순서대로 하나씩 한다.
@@ -108,6 +127,10 @@ export class MentionBundles {
   private readonly contextRequests = new Map<number, number>();
   /** 다음 맥락 조회의 번호. */
   private nextContextRequest = 1;
+  /** 카운트다운 중인 게시 중 묶음마다 게시를 누를 때의 확인. 게시 요청을 보내거나 게시를 멈추면 지운다. */
+  private readonly postChecks = new Map<number, PostCheck>();
+  /** 게시를 누를 때의 확인이 게시를 멈출 때 부를 함수. */
+  private readonly stopListeners = new Set<(bundleId: number, stop: PostStop) => void>();
 
   constructor(private readonly options: MentionBundlesOptions) {}
 
@@ -162,6 +185,14 @@ export class MentionBundles {
     };
   }
 
+  /** 게시를 누를 때의 확인이 게시를 멈출 때마다 `listener`를 그 묶음 ID와 까닭으로 부른다. 묶음 변경을 알린 뒤에 부른다. 돌려준 함수를 부르면 그만 부른다. */
+  onPostStopped(listener: (bundleId: number, stop: PostStop) => void): () => void {
+    this.stopListeners.add(listener);
+    return () => {
+      this.stopListeners.delete(listener);
+    };
+  }
+
   /**
    * 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 둘은 함께 저장한다.
    * 같은 자리에 처리되지 않은 묶음이 있으면 합치고, 없거나 처리됨뿐이면 새 묶음을 만든다.
@@ -203,6 +234,8 @@ export class MentionBundles {
 
       /** 이 PC가 게시한 글마다 그 글이 답한 멘션 위치. */
       const ranges = this.postedRanges();
+      /** 이번에 바뀌는 묶음과 새로 넣은 멘션. `updated`와 같은 순서다. */
+      const entries = [...touched.values()];
       /** 저장할 묶음. 자리마다 조회한 결과로 "이미 답함"을 판정한다. */
       const updated = [...touched].map(([place, { bundle, added }]) => {
         return applyDetection(bundle, added, lookups.get(place), now, ranges);
@@ -213,6 +246,19 @@ export class MentionBundles {
 
       /** 새로 만든 묶음의 ID. 저장소는 준 순서대로 돌려주므로, ID 없이 넘긴 자리의 묶음이다. */
       const createdIds = new Set(saved.filter((_, index) => updated[index]?.id === null).map((bundle) => bundle.id));
+      /** 게시를 누를 때의 확인이 끝나기 전에 새 멘션이 합쳐져 게시를 멈춘 묶음과 그 까닭. */
+      const stopped = saved.flatMap((bundle, index): [number, PostStop][] => {
+        /** 합치기 전의 묶음. */
+        const before = this.bundles.find((item) => item.id === bundle.id);
+        if (before?.status !== 'posting' || bundle.status === 'posting') return [];
+        if (bundle.status === 'already-answered') return [[bundle.id, { kind: 'already-answered' }]];
+        /** 이번에 넣은 멘션 위치. 저장소는 준 순서대로 돌려준다. */
+        const added = entries[index]!.added;
+        /** 이번에 합쳐 묶음에 남은 새 멘션 수. */
+        const merged = activeMentions(bundle).filter((mention) => added.has(mentionLocationKey(mention))).length;
+        return [[bundle.id, { kind: 'changed', newMentionCount: merged, newWritingCount: 0, edited: false, goneMentionCount: 0 }]];
+      });
+      for (const [bundleId] of stopped) this.postChecks.delete(bundleId);
       this.bundles = [...this.bundles.filter((bundle) => !saved.some((item) => item.id === bundle.id)), ...saved];
       for (const bundle of saved) {
         this.options.logger.info(createdIds.has(bundle.id) ? 'bundle.created' : 'bundle.merged', {
@@ -223,6 +269,10 @@ export class MentionBundles {
         });
       }
       this.emit();
+      for (const [bundleId, stop] of stopped) {
+        this.options.logger.info('bundle.post-stopped', { bundleId, reason: 'new-mention' });
+        this.emitStopped(bundleId, stop);
+      }
 
       /** 새로 저장소 확인 필요가 된 묶음. 대기열 순서다. 생성 중 묶음은 초안이 준비될 때 알린다. */
       const waiting = saved.filter((bundle) => createdIds.has(bundle.id) && countsForReview(bundle.status)).sort(compareBundles);
@@ -328,17 +378,9 @@ export class MentionBundles {
     if (result === null) return 'stop';
 
     /** 반영할 관찰. */
-    let observed: WatchObservation;
-    if (result.ok) {
-      observed = {
-        kind: 'found',
-        context: result.context,
-        myAnswers: result.myAnswers,
-        goneMentions: new Set(result.goneMentions.map(mentionLocationKey)),
-      };
-    } else if (isSourceGone(result.failure)) {
-      observed = { kind: 'gone' };
-    } else {
+    const observed = observationOf(result);
+    if (!observed) {
+      if (result.ok) return 'continue';
       /** 조회하지 못한 까닭. */
       const failure = result.failure;
       this.options.logger.warn('bundle.watch-failed', { bundleId, reason: failure.kind, status: failure.kind === 'http' ? failure.status : null });
@@ -618,18 +660,99 @@ export class MentionBundles {
     /** 게시 중이 된 묶음. */
     const changed = await this.change(bundleId, 'bundle.posting-started', (bundle) =>
       isPostable(bundle) ? { ...bundle, status: 'posting', posting: null } : null,
+      // 게시 중이 되는 줄 안에서 확인을 함께 둬야, 바로 뒤에 들어온 멘션도 확인이 끝나기 전의 멘션으로 합쳐진다.
+      () => this.postChecks.set(bundleId, { finished: false, answeredMentions: null }),
     );
     return changed !== null;
   }
 
   /**
-   * 카운트다운 중인 게시를 취소해 준비됨으로 돌린다. 초안·편집본·받는 사람은 그대로다.
+   * 게시를 누를 때의 확인. 게시 중(카운트다운) 묶음의 Flow 내용을 다시 조회해 화면에 보이던 내용과 견준다.
+   * 판정은 준비된 뒤의 변화 감시와 같은 규칙이다.
+   * - 남은 멘션이 모두 내 답으로 빠지면 "이미 답함", 모두 사라지면 "원문 사라짐"으로 옮긴다. 표기만 빠지고 게시할 자리가 남아 있어도 같다.
+   * - [게시]를 누를 때 화면에 없던 새 글(나를 멘션한 글 포함), 원문 수정, 새로 사라진 멘션이 있으면 준비됨으로 돌리고 알림 줄을 붙인다.
+   * - 이미 알림 줄에 떠 있던 변화뿐이면 그대로 게시하게 두고, 조회한 내용에 있던 멘션을 이 PC가 게시할 글이 답한 범위로 둔다.
+   * - 조회하지 못하면 그대로 게시하게 둔다. 이 확인은 게시를 막는 관문이 아니라 안전망이다.
+   * 멈추면 묶음 변경을 알린 뒤 `onPostStopped`로 까닭을 알린다. 이 확인이 끝나기 전에 늦어서 결과 없이 게시했으면(`endPostCheck`) 결과를 버린다.
+   */
+  async checkBeforePost(bundleId: number): Promise<PostCheckOutcome> {
+    /** 확인할 묶음. */
+    const bundle = this.bundles.find((item) => item.id === bundleId);
+    /** 이 묶음의 확인. 조회하는 사이에 취소하고 다시 눌렀으면 다른 확인이 된다. */
+    const check = this.postChecks.get(bundleId);
+    if (!bundle || bundle.status !== 'posting' || !check || check.finished) return 'skipped';
+
+    /** 조회한 결과. 쓸 키가 없거나 조회 중 예외가 나면 `null`. */
+    const result = await this.options.collectContext(structuredClone(bundle)).catch(() => null);
+    /** 반영할 관찰. 조회하지 못했으면 `null`. */
+    const observed = result ? observationOf(result) : null;
+
+    return this.lane.run(async (): Promise<PostCheckOutcome> => {
+      /** 지금 묶음. */
+      const latest = this.bundles.find((item) => item.id === bundleId);
+      if (!latest || latest.status !== 'posting' || latest.posting !== null || this.postChecks.get(bundleId) !== check || check.finished) return 'skipped';
+      check.finished = true;
+      if (!observed) {
+        this.options.logger.warn('bundle.post-check-unavailable', { bundleId, reason: result ? (result.ok ? 'unknown' : result.failure.kind) : 'no-key' });
+        return 'unchecked';
+      }
+
+      /** 조회한 내용을 반영한 묶음. 아직 게시 중이다. */
+      const checkedBundle = applyWatch(latest, observed, this.options.clock.now(), this.postedRanges());
+      /** 누를 때 화면에 없던 변화. */
+      const unseen = unseenChanges(latest, checkedBundle);
+      /** 게시를 멈춘 까닭. 멈추지 않으면 `null`. */
+      let stop: PostStop | null = null;
+      if (checkedBundle.status === 'already-answered' || checkedBundle.status === 'source-gone') stop = { kind: checkedBundle.status };
+      else if (unseen.newWritings.length > 0 || unseen.editedWritings.length > 0 || unseen.goneMentions > 0) {
+        stop = {
+          kind: 'changed',
+          newMentionCount: 0,
+          newWritingCount: unseen.newWritings.length,
+          edited: unseen.editedWritings.length > 0,
+          goneMentionCount: unseen.goneMentions,
+        };
+      }
+      if (!stop) {
+        // 알림 줄에 새 글로 떠 있던, 아직 알림이 오지 않은 나를 멘션한 글도 사용자가 보고 누른 것이라 범위에 넣는다.
+        check.answeredMentions = uniqueLocations([...activeMentions(checkedBundle).map(mentionLocationOf), ...(result?.ok ? result.myMentions : [])]);
+        this.options.logger.info('bundle.post-check-passed', { bundleId });
+        return 'passed';
+      }
+
+      /** 게시를 멈춘 묶음. 화면에 없던 변화면 준비됨으로 돌려 알림 줄을 붙인다. */
+      const next: MentionBundle = stop.kind === 'changed' ? { ...checkedBundle, status: 'ready' } : checkedBundle;
+      await this.options.stateStore.saveBundle(next);
+      this.bundles = this.bundles.map((item) => (item.id === bundleId ? next : item));
+      this.postChecks.delete(bundleId);
+      this.options.logger.info('bundle.post-stopped', { bundleId, status: next.status, reason: stop.kind });
+      this.emit();
+      this.emitStopped(bundleId, stop);
+      return 'stopped';
+    });
+  }
+
+  /**
+   * 카운트다운이 끝난 뒤에도 게시를 누를 때의 확인이 끝나지 않아 결과 없이 게시한다. 늦게 끝난 확인의 결과는 버리고,
+   * 이 뒤에 들어온 멘션은 확인이 끝난 뒤의 멘션으로 보아 합치지 않는다.
+   */
+  endPostCheck(bundleId: number): void {
+    /** 끝낼 확인. */
+    const check = this.postChecks.get(bundleId);
+    if (check) check.finished = true;
+  }
+
+  /**
+   * 카운트다운 중인 게시를 취소해 준비됨으로 돌린다. 초안·편집본·받는 사람은 그대로다. 게시를 누를 때의 확인은 버린다.
    * 게시 요청을 이미 보냈으면(게시 기록이 있음) 취소하지 않는다. 취소했으면 참이다.
    */
   async cancelPosting(bundleId: number): Promise<boolean> {
     /** 준비됨으로 돌아간 묶음. */
-    const changed = await this.change(bundleId, 'bundle.posting-cancelled', (bundle) =>
-      bundle.status === 'posting' && bundle.posting === null ? { ...bundle, status: 'ready' } : null,
+    const changed = await this.change(
+      bundleId,
+      'bundle.posting-cancelled',
+      (bundle) => (bundle.status === 'posting' && bundle.posting === null ? { ...bundle, status: 'ready' } : null),
+      () => this.postChecks.delete(bundleId),
     );
     return changed !== null;
   }
@@ -640,19 +763,24 @@ export class MentionBundles {
    * 게시할 수 없는 글이 되었으면 보내지 않고 준비됨으로 돌린 뒤 `null`이다.
    */
   async recordPostRequest(bundleId: number): Promise<string | null> {
+    /** 게시를 누를 때 조회한 내용에 있던 멘션. 조회하지 못했으면 `null`. */
+    const checkedMentions = this.postChecks.get(bundleId)?.answeredMentions ?? null;
     /** 게시 기록을 저장한 묶음. */
-    const changed = await this.change(bundleId, 'bundle.post-requested', (bundle) => {
-      if (bundle.status !== 'posting' || bundle.posting !== null) return null;
-      /** 보낼 게시 본문. 게시 중에는 초안과 받는 사람을 바꿀 수 없어 [게시]를 누를 때와 같다. */
-      const body = postableBody(bundle);
-      return body === null
-        ? { ...bundle, status: 'ready' }
-        : {
-            ...bundle,
-            // 게시 중에는 새 멘션이 합쳐지지 않아 지금 남은 멘션이 곧 [게시]를 누를 때 본 멘션이다.
-            posting: { body, sentAt: this.options.clock.now(), postedId: null, failure: null, answeredMentions: activeMentions(bundle).map(mentionLocationOf) },
-          };
-    });
+    const changed = await this.change(
+      bundleId,
+      'bundle.post-requested',
+      (bundle) => {
+        if (bundle.status !== 'posting' || bundle.posting !== null) return null;
+        /** 보낼 게시 본문. 게시 중에는 초안과 받는 사람을 바꿀 수 없어 [게시]를 누를 때와 같다. */
+        const body = postableBody(bundle);
+        if (body === null) return { ...bundle, status: 'ready' };
+        // 조회하지 못했으면, 확인이 끝나기 전의 새 멘션은 게시를 멈추므로 지금 남은 멘션이 곧 [게시]를 누를 때 본 멘션이다.
+        /** 이 글이 답한 멘션 위치. */
+        const answeredMentions = checkedMentions ? structuredClone(checkedMentions) : activeMentions(bundle).map(mentionLocationOf);
+        return { ...bundle, posting: { body, sentAt: this.options.clock.now(), postedId: null, failure: null, answeredMentions } };
+      },
+      () => this.postChecks.delete(bundleId),
+    );
     return changed?.posting?.body ?? null;
   }
 
@@ -681,8 +809,11 @@ export class MentionBundles {
 
   /** 게시하지 못한 게시 중 묶음을 준비됨으로 돌린다. 게시 기록은 지우고 초안·편집본·받는 사람은 그대로 둔다. */
   async returnToReady(bundleId: number): Promise<void> {
-    await this.change(bundleId, 'bundle.posting-returned', (bundle) =>
-      bundle.status === 'posting' ? { ...bundle, status: 'ready', posting: null } : null,
+    await this.change(
+      bundleId,
+      'bundle.posting-returned',
+      (bundle) => (bundle.status === 'posting' ? { ...bundle, status: 'ready', posting: null } : null),
+      () => this.postChecks.delete(bundleId),
     );
   }
 
@@ -730,8 +861,16 @@ export class MentionBundles {
     if (restored && showsContextWithoutDraft(restored)) await this.refreshContexts([bundleId]);
   }
 
-  /** 묶음 하나를 `update`로 바꿔 저장한다. `update`가 `null`을 돌려주면 바꾸지 않는다. 바꾼 묶음을 돌려주고, 바꾸지 않았거나 없는 묶음이면 `null`. */
-  private change(bundleId: number, event: string, update: (bundle: MentionBundle) => MentionBundle | null): Promise<MentionBundle | null> {
+  /**
+   * 묶음 하나를 `update`로 바꿔 저장한다. `update`가 `null`을 돌려주면 바꾸지 않는다. 바꾼 묶음을 돌려주고, 바꾸지 않았거나 없는 묶음이면 `null`.
+   * `onSaved`는 바꿔 저장했을 때 같은 줄 안에서 듣는 쪽에 알리기 전에 한다. 메모리에만 두는 값을 저장한 묶음과 함께 바꿀 때 쓴다.
+   */
+  private change(
+    bundleId: number,
+    event: string,
+    update: (bundle: MentionBundle) => MentionBundle | null,
+    onSaved?: () => void,
+  ): Promise<MentionBundle | null> {
     return this.lane.run(async () => {
       /** 바꿀 묶음. */
       const bundle = this.bundles.find((item) => item.id === bundleId);
@@ -741,10 +880,16 @@ export class MentionBundles {
 
       await this.options.stateStore.saveBundle(next);
       this.bundles = this.bundles.map((item) => (item.id === bundleId ? next : item));
+      onSaved?.();
       this.options.logger.info(event, { bundleId, status: next.status });
       this.emit();
       return structuredClone(next);
     });
+  }
+
+  /** 듣는 쪽에 게시를 멈췄다고 알린다. */
+  private emitStopped(bundleId: number, stop: PostStop): void {
+    for (const listener of this.stopListeners) listener(bundleId, structuredClone(stop));
   }
 
   /**
@@ -775,12 +920,17 @@ export class MentionBundles {
 
   /**
    * 자리의 새 멘션을 합칠 묶음. 처리되지 않은 묶음이고, 되돌린 묶음과 새 묶음이 함께 있으면 가장 최근에 만든 묶음이다.
-   * 게시 중 묶음에는 합치지 않는다. 게시는 그대로 진행하고 새 멘션은 새 묶음이 된다.
+   * 게시 중 묶음에는 게시를 누를 때의 확인이 끝나기 전에만 합친다(합치면 게시를 멈춘다). 확인이 끝난 뒤에는 게시를 그대로 진행하고 새 멘션은 새 묶음이 된다.
    */
   private openBundleAt(place: string): MentionBundle | undefined {
     return this.bundles
-      .filter((bundle) => !isProcessed(bundle.status) && bundle.status !== 'posting' && bundlePlaceKey(bundle) === place)
+      .filter((bundle) => !isProcessed(bundle.status) && (bundle.status !== 'posting' || this.isCheckingPost(bundle)) && bundlePlaceKey(bundle) === place)
       .sort((a, b) => b.id - a.id)[0];
+  }
+
+  /** 게시 중 묶음이 아직 게시 요청을 보내지 않았고 게시를 누를 때의 확인이 끝나지 않았는지 본다. */
+  private isCheckingPost(bundle: MentionBundle): boolean {
+    return bundle.status === 'posting' && bundle.posting === null && this.postChecks.get(bundle.id)?.finished === false;
   }
 
   /** 듣는 쪽에 묶음이 바뀌었다고 알린다. */
@@ -912,6 +1062,7 @@ function showsContextWithoutDraft(bundle: MentionBundle): boolean {
  * - 준비됨(초안·요구·지시를 손대지 않음): 합치고 자동으로 다시 만든다(다시 만들기).
  * - 실패: 합치고 자동으로 다시 시도한다. 재생성 중에 실패했으면 같은 재생성 입력으로 다시 만든다.
  * - 그 밖(손댄 준비됨, 저장소 확인 필요): 합치기만 하고 "새 멘션"을 센다.
+ * - 게시 중(게시를 누를 때의 확인이 끝나기 전): 게시를 멈추고 준비됨 규칙으로 합친다.
  * 모든 멘션이 빠지면 이미 답함으로 옮긴다.
  */
 function applyDetection(
@@ -954,6 +1105,17 @@ type WatchObservation =
   | { kind: 'gone' };
 
 /**
+ * 묶음 자리를 다시 조회한 결과를 반영할 관찰로 바꾼다. 게시물이 지워졌거나(`404`) 볼 수 없거나(`403`) 머리 댓글이 지워졌으면 멘션이 모두 사라진 것이다.
+ * 네트워크 오류, `5xx`, `429`, `401`처럼 사라졌는지 알 수 없는 실패면 `null`.
+ */
+function observationOf(result: BundleContextResult): WatchObservation | null {
+  if (result.ok) {
+    return { kind: 'found', context: result.context, myAnswers: result.myAnswers, goneMentions: new Set(result.goneMentions.map(mentionLocationKey)) };
+  }
+  return isSourceGone(result.failure) ? { kind: 'gone' } : null;
+}
+
+/**
  * 준비된 뒤의 변화 감시가 본 것을 묶음에 반영한다.
  * - 새로 찾은 내 답으로 "이미 답함"을 다시 판정한다(감지 때와 같은 규칙).
  * - 사라진 멘션은 묶음에서 뺀다. 되돌릴 때 사라진 것으로 기록한 멘션은 다시 빼지 않는다.
@@ -993,11 +1155,15 @@ function sameIgnoringFetchTime(a: MentionBundle, b: MentionBundle): boolean {
 /**
  * 기존 묶음에 묶음에 남는 새 멘션 `count`건을 합칠 때 상태에 따라 바꿀 것. 생성 중 묶음은 대기열이 처음부터 다시 만들므로 바꾸지 않는다.
  * 손대지 않은 준비됨은 다시 만들기로, 실패는 다시 시도로 생성 중에 올리고, 그 밖에는 "새 멘션"만 센다.
+ * 게시를 누를 때의 확인이 끝나기 전의 게시 중 묶음은 게시를 멈추고 준비됨으로 보아 합친다.
  */
 function mergedNewMentions(bundle: UnsavedBundle, count: number): Partial<MentionBundle> {
   switch (bundle.status) {
     case 'generating':
       return {};
+    case 'posting':
+      // 게시를 누를 때의 확인이 끝나기 전에 온 멘션이다. 게시를 멈추고 준비됨 규칙으로 합친다.
+      return { status: 'ready', ...mergedNewMentions({ ...bundle, status: 'ready' }, count) };
     case 'ready':
       if (bundle.draft && !isDraftTouched(bundle)) return regenerationOf(bundle, 'again');
       break;
@@ -1016,6 +1182,19 @@ function mergeAnswers(recorded: readonly RecordedAnswer[], fetched: readonly MyA
   /** 빼기로 기록한 답의 ID. */
   const excludedIds = new Set(excluded.map((answer) => answer.answerId));
   return [...excluded, ...fetched.filter((answer) => !excludedIds.has(answer.answerId)).map((answer) => ({ ...answer, excluded: false }))];
+}
+
+/** 같은 멘션 위치를 한 번씩만 남긴다. 처음 나온 순서다. */
+function uniqueLocations(locations: readonly MentionLocation[]): MentionLocation[] {
+  /** 이미 넣은 위치. */
+  const seen = new Set<string>();
+  return locations.filter((location) => {
+    /** 멘션 위치. */
+    const key = mentionLocationKey(location);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** 사라진 멘션을 사라짐 판정에서 빼기로 기록한다. 기록한 멘션은 다시 묶음에 든다. */

@@ -97,6 +97,8 @@ export class FakeFlowApi implements FlowApi {
   private failures: ScriptedFailure[] = [];
   /** 요청을 받을 때 응답하기 전에 할 일. 요청 문자열마다 한 번씩 한다. */
   private readonly hooks = new Map<string, () => void>();
+  /** 경로마다 응답을 붙잡아 둔 문. 문이 열릴 때까지 그 경로의 요청은 응답하지 않는다. */
+  private readonly gates = new Map<string, Promise<void>>();
   /** 게시로 다음에 만들 글의 ID. */
   private nextWrittenId = 950_000_001;
 
@@ -207,6 +209,20 @@ export class FakeFlowApi implements FlowApi {
     this.hooks.set(request, action);
   }
 
+  /**
+   * `path`(`메서드 경로`, `?` 앞까지)로 오는 요청의 응답을 돌려준 함수를 부를 때까지 붙잡아 둔다. 요청은 받은 때 `requests`에 남는다.
+   * Flow가 늦게 답하는 경우를 만든다. 응답은 풀어 준 때의 내용으로 한다.
+   */
+  hold(path: string): () => void {
+    /** 문을 연다. */
+    let release!: () => void;
+    this.gates.set(path, new Promise<void>((resolve) => (release = resolve)));
+    return () => {
+      this.gates.delete(path);
+      release();
+    };
+  }
+
   async getMe(): Promise<FlowApiResult<FlowEmployee>> {
     this.requests.push('GET /user/employees/me');
     return this.meResult;
@@ -296,8 +312,8 @@ export class FakeFlowApi implements FlowApi {
     return { registerId: FAKE_ME.userId, registerName: FAKE_ME.name, registeredDateTime: this.writtenDateTime, systemCode: '' };
   }
 
-  /** 요청을 남기고, 대본의 실패가 있으면 그 실패를, 없으면 `respond`의 값으로 답한다. */
-  private answer<T>(path: string, cursor: string | null, respond: () => T | typeof NOT_FOUND): FlowApiResult<T> {
+  /** 요청을 남기고, 대본의 실패가 있으면 그 실패를, 없으면 `respond`의 값으로 답한다. 붙잡아 둔 경로면 풀어 줄 때까지 기다린다. */
+  private async answer<T>(path: string, cursor: string | null, respond: () => T | typeof NOT_FOUND): Promise<FlowApiResult<T>> {
     /** 남길 요청 문자열. */
     const request = cursor === null ? path : `${path}?cursor=${cursor}`;
     this.requests.push(request);
@@ -307,6 +323,7 @@ export class FakeFlowApi implements FlowApi {
       this.hooks.delete(request);
       hook();
     }
+    await this.gates.get(path);
 
     /** 이 요청에 걸린 실패. */
     const scripted = this.failures.find((failure) => failure.path === path && failure.remaining > 0);

@@ -40,8 +40,8 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음. */
   const { selected, select, movedWhileViewing } = selection;
-  /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패 토스트. */
-  const { toast, failedToasts, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
+  /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
+  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {
@@ -103,7 +103,15 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
           )}
         </section>
       </div>
-      <ToastStack bundles={bundles} ignoreToast={toast} failedToasts={failedToasts} onRestore={restore} onCancelPost={cancelPost} />
+      <ToastStack
+        bundles={bundles}
+        ignoreToast={toast}
+        failedToasts={failedToasts}
+        stoppedToasts={stoppedToasts}
+        onRestore={restore}
+        onCancelPost={cancelPost}
+        onStoppedAction={followStopped}
+      />
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
     </div>

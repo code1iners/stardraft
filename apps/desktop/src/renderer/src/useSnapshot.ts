@@ -40,6 +40,8 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, editor: event.editor });
       } else if (event.type === 'review-changed') {
         setSnapshot((current) => current && { ...current, review: event.review });
+      } else if (event.type === 'trial-changed') {
+        setSnapshot((current) => current && { ...current, trial: event.trial });
       }
     });
   }, []);

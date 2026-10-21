@@ -362,9 +362,12 @@ export class DraftQueue {
     /** 바꾸기 전의 대기열 순서. */
     const before = this.waitingOrder();
     // 생성 중이 아니게 된 묶음(취소함, 저장소 확인 필요 등)은 빼고, 새로 생성 중이 된 묶음은 그 까닭에 맞는 자리에 넣는다.
+    // 시험 묶음은 사용자가 시작한 것이라 감지해서 기다리는 묶음보다 앞에 든다.
     this.waiting = this.waiting.filter((queued) => generating.includes(queued.bundleId));
+    /** 시험 묶음의 ID. */
+    const trialId = this.options.bundles.trialId();
     for (const bundleId of generating) {
-      if (bundleId !== this.running?.bundleId) this.enqueue(bundleId, this.reservedPriorities.get(bundleId) ?? 'auto');
+      if (bundleId !== this.running?.bundleId) this.enqueue(bundleId, this.reservedPriorities.get(bundleId) ?? (bundleId === trialId ? 'user' : 'auto'));
     }
     // 실행 중인 묶음에 새 멘션이 합쳐졌거나 묶음이 생성 중이 아니게 되었으면 실행을 멈춘다. 생성 중으로 남았으면 처음부터 다시 만든다.
     if (this.running && !this.isStillGenerating(this.running)) this.interrupt(this.running, 'bundle-changed');

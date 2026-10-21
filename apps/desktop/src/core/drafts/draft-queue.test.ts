@@ -25,6 +25,7 @@ import { RepoMappings } from '../repos/repo-mappings';
 import { DRAFT_INSTRUCTIONS } from './draft-input';
 import { draftAgentFrom, DraftQueue, type DraftQueueOptions } from './draft-queue';
 import { SELECTION_INSTRUCTIONS } from './repo-selection';
+import { listRecentMentions } from '../trial/recent-mentions';
 
 /** 지금 시각. 2026-10-20 09:00:00 한국 표준시(00:00:00 UTC). */
 const NOW = Date.UTC(2026, 9, 20, 0, 0, 0);
@@ -2442,5 +2443,169 @@ describe('재생성: 준비됨·실패 묶음에 새 멘션이 올 때', () => {
     expect(input).toContain('# 덧붙인 지시\n1. 더 짧게\n');
     expect(input).toContain('## 멘션 2건 (시간순, 마지막이 답할 대상)');
     expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', regeneration: null, directives: ['더 짧게'] });
+  });
+});
+
+/** 가짜 Flow의 알림 목록에서 최근 멘션 목록을 만든다. 시험할 멘션을 고르는 목록과 같다. */
+async function recentMentionsOf(flow: FakeFlowApi) {
+  /** 목록을 만든 결과. */
+  const result = await listRecentMentions(flow, ME, NOW);
+  if (!result.ok) throw new Error('최근 멘션 목록을 만들지 못했습니다.');
+  return result.value;
+}
+
+describe('최근 멘션으로 시험', () => {
+  it('저장소 매핑이 없는 프로젝트의 멘션을 선택 실행이 코드와 무관하다고 판정하면 시험 묶음도 저장소 확인 필요로 끝나고 "[시험] …" 알림을 올린다', async () => {
+    const { flow, executor, bundles, notifier, settingsStore } = await setup();
+    /** 저장소가 둘인 작업 폴더. 후보가 둘이어야 선택 실행이 돈다. */
+    const work = makeWorkFolder('work', ['api', 'web']);
+    settingsStore.settings.workFolders = [work.folder];
+    flow.addAlarm(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
+    executor.script({ outcome: { type: 'completed', output: { verdict: 'unrelated', repositories: [], reason: '회의 일정을 묻는 멘션입니다.' } } });
+    /** 시험할 멘션. */
+    const [recent] = await recentMentionsOf(flow);
+
+    /** 시험 묶음 ID. */
+    const trialId = await bundles.startTrial(recent!);
+    await settle();
+
+    expect(executor.requests.map((request) => request.kind)).toEqual(['selection']);
+    expect(bundles.get(trialId!)).toMatchObject({ trial: true, status: 'repo-check-needed', draft: null, repoCheck: { kind: 'unrelated' } });
+    expect(notifier.sent).toContainEqual({ title: '[시험] 저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: trialId });
+  });
+
+  it('생성 중에 시험을 끝내면 돌던 실행을 멈추고 묶음을 지운다', async () => {
+    const { flow, executor, bundles, stateStore } = await setup();
+    flow.addAlarm(alarm('101'));
+    executor.script({ outcome: 'wait-for-abort' });
+    /** 시험할 멘션. */
+    const [recent] = await recentMentionsOf(flow);
+    /** 시험 묶음 ID. */
+    const trialId = await bundles.startTrial(recent!);
+    await settle();
+    expect(bundles.get(trialId!)?.status).toBe('generating');
+    expect(executor.requests).toHaveLength(1);
+
+    expect(await bundles.endTrial(trialId!)).toBe(true);
+    await settle();
+
+    expect(executor.requests[0]?.signal.aborted).toBe(true);
+    expect(bundles.state()).toEqual([]);
+    expect(await stateStore.listBundles()).toEqual([]);
+  });
+
+  it('고른 멘션으로 시험 묶음을 만들어 감지해서 기다리는 묶음보다 앞에서 실제처럼 실행하고, 트레이 숫자와 "[시험] …" 알림을 올린다. 기준점은 옮기지 않는다', async () => {
+    const { flow, executor, bundles, notifier, stateStore, repos, poll } = await setup();
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    /** 시험할 멘션. 이미 감지해 묶음에 든 멘션도 고를 수 있다. */
+    const recent = (await recentMentionsOf(flow)).find((item) => item.mention.remarkId === '700')!;
+
+    /** 시험 묶음 ID. */
+    const trialId = await bundles.startTrial(recent);
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    expect(executor.requests.map(targetMentionOf)).toEqual([
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 두 번째 질문',
+    ]);
+    expect(bundles.get(trialId!)).toMatchObject({ trial: true, status: 'ready', postTitle: '가짜 게시물', mentions: [expect.objectContaining({ alarmId: '101' })] });
+    expect(bundles.reviewCount()).toBe(3);
+    expect(notifier.sent).toContainEqual({ title: '[시험] 초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', bundleId: trialId });
+    expect(stateStore.baselineAlarmId).toBe('102');
+  });
+
+  it('직접 답 확인을 건너뛰어 이미 답한 멘션으로도 초안을 만들고, 준비된 뒤의 변화 감시도 건너뛴다', async () => {
+    const { flow, executor, bundles, repos, poll } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '800', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085500' });
+    flow.respondToListMentionAlarms([alarm('99')]);
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    /** 시험할 멘션. 이미 답한 멘션이다. */
+    const [recent] = await recentMentionsOf(flow);
+    expect(recent?.answered).toBe(true);
+
+    /** 시험 묶음 ID. */
+    const trialId = await bundles.startTrial(recent!);
+    await settle();
+    expect(bundles.get(trialId!)).toMatchObject({ status: 'ready', mentions: [expect.objectContaining({ answered: false })] });
+
+    // 원문이 지워져도 시험 묶음은 감시하지 않아 그대로 준비됨이다.
+    flow.removeComment(POST_ID, '700');
+    await poll();
+    expect(bundles.get(trialId!)?.status).toBe('ready');
+  });
+
+  it('시험은 한 번에 하나만 하고, 시험 묶음은 게시할 수 없다', async () => {
+    const { flow, executor, bundles, repos } = await setup();
+    flow.addAlarm(alarm('101'));
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    /** 시험할 멘션. */
+    const [recent] = await recentMentionsOf(flow);
+
+    /** 시험 묶음 ID. */
+    const trialId = await bundles.startTrial(recent!);
+    await settle();
+
+    expect(await bundles.startTrial(recent!)).toBeNull();
+    expect(bundles.state()).toHaveLength(1);
+    expect(await bundles.startPosting(trialId!)).toBe(false);
+    expect(bundles.get(trialId!)?.status).toBe('ready');
+  });
+
+  it('시험을 끝내거나 무시하면 묶음과 실행 기록을 지우고 처리됨·최소 기록·멘션 위치에 남기지 않아, 같은 멘션 위치의 알림도 실제 묶음이 된다', async () => {
+    const { flow, executor, bundles, stateStore, repos, poll } = await setup();
+    flow.addAlarm(alarm('101'));
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: 'Claude usage limit reached.' } });
+    /** 시험할 멘션. 아직 감지하지 않은 기준점 뒤의 멘션이다. */
+    const [recent] = await recentMentionsOf(flow);
+
+    /** 끝낼 시험 묶음 ID. */
+    const ended = await bundles.startTrial(recent!);
+    await settle();
+    expect(await bundles.endTrial(ended!)).toBe(true);
+    /** 무시할 시험 묶음 ID. 하나를 끝냈으므로 다시 시험할 수 있다. */
+    const ignored = await bundles.startTrial(recent!);
+    await settle();
+    expect(bundles.get(ignored!)?.status).toBe('failed');
+    await bundles.ignore(ignored!);
+
+    expect(bundles.state()).toEqual([]);
+    expect(await stateStore.listBundles()).toEqual([]);
+    expect(await stateStore.listMinimalRecords()).toEqual([]);
+    expect(await stateStore.hasMentionLocation(recent!.mention)).toBe(false);
+    expect(stateStore.baselineAlarmId).toBe('100');
+
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    expect(bundles.state()).toMatchObject([{ trial: false, status: 'ready', mentions: [expect.objectContaining({ alarmId: '101' })] }]);
+  });
+
+  it('시험 묶음이 있는 동안 같은 자리에 온 멘션은 시험 묶음에 합치지 않고 실제 묶음이 된다', async () => {
+    const { flow, executor, bundles, stateStore, repos, poll } = await setup();
+    flow.addAlarm(alarm('101'));
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    /** 시험할 멘션. */
+    const [recent] = await recentMentionsOf(flow);
+    /** 시험 묶음 ID. */
+    const trialId = await bundles.startTrial(recent!);
+    await settle();
+
+    await poll();
+
+    expect(bundles.state().map((bundle) => [bundle.trial, bundle.status])).toEqual([
+      [true, 'ready'],
+      [false, 'ready'],
+    ]);
+    await bundles.endTrial(trialId!);
+    expect((await stateStore.listBundles()).map((bundle) => bundle.trial)).toEqual([false]);
   });
 });

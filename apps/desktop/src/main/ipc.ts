@@ -15,6 +15,7 @@ import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
 import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
+import type { TrialRun } from '../core/trial/trial-run';
 import { agentFixCommand } from '../shared/agent-fix-command';
 import {
   IPC_CHANNELS,
@@ -36,7 +37,7 @@ import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
 import type { AppWindows } from './app-windows';
 import { isAppRendererUrl } from './renderer-page';
 import type { ReviewSections } from './review-sections';
-import { flowUrlOf, reviewSnapshot, type ProjectLookup } from './review-snapshot';
+import { flowUrlOf, reviewSnapshot, trialSnapshot, type ProjectLookup } from './review-snapshot';
 
 /** IPC가 부르는 main의 일. */
 export interface IpcServices {
@@ -72,6 +73,8 @@ export interface IpcServices {
   reviewSections: ReviewSections;
   /** 근거의 "에디터에서 열기"와 설정 "일반"의 에디터. */
   editorOpener: EditorOpener;
+  /** 최근 멘션으로 시험의 멘션 고르기 목록. */
+  trialRun: TrialRun;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -126,6 +129,12 @@ export function registerIpc(services: IpcServices): void {
   // 게시를 누를 때의 확인이 게시를 멈춘 것도 그 순간 한 번만 토스트로 알린다.
   services.bundles.onPostStopped((bundleId, stop) => services.windows.broadcast({ type: 'post-stopped', bundleId, stop }));
   services.reviewSections.onChange(broadcastReview);
+  // 멘션 고르기 목록이 바뀌거나, 시험 묶음이 생기거나 지워지거나, 감지를 시작하면 시험을 시작할 수 있는지가 바뀐다.
+  /** 시험 상태를 열린 창에 알린다. */
+  const broadcastTrial = () => services.windows.broadcast({ type: 'trial-changed', trial: currentTrialSnapshot(services) });
+  services.trialRun.onChange(broadcastTrial);
+  services.bundles.onChange(broadcastTrial);
+  services.onboarding.onChange(broadcastTrial);
   services.repoMappings.onChange(broadcastReview);
   services.repoPicker.onChange(broadcastReview);
 }
@@ -141,6 +150,11 @@ function currentReviewSnapshot({ bundles, drafts, posting, reviewSections, repoM
     repoPicker.state(),
     (bundleId) => posting.countdownEndsAt(bundleId),
   );
+}
+
+/** 지금 시험 상태의 스냅숏. */
+function currentTrialSnapshot({ trialRun, bundles, onboarding }: IpcServices) {
+  return trialSnapshot(trialRun.state(), bundles.trialId(), onboarding.state().detectionStarted);
 }
 
 /** 참여 Flow 프로젝트 목록에서 Flow 프로젝트를 찾는 함수. 목록을 아직 받지 않았으면 언제나 `null`이다. */
@@ -174,6 +188,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     launchAtLogin: launchAtLogin.enabled(),
     editor: editorSnapshot(services.editorOpener.state()),
     review: currentReviewSnapshot(services),
+    trial: currentTrialSnapshot(services),
   };
 }
 
@@ -196,6 +211,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     repoPicker,
     reviewSections,
     editorOpener,
+    trialRun,
   } = services;
   switch (command.type) {
     case 'open-settings':
@@ -343,6 +359,21 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'set-editor':
       await editorOpener.setChoice(command.choice);
+      return;
+    case 'open-trial-picker':
+      await trialRun.open(command.window);
+      return;
+    case 'reload-trial-picker':
+      await trialRun.reload();
+      return;
+    case 'close-trial-picker':
+      trialRun.close();
+      return;
+    case 'start-trial':
+      await trialRun.start(command.alarmId);
+      return;
+    case 'end-trial':
+      await bundles.endTrial(command.bundleId);
       return;
   }
 }

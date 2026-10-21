@@ -6,6 +6,7 @@ import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
+import { EditorOpener } from '../core/editors/editor-opener';
 import { collectBundleContext } from '../core/flow/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
 import { draftAgentFrom, DraftQueue } from '../core/drafts/draft-queue';
@@ -26,6 +27,7 @@ import { globalProblemText, type GlobalProblemText } from '../shared/global-prob
 import { APP_ID, appPlatform, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
 import { createAppLogger } from './app-logger';
 import { AppWindows } from './app-windows';
+import { editorSystem } from './editor-system';
 import { globalProblemSnapshot, registerIpc } from './ipc';
 import { OsNotifier } from './os-notifier';
 import { ReviewSections } from './review-sections';
@@ -219,6 +221,9 @@ function start(): void {
     /** 설정 "일반" 칸의 로그인 시 자동 시작. [감지 시작]이 켠다. */
     const launchAtLogin = new LaunchAtLogin({ settingsStore: appData.settingsStore, logger, applyToSystem: applyLoginItem });
     await launchAtLogin.load();
+    /** 근거의 "에디터에서 열기". 기억한 에디터를 읽고 이 PC의 에디터를 찾아 둔다. */
+    const editorOpener = new EditorOpener({ settingsStore: appData.settingsStore, logger, system: editorSystem() });
+    void editorOpener.refresh().catch((error: unknown) => logger.warn('editor.refresh-failed', errorFields(error)));
     /** 필수 세 가지와 [감지 시작]. 각 칸의 모듈이 저장한 상태에서 필수 항목을 읽는다. */
     const onboarding = new Onboarding({
       settingsStore: appData.settingsStore,
@@ -266,6 +271,7 @@ function start(): void {
       drafts: draftQueue,
       repoPicker,
       reviewSections: new ReviewSections(),
+      editorOpener,
     });
     /** 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣는다. */
     const mentionDetection = new MentionDetection({

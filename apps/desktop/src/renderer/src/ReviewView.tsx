@@ -1,6 +1,7 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleSections, IgnoreToast, OpenInFlowButton, RunLine, StatusTag } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
+import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
 import { BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatMentionTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
 import { useBundleActions, useBundleSelection } from './useReview';
@@ -101,6 +102,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
       </div>
       {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
+      {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
     </div>
   );
 }

@@ -268,7 +268,14 @@ describe('묶음 스냅숏: 초안 실행', () => {
     expect(snapshot).toMatchObject({ status: 'ready', group: 'awaiting-review', generation: null, failure: null, repoCheck: null });
     expect(snapshot.draft).toEqual({
       requirement: { text: '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.', summary: '재시도 횟수' },
-      paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }, { text: '시험 환경은 세 번으로 보입니다.', evidence: [] }] }],
+      paragraphs: [
+        {
+          sentences: [
+            { text: '다섯 번까지 다시 시도합니다.', evidence: [1], developerTerms: [] },
+            { text: '시험 환경은 세 번으로 보입니다.', evidence: [], developerTerms: [] },
+          ],
+        },
+      ],
       evidence: [
         {
           id: 1,
@@ -278,8 +285,9 @@ describe('묶음 스냅숏: 초안 실행', () => {
           startLine: 88,
           endLine: 90,
           located: true,
+          developerTerms: [],
         },
-        { id: 2, explanation: '넘기지 않은 저장소의 근거', repositoryName: 'other', path: 'a.ts', startLine: 1, endLine: 1, located: false },
+        { id: 2, explanation: '넘기지 않은 저장소의 근거', repositoryName: 'other', path: 'a.ts', startLine: 1, endLine: 1, located: false, developerTerms: [] },
       ],
       repositories: [
         { name: 'billing-api', path: '/fake/work/billing-api' },
@@ -515,5 +523,43 @@ describe('초안 편집기와 받는 사람', () => {
     const snapshot = bundleSnapshot(bundle({ status: 'ignored', processedAt: 2_000, draft, mentions, editedText: '고친 초안입니다.' }), () => null).draft;
 
     expect(snapshot).toMatchObject({ editorText: '고친 초안입니다.', edited: true, canEdit: false });
+  });
+});
+
+describe('문체 검사', () => {
+  it('초안 문장과 근거 설명마다 개발자 용어일 수 있는 말을 넘기고, 멘션 원문·게시물 제목·스레드에 나온 말은 뺀다', () => {
+    /** 송신자가 retryCount를, 대댓글의 동료가 RetryConfig.kt를 쓴 맥락. */
+    const threadContext: BundleContext = {
+      ...context(),
+      targetThread: { ...context().targetThread!, replies: [{ ...context().targetThread!.replies[0]!, contents: 'RetryConfig.kt도 봐 주세요' }] },
+    };
+    /** 스냅숏의 초안. */
+    const snapshot = bundleSnapshot(
+      bundle({
+        status: 'ready',
+        postTitle: 'billing.retry 설정 문의',
+        mentions: [mention('101', { text: '@[테스트 사용자](me@example.test) retryCount가 몇인가요?' })],
+        context: threadContext,
+        draft: {
+          requirement: { text: '요구', summary: '요약' },
+          paragraphs: [
+            {
+              sentences: [
+                { text: 'retryCount는 maxAttempts로 정합니다.', evidence: [1] },
+                { text: 'RetryConfig.kt와 billing.retry를 보면 됩니다.', evidence: [] },
+              ],
+            },
+          ],
+          evidence: [{ id: 1, explanation: 'application-prod.yml에서 정합니다.', repository: '/fake/work/api', path: 'a.yml', startLine: 1, endLine: 1, located: true }],
+          repositories: ['/fake/work/api'],
+          autoSelection: null,
+          createdAt: 144_000,
+        },
+      }),
+      () => null,
+    ).draft;
+
+    expect(snapshot?.paragraphs[0]?.sentences.map((sentence) => sentence.developerTerms)).toEqual([['maxAttempts'], []]);
+    expect(snapshot?.evidence[0]?.developerTerms).toEqual(['application-prod.yml']);
   });
 });

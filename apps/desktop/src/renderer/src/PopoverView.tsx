@@ -2,6 +2,7 @@ import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleMeta, BundleSections, IgnoreToast, StatusTag } from './BundleDetail';
 import { SetupChecklist, WindowsTrayHint } from './Onboarding';
+import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
@@ -110,6 +111,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
       )}
       {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
+      {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
     </>
   );
 }

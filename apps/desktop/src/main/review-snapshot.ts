@@ -2,6 +2,7 @@ import { basename } from 'node:path';
 import { activeMentions, canEditDraft, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, postBody } from '../core/drafts/post-body';
+import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
@@ -113,9 +114,13 @@ export function bundleSnapshot(
 function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatch): DraftSnapshot {
   /** 받는 사람. */
   const recipients = bundleRecipients(bundle);
+  /** 문체 검사에서 뺄 단어. */
+  const source = bundleSourceWords(bundle);
   return {
     requirement: { ...draft.requirement },
-    paragraphs: draft.paragraphs.map((paragraph) => ({ sentences: paragraph.sentences.map((sentence) => ({ ...sentence, evidence: [...sentence.evidence] })) })),
+    paragraphs: draft.paragraphs.map((paragraph) => ({
+      sentences: paragraph.sentences.map((sentence) => ({ ...sentence, evidence: [...sentence.evidence], developerTerms: developerTerms(sentence.text, source) })),
+    })),
     evidence: draft.evidence.map(({ id, explanation, repository, path, startLine, endLine, located }) => ({
       id,
       explanation,
@@ -124,6 +129,7 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
       startLine,
       endLine,
       located,
+      developerTerms: developerTerms(explanation, source),
     })),
     repositories: draft.repositories.map((path) => ({ name: basename(path), path })),
     autoSelection: draft.autoSelection && { ...draft.autoSelection },

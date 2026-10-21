@@ -69,14 +69,25 @@ function alarm(alarmId: string, overrides: Partial<FlowAlarm> = {}): FlowAlarm {
   };
 }
 
+/** `settle`이 한 번에 기다리는 가장 긴 실제 시간(밀리초). 파일 작업이 끝나지 않는 고장이 있어도 테스트가 멈추지 않게 한다. */
+const SETTLE_LIMIT_MS = 3_000;
+
 /**
  * 가짜 시계가 부른 일과 가짜 포트의 응답이 모두 끝나도록 대기 중인 비동기 일을 여러 번 돌린다. 가짜 포트는 모두 바로 답한다.
- * 저장소 폴더 확인과 근거 위치 검증은 임시 폴더의 실제 파일을 읽으므로, 파일 읽기가 끝날 틈을 실제 시간으로도 준다.
+ * 저장소 폴더 확인, 근거 위치 검증, 지침 파일 쓰기는 임시 폴더의 실제 파일을 다루므로, 끝나지 않은 파일 작업이 없는 차례가
+ * 연달아 지날 때까지 기다린다. 정해진 시간만 기다리면 기계가 바빠 파일 작업이 늦을 때 흔들린다.
  */
 async function settle(): Promise<void> {
-  for (let round = 0; round < 3; round += 1) {
+  /** 그만 기다릴 시각. */
+  const deadline = Date.now() + SETTLE_LIMIT_MS;
+  /** 끝나지 않은 파일 작업 없이 연달아 지나간 차례 수. */
+  let quietRounds = 0;
+  while (quietRounds < 3 && Date.now() < deadline) {
     for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    /** 끝나기를 기다리는 파일 작업이 있는지 여부. Node는 진행 중인 파일 작업을 `FSReq`로 시작하는 이름으로 보인다. */
+    const filesPending = process.getActiveResourcesInfo().some((resource) => resource.startsWith('FSReq'));
+    quietRounds = filesPending ? 0 : quietRounds + 1;
+    await new Promise((resolve) => setTimeout(resolve, filesPending ? 5 : 1));
   }
 }
 

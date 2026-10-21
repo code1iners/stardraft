@@ -12,7 +12,8 @@ async function lintAs(filePath: string, code: string): Promise<string[]> {
   return (result?.messages ?? []).map((message) => message.ruleId ?? 'parse-error');
 }
 
-describe('import 경계', () => {
+// ESLint를 처음 띄울 때 설정과 플러그인을 읽느라, 기계가 바쁘면 첫 검사가 기본 제한 시간(5초)을 넘긴다(실측: 부하가 높을 때 10~23초).
+describe('import 경계', { timeout: 60_000 }, () => {
   it('core가 Electron을 import하면 lint가 실패한다', async () => {
     const rules = await lintAs('src/core/probe.ts', "import { app } from 'electron';\nexport const name = app.name;\n");
 

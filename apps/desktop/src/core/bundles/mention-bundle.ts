@@ -52,8 +52,11 @@ export function listGroupOf(status: BundleStatus): BundleListGroup {
   }
 }
 
+/** 처리됨 상태. 게시됨·무시함·이미 답함·원문 사라짐이다. */
+export type ProcessedStatus = Extract<BundleStatus, 'posted' | 'ignored' | 'already-answered' | 'source-gone'>;
+
 /** 처리됨(게시됨·무시함·이미 답함·원문 사라짐)인지 본다. 처리됨 묶음은 작은 창 대기열에 없고 되돌릴 수만 있다. */
-export function isProcessed(status: BundleStatus): boolean {
+export function isProcessed(status: BundleStatus): status is ProcessedStatus {
   return listGroupOf(status) === 'processed';
 }
 
@@ -270,6 +273,31 @@ export interface MentionBundle extends BundlePlace {
   runs: RunRecord[];
   /** 게시 기록. 게시 요청을 보내기 전이거나(카운트다운 중 포함) 게시하지 않았으면 `null`. */
   posting: PostingRecord | null;
+}
+
+/**
+ * 최소 기록. 처리됨 목록에서 빠진 묶음의 ID와 상태만 남긴 것이다. 송신자 이름과 글 내용은 넣지 않는다.
+ * 같은 멘션 위치에서 다시 온 알림을 막고, 이 PC가 게시한 글이 답한 범위로 "이미 답함"을 판정하는 데 쓴다. 계정이 바뀔 때까지 남는다.
+ */
+export interface MinimalRecord extends BundlePlace {
+  /** 빠지기 전 묶음의 ID. */
+  bundleId: number;
+  /** 묶음에 있던 멘션 위치 전부. 이미 답함으로 빠지거나 사라진 멘션도 넣는다. */
+  mentions: MentionLocation[];
+  /** 마지막 상태. */
+  status: ProcessedStatus;
+  /** 처리한 시각(Unix epoch 밀리초). */
+  processedAt: number;
+  /** 이 PC가 게시한 글. 게시됨이 아니면 `null`. */
+  posted: PostedAnswer | null;
+}
+
+/** 이 PC가 게시한 글과 그 글이 답한 범위. */
+export interface PostedAnswer {
+  /** 올라간 글의 ID(`commentId`·`replyId`). */
+  postedId: string;
+  /** 그 글이 답한 멘션 위치. 게시 기록의 `answeredMentions`와 같다. */
+  answeredMentions: MentionLocation[];
 }
 
 /** 아직 저장하지 않아 ID가 없을 수 있는 묶음. 새 묶음은 저장할 때 ID를 받는다. */

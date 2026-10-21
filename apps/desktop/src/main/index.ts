@@ -6,6 +6,7 @@ import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
+import { BundleRetention } from '../core/bundles/retention';
 import { EditorOpener } from '../core/editors/editor-opener';
 import { collectBundleContext } from '../core/flow/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
@@ -48,6 +49,8 @@ let detection: MentionDetection | null = null;
 let drafts: DraftQueue | null = null;
 /** 게시. 끝낼 때 카운트다운을 멈춘다. */
 let posting: Posting | null = null;
+/** 처리됨 목록 정리. 끝낼 때 다음 정리를 멈춘다. */
+let retention: BundleRetention | null = null;
 
 applyAppIdentity();
 
@@ -76,6 +79,7 @@ function start(): void {
     drafts?.stop();
     // state.db를 닫은 뒤에 카운트다운이 끝나 게시 요청을 보내지 않게 멈춘다. 카운트다운 중이던 묶음은 게시 중으로 남는다.
     posting?.stop();
+    retention?.stop();
     appData?.close();
     appData = null;
   });
@@ -186,6 +190,9 @@ function start(): void {
       resolveRepos: (projectId) => repoMappings.resolve(projectId),
     });
     await mentionBundles.load();
+    // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
+    retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
+    retention.start();
     /**
      * 초안 대기열. 생성 중 묶음을 기본 에이전트로 하나씩 실행한다. 실행마다 직전에 CLI 버전을 확인하고,
      * 에이전트 연결이 없거나 전역 실패면 연결될 때까지 멈춘다.
@@ -320,8 +327,11 @@ function start(): void {
     onboarding.onChange(syncDetection);
     flowAccount.onChange(syncDetection);
     globalProblems.onChange(syncDetection);
-    // 잠자기에서 깨어나면 밀린 멘션을 바로 조회한다.
-    powerMonitor.on('resume', () => void mentionDetection.checkNow());
+    // 잠자기에서 깨어나면 밀린 멘션을 바로 조회하고, 잠든 동안 멈춘 하루 타이머 대신 처리됨 목록도 정리한다.
+    powerMonitor.on('resume', () => {
+      void mentionDetection.checkNow();
+      retention?.cleanUpNow();
+    });
 
     // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
     // 참여 Flow 프로젝트 목록은 "저장소" 칸을 열 때 받는다.

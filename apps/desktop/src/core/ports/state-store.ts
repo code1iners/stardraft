@@ -1,4 +1,4 @@
-import type { MentionBundle, UnsavedBundle } from '../bundles/mention-bundle';
+import type { MentionBundle, MinimalRecord, UnsavedBundle } from '../bundles/mention-bundle';
 import type { MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from './flow-api';
 
@@ -22,7 +22,7 @@ export interface StateStore {
   setBaselineAlarmId(alarmId: string): Promise<void>;
   /**
    * 이 멘션 위치를 이미 기록해 두었는지 본다. 같은 멘션 위치에서 다시 온 알림은 글이 수정됐더라도 다시 감지하지 않는다.
-   * 지금은 묶음에 든 멘션을 보고, 처리한 묶음의 최소 기록(ID와 상태만 남긴 기록)이 생기면 그것도 함께 본다.
+   * 묶음에 든 멘션과 처리됨 목록에서 빠진 묶음의 최소 기록을 함께 본다.
    */
   hasMentionLocation(location: MentionLocation): Promise<boolean>;
   /** 저장한 멘션 묶음 전부. 묶음마다 멘션은 알림 시각 순서다. */
@@ -35,4 +35,11 @@ export interface StateStore {
   saveDetectedBundles(bundles: readonly UnsavedBundle[], baselineAlarmId: string): Promise<MentionBundle[]>;
   /** 이미 저장한 묶음 하나를 주어진 값으로 맞춘다. 무시·되돌리기처럼 상태를 바꿀 때 쓴다. */
   saveBundle(bundle: MentionBundle): Promise<void>;
+  /** 처리됨 목록에서 빠져 최소 기록만 남은 묶음 전부. 묶음 ID 순서다. */
+  listMinimalRecords(): Promise<MinimalRecord[]>;
+  /**
+   * 처리됨 목록에서 빠지는 묶음마다 전체 기록(묶음, 멘션, 내 답)을 지우고 주어진 최소 기록만 남긴다. 한 트랜잭션으로 한다.
+   * 지운 Flow 글과 초안이 파일에 남지 않게 한다. 최소 기록의 `bundleId`가 지울 묶음이다.
+   */
+  archiveBundles(records: readonly MinimalRecord[]): Promise<void>;
 }

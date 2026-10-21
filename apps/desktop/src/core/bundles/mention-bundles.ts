@@ -11,6 +11,7 @@ import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
 import { unseenChanges } from './bundle-changes';
+import { isExpired, minimalRecordOf } from './retention';
 import {
   activeMentions,
   bundlePlaceKey,
@@ -32,6 +33,7 @@ import {
   type BundlePlace,
   type BundleStatus,
   type MentionBundle,
+  type MinimalRecord,
   type PostedAnswerRanges,
   type PostFailureReason,
   type PostStop,
@@ -119,6 +121,8 @@ interface PostCheck {
 export class MentionBundles {
   /** 저장한 묶음 전부. 저장소와 같은 내용을 들고 있다. */
   private bundles: MentionBundle[] = [];
+  /** 처리됨 목록에서 빠진 묶음의 최소 기록 전부. 저장소와 같은 내용을 들고 있다. */
+  private minimalRecords: MinimalRecord[] = [];
   /** 묶음을 바꾸는 일을 하나씩 하는 줄. */
   private readonly lane = new SerialQueue();
   /** 묶음이 바뀔 때 부를 함수. */
@@ -138,6 +142,7 @@ export class MentionBundles {
   load(): Promise<void> {
     return this.lane.run(async () => {
       this.bundles = await this.options.stateStore.listBundles();
+      this.minimalRecords = await this.options.stateStore.listMinimalRecords();
       this.emit();
     });
   }
@@ -167,9 +172,9 @@ export class MentionBundles {
     return this.bundles.filter((bundle) => countsForReview(bundle.status)).length;
   }
 
-  /** 이 PC가 게시해 기록한 글의 ID(`commentId`, `replyId`) 전부. */
+  /** 이 PC가 게시해 기록한 글의 ID(`commentId`, `replyId`) 전부. 처리됨 목록에서 빠져 최소 기록만 남은 글도 넣는다. */
   postedIds(): Set<string> {
-    return new Set(this.bundles.flatMap((bundle) => (bundle.posting?.postedId ? [bundle.posting.postedId] : [])));
+    return new Set(this.postedRanges().keys());
   }
 
   /** 실패나 게시 실패 묶음이 있는지 본다. 트레이에 빨간 점을 띄운다. */
@@ -209,8 +214,8 @@ export class MentionBundles {
       const now = this.options.clock.now();
       /** 이번에 바뀌는 묶음과 새로 넣은 멘션. 자리마다 하나다. */
       const touched = new Map<string, { bundle: UnsavedBundle; added: Set<string> }>();
-      /** 이미 묶음에 든 멘션 위치. 같은 위치는 한 묶음에만 넣는다. */
-      const known = new Set(this.bundles.flatMap((bundle) => bundle.mentions.map(mentionLocationKey)));
+      /** 이미 묶음이나 최소 기록에 든 멘션 위치. 같은 위치는 한 묶음에만 넣고, 최소 기록의 위치는 다시 감지하지 않는다. */
+      const known = new Set([...this.bundles, ...this.minimalRecords].flatMap((item) => item.mentions.map(mentionLocationKey)));
 
       for (const mention of [...mentions].sort(compareMentions)) {
         /** 멘션 위치. */
@@ -836,6 +841,11 @@ export class MentionBundles {
     /** 되돌릴 묶음. */
     const bundle = this.bundles.find((item) => item.id === bundleId);
     if (!bundle || !isRestorable(bundle.status)) return;
+    // 7일이 지났으면 아직 정리하지 않았어도 되돌리지 않고 지금 정리해 목록에서 뺀다.
+    if (isExpired(bundle, this.options.clock.now())) {
+      await this.archiveExpired();
+      return;
+    }
     /** 지금 Flow에 있는 내 답. 자동으로 옮겨진 묶음이 아니거나 조회하지 못하면 `null`. */
     const current = isAutoProcessed(bundle.status) ? await this.options.findMyAnswers(bundle).catch(() => null) : null;
     /** 초안이 없을 때 돌아갈 상태를 정할 저장소 매핑. */
@@ -844,7 +854,7 @@ export class MentionBundles {
     // 조회하는 사이에 상태가 바뀌었을 수 있으므로 줄에 들어가 지금 값으로 다시 본다.
     /** 되돌린 묶음. */
     const restored = await this.change(bundleId, 'bundle.restored', (latest) => {
-      if (!isRestorable(latest.status)) return null;
+      if (!isRestorable(latest.status) || isExpired(latest, this.options.clock.now())) return null;
       /** 판정에서 뺄 것을 기록하는지 여부. */
       const recording = isAutoProcessed(latest.status);
       /** 되돌린 뒤의 내 답 기록. */
@@ -859,6 +869,32 @@ export class MentionBundles {
     });
     // 초안 없이 기다리게 되면 원문 영역에 보일 맥락을 새로 조회한다. 생성 중이면 초안 실행 직전에 조회한다.
     if (restored && showsContextWithoutDraft(restored)) await this.refreshContexts([bundleId]);
+  }
+
+  /**
+   * 처리한 지 7일이 된 처리됨 묶음을 목록에서 뺀다. 전체 기록을 지우고 최소 기록만 남긴다. 게시됨도 같다. 뺀 묶음 수를 돌려준다.
+   * 보관 정리가 앱을 켤 때와 하루에 한 번 부르고, 7일이 지난 묶음을 되돌리려 할 때도 부른다.
+   */
+  archiveExpired(): Promise<number> {
+    // 줄에서 앞선 일을 기다리는 동안 시각이 지나도, 정리를 부른 때를 기준으로 7일을 잰다.
+    /** 정리를 부른 시각. */
+    const now = this.options.clock.now();
+    return this.lane.run(async () => {
+      /** 목록에서 뺄 묶음. */
+      const expired = this.bundles.filter((bundle) => isExpired(bundle, now));
+      if (expired.length === 0) return 0;
+
+      /** 남길 최소 기록. */
+      const records = expired.map(minimalRecordOf);
+      await this.options.stateStore.archiveBundles(records);
+      /** 뺀 묶음 ID. */
+      const ids = new Set(expired.map((bundle) => bundle.id));
+      this.bundles = this.bundles.filter((bundle) => !ids.has(bundle.id));
+      this.minimalRecords = [...this.minimalRecords, ...records];
+      this.options.logger.info('bundle.archived', { count: records.length });
+      this.emit();
+      return records.length;
+    });
   }
 
   /**
@@ -897,9 +933,14 @@ export class MentionBundles {
    * 그래야 게시 중에 들어와 새 묶음이 된 멘션이 그 글 때문에 바로 "이미 답함"으로 숨지 않는다. 다른 PC나 Flow 화면에서 쓴 내 답은 시각으로 판정한다.
    */
   private postedRanges(): PostedAnswerRanges {
+    /** 묶음과 최소 기록마다 게시한 글과 그 글이 답한 범위. */
+    const posted = [
+      ...this.bundles.map((bundle) => bundle.posting),
+      ...this.minimalRecords.map((record) => record.posted),
+    ];
     return new Map(
-      this.bundles.flatMap((bundle): [string, Set<string>][] =>
-        bundle.posting?.postedId ? [[bundle.posting.postedId, new Set(bundle.posting.answeredMentions.map(mentionLocationKey))]] : [],
+      posted.flatMap((item): [string, Set<string>][] =>
+        item?.postedId ? [[item.postedId, new Set(item.answeredMentions.map(mentionLocationKey))]] : [],
       ),
     );
   }

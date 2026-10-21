@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { codexNotLoggedInStream, codexStream, codexStream as stream, codexSuccessStream, fakeCodexEvent } from '../fakes/fake-codex-events';
+import { codexNotLoggedInStream, codexStream as stream, codexSuccessStream, fakeCodexEvent } from '../fakes/fake-codex-events';
 import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
 import type { ExecutorRunRequest } from '../ports/executor';
 import type { AgentLaunch, AgentRunReport } from './agent-launch';
@@ -404,7 +404,7 @@ describe('Codex 실행기: 실패', () => {
     answerCli(runner, { kind: 'spawn-failed', message: 'spawn EACCES' });
     expect((await executor.run(draftRequest())).outcome).toEqual({ type: 'failed', reason: 'cli-missing', detail: 'spawn EACCES' });
 
-    answerCli(runner, { kind: 'timed-out', stdout: codexStream(fakeCodexEvent.threadStarted()), stderr: '' });
+    answerCli(runner, { kind: 'timed-out', stdout: stream(fakeCodexEvent.threadStarted()), stderr: '' });
     expect((await executor.run(draftRequest())).outcome).toEqual({ type: 'timed-out' });
 
     answerCli(runner, { kind: 'aborted', stdout: '', stderr: '' });

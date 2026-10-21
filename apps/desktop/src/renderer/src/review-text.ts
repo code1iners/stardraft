@@ -16,7 +16,7 @@ import {
   type RunLineSnapshot,
   type WritingChangeSnapshot,
 } from '../../shared/ipc';
-import { AGENT_NAMES } from '../../shared/agent-names';
+import { AGENT_INFO } from '../../shared/agent-info';
 
 /** 상태 태그의 이름과 색. 준비됨은 파랑, 생성 중·게시 중은 회색, 실패는 빨강, 확인이 필요한 상태는 노랑, 처리됨은 옅은 회색이다. */
 export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; className: string }> = {
@@ -276,7 +276,7 @@ export function formatDuration(durationMs: number): string {
 
 /** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"이다. */
 export function runLineText(run: RunLineSnapshot): string {
-  return [AGENT_NAMES[run.agent], formatDuration(run.durationMs), ...(run.contextOmitted ? ['맥락 일부 생략'] : [])].join(' · ');
+  return [AGENT_INFO[run.agent].name, formatDuration(run.durationMs), ...(run.contextOmitted ? ['맥락 일부 생략'] : [])].join(' · ');
 }
 
 /** 근거 번호를 원문자(①②…)로 보인다. ⑳을 넘으면 괄호 숫자다. */

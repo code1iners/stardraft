@@ -206,6 +206,16 @@ describe('여러 에이전트의 전역 문제', () => {
     expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'codex', reason: 'not-logged-in' });
   });
 
+  it('모두 설치되어 있지 않으면 저장한 기본 에이전트와 상관없이 늘 칸에 보이는 Claude Code의 CLI 없음을 보인다', async () => {
+    const { connections, problems, uninstall } = setup({ settings: { detectionStarted: true, defaultAgent: 'codex' } });
+    uninstall('claude-code');
+    uninstall('codex');
+
+    await connections.checkAll();
+
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'cli-missing' });
+  });
+
   it('하나라도 다시 연결되면 전역 문제가 사라진다', async () => {
     const { connections, problems, clis } = setup({ settings: { detectionStarted: true } });
     clis['claude-code'].loggedIn = false;

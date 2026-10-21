@@ -1,4 +1,4 @@
-import { AGENT_NAMES } from './agent-names';
+import { AGENT_INFO } from './agent-info';
 import type { AgentProblemReason, AppSnapshot, GlobalProblemSnapshot, SettingsSection } from './ipc';
 
 /** 전역 문제를 띠, 트레이 메뉴, OS 알림에 보일 문구. 세 곳이 같은 문구를 쓴다. */
@@ -16,7 +16,12 @@ export interface GlobalProblemText {
 /** 전역 문제의 문구. 저장된 키를 읽을 수 없는 이유는 키를 지키는 곳(macOS 키체인, Windows DPAPI)이 달라 OS마다 다르게 적는다. */
 export function globalProblemText(problem: GlobalProblemSnapshot, platform: AppSnapshot['platform']): GlobalProblemText {
   if (problem.cause === 'agent') {
-    return { title: '에이전트 확인 필요', message: agentProblemMessage(problem.reason, AGENT_NAMES[problem.agent]), actionLabel: '에이전트 확인', actionSection: 'agent' };
+    return {
+      title: '에이전트 확인 필요',
+      message: agentProblemMessage(problem.reason, AGENT_INFO[problem.agent].name),
+      actionLabel: '에이전트 확인',
+      actionSection: 'agent',
+    };
   }
   return {
     title: '키 확인 필요',

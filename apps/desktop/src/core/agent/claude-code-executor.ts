@@ -14,12 +14,10 @@ import type {
 import type { AgentExecutorOptions } from './agent-launch';
 import { CLAUDE_MAX_TURNS } from './claude-cli';
 import { withoutAgentApiKeys } from './cli-discovery';
+import { asRecord, failedOutcome, numberOrNull, parseJsonObject } from './executor-output';
 import type { ProcessResult } from './process-runner';
 import { readingFileStep, searchingStep } from './progress-steps';
 import { withDefaultSecretPatterns } from './secret-patterns';
-
-/** 오류 원문의 최대 길이. 넘으면 앞부분만 남긴다. */
-const DETAIL_MAX_LENGTH = 2_000;
 
 /**
  * Claude Code 실행기. 에이전트 실행 계약의 필수 플래그 묶음으로 `claude -p`를 띄우고,
@@ -42,7 +40,7 @@ export class ClaudeCodeExecutor implements Executor {
   private async execute(request: ExecutorRunRequest): Promise<ExecutorReport> {
     /** 띄울 CLI와 환경. */
     const launch = this.options.launch();
-    if (!launch) return { outcome: failed('cli-missing', 'Claude Code CLI를 아직 찾지 못했습니다.'), cliVersion: null, model: null, usage: null };
+    if (!launch) return { outcome: failedOutcome('cli-missing', 'Claude Code CLI를 아직 찾지 못했습니다.'), cliVersion: null, model: null, usage: null };
     /** cwd가 될 첫 저장소와 `--add-dir`로 붙일 나머지. */
     const [cwd, ...extraRoots] = request.readRoots;
     if (cwd === undefined) throw new Error('읽을 디렉터리가 없습니다.');
@@ -138,7 +136,7 @@ class ClaudeStreamReader {
   /** 표준 출력 한 줄을 읽는다. */
   push(line: string): void {
     /** JSON으로 푼 이벤트. */
-    const event = parseObject(line);
+    const event = parseJsonObject(line);
     if (!event) return;
     if (event.type === 'system' && event.subtype === 'init') {
       if (typeof event.claude_code_version === 'string') this.cliVersion = event.claude_code_version;
@@ -207,11 +205,6 @@ function contentBlocks(message: unknown): Record<string, unknown>[] {
   return Array.isArray(content) ? content.map(asRecord).filter((block) => block !== null) : [];
 }
 
-/** 배열이 아닌 객체면 필드를 읽을 수 있게, 아니면 `null`. */
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
 /**
  * 프로세스 결과와 stream-json으로 실행 결과를 정한다.
  * 결과 메시지 없이 끝나면 표준 오류만 오류 원문으로 남긴다. 표준 출력의 stream-json에는 읽은 파일 내용이 들어 있을 수 있다.
@@ -219,7 +212,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function classifyClaudeRun(result: ProcessResult, reader: ClaudeStreamReader): ExecutorOutcome {
   switch (result.kind) {
     case 'spawn-failed':
-      return failed('cli-missing', result.message);
+      return failedOutcome('cli-missing', result.message);
     case 'timed-out':
       return { type: 'timed-out' };
     case 'aborted':
@@ -230,7 +223,7 @@ function classifyClaudeRun(result: ProcessResult, reader: ClaudeStreamReader): E
 
   /** 마지막 `result` 메시지. */
   const message = reader.result;
-  if (!message) return failed('cli-error', result.stderr.trim() || `종료 코드 ${String(result.exitCode)}로 끝났습니다.`);
+  if (!message) return failedOutcome('cli-error', result.stderr.trim() || `종료 코드 ${String(result.exitCode)}로 끝났습니다.`);
   /** CLI가 알려 준 결과 문장. 실패면 오류 문장이다. */
   const text = typeof message.result === 'string' ? message.result : '';
 
@@ -238,10 +231,10 @@ function classifyClaudeRun(result: ProcessResult, reader: ClaudeStreamReader): E
     return { type: 'invalid-output', detail: '스키마에 맞는 구조화 출력을 만들지 못했습니다.' };
   }
   if (message.subtype === 'error_max_turns' || message.terminal_reason === 'max_turns') {
-    return failed('max-turns', text || '턴 수 상한에 닿았습니다.');
+    return failedOutcome('max-turns', text || '턴 수 상한에 닿았습니다.');
   }
   if (message.is_error === true || message.subtype !== 'success') {
-    return failed(apiFailureReason(reader.apiError, message.api_error_status), text || String(message.subtype));
+    return failedOutcome(apiFailureReason(reader.apiError, message.api_error_status), text || String(message.subtype));
   }
 
   /** 스키마 결과. 문서는 성공이어도 비어 있을 수 있다고 한다. */
@@ -259,23 +252,4 @@ function apiFailureReason(apiError: string | null, status: unknown): ExecutorFai
   // 연결 자체가 실패하면 HTTP 상태 없이 server_error로 온다(실측: 연결 거부를 10회 재시도한 뒤).
   if (apiError === 'server_error' && (status === null || status === undefined)) return 'network';
   return 'agent-error';
-}
-
-/** 실패 결과를 만든다. 오류 원문은 길이 상한까지만 남긴다. */
-function failed(reason: ExecutorFailureReason, detail: string): ExecutorOutcome {
-  return { type: 'failed', reason, detail: detail.slice(0, DETAIL_MAX_LENGTH) };
-}
-
-/** 유한한 숫자면 그 값, 아니면 `null`. */
-function numberOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-/** JSON 객체 한 줄을 푼다. 객체가 아니면 `null`. */
-function parseObject(line: string): Record<string, unknown> | null {
-  try {
-    return asRecord(JSON.parse(line));
-  } catch {
-    return null;
-  }
 }

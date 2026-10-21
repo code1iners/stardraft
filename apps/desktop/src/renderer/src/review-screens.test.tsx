@@ -86,6 +86,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
       {
         agent: 'claude-code',
         progress: { status: 'connected' },
+        cliFound: true,
         details: {
           cliPath: null,
           cliCommand: 'claude',

@@ -922,6 +922,24 @@ describe('에이전트 연결 확인: Codex', () => {
     expect(request?.env).toEqual({ PATH: SHELL_PATH, HOME: home, LANG: 'ko_KR.UTF-8' });
   });
 
+  it('설치를 찾았는지(cliFound)는 마지막으로 끝난 찾기 단계의 결과이고, 다시 확인하는 동안에도 앞 확인의 값을 둔다', async () => {
+    const { runner, connection, linkPath } = setupCodex();
+    expect(connection.state().cliFound).toBe(false);
+    await connection.check();
+    expect(connection.state().cliFound).toBe(true);
+
+    /** 다시 확인하는 동안 받은 찾기 여부. */
+    const seen: boolean[] = [];
+    connection.onChange((state) => seen.push(state.cliFound));
+    rmSync(linkPath);
+    await connection.check();
+
+    // 저장한 경로가 사라져 다시 찾았지만 찾지 못했다. 찾기 단계가 끝나기 전까지는 앞 확인의 값이다.
+    expect(seen[0]).toBe(true);
+    expect(connection.state()).toMatchObject({ progress: { status: 'failed', failure: { step: 'find', reason: 'not-found' } }, cliFound: false });
+    expect(runner.requests.length).toBeGreaterThan(0);
+  });
+
   it('모델 목록은 연결 확인 때 codex debug models에서 visibility가 list인 모델을 우선순위대로 읽는다', async () => {
     const { connection } = setupCodex();
     expect(connection.models()).toEqual([]);

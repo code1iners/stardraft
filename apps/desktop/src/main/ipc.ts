@@ -20,7 +20,7 @@ import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding'
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import type { TrialRun } from '../core/trial/trial-run';
 import { agentFixCommand } from '../shared/agent-fix-command';
-import { AGENT_NAMES } from '../shared/agent-names';
+import { AGENT_INFO } from '../shared/agent-info';
 import {
   IPC_CHANNELS,
   parseAppCommand,
@@ -544,7 +544,7 @@ function workFoldersSnapshot(state: WorkFoldersState): WorkFoldersSnapshot {
 /** 파일 선택 창으로 CLI를 받아 확인한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
 async function pickAgentCli(windows: AppWindows, agentConnection: AgentConnection): Promise<void> {
   /** 에이전트 이름. */
-  const name = AGENT_NAMES[agentConnection.agent];
+  const name = AGENT_INFO[agentConnection.agent].name;
   /** 파일 선택 창 설정. macOS는 `~/.local` 같은 숨김 폴더도 고를 수 있게 한다. */
   const options: OpenDialogOptions = {
     title: `${name} CLI 직접 지정`,
@@ -574,7 +574,12 @@ function copyAgentFixCommand(agentConnection: AgentConnection): void {
 
 /** core의 에이전트 연결 상태를 렌더러에 넘길 모양으로 바꾼다. */
 function agentConnectionSnapshot(state: AgentConnectionState): AgentConnectionSnapshot {
-  return { agent: state.agent, progress: state.progress, details: { ...state.details, searchedDirs: [...state.details.searchedDirs] } };
+  return {
+    agent: state.agent,
+    progress: state.progress,
+    cliFound: state.cliFound,
+    details: { ...state.details, searchedDirs: [...state.details.searchedDirs] },
+  };
 }
 
 /** 후보 에이전트마다의 연결 상태. 후보 순서다. */

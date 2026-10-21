@@ -16,7 +16,7 @@ export type AgentSetupStatus = 'connected' | 'checking' | 'not-connected';
 /**
  * 이 OS에서 후보가 되는 에이전트마다 둔 연결 확인의 묶음. macOS는 Claude Code와 Codex, Windows는 Claude Code만이다.
  * 에이전트 전역 문제는 대기열이 쓸 에이전트가 하나도 없을 때만 띄운다. 연결된 에이전트가 있으면 기본 에이전트가 그것으로 바뀌어
- * 대기열이 이어 가기 때문이다. 띄울 때는 저장한 기본 에이전트의 문제를 먼저 보이되, 설치된 에이전트의 문제를 CLI 없음보다 앞세운다.
+ * 대기열이 이어 가기 때문이다. 띄울 때는 설치된 에이전트의 문제를 CLI 없음보다 앞세우고, 그 가운데서는 저장한 기본 에이전트의 문제가 먼저다.
  */
 export class AgentConnections {
   /** 후보 순서대로 둔 연결 확인. */
@@ -117,9 +117,12 @@ export class AgentConnections {
   }
 }
 
-/** 띄울 문제 하나. 설치된 에이전트의 문제(CLI 없음이 아님)를 앞세우고, 같으면 저장한 기본 에이전트, 그다음 후보 순서다. */
+/**
+ * 띄울 문제 하나. 설치된 에이전트의 문제(CLI 없음이 아님)를 앞세우고, 그 가운데서는 저장한 기본 에이전트가 먼저다.
+ * 모두 CLI 없음이면 후보 순서(Claude Code 먼저)를 따른다. 설치를 찾지 못한 Codex는 에이전트 칸에 카드가 없어 [에이전트 확인]으로 열어도 볼 수 없기 때문이다.
+ */
 function primaryProblem(problems: readonly AgentProblem[], preferred: AgentId | null): AgentProblem {
-  /** 앞세울 차례. 작을수록 앞이다. */
-  const rank = (problem: AgentProblem) => (problem.reason === 'cli-missing' ? 2 : 0) + (problem.agent === preferred ? 0 : 1);
+  /** 앞세울 차례. 작을수록 앞이고, 같으면 후보 순서를 지킨다. */
+  const rank = (problem: AgentProblem) => (problem.reason === 'cli-missing' ? 2 : problem.agent === preferred ? 0 : 1);
   return [...problems].sort((a, b) => rank(a) - rank(b))[0] as AgentProblem;
 }

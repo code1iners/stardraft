@@ -174,6 +174,8 @@ export interface AgentConnectionSnapshot {
   agent: AgentId;
   /** 진행 상태. */
   progress: AgentCheckProgress;
+  /** 마지막으로 끝난 찾기 단계가 CLI를 찾았는지 여부. 다시 확인하는 동안에도 앞 확인의 값이다. */
+  cliFound: boolean;
   /** "자세히" 내용. */
   details: AgentCheckDetails;
 }
@@ -791,7 +793,7 @@ export interface AppSnapshot {
   flowAccount: FlowAccountSnapshot;
   /** 지금 보일 전역 문제. 없으면 `null`. */
   globalProblem: GlobalProblemSnapshot | null;
-  /** Claude Code 연결 확인 상태. */
+  /** 이 OS의 후보 에이전트마다의 연결 확인 상태. 후보 순서다(macOS는 Claude Code와 Codex, Windows는 Claude Code). */
   agentConnections: AgentConnectionSnapshot[];
   /** 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferencesSnapshot;

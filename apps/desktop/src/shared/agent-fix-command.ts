@@ -1,13 +1,5 @@
+import { AGENT_INFO } from './agent-info';
 import type { AgentCheckDetails, AgentCheckFailure, AgentId, AppSnapshot } from './ipc';
-
-/** Claude Code 설치 명령. macOS 터미널용. 공식 설치 스크립트다. */
-const CLAUDE_INSTALL_COMMAND_MAC = 'curl -fsSL https://claude.ai/install.sh | bash';
-
-/** Claude Code 설치 명령. Windows PowerShell용. 공식 설치 스크립트다. */
-const CLAUDE_INSTALL_COMMAND_WINDOWS = 'irm https://claude.ai/install.ps1 | iex';
-
-/** Codex 설치 명령. macOS 터미널용. 공식 독립 설치 스크립트다(`~/.local/bin`에 설치). Codex는 macOS에서만 후보다. */
-const CODEX_INSTALL_COMMAND_MAC = 'curl -fsSL https://chatgpt.com/codex/install.sh | sh';
 
 /**
  * 실패 카드에 보이고 [명령 복사]가 복사하는 명령. 명령으로 고칠 수 없는 실패면 `null`이다.
@@ -19,15 +11,16 @@ export function agentFixCommand(
   details: Pick<AgentCheckDetails, 'cliCommand' | 'updateCommand'>,
   platform: AppSnapshot['platform'],
 ): string | null {
+  /** 이 에이전트의 설치·로그인 명령. */
+  const { installCommands, loginArgs } = AGENT_INFO[agent];
   switch (failure.reason) {
     case 'not-found':
-      if (agent === 'codex') return CODEX_INSTALL_COMMAND_MAC;
-      return platform === 'win32' ? CLAUDE_INSTALL_COMMAND_WINDOWS : CLAUDE_INSTALL_COMMAND_MAC;
+      return platform === 'win32' ? installCommands.windows : installCommands.mac;
     case 'update-required':
       return details.updateCommand;
     case 'not-logged-in':
     case 'api-key-helper':
-      return agent === 'codex' ? `${details.cliCommand} login` : `${details.cliCommand} auth login`;
+      return `${details.cliCommand} ${loginArgs}`;
     default:
       return null;
   }

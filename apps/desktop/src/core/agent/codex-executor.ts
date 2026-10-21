@@ -14,13 +14,11 @@ import type {
 } from '../ports/executor';
 import type { AgentExecutorOptions } from './agent-launch';
 import { withoutAgentApiKeys } from './cli-discovery';
+import { asRecord, failedOutcome, numberOrNull, parseJsonObject } from './executor-output';
 import { describeCodexCommand, type CodexCommand } from './codex-commands';
 import type { ProcessResult } from './process-runner';
 import { LISTING_FILES_STEP, readingFileStep, runningCommandStep, searchingStep } from './progress-steps';
 import { withDefaultSecretPatterns } from './secret-patterns';
-
-/** 오류 원문의 최대 길이. 넘으면 앞부분만 남긴다. */
-const DETAIL_MAX_LENGTH = 2_000;
 
 /** 실행 계약이 인라인으로 정의하는 Codex 권한 프로필의 이름. */
 const PERMISSION_PROFILE = 'stardraft';
@@ -46,7 +44,7 @@ export class CodexExecutor implements Executor {
   private async execute(request: ExecutorRunRequest): Promise<ExecutorReport> {
     /** 띄울 CLI와 환경. */
     const launch = this.options.launch();
-    if (!launch) return { outcome: failed('cli-missing', 'Codex CLI를 아직 찾지 못했습니다.'), cliVersion: null, model: null, usage: null };
+    if (!launch) return { outcome: failedOutcome('cli-missing', 'Codex CLI를 아직 찾지 못했습니다.'), cliVersion: null, model: null, usage: null };
     /** `-C`와 cwd가 될 첫 루트와 `workspace_roots`로 넘길 나머지. */
     const [cwd, ...extraRoots] = request.readRoots;
     if (cwd === undefined) throw new Error('읽을 디렉터리가 없습니다.');
@@ -54,7 +52,7 @@ export class CodexExecutor implements Executor {
     // 심볼릭 링크로 띄우면 세션이 만들어지지 않는다. 실제 경로는 버전마다 바뀌므로 실행할 때마다 푼다.
     /** CLI의 실제 경로. 풀 수 없으면 파일이 지워진 것이다. */
     const realCli = await realpath(launch.cliPath).catch(() => null);
-    if (realCli === null) return { outcome: failed('cli-missing', `${launch.cliPath}를 찾을 수 없습니다.`), cliVersion: null, model: null, usage: null };
+    if (realCli === null) return { outcome: failedOutcome('cli-missing', `${launch.cliPath}를 찾을 수 없습니다.`), cliVersion: null, model: null, usage: null };
 
     /** 이번 실행의 임시 폴더. */
     const tempDir = await mkdtemp(join(this.options.tempRoot ?? tmpdir(), 'stardraft-run-'));
@@ -108,7 +106,7 @@ class CodexEventReader {
   /** 표준 출력 한 줄을 읽는다. */
   push(line: string): void {
     /** JSON으로 푼 이벤트. */
-    const event = parseObject(line);
+    const event = parseJsonObject(line);
     if (!event) return;
     /** 이벤트의 항목. */
     const item = asRecord(event.item);
@@ -124,7 +122,9 @@ class CodexEventReader {
       const tokens = asRecord(event.usage) ?? {};
       this.usage = { costUsd: null, inputTokens: numberOrNull(tokens.input_tokens), outputTokens: numberOrNull(tokens.output_tokens) };
     } else if (event.type === 'turn.failed') {
-      this.turnFailure = typeof asRecord(event.error)?.message === 'string' ? (asRecord(event.error)?.message as string) : '';
+      /** 턴 실패 문장. */
+      const message = asRecord(event.error)?.message;
+      this.turnFailure = typeof message === 'string' ? message : '';
     } else if (event.type === 'error' && typeof event.message === 'string') {
       this.lastError = event.message;
     }
@@ -257,7 +257,7 @@ function tomlString(value: string): string {
 function classifyCodexRun(result: ProcessResult, reader: CodexEventReader): ExecutorOutcome {
   switch (result.kind) {
     case 'spawn-failed':
-      return failed('cli-missing', result.message);
+      return failedOutcome('cli-missing', result.message);
     case 'timed-out':
       return { type: 'timed-out' };
     case 'aborted':
@@ -266,14 +266,14 @@ function classifyCodexRun(result: ProcessResult, reader: CodexEventReader): Exec
       break;
   }
 
-  if (reader.turnFailure !== null) return failed(turnFailureReason(reader.turnFailure), reader.turnFailure);
+  if (reader.turnFailure !== null) return failedOutcome(turnFailureReason(reader.turnFailure), reader.turnFailure);
   if (result.exitCode !== 0) {
-    return failed('cli-error', reader.lastError ?? (result.stderr.trim() || `종료 코드 ${String(result.exitCode)}로 끝났습니다.`));
+    return failedOutcome('cli-error', reader.lastError ?? (result.stderr.trim() || `종료 코드 ${String(result.exitCode)}로 끝났습니다.`));
   }
   if (reader.lastMessage === null) return { type: 'invalid-output', detail: '결과에 구조화 출력이 없습니다.' };
 
   /** 마지막 메시지를 JSON으로 푼 것. */
-  const output = parseObject(reader.lastMessage);
+  const output = parseJsonObject(reader.lastMessage);
   if (output === null) return { type: 'invalid-output', detail: '마지막 메시지가 JSON 객체가 아닙니다.' };
   return { type: 'completed', output };
 }
@@ -287,28 +287,4 @@ function turnFailureReason(message: string): ExecutorFailureReason {
   if (/overloaded|high demand|\b529\b|\b503\b/i.test(message)) return 'overloaded';
   if (/stream disconnected|error sending request|connection (?:refused|reset|closed)|failed to connect|dns error|network/i.test(message)) return 'network';
   return 'agent-error';
-}
-
-/** 실패 결과를 만든다. 오류 원문은 길이 상한까지만 남긴다. */
-function failed(reason: ExecutorFailureReason, detail: string): ExecutorOutcome {
-  return { type: 'failed', reason, detail: detail.slice(0, DETAIL_MAX_LENGTH) };
-}
-
-/** 유한한 숫자면 그 값, 아니면 `null`. */
-function numberOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-/** 배열이 아닌 객체면 필드를 읽을 수 있게, 아니면 `null`. */
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-/** JSON 객체 한 줄을 푼다. 객체가 아니면 `null`. */
-function parseObject(line: string): Record<string, unknown> | null {
-  try {
-    return asRecord(JSON.parse(line));
-  } catch {
-    return null;
-  }
 }

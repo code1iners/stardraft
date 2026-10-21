@@ -6,7 +6,6 @@ import type { AgentProblemReason, GlobalProblems } from '../problems/global-prob
 import { AGENT_CLIS, type AgentCli, type ListedModel } from './agent-cli';
 import type { AgentLaunch, AgentRunReport } from './agent-launch';
 import { CHECK_RUN_INPUT, CHECK_RUN_INSTRUCTIONS, CHECK_RUN_SCHEMA, CHECK_RUN_TIMEOUT_MS, isCheckRunPassed } from './check-run';
-import { CLI_COMMAND_TIMEOUT_MS, compareVersions, parseCliVersion } from './claude-cli';
 import {
   agentProcessEnv,
   envValue,
@@ -21,8 +20,12 @@ import {
   terminalCommand,
   type CliSearchContext,
 } from './cli-discovery';
+import { compareVersions, parseCliVersion } from './cli-version';
 import type { ProcessResult, ProcessRunner } from './process-runner';
 import { suspectsGlobalFailure } from './run-failures';
+
+/** 버전 확인, 로그인 확인, 모델 목록 명령의 제한 시간(밀리초). */
+const CLI_COMMAND_TIMEOUT_MS = 10_000;
 
 /** 에이전트 연결 확인의 네 단계. 화면의 연결선 네 마디다. 넷째 `run-check`는 점검 실행(화면 이름 "작동 확인")이다. */
 export type AgentCheckStep = 'find' | 'version' | 'login' | 'run-check';
@@ -88,6 +91,8 @@ export interface AgentConnectionState {
   agent: AgentId;
   /** 진행 상태. */
   progress: AgentCheckProgress;
+  /** 마지막으로 끝난 찾기 단계가 CLI를 찾았는지 여부. 다시 확인하는 동안에도 앞 확인의 값을 둔다. Codex 카드는 찾았을 때만 보인다. */
+  cliFound: boolean;
   /** "자세히" 내용. */
   details: AgentCheckDetails;
 }
@@ -166,6 +171,8 @@ export class AgentConnection {
   private childPath: ChildPath | null = null;
   /** 마지막 확인이 찾은 CLI 경로. 실행기가 이 경로로 띄운다. */
   private cliPath: string | null = null;
+  /** 마지막으로 끝난 찾기 단계가 CLI를 찾았는지 여부. */
+  private cliFound = false;
   /** 작동 확인을 통과한 CLI 버전. 연결되지 않았으면 `null`. 실행에서 다른 버전을 보면 다시 확인한다. */
   private confirmedVersion: string | null = null;
   /** 마지막으로 읽은 CLI 버전. 실행 이벤트가 버전을 알려 주지 않는 에이전트(Codex)의 실행 기록에 쓴다. */
@@ -189,7 +196,7 @@ export class AgentConnection {
       homeDir: options.homeDir,
       isExecutableFile: options.isExecutableFile ?? isExecutableFileOnDisk,
     };
-    this.current = { agent: this.cli.agent, progress: { status: 'idle' }, details: this.emptyDetails() };
+    this.current = { agent: this.cli.agent, progress: { status: 'idle' }, cliFound: false, details: this.emptyDetails() };
     this.executor = this.cli.createExecutor({
       runner: options.runner,
       launch: () => this.launch(),
@@ -334,7 +341,7 @@ export class AgentConnection {
     const details = this.emptyDetails();
     /** 상태를 바꾼다. 앞 확인이면 바꾸지 않는다. */
     const publish = (progress: AgentCheckProgress) => {
-      if (isCurrent()) this.setState({ agent: this.agent, progress, details: { ...details } });
+      if (isCurrent()) this.setState({ agent: this.agent, progress, cliFound: this.cliFound, details: { ...details } });
     };
 
     // 1. 찾기
@@ -342,6 +349,7 @@ export class AgentConnection {
     /** 찾기 결과. */
     const found = await this.find(how, details);
     if (!isCurrent()) return;
+    this.cliFound = found.ok;
     if (!found.ok) return this.fail(publish, found.failure, isCurrent);
     // 앞 확인이 늦게 끝나 새 확인의 경로를 덮지 않게, 마지막 확인일 때만 PATH를 들고 경로를 저장한다.
     this.childPath = found.childPath;

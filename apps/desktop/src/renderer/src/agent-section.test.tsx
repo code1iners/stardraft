@@ -4,12 +4,13 @@ import type { AgentCheckProgress, AgentConnectionSnapshot, AgentId, AgentPrefere
 import { AgentSection } from './AgentSection';
 
 /** 가짜 연결 상태. 경로와 버전은 가짜다. */
-function connection(agent: AgentId, progress: AgentCheckProgress, cliPath: string | null): AgentConnectionSnapshot {
+function connection(agent: AgentId, progress: AgentCheckProgress, cliPath: string | null, cliFound = cliPath !== null): AgentConnectionSnapshot {
   /** 명령 이름. */
   const command = agent === 'codex' ? 'codex' : 'claude';
   return {
     agent,
     progress,
+    cliFound,
     details: {
       cliPath,
       cliCommand: command,
@@ -77,5 +78,16 @@ describe('설정 "에이전트" 칸', () => {
     expect(html).toContain('Codex에 로그인해야 합니다');
     expect(html).toContain('<span class="mini-command">codex login</span>');
     expect(html).toContain('ChatGPT에 로그인');
+  });
+
+  it('찾은 적이 있는 Codex는 다시 확인하며 찾는 동안에도 카드를 그대로 보인다(칸을 열 때마다 깜빡이지 않는다)', () => {
+    /** 다시 확인을 막 시작해 자세히가 비어 있는 Codex. */
+    const html = htmlOf([
+      connection('claude-code', { status: 'connected' }, '/fake/bin/claude'),
+      connection('codex', { status: 'checking', step: 'find' }, null, true),
+    ]);
+
+    expect(html.match(/class="agent-card"/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="Codex 연결 단계"');
   });
 });

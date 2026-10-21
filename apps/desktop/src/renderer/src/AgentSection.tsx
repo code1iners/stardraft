@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { agentFixCommand } from '../../shared/agent-fix-command';
-import { AGENT_NAMES } from '../../shared/agent-names';
+import { AGENT_INFO } from '../../shared/agent-info';
 import type {
   AgentCheckDetails,
   AgentCheckFailure,
@@ -21,17 +21,6 @@ const STEPS: readonly { step: AgentCheckStep; label: string }[] = [
   { step: 'run-check', label: '작동 확인' },
 ];
 
-/** 연결선 끝의 에이전트 아이콘에 쓰는 글자. */
-const AGENT_MARKS: Record<AgentId, string> = {
-  'claude-code': 'C',
-  codex: 'X',
-};
-
-/** 로그인 명령이 브라우저로 여는 계정의 이름. 실패 카드 셋째 장의 그림에 쓴다. */
-const LOGIN_SITES: Record<AgentId, string> = {
-  'claude-code': 'Claude',
-  codex: 'ChatGPT',
-};
 
 /** 모델 칸의 안내. Claude Code는 앱에 넣어 둔 계열 별칭, Codex는 연결 확인 때 읽은 목록이다. */
 const MODEL_HELP: Record<AgentId, string> = {
@@ -63,7 +52,7 @@ interface FailureText {
  */
 function failureText(reason: AgentCheckFailure['reason'], agent: AgentId): FailureText {
   /** 에이전트 이름. */
-  const name = AGENT_NAMES[agent];
+  const name = AGENT_INFO[agent].name;
   switch (reason) {
     case 'not-found':
       return {
@@ -76,7 +65,7 @@ function failureText(reason: AgentCheckFailure['reason'], agent: AgentId): Failu
       return {
         cause: '실행할 수 없음',
         title: '고른 파일을 실행할 수 없습니다',
-        line: `${name} CLI 실행 파일(${agent === 'codex' ? 'codex' : 'claude'})을 다시 지정하거나 다시 찾기를 눌러 주세요.`,
+        line: `${name} CLI 실행 파일(${AGENT_INFO[agent].commandName})을 다시 지정하거나 다시 찾기를 눌러 주세요.`,
       };
     case 'update-required':
       return {
@@ -151,11 +140,11 @@ interface AgentSectionProps {
 }
 
 /**
- * 카드를 보일 연결인지 본다. Claude Code는 늘 보인다. Codex는 설치를 찾았을 때만 후보라, 찾은 경로가 있을 때만 보인다.
- * 직접 지정한 파일을 실행할 수 없을 때도 그 경로가 남아 보인다.
+ * 카드를 보일 연결인지 본다. Claude Code는 늘 보인다. Codex는 설치를 찾았을 때만 후보라, 마지막으로 끝난 찾기 단계가 찾았을 때만 보인다.
+ * 칸을 열 때마다 다시 확인하지만 찾는 동안에는 앞 확인의 값이라 카드가 깜빡이지 않는다.
  */
-function isVisible({ agent, details }: AgentConnectionSnapshot): boolean {
-  return agent === 'claude-code' || details.cliPath !== null;
+function isVisible({ agent, cliFound }: AgentConnectionSnapshot): boolean {
+  return agent === 'claude-code' || cliFound;
 }
 
 /**
@@ -206,8 +195,8 @@ function AgentCard({ connection, platform }: AgentCardProps) {
   const checking = progress.status === 'checking';
   /** 멈춘 이유. 실패가 아니면 `null`. */
   const failure = progress.status === 'failed' ? progress.failure : null;
-  /** 실패 문구. */
-  const failed = failure && failureText(failure.reason, agent);
+  /** 실패 이유별 문구. */
+  const failureCopy = failure && failureText(failure.reason, agent);
   /** 실패 카드의 명령. 명령으로 고칠 수 없으면 `null`. */
   const fixCommand = failure && agentFixCommand(agent, failure, details, platform);
   /** 찾기에서 멈췄는지 여부. 이때 "직접 지정"을 보인다. */
@@ -231,28 +220,28 @@ function AgentCard({ connection, platform }: AgentCardProps) {
             />
           </svg>
         </AgentNode>
-        <ol className="agent-segments" aria-label={`${AGENT_NAMES[agent]} 연결 단계`}>
+        <ol className="agent-segments" aria-label={`${AGENT_INFO[agent].name} 연결 단계`}>
           {STEPS.map(({ step, label }, index) => {
             /** 이 마디의 상태. */
             const state = segmentState(progress, index);
             return (
               <li key={step} className={`agent-segment ${state}`} aria-current={state === 'cur' ? 'step' : undefined}>
                 <span className="agent-bar">{state === 'bad' && <span className="agent-break" aria-hidden="true">✕</span>}</span>
-                {state === 'bad' && failed ? failed.cause : label}
+                {state === 'bad' && failureCopy ? failureCopy.cause : label}
               </li>
             );
           })}
         </ol>
-        <AgentNode label={AGENT_NAMES[agent]}>{AGENT_MARKS[agent]}</AgentNode>
+        <AgentNode label={AGENT_INFO[agent].name}>{AGENT_INFO[agent].mark}</AgentNode>
       </div>
 
       <StatusLine agent={agent} progress={progress} />
 
-      {failed &&
-        (fixCommand && failed.third ? (
-          <FixCards command={fixCommand} third={failed.third} agent={agent} platform={platform} onCheck={handleCheck} />
+      {failureCopy &&
+        (fixCommand && failureCopy.third ? (
+          <FixCards command={fixCommand} third={failureCopy.third} agent={agent} platform={platform} onCheck={handleCheck} />
         ) : (
-          <p className="agent-notice">{failed.line}</p>
+          <p className="agent-notice">{failureCopy.line}</p>
         ))}
 
       <div className="agent-actions">
@@ -302,7 +291,7 @@ function DefaultAgentField({ connectedAgents, defaultAgent }: DefaultAgentFieldP
             checked={defaultAgent === agent}
             onChange={() => void window.stardraft.send({ type: 'set-default-agent', agent })}
           />
-          {AGENT_NAMES[agent]}
+          {AGENT_INFO[agent].name}
         </label>
       ))}
     </fieldset>
@@ -330,7 +319,7 @@ function ModelField({ agent, choice }: ModelFieldProps) {
   return (
     <div className="field">
       <label className="field-label" htmlFor={selectId}>
-        {AGENT_NAMES[agent]} 모델
+        {AGENT_INFO[agent].name} 모델
       </label>
       <p className="field-help muted">{MODEL_HELP[agent]}</p>
       <select id={selectId} className="text-input model-select" value={choice.selected ?? ''} onChange={(event) => handleChange(event.target.value)}>
@@ -393,7 +382,7 @@ function StatusLine({ agent, progress }: { agent: AgentId; progress: AgentCheckP
         </p>
       );
     case 'connected':
-      return <p className="agent-status ok-text">✓ {AGENT_NAMES[agent]} 연결됨</p>;
+      return <p className="agent-status ok-text">✓ {AGENT_INFO[agent].name} 연결됨</p>;
   }
 }
 
@@ -468,7 +457,7 @@ function FixCards({ command, third, agent, platform, onCheck }: FixCardsProps) {
             <div className="mini-browser">
               <div className="mini-browser-bar" />
               <div className="mini-browser-body">
-                {LOGIN_SITES[agent]}에 로그인
+                {AGENT_INFO[agent].loginSite}에 로그인
                 <br />
                 <span className="mini-browser-go">승인</span>
               </div>

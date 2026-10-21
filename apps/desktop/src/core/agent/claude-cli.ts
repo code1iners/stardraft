@@ -10,26 +10,6 @@ export const CLAUDE_COMMAND_NAME = 'claude';
  */
 export const MIN_CLAUDE_VERSION = '2.1.259';
 
-/** 버전 확인과 로그인 확인 명령의 제한 시간(밀리초). */
-export const CLI_COMMAND_TIMEOUT_MS = 10_000;
-
-/** `claude --version` 출력(`2.1.303 (Claude Code)`)에서 버전을 꺼낸다. 없으면 `null`. */
-export function parseCliVersion(output: string): string | null {
-  return /\b(\d+)\.(\d+)\.(\d+)\b/.exec(output)?.[0] ?? null;
-}
-
-/** 두 `x.y.z` 버전을 비교한다. `a`가 낮으면 음수, 같으면 0, 높으면 양수. */
-export function compareVersions(a: string, b: string): number {
-  /** 숫자로 나눈 두 버전. */
-  const [left, right] = [a, b].map((version) => version.split('.').map(Number));
-  for (let index = 0; index < 3; index += 1) {
-    /** 이 자리의 차이. */
-    const diff = (left?.[index] ?? 0) - (right?.[index] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
 /** `claude auth status` JSON 출력에서 앱이 쓰는 값. */
 export interface ClaudeAuthStatus {
   /** 로그인되어 있는지 여부. */

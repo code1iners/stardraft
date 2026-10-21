@@ -32,6 +32,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
       {
         agent: 'claude-code',
         progress: { status: 'idle' },
+        cliFound: false,
         details: {
           cliPath: null,
           cliCommand: 'claude',

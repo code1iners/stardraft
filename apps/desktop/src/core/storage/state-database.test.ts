@@ -754,11 +754,13 @@ describe('최소 기록', () => {
     mentions: [{ postId: '90000011', remarkId: '-1', replyId: '-1' }],
     status: 'posted' as const,
     processedAt: 6_000,
-    postedId: '950000001',
-    answeredMentions: [
-      { postId: '90000011', remarkId: '-1', replyId: '-1' },
-      { postId: '90000011', remarkId: '701', replyId: '-1' },
-    ],
+    posted: {
+      postedId: '950000001',
+      answeredMentions: [
+        { postId: '90000011', remarkId: '-1', replyId: '-1' },
+        { postId: '90000011', remarkId: '701', replyId: '-1' },
+      ],
+    },
   };
 
   it('묶음을 최소 기록으로 바꾸면 묶음·멘션·내 답은 지우고, 다시 열어도 최소 기록과 그 멘션 위치는 남는다', async () => {
@@ -771,7 +773,7 @@ describe('최소 기록', () => {
           status: 'posted',
           processedAt: 6_000,
           answers: [{ answerId: '950000001', registeredDateTime: '20261020090000', excluded: false }],
-          posting: { body: '가짜 답', sentAt: 5_000, postedId: '950000001', failure: null, answeredMentions: POSTED_RECORD.answeredMentions },
+          posting: { body: '가짜 답', sentAt: 5_000, postedId: '950000001', failure: null, answeredMentions: POSTED_RECORD.posted.answeredMentions },
         }),
         bundle([mention('102', { postId: '90000012' })], { status: 'ready' }),
       ],
@@ -807,7 +809,7 @@ describe('최소 기록', () => {
       '101',
     );
 
-    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', postedId: null, answeredMentions: [] }]);
+    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', posted: null }]);
 
     for (const label of ['가짜 원문', '가짜 송신자', '가짜 편집본', '가짜 지시']) {
       expect(readFileSync(path).includes(Buffer.from(label))).toBe(false);
@@ -819,7 +821,7 @@ describe('최소 기록', () => {
   it('지운 묶음의 ID는 최소 기록으로 바꾼 뒤에도 다시 쓰지 않는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
     await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 6_000 })], '101');
-    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', postedId: null, answeredMentions: [] }]);
+    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', posted: null }]);
 
     /** 새로 저장한 묶음. */
     const [saved] = await store.saveDetectedBundles([bundle([mention('102', { postId: '90000012' })])], '102');
@@ -830,7 +832,7 @@ describe('최소 기록', () => {
   it('다른 계정으로 처음부터 시작하면 최소 기록도 지운다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
     await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 6_000 })], '101');
-    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', postedId: null, answeredMentions: [] }]);
+    await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', posted: null }]);
 
     await store.resetForAccount(NEW_ACCOUNT);
 

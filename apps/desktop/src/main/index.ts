@@ -327,8 +327,11 @@ function start(): void {
     onboarding.onChange(syncDetection);
     flowAccount.onChange(syncDetection);
     globalProblems.onChange(syncDetection);
-    // 잠자기에서 깨어나면 밀린 멘션을 바로 조회한다.
-    powerMonitor.on('resume', () => void mentionDetection.checkNow());
+    // 잠자기에서 깨어나면 밀린 멘션을 바로 조회하고, 잠든 동안 멈춘 하루 타이머 대신 처리됨 목록도 정리한다.
+    powerMonitor.on('resume', () => {
+      void mentionDetection.checkNow();
+      retention?.cleanUpNow();
+    });
 
     // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
     // 참여 Flow 프로젝트 목록은 "저장소" 칸을 열 때 받는다.

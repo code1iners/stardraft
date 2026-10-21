@@ -168,7 +168,7 @@ export const STATE_MIGRATIONS: readonly string[] = [
   `,
   // 14: 보관. 처리됨 목록에서 빠진 묶음의 최소 기록(ID와 상태만)을 전체 기록(`mention_bundle`, `mention`, `bundle_answer`)과 다른 표에 둔다.
   // 묶음 자리·마지막 상태·처리한 시각·이 PC가 게시한 글의 ID, 묶음에 있던 멘션 위치, 그 글이 답한 멘션 위치다. 송신자 이름과 글 내용은 넣지 않는다.
-  // 멘션 위치는 `mention`과 같은 기본 키라, 한 위치는 묶음과 최소 기록 가운데 한 곳에만 있다. 이미 있던 묶음은 아직 목록에서 빠지지 않았다.
+  // 묶음을 최소 기록으로 바꿀 때 멘션 위치를 `mention`에서 옮기므로, 한 위치는 묶음과 최소 기록 가운데 한 곳에만 있다. 이미 있던 묶음은 아직 목록에서 빠지지 않았다.
   `
   CREATE TABLE minimal_record (
     bundle_id INTEGER PRIMARY KEY,
@@ -310,7 +310,11 @@ export class SqliteStateStore implements StateStore {
       this.writeAccount(account);
     })();
 
-    // secure_delete는 본 파일의 지운 자리만 덮으므로, 옛 계정의 글이 WAL에 남지 않게 본 파일에 반영하고 WAL을 비운다.
+    this.clearWal();
+  }
+
+  /** secure_delete는 본 파일의 지운 자리만 덮으므로, 지운 글이 WAL에 남지 않게 본 파일에 반영하고 WAL을 비운다. */
+  private clearWal(): void {
     this.db.pragma('wal_checkpoint(TRUNCATE)');
   }
 
@@ -527,11 +531,10 @@ export class SqliteStateStore implements StateStore {
       bundleId: row.bundle_id,
       postId: row.post_id,
       remarkId: row.remark_id,
-      mentions: (mentions.get(row.bundle_id) ?? []).map(locationOf),
+      mentions: (mentions.get(row.bundle_id) ?? []).map(locationOfRow),
       status: row.status as ProcessedStatus,
       processedAt: row.processed_at,
-      postedId: row.posted_id,
-      answeredMentions: (answered.get(row.bundle_id) ?? []).map(locationOf),
+      posted: row.posted_id === null ? null : { postedId: row.posted_id, answeredMentions: (answered.get(row.bundle_id) ?? []).map(locationOfRow) },
     }));
   }
 
@@ -546,18 +549,24 @@ export class SqliteStateStore implements StateStore {
     const insertMention = this.db.prepare(
       'INSERT INTO minimal_record_mention (post_id, remark_id, reply_id, bundle_id) VALUES (@postId, @remarkId, @replyId, @bundleId)',
     );
+    /** 묶음의 멘션을 지우는 문장. */
+    const deleteMentions = this.db.prepare('DELETE FROM mention WHERE bundle_id = ?');
+    /** 묶음에 기록한 내 답을 지우는 문장. */
+    const deleteAnswers = this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id = ?');
+    /** 묶음 줄을 지우는 문장. */
+    const deleteBundle = this.db.prepare('DELETE FROM mention_bundle WHERE id = ?');
     /** 게시한 글이 답한 멘션 위치 하나를 넣는 문장. 같은 위치가 거듭 들어 있어도 한 줄이다. */
     const insertAnswered = this.db.prepare(
       'INSERT OR IGNORE INTO minimal_record_answered (bundle_id, post_id, remark_id, reply_id) VALUES (@bundleId, @postId, @remarkId, @replyId)',
     );
 
-    // 멘션 위치는 `mention`과 최소 기록 가운데 한 곳에만 두므로, 전체 기록을 먼저 지우고 최소 기록을 넣는다.
+    // 묶음마다 전체 기록을 지우고 최소 기록을 넣는다. 하나라도 실패하면 아무것도 바뀌지 않는다.
     this.db.transaction(() => {
       for (const record of records) {
-        this.db.prepare('DELETE FROM mention WHERE bundle_id = ?').run(record.bundleId);
-        this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id = ?').run(record.bundleId);
+        deleteMentions.run(record.bundleId);
+        deleteAnswers.run(record.bundleId);
         /** 지운 묶음 줄 수. */
-        const { changes } = this.db.prepare('DELETE FROM mention_bundle WHERE id = ?').run(record.bundleId);
+        const { changes } = deleteBundle.run(record.bundleId);
         if (changes === 0) throw new Error(`저장하지 않은 묶음 ${record.bundleId}입니다.`);
 
         insertRecord.run({
@@ -566,15 +575,14 @@ export class SqliteStateStore implements StateStore {
           remarkId: record.remarkId,
           status: record.status,
           processedAt: record.processedAt,
-          postedId: record.postedId,
+          postedId: record.posted?.postedId ?? null,
         });
         for (const location of record.mentions) insertMention.run({ ...mentionLocationOf(location), bundleId: record.bundleId });
-        for (const location of record.answeredMentions) insertAnswered.run({ ...mentionLocationOf(location), bundleId: record.bundleId });
+        for (const location of record.posted?.answeredMentions ?? []) insertAnswered.run({ ...mentionLocationOf(location), bundleId: record.bundleId });
       }
     })();
 
-    // secure_delete는 본 파일의 지운 자리만 덮으므로, 지운 글이 WAL에 남지 않게 본 파일에 반영하고 WAL을 비운다.
-    this.db.pragma('wal_checkpoint(TRUNCATE)');
+    this.clearWal();
   }
 
   /** 기준점 한 줄을 넣거나 바꾼다. */
@@ -620,7 +628,7 @@ function jsonOrNull(value: unknown): string | null {
 }
 
 /** 멘션 위치 줄에서 멘션 위치만 떼어 낸다. */
-function locationOf({ post_id, remark_id, reply_id }: LocationRow): MentionLocation {
+function locationOfRow({ post_id, remark_id, reply_id }: LocationRow): MentionLocation {
   return { postId: post_id, remarkId: remark_id, replyId: reply_id };
 }
 

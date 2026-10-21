@@ -200,6 +200,39 @@ describe('보관: 처리됨 목록의 7일', () => {
     retention.stop();
   });
 
+  it('Flow에서 답해 이미 답함이 된 묶음도 7일이 지나면 같은 규칙으로 빠지고 최소 기록에 마지막 상태가 남는다', async () => {
+    const { flow, stateStore, bundles, retention, poll, advance } = await setup();
+    flow.addReply(POST_ID, '700', { replyId: '890', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085500' });
+    await poll(alarm('101'));
+    expect(bundles.state().map(({ status }) => status)).toEqual(['already-answered']);
+    retention.start();
+
+    await advance(7 * DAY_MS);
+
+    expect(bundles.state()).toEqual([]);
+    expect((await stateStore.listMinimalRecords()).map(({ status, processedAt, posted }) => ({ status, processedAt, posted }))).toEqual([
+      { status: 'already-answered', processedAt: NOW, posted: null },
+    ]);
+    retention.stop();
+  });
+
+  it('잠자기에서 깨어나 정리하면 하루마다 하는 정리를 기다리지 않고 7일이 된 묶음을 뺀다', async () => {
+    const { bundles, retention, poll, advance } = await setup();
+    await poll(alarm('101'));
+    await bundles.ignore(bundles.state()[0]!.id);
+    // 처리한 지 한 시간 뒤에 켠 앱이라, 하루마다 하는 정리는 처리한 지 7일 1시간에 돈다.
+    await advance(60 * 60 * 1000);
+    retention.start();
+    await advance(7 * DAY_MS - 60 * 60 * 1000);
+    expect(bundles.state().map(({ status }) => status)).toEqual(['ignored']);
+
+    retention.cleanUpNow();
+    await settle();
+
+    expect(bundles.state()).toEqual([]);
+    retention.stop();
+  });
+
   it('대기 중인 묶음(저장소 확인 필요)은 기한 없이 남는다', async () => {
     const { bundles, retention, poll, advance } = await setup();
     await poll(alarm('101'));
@@ -247,8 +280,7 @@ describe('보관: 최소 기록', () => {
         mentions: [{ postId: POST_ID, remarkId: '700', replyId: '-1' }],
         status: 'posted',
         processedAt: NOW - 7 * DAY_MS,
-        postedId: '950',
-        answeredMentions: [{ postId: POST_ID, remarkId: '700', replyId: '-1' }],
+        posted: { postedId: '950', answeredMentions: [{ postId: POST_ID, remarkId: '700', replyId: '-1' }] },
       },
     ]);
     expect(bundles.postedIds()).toEqual(new Set(['950']));

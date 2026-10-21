@@ -122,7 +122,7 @@ export class MentionBundles {
   /** 저장한 묶음 전부. 저장소와 같은 내용을 들고 있다. */
   private bundles: MentionBundle[] = [];
   /** 처리됨 목록에서 빠진 묶음의 최소 기록 전부. 저장소와 같은 내용을 들고 있다. */
-  private records: MinimalRecord[] = [];
+  private minimalRecords: MinimalRecord[] = [];
   /** 묶음을 바꾸는 일을 하나씩 하는 줄. */
   private readonly lane = new SerialQueue();
   /** 묶음이 바뀔 때 부를 함수. */
@@ -142,7 +142,7 @@ export class MentionBundles {
   load(): Promise<void> {
     return this.lane.run(async () => {
       this.bundles = await this.options.stateStore.listBundles();
-      this.records = await this.options.stateStore.listMinimalRecords();
+      this.minimalRecords = await this.options.stateStore.listMinimalRecords();
       this.emit();
     });
   }
@@ -174,7 +174,7 @@ export class MentionBundles {
 
   /** 이 PC가 게시해 기록한 글의 ID(`commentId`, `replyId`) 전부. 처리됨 목록에서 빠져 최소 기록만 남은 글도 넣는다. */
   postedIds(): Set<string> {
-    return new Set([...this.postedRanges().keys()]);
+    return new Set(this.postedRanges().keys());
   }
 
   /** 실패나 게시 실패 묶음이 있는지 본다. 트레이에 빨간 점을 띄운다. */
@@ -215,7 +215,7 @@ export class MentionBundles {
       /** 이번에 바뀌는 묶음과 새로 넣은 멘션. 자리마다 하나다. */
       const touched = new Map<string, { bundle: UnsavedBundle; added: Set<string> }>();
       /** 이미 묶음이나 최소 기록에 든 멘션 위치. 같은 위치는 한 묶음에만 넣고, 최소 기록의 위치는 다시 감지하지 않는다. */
-      const known = new Set([...this.bundles, ...this.records].flatMap((item) => item.mentions.map(mentionLocationKey)));
+      const known = new Set([...this.bundles, ...this.minimalRecords].flatMap((item) => item.mentions.map(mentionLocationKey)));
 
       for (const mention of [...mentions].sort(compareMentions)) {
         /** 멘션 위치. */
@@ -890,7 +890,7 @@ export class MentionBundles {
       /** 뺀 묶음 ID. */
       const ids = new Set(expired.map((bundle) => bundle.id));
       this.bundles = this.bundles.filter((bundle) => !ids.has(bundle.id));
-      this.records = [...this.records, ...records];
+      this.minimalRecords = [...this.minimalRecords, ...records];
       this.options.logger.info('bundle.archived', { count: records.length });
       this.emit();
       return records.length;
@@ -936,7 +936,7 @@ export class MentionBundles {
     /** 묶음과 최소 기록마다 게시한 글과 그 글이 답한 범위. */
     const posted = [
       ...this.bundles.map((bundle) => bundle.posting),
-      ...this.records.map(({ postedId, answeredMentions }) => ({ postedId, answeredMentions })),
+      ...this.minimalRecords.map((record) => record.posted),
     ];
     return new Map(
       posted.flatMap((item): [string, Set<string>][] =>

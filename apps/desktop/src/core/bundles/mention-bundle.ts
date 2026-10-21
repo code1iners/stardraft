@@ -288,9 +288,15 @@ export interface MinimalRecord extends BundlePlace {
   status: ProcessedStatus;
   /** 처리한 시각(Unix epoch 밀리초). */
   processedAt: number;
-  /** 이 PC가 게시한 글의 ID(`commentId`·`replyId`). 게시됨이 아니면 `null`. */
-  postedId: string | null;
-  /** 이 PC가 게시한 글이 답한 멘션 위치. 게시됨이 아니면 비어 있다. */
+  /** 이 PC가 게시한 글. 게시됨이 아니면 `null`. */
+  posted: PostedAnswer | null;
+}
+
+/** 이 PC가 게시한 글과 그 글이 답한 범위. */
+export interface PostedAnswer {
+  /** 올라간 글의 ID(`commentId`·`replyId`). */
+  postedId: string;
+  /** 그 글이 답한 멘션 위치. 게시 기록의 `answeredMentions`와 같다. */
   answeredMentions: MentionLocation[];
 }
 

@@ -13,7 +13,7 @@ import {
   SETUP_REQUIREMENT_SECTIONS,
   windowsTrayHint,
 } from '../../shared/onboarding-text';
-import { AGENT_NAMES } from './AgentSection';
+import { AGENT_INFO } from '../../shared/agent-info';
 
 /** 필수 설정 줄 오른쪽에 보일 상태 글자와 색. */
 const STATUS_TEXT: Record<SetupRequirementStatus, { label: string; className: string }> = {
@@ -204,7 +204,7 @@ function requirementDetail(requirement: SetupRequirement, snapshot: AppSnapshot)
       return '내 키를 붙여 넣으면 계정을 확인합니다';
     }
     case 'agent':
-      if (status === 'done') return `${AGENT_NAMES[snapshot.agentPreferences.defaultAgent ?? 'claude-code']} 연결됨`;
+      if (status === 'done') return `${AGENT_INFO[snapshot.agentPreferences.defaultAgent ?? 'claude-code'].name} 연결됨`;
       if (status === 'checking') return '연결을 확인하는 중입니다';
       return '연결하지 못했습니다. 눌러서 원인을 확인합니다';
     case 'work-folders': {

@@ -101,8 +101,8 @@ export interface FlowAccountSnapshot {
 export type GlobalProblemSnapshot =
   /** 키 확인 필요. */
   | { cause: 'flow-key'; reason: FlowKeyProblemReason }
-  /** 에이전트 확인 필요. */
-  | { cause: 'agent'; reason: AgentProblemReason };
+  /** 에이전트 확인 필요. `agent`는 실패한 에이전트다. */
+  | { cause: 'agent'; agent: AgentId; reason: AgentProblemReason };
 
 /** "키 확인 필요"가 생긴 이유. `rejected`는 Flow가 키를 거부한 것(`401`), `unreadable`은 저장된 키를 읽을 수 없는 것이다. */
 export type FlowKeyProblemReason = 'rejected' | 'unreadable';
@@ -125,7 +125,7 @@ export type AgentCheckFailure =
   | { step: 'version'; reason: 'unreadable' }
   /** 로그인되어 있지 않다. */
   | { step: 'login'; reason: 'not-logged-in' }
-  /** `apiKeyHelper`로만 인증한다. 앱은 이 방식을 지원하지 않는다. */
+  /** `apiKeyHelper`로만 인증한다(Claude Code). 앱은 이 방식을 지원하지 않는다. */
   | { step: 'login'; reason: 'api-key-helper' }
   /** 로그인 상태를 읽지 못했다. */
   | { step: 'login'; reason: 'unreadable' }
@@ -150,7 +150,7 @@ export type PathSource = 'login-shell' | 'app';
 export interface AgentCheckDetails {
   /** 찾은 CLI의 절대 경로. */
   cliPath: string | null;
-  /** 터미널에서 이 CLI를 부르는 말(`claude` 또는 따옴표로 감싼 절대 경로). */
+  /** 터미널에서 이 CLI를 부르는 말(`claude`·`codex` 또는 따옴표로 감싼 절대 경로). */
   cliCommand: string;
   /** 이 CLI를 업데이트하는 명령. Homebrew 설치본은 brew 명령이다. */
   updateCommand: string;
@@ -158,7 +158,7 @@ export interface AgentCheckDetails {
   version: string | null;
   /** 필요한 가장 낮은 버전. */
   requiredVersion: string;
-  /** 로그인 방식. */
+  /** 로그인 방식(Claude Code의 `claude.ai`·`api_key_helper`, Codex의 `chatgpt`·`api-key` 등). */
   authMethod: string | null;
   /** 자식 프로세스 PATH의 출처. 아직 읽지 않았으면 `null`. */
   pathSource: PathSource | null;
@@ -168,10 +168,14 @@ export interface AgentCheckDetails {
   errorOutput: string | null;
 }
 
-/** 설정 "에이전트" 칸의 연결 표시가 그릴 상태. */
+/** 설정 "에이전트" 칸의 연결 표시가 그릴 에이전트 하나의 상태. */
 export interface AgentConnectionSnapshot {
+  /** 확인하는 에이전트. */
+  agent: AgentId;
   /** 진행 상태. */
   progress: AgentCheckProgress;
+  /** 마지막으로 끝난 찾기 단계가 CLI를 찾았는지 여부. 다시 확인하는 동안에도 앞 확인의 값이다. */
+  cliFound: boolean;
   /** "자세히" 내용. */
   details: AgentCheckDetails;
 }
@@ -789,8 +793,8 @@ export interface AppSnapshot {
   flowAccount: FlowAccountSnapshot;
   /** 지금 보일 전역 문제. 없으면 `null`. */
   globalProblem: GlobalProblemSnapshot | null;
-  /** Claude Code 연결 확인 상태. */
-  agentConnection: AgentConnectionSnapshot;
+  /** 이 OS의 후보 에이전트마다의 연결 확인 상태. 후보 순서다(macOS는 Claude Code와 Codex, Windows는 Claude Code). */
+  agentConnections: AgentConnectionSnapshot[];
   /** 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferencesSnapshot;
   /** 작업 폴더와 "이 PC에서 찾은 폴더". */
@@ -822,7 +826,7 @@ export type AppEvent =
   /** 보일 전역 문제가 바뀌었다. */
   | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null }
   /** 에이전트 연결 확인 상태가 바뀌었다. */
-  | { type: 'agent-connection-changed'; agentConnection: AgentConnectionSnapshot }
+  | { type: 'agent-connections-changed'; agentConnections: AgentConnectionSnapshot[] }
   /** 기본 에이전트나 모델 선택이 바뀌었다. 연결된 에이전트가 바뀔 때도 온다. */
   | { type: 'agent-preferences-changed'; agentPreferences: AgentPreferencesSnapshot }
   /** 작업 폴더나 그 훑은 결과, "이 PC에서 찾은 폴더"가 바뀌었다. */
@@ -860,14 +864,16 @@ export type AppCommand =
   | { type: 'confirm-flow-account-switch' }
   /** 진행 중인 키 확인이나 확인을 기다리는 계정 바꾸기를 그만둔다. */
   | { type: 'cancel-flow-key-check' }
-  /** 에이전트 연결을 확인한다. 칸을 열 때와 [다시 확인]에 쓴다. 저장한 CLI 경로가 있으면 그대로 쓴다. */
-  | { type: 'check-agent' }
+  /** 이 OS의 후보 에이전트를 모두 확인한다. 에이전트 칸을 열 때 쓴다. 저장한 CLI 경로가 있으면 그대로 쓴다. */
+  | { type: 'check-agents' }
+  /** 에이전트 하나의 연결을 확인한다. [다시 확인]에 쓴다. */
+  | { type: 'check-agent'; agent: AgentId }
   /** 저장한 CLI 경로를 무시하고 다시 찾는다. */
-  | { type: 'rediscover-agent' }
+  | { type: 'rediscover-agent'; agent: AgentId }
   /** 파일 선택 창으로 CLI를 직접 지정한다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
-  | { type: 'pick-agent-cli' }
+  | { type: 'pick-agent-cli'; agent: AgentId }
   /** 실패 카드의 명령을 클립보드에 복사한다. 명령은 main이 지금 상태에서 정한다. */
-  | { type: 'copy-agent-fix-command' }
+  | { type: 'copy-agent-fix-command'; agent: AgentId }
   /** 기본 에이전트를 고른다. 연결되지 않은 에이전트는 main이 받지 않는다. */
   | { type: 'set-default-agent'; agent: AgentId }
   /** 에이전트의 모델을 고른다. `null`은 기본 모델(에이전트가 정함)이다. 목록에 없는 모델은 main이 받지 않는다. */
@@ -1089,6 +1095,11 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isFlowApiKeyInput(candidate.apiKey) ? { type: 'check-flow-key', apiKey: candidate.apiKey } : null;
     case 'set-default-agent':
       return isAgentId(candidate.agent) ? { type: 'set-default-agent', agent: candidate.agent } : null;
+    case 'check-agent':
+    case 'rediscover-agent':
+    case 'pick-agent-cli':
+    case 'copy-agent-fix-command':
+      return isAgentId(candidate.agent) ? { type: candidate.type, agent: candidate.agent } : null;
     case 'set-agent-model':
       return isAgentId(candidate.agent) && isAgentModelInput(candidate.model)
         ? { type: 'set-agent-model', agent: candidate.agent, model: candidate.model }
@@ -1171,10 +1182,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'close-editor-picker':
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
-    case 'check-agent':
-    case 'rediscover-agent':
-    case 'pick-agent-cli':
-    case 'copy-agent-fix-command':
+    case 'check-agents':
     case 'pick-work-folders':
     case 'refresh-work-folders':
     case 'refresh-repo-mappings':

@@ -6,6 +6,7 @@ import type { DraftQueue } from '../core/drafts/draft-queue';
 import type { DraftSettings, DraftSettingsState } from '../core/drafts/draft-settings';
 import type { Posting } from '../core/posting/posting';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
+import type { AgentConnections } from '../core/agent/agent-connections';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import { errorFields, type Logger } from '../core/logging/logger';
@@ -19,6 +20,7 @@ import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding'
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import type { TrialRun } from '../core/trial/trial-run';
 import { agentFixCommand } from '../shared/agent-fix-command';
+import { AGENT_INFO } from '../shared/agent-info';
 import {
   IPC_CHANNELS,
   parseAppCommand,
@@ -52,8 +54,8 @@ export interface IpcServices {
   flowAccount: FlowAccount;
   /** 작은 창 띠에 보일 전역 문제. */
   globalProblems: GlobalProblems;
-  /** "에이전트" 칸의 연결 확인. */
-  agentConnection: AgentConnection;
+  /** "에이전트" 칸의 연결 확인. 이 OS의 후보 에이전트마다 하나씩 있다. */
+  agentConnections: AgentConnections;
   /** "에이전트" 칸의 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferences;
   /** "저장소" 칸의 작업 폴더. */
@@ -110,9 +112,9 @@ export function registerIpc(services: IpcServices): void {
       type: 'agent-preferences-changed',
       agentPreferences: agentPreferencesSnapshot(services.agentPreferences.state()),
     });
-  services.agentConnection.onChange((state) => {
-    services.windows.broadcast({ type: 'agent-connection-changed', agentConnection: agentConnectionSnapshot(state) });
-    // 연결되거나 끊기면 연결된 에이전트와 모델 선택 상자도 바뀐다.
+  services.agentConnections.onChange(() => {
+    services.windows.broadcast({ type: 'agent-connections-changed', agentConnections: agentConnectionsSnapshot(services.agentConnections) });
+    // 연결되거나 끊기면 연결된 에이전트와 모델 선택 상자(Codex는 다시 읽은 목록)도 바뀐다.
     broadcastPreferences();
   });
   services.agentPreferences.onChange(broadcastPreferences);
@@ -183,14 +185,14 @@ function projectLookup(repoMappings: RepoMappings): ProjectLookup {
 /** 지금 앱 상태의 스냅숏. */
 function currentSnapshot(services: IpcServices): AppSnapshot {
   /** 상태를 읽을 main의 일. */
-  const { flowAccount, globalProblems, agentConnection, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin } = services;
+  const { flowAccount, globalProblems, agentConnections, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin } = services;
   return {
     appName: app.name,
     version: app.getVersion(),
     platform: appPlatform(),
     flowAccount: flowAccountSnapshot(flowAccount.state()),
     globalProblem: activeProblemSnapshot(globalProblems.current()),
-    agentConnection: agentConnectionSnapshot(agentConnection.state()),
+    agentConnections: agentConnectionsSnapshot(agentConnections),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
     workFolders: workFoldersSnapshot(workFolders.state()),
     repoMappings: repoMappingsSnapshot(repoMappings.state()),
@@ -210,7 +212,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     windows,
     logger,
     flowAccount,
-    agentConnection,
+    agentConnections,
     agentPreferences,
     workFolders,
     repoMappings,
@@ -242,18 +244,27 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'cancel-flow-key-check':
       flowAccount.cancelKeyCheck();
       return;
+    case 'check-agents':
+      await agentConnections.checkAll();
+      return;
     case 'check-agent':
-      await agentConnection.check();
+      await agentConnections.get(command.agent)?.check();
       return;
     case 'rediscover-agent':
-      await agentConnection.rediscover();
+      await agentConnections.get(command.agent)?.rediscover();
       return;
-    case 'pick-agent-cli':
-      await pickAgentCli(windows, agentConnection);
+    case 'pick-agent-cli': {
+      /** 직접 지정할 에이전트의 연결 확인. 이 OS에서 후보가 아니면 없다. */
+      const connection = agentConnections.get(command.agent);
+      if (connection) await pickAgentCli(windows, connection);
       return;
-    case 'copy-agent-fix-command':
-      copyAgentFixCommand(agentConnection);
+    }
+    case 'copy-agent-fix-command': {
+      /** 명령을 복사할 에이전트의 연결 확인. */
+      const connection = agentConnections.get(command.agent);
+      if (connection) copyAgentFixCommand(connection);
       return;
+    }
     case 'set-default-agent':
       await agentPreferences.setDefaultAgent(command.agent);
       return;
@@ -532,12 +543,14 @@ function workFoldersSnapshot(state: WorkFoldersState): WorkFoldersSnapshot {
 
 /** 파일 선택 창으로 CLI를 받아 확인한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
 async function pickAgentCli(windows: AppWindows, agentConnection: AgentConnection): Promise<void> {
+  /** 에이전트 이름. */
+  const name = AGENT_INFO[agentConnection.agent].name;
   /** 파일 선택 창 설정. macOS는 `~/.local` 같은 숨김 폴더도 고를 수 있게 한다. */
   const options: OpenDialogOptions = {
-    title: 'Claude Code CLI 직접 지정',
+    title: `${name} CLI 직접 지정`,
     buttonLabel: '선택',
     properties: ['openFile', 'showHiddenFiles'],
-    ...(process.platform === 'win32' ? { filters: [{ name: 'Claude Code CLI', extensions: ['exe', 'cmd'] }] } : {}),
+    ...(process.platform === 'win32' ? { filters: [{ name: `${name} CLI`, extensions: ['exe', 'cmd'] }] } : {}),
   };
   /** 설정 창. 있으면 그 위에 시트로 띄운다. */
   const parent = windows.settingsWindow();
@@ -555,13 +568,23 @@ function copyAgentFixCommand(agentConnection: AgentConnection): void {
   const { progress, details } = agentConnection.state();
   if (progress.status !== 'failed') return;
   /** 복사할 명령. */
-  const command = agentFixCommand(progress.failure, details, appPlatform());
+  const command = agentFixCommand(agentConnection.agent, progress.failure, details, appPlatform());
   if (command) clipboard.writeText(command);
 }
 
 /** core의 에이전트 연결 상태를 렌더러에 넘길 모양으로 바꾼다. */
 function agentConnectionSnapshot(state: AgentConnectionState): AgentConnectionSnapshot {
-  return { progress: state.progress, details: { ...state.details, searchedDirs: [...state.details.searchedDirs] } };
+  return {
+    agent: state.agent,
+    progress: state.progress,
+    cliFound: state.cliFound,
+    details: { ...state.details, searchedDirs: [...state.details.searchedDirs] },
+  };
+}
+
+/** 후보 에이전트마다의 연결 상태. 후보 순서다. */
+function agentConnectionsSnapshot(connections: AgentConnections): AgentConnectionSnapshot[] {
+  return connections.all.map((connection) => agentConnectionSnapshot(connection.state()));
 }
 
 /** core의 기본 에이전트와 모델 선택을 렌더러에 넘길 모양으로 바꾼다. */
@@ -594,7 +617,7 @@ function flowAccountSnapshot(state: FlowAccountState): FlowAccountSnapshot {
 
 /** core의 전역 문제를 렌더러·트레이·알림 문구가 쓰는 모양으로 바꾼다. */
 export function globalProblemSnapshot(problem: GlobalProblem): GlobalProblemSnapshot {
-  return problem.cause === 'agent' ? { cause: 'agent', reason: problem.reason } : { cause: 'flow-key', reason: problem.reason };
+  return problem.cause === 'agent' ? { cause: 'agent', agent: problem.agent, reason: problem.reason } : { cause: 'flow-key', reason: problem.reason };
 }
 
 /** 지금 보일 전역 문제를 렌더러에 넘길 모양으로 바꾼다. 없으면 `null`. */

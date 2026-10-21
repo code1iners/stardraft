@@ -543,6 +543,11 @@ p.setup-tray-hint {
   border-radius: 10px;
 }
 
+/* 후보 에이전트마다 카드가 하나씩 쌓인다(macOS에서 Codex를 찾았을 때). */
+.agent-card + .agent-card {
+  margin-top: 12px;
+}
+
 .agent-link {
   display: flex;
   align-items: flex-start;

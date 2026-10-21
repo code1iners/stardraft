@@ -55,11 +55,19 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'cancel-flow-key-check' })).toEqual({ type: 'cancel-flow-key-check' });
   });
 
-  it('에이전트 확인 명령을 받고, 렌더러가 실은 경로나 명령은 버린다', () => {
-    expect(parseAppCommand({ type: 'check-agent' })).toEqual({ type: 'check-agent' });
-    expect(parseAppCommand({ type: 'rediscover-agent' })).toEqual({ type: 'rediscover-agent' });
-    expect(parseAppCommand({ type: 'pick-agent-cli', path: '/tmp/evil' })).toEqual({ type: 'pick-agent-cli' });
-    expect(parseAppCommand({ type: 'copy-agent-fix-command', text: 'rm -rf ~' })).toEqual({ type: 'copy-agent-fix-command' });
+  it('에이전트 확인 명령은 앱이 아는 에이전트만 받고, 렌더러가 실은 경로나 명령은 버린다', () => {
+    expect(parseAppCommand({ type: 'check-agents' })).toEqual({ type: 'check-agents' });
+    expect(parseAppCommand({ type: 'check-agent', agent: 'codex' })).toEqual({ type: 'check-agent', agent: 'codex' });
+    expect(parseAppCommand({ type: 'rediscover-agent', agent: 'claude-code' })).toEqual({ type: 'rediscover-agent', agent: 'claude-code' });
+    expect(parseAppCommand({ type: 'pick-agent-cli', agent: 'codex', path: '/tmp/evil' })).toEqual({ type: 'pick-agent-cli', agent: 'codex' });
+    expect(parseAppCommand({ type: 'copy-agent-fix-command', agent: 'claude-code', text: 'rm -rf ~' })).toEqual({
+      type: 'copy-agent-fix-command',
+      agent: 'claude-code',
+    });
+    for (const type of ['check-agent', 'rediscover-agent', 'pick-agent-cli', 'copy-agent-fix-command']) {
+      expect(parseAppCommand({ type })).toBeNull();
+      expect(parseAppCommand({ type, agent: 'gemini' })).toBeNull();
+    }
   });
 
   it('기본 에이전트 고르기 명령은 앱이 아는 에이전트만 받는다', () => {

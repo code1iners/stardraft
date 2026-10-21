@@ -1,4 +1,5 @@
 import type { RunKind } from '../ports/executor';
+import type { CliCommand, ListedModel, LoginCheck } from './agent-cli';
 
 /** Claude Code CLI의 명령 이름. */
 export const CLAUDE_COMMAND_NAME = 'claude';
@@ -8,26 +9,6 @@ export const CLAUDE_COMMAND_NAME = 'claude';
  * 배포된 바이너리로 확인하면 `--restricted`는 2.1.248, 가장 늦게 생긴 `--permission-prompts`는 2.1.259부터 있다.
  */
 export const MIN_CLAUDE_VERSION = '2.1.259';
-
-/** 버전 확인과 로그인 확인 명령의 제한 시간(밀리초). */
-export const CLI_COMMAND_TIMEOUT_MS = 10_000;
-
-/** `claude --version` 출력(`2.1.303 (Claude Code)`)에서 버전을 꺼낸다. 없으면 `null`. */
-export function parseCliVersion(output: string): string | null {
-  return /\b(\d+)\.(\d+)\.(\d+)\b/.exec(output)?.[0] ?? null;
-}
-
-/** 두 `x.y.z` 버전을 비교한다. `a`가 낮으면 음수, 같으면 0, 높으면 양수. */
-export function compareVersions(a: string, b: string): number {
-  /** 숫자로 나눈 두 버전. */
-  const [left, right] = [a, b].map((version) => version.split('.').map(Number));
-  for (let index = 0; index < 3; index += 1) {
-    /** 이 자리의 차이. */
-    const diff = (left?.[index] ?? 0) - (right?.[index] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
 
 /** `claude auth status` JSON 출력에서 앱이 쓰는 값. */
 export interface ClaudeAuthStatus {
@@ -54,6 +35,28 @@ export function parseClaudeAuthStatus(output: string): ClaudeAuthStatus | null {
 }
 
 /**
+ * 로그인을 확인한다. 실제 실행처럼 `--restricted`를 붙여, 앱 실행에서 무시되는 `apiKeyHelper`를 로그인으로 치지 않는다.
+ * 로그인이 안 되어 있으면 `--restricted` 없이 한 번 더 물어 `apiKeyHelper` 방식인지 가린다.
+ */
+export async function checkClaudeLogin(runCli: CliCommand): Promise<LoginCheck> {
+  /** 실제 실행과 같은 조건의 로그인 상태. */
+  const restricted = await runCli(['--restricted', 'auth', 'status']);
+  /** 읽은 로그인 상태. 로그인되지 않았으면 종료 코드 1로 끝나므로 종료 코드는 보지 않는다. */
+  const status = restricted.kind === 'exited' ? parseClaudeAuthStatus(restricted.stdout) : null;
+  if (status === null) return { ok: false, reason: 'unreadable', authMethod: null, failedResult: restricted };
+  if (status.loggedIn) return { ok: true, authMethod: status.authMethod };
+
+  /** 사용자 설정까지 본 로그인 상태. */
+  const unrestricted = await runCli(['auth', 'status']);
+  /** 사용자 설정의 로그인 방식. */
+  const userAuthMethod = unrestricted.kind === 'exited' ? (parseClaudeAuthStatus(unrestricted.stdout)?.authMethod ?? null) : null;
+  /** 자세히에 남길 로그인 방식. */
+  const authMethod = userAuthMethod ?? status.authMethod;
+  if (userAuthMethod === 'api_key_helper') return { ok: false, reason: 'api-key-helper', authMethod };
+  return { ok: false, reason: 'not-logged-in', authMethod };
+}
+
+/**
  * 이 CLI를 업데이트하는 명령. Homebrew cask 설치본은 Homebrew가 관리하므로(`claude update`도 "Claude is managed by Homebrew"라며 brew로 넘긴다) brew 명령을 쓴다.
  * @param realPath 링크를 푼 CLI 실제 경로.
  * @param cliCommand 터미널에서 이 CLI를 부르는 말.
@@ -75,14 +78,6 @@ export const CLAUDE_MAX_TURNS: Readonly<Record<RunKind, number>> = {
   draft: 60,
   check: 3,
 };
-
-/** 모델 선택 상자에 넣어 두는 모델 하나. */
-export interface ListedModel {
-  /** CLI에 `--model`로 넘길 값. */
-  id: string;
-  /** 화면에 보일 이름. */
-  label: string;
-}
 
 /**
  * Claude Code 모델 선택 상자의 계열 별칭. 고르면 그 계열의 최신 모델을 쓴다.

@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claudeNotLoggedInStream, claudeStream as stream, fakeClaudeEvent } from '../fakes/fake-claude-stream';
 import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
 import type { ExecutorProgress, ExecutorRunRequest } from '../ports/executor';
-import { ClaudeCodeExecutor, type ClaudeLaunch, type ClaudeRunReport } from './claude-code-executor';
+import type { AgentLaunch, AgentRunReport } from './agent-launch';
+import { ClaudeCodeExecutor } from './claude-code-executor';
 import { NodeProcessRunner } from './node-process-runner';
 import type { ProcessRequest } from './process-runner';
 
@@ -48,10 +49,10 @@ function draftRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunR
 }
 
 /** 가짜 실행기와 실행기 어댑터를 만든다. */
-function setup(launch: ClaudeLaunch | null = { cliPath: CLI, env: CHILD_ENV }) {
+function setup(launch: AgentLaunch | null = { cliPath: CLI, env: CHILD_ENV, version: '2.1.303' }) {
   const runner = new FakeProcessRunner();
   /** 실행이 끝날 때마다 받은 보고. */
-  const reports: ClaudeRunReport[] = [];
+  const reports: AgentRunReport[] = [];
   const executor = new ClaudeCodeExecutor({ runner, launch: () => launch, tempRoot, onRunFinished: (report) => reports.push(report) });
   return { runner, executor, reports };
 }
@@ -176,6 +177,7 @@ describe('Claude Code 실행기: 인수 묶음', () => {
     const { runner, executor } = setup({
       cliPath: CLI,
       env: { ...CHILD_ENV, ANTHROPIC_API_KEY: 'sk-fake-key', CODEX_API_KEY: 'fake-codex-key' },
+      version: '2.1.303',
     });
     answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
 
@@ -536,7 +538,7 @@ describe('Claude Code 실행기: 실제 프로세스의 취소', () => {
       ].join('\n'),
     );
     chmodSync(cliPath, 0o755);
-    const executor = new ClaudeCodeExecutor({ runner: new NodeProcessRunner(), launch: () => ({ cliPath, env: { PATH: '/usr/bin:/bin' } }), tempRoot });
+    const executor = new ClaudeCodeExecutor({ runner: new NodeProcessRunner(), launch: () => ({ cliPath, env: { PATH: '/usr/bin:/bin' }, version: null }), tempRoot });
     const controller = new AbortController();
     /** 취소하기 직전에 자식 프로세스가 돌고 있었는지 여부. */
     let childRunningBeforeCancel = false;

@@ -64,7 +64,7 @@ describe('전역 문제', () => {
 
   it('원인마다 지금 문제가 있는지 물을 수 있다. 맨 앞에 보이지 않는 원인도 있다고 답한다', () => {
     const { problems } = setup();
-    problems.raise({ cause: 'agent', reason: 'not-logged-in' });
+    problems.raise({ cause: 'agent', agent: 'claude-code', reason: 'not-logged-in' });
 
     expect(problems.has('agent')).toBe(true);
     expect(problems.has('flow-key')).toBe(false);

@@ -1,7 +1,7 @@
 import { errorFields, type Logger } from '../logging/logger';
 import type { AgentId } from '../ports/executor';
 import { DEFAULT_SETTINGS, type SettingsStore } from '../ports/settings-store';
-import { CLAUDE_MODEL_ALIASES, type ListedModel } from './claude-cli';
+import type { ListedModel } from './agent-cli';
 
 /** 모델 선택 상자의 항목 하나. */
 export interface ModelOption {
@@ -39,6 +39,8 @@ export interface AgentPreferencesOptions {
   logger: Logger;
   /** 지금 연결된 에이전트. 연결 확인이 정한다. */
   connectedAgents: () => readonly AgentId[];
+  /** 에이전트의 모델 목록. Claude Code는 앱에 넣어 둔 계열 별칭, Codex는 연결 확인이 `codex debug models`에서 읽은 것이다. */
+  listedModels: (agent: AgentId) => readonly ListedModel[];
 }
 
 /** 설정에서 읽어 둔 값. */
@@ -77,7 +79,7 @@ export class AgentPreferences {
       connectedAgents,
       defaultAgent: defaultAgentFor(connectedAgents, this.saved.defaultAgent),
       models: Object.fromEntries(
-        connectedAgents.map((agent) => [agent, modelChoice(listedModels(agent), this.saved.agentModels[agent] ?? null)]),
+        connectedAgents.map((agent) => [agent, modelChoice(this.options.listedModels(agent), this.saved.agentModels[agent] ?? null)]),
       ),
     };
   }
@@ -103,7 +105,7 @@ export class AgentPreferences {
   async setModel(agent: AgentId, model: string | null): Promise<void> {
     /** 지금 저장한 모델. */
     const current = this.saved.agentModels[agent] ?? null;
-    if (model !== null && model !== current && !listedModels(agent).some((listed) => listed.id === model)) {
+    if (model !== null && model !== current && !this.options.listedModels(agent).some((listed) => listed.id === model)) {
       this.options.logger.warn('agent-preferences.model-rejected', { agent });
       return;
     }
@@ -134,11 +136,6 @@ function defaultAgentFor(connected: readonly AgentId[], saved: AgentId): AgentId
   if (connected.includes(saved)) return saved;
   if (connected.includes('claude-code')) return 'claude-code';
   return connected[0] ?? null;
-}
-
-/** 에이전트의 모델 목록. Codex 목록은 Codex 연결 확인이 더한다. */
-function listedModels(agent: AgentId): readonly ListedModel[] {
-  return agent === 'claude-code' ? CLAUDE_MODEL_ALIASES : [];
 }
 
 /** 모델 목록과 저장한 모델로 선택 상자를 만든다. 저장한 모델이 목록에 없으면 끝에 남긴다. */

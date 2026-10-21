@@ -1,6 +1,6 @@
 import { mkdir, realpath } from 'node:fs/promises';
 import { errorFields, type Logger } from '../logging/logger';
-import type { AgentId, Executor, ExecutorFailureReason, ExecutorOutcome } from '../ports/executor';
+import type { AgentId, Executor, ExecutorOutcome } from '../ports/executor';
 import type { SettingsStore } from '../ports/settings-store';
 import type { AgentProblemReason, GlobalProblems } from '../problems/global-problems';
 import { CHECK_RUN_INPUT, CHECK_RUN_INSTRUCTIONS, CHECK_RUN_SCHEMA, CHECK_RUN_TIMEOUT_MS, isCheckRunPassed } from './check-run';
@@ -29,6 +29,7 @@ import {
   type CliSearchContext,
 } from './cli-discovery';
 import type { ProcessResult, ProcessRunner } from './process-runner';
+import { suspectsGlobalFailure } from './run-failures';
 
 /** 에이전트 연결 확인의 네 단계. 화면의 연결선 네 마디다. 넷째 `run-check`는 점검 실행(화면 이름 "작동 확인")이다. */
 export type AgentCheckStep = 'find' | 'version' | 'login' | 'run-check';
@@ -154,9 +155,6 @@ type FindResult =
 /** 연결 확인하는 에이전트. Codex는 뒤 티켓이 더한다. */
 const AGENT: AgentId = 'claude-code';
 
-/** 전역 실패를 의심할 실행 실패. 이 실패로 끝나면 연결 확인을 처음부터 다시 돌린다. 과부하·네트워크 같은 일시적 실패는 넣지 않는다. */
-const SUSPECTED_GLOBAL_FAILURES: readonly ExecutorFailureReason[] = ['cli-missing', 'cli-error', 'not-logged-in'];
-
 /**
  * 에이전트 연결 확인. Claude Code CLI를 찾고, 버전, 로그인, 작동 확인(점검 실행)을 차례로 확인한다.
  * 앱을 시작할 때와 설정 "에이전트" 칸을 열 때 돌고, 실행이 전역 실패를 의심하게 끝나거나 CLI 버전이 바뀐 것을 알아채면 다시 돈다.
@@ -237,6 +235,31 @@ export class AgentConnection {
     return this.confirmedVersion !== null;
   }
 
+  /**
+   * 선택·초안 실행 직전에 이 에이전트로 실행해도 되는지 확인한다. 실행해도 되면 참이다.
+   * 매 실행 전에는 CLI 버전만 읽는다. 로그인 확인과 작동 확인은 앱을 시작할 때와 전역 실패가 의심될 때 연결 확인이 한다.
+   * 진행 중인 연결 확인이 있으면 끝나기를 기다린다. 버전이 작동 확인 때와 다르거나 버전을 읽지 못하면(CLI가 지워짐 등)
+   * 연결 확인을 처음부터 다시 돌려(작동 확인 포함) 그 결과를 따른다. 실패하면 연결 확인이 전역 문제로 알린다.
+   */
+  async confirmForRun(): Promise<boolean> {
+    await this.settled();
+    /** 작동 확인을 통과한 CLI와 버전. */
+    const [cliPath, confirmed] = [this.cliPath, this.confirmedVersion];
+    if (cliPath === null || confirmed === null) return false;
+
+    /** 버전 명령 결과. */
+    const result = await this.runCli(cliPath, ['--version']);
+    /** 지금 CLI 버전. 읽지 못하면 `null`. */
+    const version = result.kind === 'exited' && result.exitCode === 0 ? parseCliVersion(result.stdout) : null;
+    if (version === confirmed) return true;
+
+    if (version === null) this.options.logger.warn('agent.cli-version-unreadable', { agent: AGENT, result: result.kind });
+    else this.options.logger.info('agent.cli-version-changed', { agent: AGENT, from: confirmed, to: version });
+    await this.check();
+    await this.settled();
+    return this.isConnected();
+  }
+
   /** 에이전트 CLI 자식 프로세스의 환경 변수. 아직 PATH를 읽지 않았으면 `null`. */
   processEnv(): Record<string, string> | null {
     return this.childPath && agentProcessEnv(this.options.env, this.childPath.path, this.options.platform);
@@ -252,7 +275,7 @@ export class AgentConnection {
   /** 선택·초안 실행이 끝나면 결과를 보고, 전역 실패가 의심되거나 CLI 버전이 바뀌었으면 연결 확인을 다시 돌린다. */
   private recheckAfterRun({ kind, cliVersion, outcome }: ClaudeRunReport): void {
     if (kind === 'check') return;
-    if (outcome.type === 'failed' && SUSPECTED_GLOBAL_FAILURES.includes(outcome.reason)) {
+    if (outcome.type === 'failed' && suspectsGlobalFailure(outcome.reason)) {
       this.options.logger.warn('agent.global-failure-suspected', { agent: AGENT, reason: outcome.reason });
       void this.check();
       return;
@@ -261,6 +284,11 @@ export class AgentConnection {
       this.options.logger.info('agent.cli-version-changed', { agent: AGENT, from: this.confirmedVersion, to: cliVersion });
       void this.check();
     }
+  }
+
+  /** 진행 중인 연결 확인이 모두 끝나기를 기다린다. 기다리는 사이에 새 확인이 시작되면(다시 찾기 등) 그것도 기다린다. */
+  private async settled(): Promise<void> {
+    while (this.running) await this.running;
   }
 
   /** 새 확인을 시작한다. 진행 중이던 확인의 결과는 버리고 점검 실행은 끊는다. */

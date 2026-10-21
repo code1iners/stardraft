@@ -177,14 +177,26 @@ function start(): void {
       resolveRepos: (projectId) => repoMappings.resolve(projectId),
     });
     await mentionBundles.load();
-    /** 초안 대기열. 생성 중 묶음을 기본 에이전트로 하나씩 실행하고, 에이전트 연결이 없으면 연결될 때까지 기다린다. */
+    /**
+     * 초안 대기열. 생성 중 묶음을 기본 에이전트로 하나씩 실행한다. 실행마다 직전에 CLI 버전을 확인하고,
+     * 에이전트 연결이 없거나 전역 실패면 연결될 때까지 멈춘다.
+     */
     const draftQueue = new DraftQueue({
       bundles: mentionBundles,
-      // 지금은 Claude Code 실행기만 있다. 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
-      agent: () => draftAgentFrom(agentPreferences.state(), [agentConnection.executor]),
+      // 지금은 Claude Code 연결만 있다. 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
+      agent: () => draftAgentFrom(agentPreferences.state(), [agentConnection]),
       onAgentChange: (listener) => {
         /** 구독을 끊는 함수. */
         const unsubscribes = [agentConnection.onChange(listener), agentPreferences.onChange(listener)];
+        return () => {
+          for (const unsubscribe of unsubscribes) unsubscribe();
+        };
+      },
+      // "키 확인 필요"인 동안은 맥락을 조회할 수 없어 대기열을 멈춘다. 키를 다시 넣어 풀리면 다시 돈다.
+      flowKeyUsable: () => flowAccount.apiKey() !== null && !globalProblems.has('flow-key'),
+      onFlowKeyChange: (listener) => {
+        /** 구독을 끊는 함수. */
+        const unsubscribes = [globalProblems.onChange(listener), flowAccount.onChange(listener)];
         return () => {
           for (const unsubscribe of unsubscribes) unsubscribe();
         };
@@ -196,7 +208,6 @@ function start(): void {
       logger,
     });
     drafts = draftQueue;
-    draftQueue.start();
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
     // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.
     /** 목록을 받은 계정의 사용자 ID. */
@@ -325,10 +336,13 @@ function start(): void {
 
     // 저장된 키는 트레이를 띄운 뒤에 읽는다. 업데이트 뒤에는 키체인 재허용을 묻고 답할 때까지 끝나지 않기 때문이다.
     // 키를 읽으면 감지를 시작한 앱은 바로 알림을 조회한다.
+    // 초안 대기열도 키를 읽은 뒤에 시작한다. 키를 읽었다는 알림은 따로 없고, 읽기 전에는 맥락을 조회할 수 없기 때문이다.
+    // 키를 읽지 못했으면 "키 확인 필요"가 풀릴 때까지 대기열은 멈춰 있다.
     flowAccount
       .checkStoredKey()
       .then(syncDetection)
-      .catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)));
+      .catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)))
+      .finally(() => draftQueue.start());
     // 앱을 시작할 때 에이전트 연결을 확인한다(작동 확인 포함). 끊겨 있으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
     void agentConnection.check();
   });

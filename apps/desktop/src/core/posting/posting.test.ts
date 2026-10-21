@@ -373,6 +373,34 @@ describe('게시: 게시하지 못했을 때', () => {
     expect(flow.writes).toEqual([]);
   });
 
+  it('응답이 없거나 5xx이거나 앱이 모르는 응답이면 올라갔는지 알 수 없으므로, 보내기 전 기록을 둔 채 게시 중으로 남겨 다시 게시하지 못하게 한다', async () => {
+    for (const failure of [{ kind: 'network' as const }, { kind: 'http' as const, status: 503 }, { kind: 'unexpected-response' as const }]) {
+      const { clock, flow, bundles, posting, bundleId } = await setup('post');
+      flow.failOn(`POST /user/comments/${POST_ID}`, failure, 1);
+
+      await posting.post(bundleId);
+      clock.advance(COUNTDOWN_MS);
+      await settle();
+      await posting.post(bundleId);
+      clock.advance(COUNTDOWN_MS);
+      await settle();
+
+      expect(bundles.get(bundleId)).toMatchObject({ status: 'posting', posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, postedId: null } });
+      expect(flow.requests.filter((request) => request.startsWith('POST'))).toHaveLength(1);
+    }
+  });
+
+  it('요청 한도(429)는 처리되지 않은 것이 확실하므로 준비됨으로 돌린다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: 1_000 }, 1);
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'ready', posting: null });
+  });
+
   it('Flow가 키를 거부하면(401) "키 확인 필요"를 알리고 묶음은 준비됨으로 둔다', async () => {
     const { clock, flow, bundles, posting, bundleId, keyRejections } = await setup('thread');
     flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'unauthorized' }, 1);

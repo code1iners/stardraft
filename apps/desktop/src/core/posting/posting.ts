@@ -2,7 +2,7 @@ import type { MentionBundles } from '../bundles/mention-bundles';
 import { isPostBody } from '../flow/mention-place';
 import type { Logger } from '../logging/logger';
 import type { CancelScheduled, Clock } from '../ports/clock';
-import type { FlowApiResult, FlowConnection } from '../ports/flow-api';
+import type { FlowApiFailure, FlowApiResult, FlowConnection } from '../ports/flow-api';
 
 /** 게시 취소 카운트다운(밀리초). [게시]를 누르고 이만큼 지나야 게시 요청을 보낸다. 설정에서 바꿀 수 없다. */
 export const POST_COUNTDOWN_MS = 5_000;
@@ -30,7 +30,8 @@ interface Countdown {
 /**
  * 게시. [게시]를 누르면 묶음을 게시 중으로 두고 5초 카운트다운을 시작하며, 그동안 취소할 수 있다. 확인 단계는 없다.
  * 카운트다운이 끝나면 게시 요청을 보내기 직전에 게시 본문을 먼저 기록하고, 본문 묶음은 게시물의 새 댓글로, 댓글 스레드 묶음은 그 댓글의 대댓글로 올린다.
- * 성공하면 올라간 글의 ID를 기록하고 게시됨으로 둔다. 게시하지 못하면 준비됨으로 돌린다.
+ * 성공하면 올라간 글의 ID를 기록하고 게시됨으로 둔다. 올라가지 않은 것이 확실하면 준비됨으로 돌리고,
+ * 올라갔는지 알 수 없으면(응답 없음, `5xx`) 다시 게시하지 못하게 보내기 전 기록을 둔 채 게시 중으로 둔다.
  */
 export class Posting {
   /** 묶음마다 진행 중인 카운트다운. */
@@ -116,9 +117,10 @@ export class Posting {
 
     /** 게시할 묶음. */
     const bundle = this.options.bundles.get(bundleId);
+    if (!bundle) return;
     /** 지금 키로 만든 Flow 연결. */
     const flow = this.options.connectFlow();
-    if (!bundle || !flow) {
+    if (!flow) {
       this.options.logger.warn('posting.no-key', { bundleId });
       await this.options.bundles.returnToReady(bundleId);
       return;
@@ -137,6 +139,11 @@ export class Posting {
       return;
     }
 
+    if (isOutcomeUnknown(result.failure)) {
+      // REST에는 댓글 삭제가 없어 그대로 다시 보내면 중복 댓글이 남을 수 있다. 보내기 전 기록을 둔 채 게시 중으로 두어 [게시]를 막는다.
+      this.options.logger.warn('posting.outcome-unknown', { bundleId, reason: result.failure.kind });
+      return;
+    }
     this.options.logger.warn('posting.failed', { bundleId, reason: result.failure.kind });
     if (result.failure.kind === 'unauthorized') flow.reportKeyRejected();
     await this.options.bundles.returnToReady(bundleId);
@@ -146,6 +153,14 @@ export class Posting {
   private emit(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+/**
+ * 게시 요청이 올라갔는지 알 수 없는 실패인지 본다. 응답을 받지 못했거나(`5xx` 포함),
+ * 성공 응답인데 만든 글의 ID를 읽을 수 없는 경우다. 요청 한도(`429`)와 그 밖의 거절은 처리되지 않은 것이 확실하다.
+ */
+function isOutcomeUnknown(failure: FlowApiFailure): boolean {
+  return failure.kind === 'network' || failure.kind === 'unexpected-response' || (failure.kind === 'http' && failure.status >= 500);
 }
 
 /** 성공한 결과의 값을 바꾼다. 실패는 그대로 둔다. */

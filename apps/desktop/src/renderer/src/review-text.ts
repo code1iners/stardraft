@@ -93,16 +93,19 @@ export function ignoredText(bundle: BundleSnapshot): string {
   return `무시했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
 }
 
-/** 게시 중 묶음의 바닥 줄 문구. 카운트다운 중이면 남은 초, 게시 요청을 보냈으면 결과를 기다린다는 말이다. */
-export function postingFooterText(secondsLeft: number | null): string {
-  return secondsLeft === null ? '게시 결과를 기다리는 중입니다.' : `${secondsLeft}초 뒤 게시합니다.`;
+/** 카운트다운의 남은 초를 알리는 말. 예: 5초 뒤 게시합니다 */
+function countdownText(secondsLeft: number): string {
+  return `${secondsLeft}초 뒤 게시합니다`;
 }
 
-/** 게시 토스트 문구. 카운트다운 중이면 남은 초, 게시 요청을 보냈으면 게시하는 중이라는 말이다. */
-export function postingToastText(bundle: BundleSnapshot, secondsLeft: number | null): string {
-  /** 어느 멘션에 답하는지. */
-  const target = `${senderLine(bundle.senderNames)}님 멘션`;
-  return secondsLeft === null ? `게시하는 중입니다: ${target}` : `${secondsLeft}초 뒤 게시합니다: ${target}`;
+/** 게시 중 묶음의 바닥 줄 문구. 카운트다운 중이면 남은 초, 게시 요청을 보냈으면 결과를 확인하는 중이라는 말이다. */
+export function postingFooterText(secondsLeft: number | null): string {
+  return secondsLeft === null ? '게시 결과 확인 중입니다.' : `${countdownText(secondsLeft)}.`;
+}
+
+/** 카운트다운 토스트 문구. 예: 5초 뒤 게시합니다: 김철수님 멘션 */
+export function countdownToastText(bundle: BundleSnapshot, secondsLeft: number): string {
+  return `${countdownText(secondsLeft)}: ${senderLine(bundle.senderNames)}님 멘션`;
 }
 
 /**

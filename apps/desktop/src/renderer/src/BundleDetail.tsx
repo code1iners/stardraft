@@ -17,6 +17,7 @@ import {
   BUNDLE_PLACE_LABELS,
   BUNDLE_STATUS_TAGS,
   circledNumber,
+  countdownToastText,
   evidenceLocation,
   failureText,
   formatMentionTime,
@@ -28,7 +29,6 @@ import {
   postBodyLengthText,
   postLine,
   postingFooterText,
-  postingToastText,
   PROCESSED_NOTES,
   reasonText,
   repoCheckText,
@@ -1179,57 +1179,55 @@ function NewMentionNotice({ bundle }: BundleProps) {
 
 /** 창 아래 토스트 자리에 넘기는 값. */
 interface ToastStackProps {
-  /** 묶음 전부. 게시 중 묶음마다 게시 토스트를 띄운다. */
+  /** 묶음 전부. 카운트다운 중인 묶음마다 카운트다운 토스트를 띄운다. */
   bundles: readonly BundleSnapshot[];
   /** 보이는 무시 토스트. 없으면 `null`. */
   ignoreToast: IgnoreToastState | null;
   /** 무시 토스트의 [되돌리기]를 눌렀다. */
   onRestore: (bundleId: number) => void;
-  /** 게시 토스트의 [취소]를 눌렀다. */
+  /** 카운트다운 토스트의 [취소]를 눌렀다. */
   onCancelPost: (bundleId: number) => void;
 }
 
 /**
- * 창 아래 토스트 자리. 게시 중 묶음의 게시 토스트를 먼저, 무시 토스트를 그 아래에 쌓는다. 띄울 토스트가 없으면 그리지 않는다.
- * 게시 토스트는 main의 묶음 상태를 따르므로, 다른 묶음을 보고 있거나 창을 바꿔도 게시 중인 동안 보인다.
+ * 창 아래 토스트 자리. 카운트다운 토스트를 먼저, 무시 토스트를 그 아래에 쌓는다. 띄울 토스트가 없으면 그리지 않는다.
+ * 카운트다운 토스트는 main의 묶음 상태를 따르므로, 다른 묶음을 보고 있거나 창을 바꿔도 카운트다운 동안 보인다.
  */
 export function ToastStack({ bundles, ignoreToast, onRestore, onCancelPost }: ToastStackProps) {
-  /** 게시 중 묶음. */
-  const posting = bundles.filter((bundle) => bundle.status === 'posting' && bundle.posting);
-  if (posting.length === 0 && !ignoreToast) return null;
+  /** 카운트다운 중인 묶음과 카운트다운이 끝날 시각. */
+  const countdowns = bundles.flatMap((bundle) => (bundle.posting?.phase === 'countdown' ? [{ bundle, endsAt: bundle.posting.endsAt }] : []));
+  if (countdowns.length === 0 && !ignoreToast) return null;
   return (
     <div className="toast-stack">
-      {posting.map((bundle) => (
-        <PostingToast key={`${bundle.id}-${bundle.posting!.phase}`} bundle={bundle} onCancel={() => onCancelPost(bundle.id)} />
+      {countdowns.map(({ bundle, endsAt }) => (
+        <CountdownToast key={`${bundle.id}-${endsAt}`} bundle={bundle} endsAt={endsAt} onCancel={() => onCancelPost(bundle.id)} />
       ))}
       {ignoreToast && <IgnoreToast toast={ignoreToast} onRestore={() => onRestore(ignoreToast.bundleId)} />}
     </div>
   );
 }
 
-/** 게시 토스트에 넘기는 값. */
-interface PostingToastProps {
-  /** 게시 중 묶음. */
+/** 카운트다운 토스트에 넘기는 값. */
+interface CountdownToastProps {
+  /** 카운트다운 중인 묶음. */
   bundle: BundleSnapshot;
+  /** 카운트다운이 끝나 게시 요청을 보낼 시각(Unix epoch 밀리초). */
+  endsAt: number;
   /** [취소]를 눌렀다. */
   onCancel: () => void;
 }
 
-/** 게시 중 묶음의 토스트. 카운트다운 동안 남은 초와 [취소]를 보이고, 게시 요청을 보낸 뒤에는 게시하는 중이라고 보인다. */
-function PostingToast({ bundle, onCancel }: PostingToastProps) {
-  /** 카운트다운이 끝날 시각. 게시 요청을 보냈으면 `null`. */
-  const endsAt = bundle.posting?.phase === 'countdown' ? bundle.posting.endsAt : null;
+/** [게시]를 누른 뒤 5초 동안 뜨는 토스트. 남은 초와 [취소]를 보인다. 확인 창은 따로 없다. */
+function CountdownToast({ bundle, endsAt, onCancel }: CountdownToastProps) {
   /** 카운트다운의 남은 초. */
-  const secondsLeft = useSecondsLeft(endsAt);
+  const secondsLeft = useSecondsLeft(endsAt) ?? 0;
 
   return (
     <div className="toast" role="status">
-      <span>{postingToastText(bundle, secondsLeft)}</span>
-      {endsAt !== null && (
-        <button type="button" className="btn link" onClick={onCancel}>
-          취소
-        </button>
-      )}
+      <span>{countdownToastText(bundle, secondsLeft)}</span>
+      <button type="button" className="btn link" onClick={onCancel}>
+        취소
+      </button>
     </div>
   );
 }

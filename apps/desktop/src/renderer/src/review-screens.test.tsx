@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
@@ -871,19 +871,31 @@ describe('근거와 에디터에서 열기', () => {
 });
 
 describe('게시', () => {
+  /** 화면을 그리는 시각. 카운트다운의 남은 초를 이 시각으로 센다. */
+  const NOW = Date.UTC(2026, 9, 20, 0, 5);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   /** 그린 HTML에서 [게시] 버튼. 없으면 `undefined`. */
   function postButton(html: string): string | undefined {
     return html.match(/<button[^>]*>게시<\/button>/)?.[0];
   }
 
-  /** 카운트다운 중인 게시 중 묶음. 지금부터 5초 뒤에 게시 요청을 보낸다. */
+  /** 카운트다운 중인 게시 중 묶음. 그리는 시각에서 4.2초 뒤에 게시 요청을 보내므로 남은 초는 올림해 5초다. */
   function countingDown(): BundleSnapshot {
     return {
       ...READY,
       id: 8,
       status: 'posting',
       draft: { ...READY.draft!, canEdit: false, canPost: false },
-      posting: { phase: 'countdown', endsAt: Date.now() + 5_000 },
+      posting: { phase: 'countdown', endsAt: NOW + 4_200 },
     };
   }
 
@@ -915,16 +927,17 @@ describe('게시', () => {
     expect(html).not.toContain('<textarea');
   });
 
-  it('게시 요청을 보낸 게시 중 묶음은 결과를 기다린다고 보이고 [게시]를 끈 채로 두며 취소할 수 없다', () => {
+  it('게시 요청을 보낸 게시 중 묶음은 "게시 결과 확인 중"을 보이고 [게시]를 끈 채로 두며, 취소할 수 없고 토스트도 띄우지 않는다', () => {
     /** 게시 요청을 보낸 묶음. */
     const sending: BundleSnapshot = { ...countingDown(), posting: { phase: 'sending' } };
     /** 그린 HTML. */
     const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([sending])} />);
     const text = textOf(<PopoverContent snapshot={snapshot([sending])} />);
 
-    expect(text).toContain('게시 결과를 기다리는 중입니다.');
+    expect(text).toContain('게시 결과 확인 중입니다.');
     expect(postButton(html)).toContain('disabled');
     expect(text).not.toContain('취소');
+    expect(html).not.toContain('class="toast"');
   });
 
   it('게시 중 묶음이 있으면 다른 묶음을 보고 있어도 창 아래에 카운트다운 토스트와 [취소]를 보인다. 펼친 창도 같다', () => {

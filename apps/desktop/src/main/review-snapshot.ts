@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
-import { activeMentions, canEditDraft, canPost, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
+import { activeMentions, canEditDraft, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
-import { bundleRecipients, draftEditorText, postableBody, postBody } from '../core/drafts/post-body';
+import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
 import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
@@ -53,7 +53,7 @@ export function reviewSnapshot(
   generationOf: GenerationLookup,
   mappingOf: MappingLookup,
   repoPicker: RepoPickerState | null,
-  countdownOf: CountdownLookup = () => null,
+  countdownOf: CountdownLookup,
 ): ReviewSnapshot {
   return {
     bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf)),
@@ -158,7 +158,7 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
     recipients: recipients.map(({ name }) => ({ name })),
     // 빈 편집기 텍스트의 게시 본문이 곧 받는 사람 표기와 이어 붙이는 공백이다.
     postBodyPrefixLength: postBody(recipients, '').length,
-    canPost: canPost(bundle.status) && postableBody(bundle) !== null,
+    canPost: isPostable(bundle),
   };
 }
 

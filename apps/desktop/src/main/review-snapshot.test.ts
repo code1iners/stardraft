@@ -455,8 +455,8 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     /** 창 하나의 영역 펼침 상태. */
     const sections = { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true };
 
-    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', picker).repoPicker).toEqual(picker);
-    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null).repoPicker).toBeNull();
+    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', picker, () => null).repoPicker).toEqual(picker);
+    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).repoPicker).toBeNull();
   });
 });
 

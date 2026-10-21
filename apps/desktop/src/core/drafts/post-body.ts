@@ -1,4 +1,4 @@
-import { activeMentions, compareMentions, type MentionBundle } from '../bundles/mention-bundle';
+import { activeMentions, canPost, compareMentions, type MentionBundle } from '../bundles/mention-bundle';
 import { mentionWritingOf } from '../flow/bundle-context';
 import { isSameFlowUser } from '../flow/user-id';
 import type { Draft } from './draft';
@@ -73,4 +73,9 @@ export function postableBody(bundle: Pick<MentionBundle, 'mentions' | 'context' 
   /** 게시 본문. */
   const body = postBody(bundleRecipients(bundle), text);
   return body.length > POST_BODY_CHAR_LIMIT ? null : body;
+}
+
+/** 지금 [게시]를 눌러 게시를 시작할 수 있는지 본다. 준비됨 묶음이고 게시할 수 있는 글(`postableBody`)일 때다. */
+export function isPostable(bundle: Pick<MentionBundle, 'status' | 'mentions' | 'context' | 'removedRecipients' | 'draft' | 'editedText'>): boolean {
+  return canPost(bundle.status) && postableBody(bundle) !== null;
 }

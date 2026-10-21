@@ -6,7 +6,7 @@ import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
-import { bundleRecipients, draftEditorText, postableBody } from '../drafts/post-body';
+import { bundleRecipients, draftEditorText, isPostable, postableBody } from '../drafts/post-body';
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
@@ -15,7 +15,6 @@ import {
   bundlePlaceKey,
   canEditDraft,
   canPickRepos,
-  canPost,
   compareBundles,
   compareMentions,
   countsForReview,
@@ -189,7 +188,7 @@ export class MentionBundles {
       const updated = [...touched].map(([place, { bundle, added }]) => {
         /** 이 자리를 조회한 결과. 다른 묶음이 게시한 글은 그 묶음의 답이라 내 답에서 뺀다. */
         const lookup = lookups.get(place);
-        return applyDetection(bundle, added, lookup && { ...lookup, myAnswers: lookup.myAnswers && this.notPostedElsewhere(lookup.myAnswers, bundle.id) }, now);
+        return applyDetection(bundle, added, lookup && { ...lookup, myAnswers: lookup.myAnswers && this.notPostedByOtherBundles(lookup.myAnswers, bundle.id) }, now);
       });
       /** 저장한 묶음. */
       const saved = await this.options.stateStore.saveDetectedBundles(updated, baselineAlarmId);
@@ -312,7 +311,7 @@ export class MentionBundles {
       const latest = this.bundles.find((item) => item.id === bundleId);
       if (!latest || latest.status !== 'generating') return { kind: 'skipped' };
       /** 새로 찾은 내 답을 더한 기록. 다른 묶음이 게시한 글은 그 묶음의 답이라 뺀다. */
-      const answers = mergeAnswers(latest.answers, this.notPostedElsewhere(result.myAnswers, bundleId));
+      const answers = mergeAnswers(latest.answers, this.notPostedByOtherBundles(result.myAnswers, bundleId));
       /** 다시 판정한 멘션. */
       const mentions = judgeAnswered(latest.mentions, answers);
       /** 모든 멘션이 빠졌는지 여부. */
@@ -521,7 +520,7 @@ export class MentionBundles {
   async startPosting(bundleId: number): Promise<boolean> {
     /** 게시 중이 된 묶음. */
     const changed = await this.change(bundleId, 'bundle.posting-started', (bundle) =>
-      canPost(bundle.status) && postableBody(bundle) !== null ? { ...bundle, status: 'posting', posting: null } : null,
+      isPostable(bundle) ? { ...bundle, status: 'posting', posting: null } : null,
     );
     return changed !== null;
   }
@@ -541,6 +540,7 @@ export class MentionBundles {
   /**
    * 카운트다운이 끝난 묶음의 게시 요청을 보내기 직전에, "게시 요청 보냄"과 게시 본문을 게시 기록으로 먼저 저장한다.
    * 저장했으면 보낼 게시 본문을 돌려준다. 그사이 취소했거나 이미 보냈으면 `null`이다.
+   * 게시할 수 없는 글이 되었으면 보내지 않고 준비됨으로 돌린 뒤 `null`이다.
    */
   async recordPostRequest(bundleId: number): Promise<string | null> {
     /** 게시 기록을 저장한 묶음. */
@@ -548,7 +548,7 @@ export class MentionBundles {
       if (bundle.status !== 'posting' || bundle.posting !== null) return null;
       /** 보낼 게시 본문. 게시 중에는 초안과 받는 사람을 바꿀 수 없어 [게시]를 누를 때와 같다. */
       const body = postableBody(bundle);
-      return body === null ? null : { ...bundle, posting: { body, sentAt: this.options.clock.now(), postedId: null } };
+      return body === null ? { ...bundle, status: 'ready' } : { ...bundle, posting: { body, sentAt: this.options.clock.now(), postedId: null } };
     });
     return changed?.posting?.body ?? null;
   }
@@ -629,15 +629,15 @@ export class MentionBundles {
   }
 
   /**
-   * 묶음 자리에서 찾은 내 답에서 다른 묶음이 게시한 글을 뺀다. 이 PC가 게시한 글은 그 글을 올린 묶음의 멘션에만 답한 것으로 보기 때문이다.
+   * 묶음 자리에서 찾은 내 답에서 이 PC의 다른 묶음이 게시한 글을 뺀다. 이 PC가 게시한 글은 그 글을 올린 묶음의 멘션에만 답한 것으로 보기 때문이다.
    * 그래야 게시 중에 들어와 새 묶음이 된 멘션이 그 글 때문에 바로 "이미 답함"으로 숨지 않는다. 다른 PC나 Flow 화면에서 쓴 내 답은 그대로 둔다.
    */
-  private notPostedElsewhere(answers: readonly MyAnswer[], bundleId: number | null): MyAnswer[] {
-    /** 다른 묶음이 게시한 글의 ID. */
-    const postedElsewhere = new Set(
+  private notPostedByOtherBundles(answers: readonly MyAnswer[], bundleId: number | null): MyAnswer[] {
+    /** 이 PC의 다른 묶음이 게시한 글의 ID. */
+    const postedByOthers = new Set(
       this.bundles.flatMap((bundle) => (bundle.id !== bundleId && bundle.posting?.postedId ? [bundle.posting.postedId] : [])),
     );
-    return answers.filter((answer) => !postedElsewhere.has(answer.answerId));
+    return answers.filter((answer) => !postedByOthers.has(answer.answerId));
   }
 
   /** Flow 프로젝트마다 저장소 매핑을 한 번씩 확인한다. 확인하다 예외가 나면 매핑이 없는 것으로 본다. */

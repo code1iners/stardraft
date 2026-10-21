@@ -166,7 +166,7 @@ function start(): void {
         /** 에이전트 연결 확인의 진행 상태. */
         const agentProgress = agentConnection.state().progress.status;
         return {
-          keyVerified: flowAccount.state().account !== null && globalProblems.current()?.problem.cause !== 'flow-key',
+          keyVerified: flowAccount.state().account !== null && !globalProblems.has('flow-key'),
           // 시작할 때 연결 확인이 돌기 전(idle)도 확인 중으로 본다.
           agent: agentProgress === 'connected' ? 'connected' : agentProgress === 'failed' ? 'not-connected' : 'checking',
           workFolderCount: workFolders.state().folders.length,
@@ -211,7 +211,7 @@ function start(): void {
      */
     const syncDetection = () => {
       /** 지금 쓰는 키. "키 확인 필요"가 있으면 쓰지 않는다. */
-      const apiKey = globalProblems.current()?.problem.cause === 'flow-key' ? null : flowAccount.apiKey();
+      const apiKey = globalProblems.has('flow-key') ? null : flowAccount.apiKey();
       if (!onboarding.state().detectionStarted || apiKey === null) {
         detectionKey = null;
         return;

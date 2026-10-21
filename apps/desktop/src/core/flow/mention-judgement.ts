@@ -1,14 +1,11 @@
 import type { FlowAlarm, FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowPost, FlowReply } from '../ports/flow-api';
 import { hasMentionMarkupFor } from './mention-markup';
+import { mentionPlaceOf } from './mention-place';
+import { walkPages } from './pages';
 import { isSameFlowUser } from './user-id';
-
-/** 댓글·대댓글 목록을 넘기는 최대 쪽 수. 서버가 다음 쪽이 있다고 계속 답해도 여기서 멈춘다. */
-const MAX_PAGES = 50;
 
 /** 알림을 멘션으로 보지 않고 버린 이유. 로그에만 남는다. */
 export type MentionDropReason =
-  /** 다른 사람이 받은 알림이다(`receiverId`가 내 ID가 아님). */
-  | 'other-receiver'
   /** 송신자가 나다. */
   | 'sent-by-me'
   /** 알림의 멘션 위치를 읽을 수 없다. */
@@ -18,9 +15,7 @@ export type MentionDropReason =
   /** 글이 지워졌다(`404`, 목록에 없는 댓글·대댓글). */
   | 'gone'
   /** 글을 볼 권한이 없다(`403`). */
-  | 'forbidden'
-  /** 그 밖의 응답 코드나 모르는 모양의 응답이라 다시 조회해도 판정할 수 없다. */
-  | 'unreadable';
+  | 'forbidden';
 
 /** 알림 하나를 판정한 결과. */
 export type MentionJudgement =
@@ -50,51 +45,58 @@ export class MentionJudge {
   /** 댓글마다 대댓글 목록 API로 받은 대댓글. */
   private readonly replies = new Map<string, Promise<Fetched<FlowReply[]>>>();
 
-  /** `myId`는 키 확인 때 얻은 내 사용자 ID다. */
+  /** `accountUserId`는 키 확인 때 얻은 내 사용자 ID다. 알림에 `receiverId`가 없을 때 대신 쓴다. */
   constructor(
     private readonly api: FlowApi,
-    private readonly myId: string,
+    private readonly accountUserId: string,
   ) {}
 
-  /** 알림 하나를 판정한다. */
+  /** 알림 하나를 판정한다. 내 ID는 알림의 `receiverId`다. */
   async judge(alarm: FlowAlarm): Promise<MentionJudgement> {
-    // 내 ID는 알림의 receiverId다. 키 확인 때 얻은 사용자 ID와 다르면 다른 계정의 알림이라 판정하지 않는다.
-    if (!isSameFlowUser(alarm.receiverId, this.myId)) return dropped('other-receiver');
-    if (isSameFlowUser(alarm.registerId, this.myId)) return dropped('sent-by-me');
+    /** 나를 지목했는지 볼 내 ID. */
+    const myId = alarm.receiverId || this.accountUserId;
+    if (isSameFlowUser(alarm.registerId, myId) || isSameFlowUser(alarm.registerId, this.accountUserId)) return dropped('sent-by-me');
 
-    /** 멘션된 글의 내용과 지목된 ID. */
-    const target = await this.mentionedText(alarm);
-    if (target.kind !== 'found') return target;
-    return target.value ? MENTION : dropped('not-mentioned');
+    /** 멘션된 글에 나를 지목한 표기가 있는지. */
+    const mentionsMe = await this.mentionsMe(alarm, myId);
+    if (mentionsMe.kind !== 'found') return mentionsMe;
+    return mentionsMe.value ? MENTION : dropped('not-mentioned');
   }
 
-  /** 멘션 위치의 글을 조회해 나를 지목한 표기가 있는지 돌려준다. */
-  private async mentionedText({ postId, remarkId, replyId }: FlowAlarm): Promise<Fetched<boolean>> {
-    if (!postId) return dropped('unknown-location');
-
-    // 본문 멘션: remarkId와 replyId가 모두 "-1"이다. 본문은 MENTIONS와 CONTENTS 표기를 둘 다 본다.
-    if (remarkId === '-1' && replyId === '-1') {
-      /** 게시물. */
-      const post = await this.post(postId);
-      if (post.kind !== 'found') return post;
-      return found(
-        post.value.textComponents.some(
-          ({ contents, mentions }) => mentions.some((id) => isSameFlowUser(id, this.myId)) || hasMentionMarkupFor(contents, this.myId),
-        ),
-      );
+  /** 멘션 위치의 글을 조회해 `myId`를 지목한 표기가 있는지 돌려준다. */
+  private async mentionsMe(alarm: FlowAlarm, myId: string): Promise<Fetched<boolean>> {
+    /** 멘션 위치. */
+    const { postId, remarkId, replyId } = alarm;
+    switch (mentionPlaceOf(alarm)) {
+      case 'post': {
+        // 본문은 TEXT 컴포넌트의 MENTIONS와 CONTENTS 표기를 둘 다 본다. @전체는 MENTIONS에 "ALL"로 오므로 걸리지 않는다.
+        /** 게시물. */
+        const post = await this.post(postId);
+        if (post.kind !== 'found') return post;
+        return found(
+          post.value.textComponents.some(
+            ({ contents, mentions }) => mentions.some((id) => isSameFlowUser(id, myId)) || hasMentionMarkupFor(contents, myId),
+          ),
+        );
+      }
+      case 'comment': {
+        /** 댓글. */
+        const comment = await this.comment(postId, remarkId);
+        if (comment.kind !== 'found') return comment;
+        return found(hasMentionMarkupFor(comment.value.contents, myId));
+      }
+      case 'reply': {
+        /** 대댓글의 부모 댓글. */
+        const comment = await this.comment(postId, remarkId);
+        if (comment.kind !== 'found') return comment;
+        /** 대댓글. */
+        const reply = await this.reply(postId, comment.value, replyId);
+        if (reply.kind !== 'found') return reply;
+        return found(hasMentionMarkupFor(reply.value.contents, myId));
+      }
+      case null:
+        return dropped('unknown-location');
     }
-    if (!remarkId || remarkId === '-1' || !replyId) return dropped('unknown-location');
-
-    /** 댓글, 또는 대댓글의 부모 댓글. */
-    const comment = await this.comment(postId, remarkId);
-    if (comment.kind !== 'found') return comment;
-    // 댓글 멘션: replyId가 "-1"이다.
-    if (replyId === '-1') return found(hasMentionMarkupFor(comment.value.contents, this.myId));
-
-    /** 대댓글. */
-    const reply = await this.reply(postId, comment.value, replyId);
-    if (reply.kind !== 'found') return reply;
-    return found(hasMentionMarkupFor(reply.value.contents, this.myId));
   }
 
   /** 게시물을 조회한다. */
@@ -107,8 +109,8 @@ export class MentionJudge {
     /** 게시물의 댓글. */
     const comments = await cached(this.comments, postId, async () => {
       /** 모든 쪽의 댓글. */
-      const pages = await allPages((cursor) => this.api.listComments(postId, cursor), (page) => page.comments);
-      return pages.kind === 'found' ? found(new Map(pages.value.map((comment) => [comment.commentId, comment]))) : pages;
+      const all = await allItems((cursor) => this.api.listComments(postId, cursor), (page) => page.comments);
+      return all.kind === 'found' ? found(new Map(all.value.map((comment) => [comment.commentId, comment]))) : all;
     });
     if (comments.kind !== 'found') return comments;
     /** 찾은 댓글. */
@@ -128,7 +130,7 @@ export class MentionJudge {
 
     /** 대댓글 목록 API로 받은 대댓글. */
     const replies = await cached(this.replies, JSON.stringify([postId, comment.commentId]), () =>
-      allPages((cursor) => this.api.listReplies(postId, comment.commentId, cursor), (page) => page.replies),
+      allItems((cursor) => this.api.listReplies(postId, comment.commentId, cursor), (page) => page.replies),
     );
     if (replies.kind !== 'found') return replies;
     /** 찾은 대댓글. */
@@ -153,42 +155,28 @@ function fetched<T>(result: FlowApiResult<T>): Fetched<T> {
 }
 
 /**
- * 조회 실패를 판정으로 바꾼다. 지워졌거나(`404`, `412`) 권한이 없으면(`403`) 버린다.
- * 키 거부, 연결 실패, 요청 한도, 서버 오류는 다음 조회에서 다시 판정한다. 그 밖의 응답은 다시 조회해도 같으므로 버린다.
+ * 조회 실패를 판정으로 바꾼다. 지워졌거나(`404`) 권한이 없으면(`403`) 버린다.
+ * 그 밖의 실패(키 거부, 연결 실패, 요청 한도, 서버 오류, 모르는 응답)는 다음 조회에서 다시 판정한다.
  */
 function judgementOfFailure(failure: FlowApiFailure): Exclude<MentionJudgement, { kind: 'mention' }> {
-  switch (failure.kind) {
-    case 'unauthorized':
-    case 'network':
-    case 'rate-limited':
-      return { kind: 'undecided', failure };
-    case 'http':
-      if (failure.status === 403) return dropped('forbidden');
-      if (failure.status === 404 || failure.status === 412) return dropped('gone');
-      return failure.status >= 500 ? { kind: 'undecided', failure } : dropped('unreadable');
-    case 'unexpected-response':
-      return dropped('unreadable');
-  }
+  if (failure.kind === 'http' && failure.status === 403) return dropped('forbidden');
+  if (failure.kind === 'http' && failure.status === 404) return dropped('gone');
+  return { kind: 'undecided', failure };
 }
 
 /** 커서로 나뉜 목록을 끝까지 받아 항목을 모은다. */
-async function allPages<P extends { nextCursor: string | null }, T>(
+async function allItems<P extends { nextCursor: string | null }, T>(
   fetchPage: (cursor: string | null) => Promise<FlowApiResult<P>>,
   itemsOf: (page: P) => T[],
 ): Promise<Fetched<T[]>> {
   /** 모은 항목. */
   const items: T[] = [];
-  /** 다음 쪽 커서. 첫 쪽은 `null`. */
-  let cursor: string | null = null;
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    /** 이번 쪽. */
-    const result = await fetchPage(cursor);
-    if (!result.ok) return judgementOfFailure(result.failure);
-    items.push(...itemsOf(result.value));
-    if (result.value.nextCursor === null || result.value.nextCursor === cursor) break;
-    cursor = result.value.nextCursor;
-  }
-  return found(items);
+  /** 쪽을 넘긴 결과. */
+  const walk = await walkPages(fetchPage, (page) => {
+    items.push(...itemsOf(page));
+    return true;
+  });
+  return walk.ok ? found(items) : judgementOfFailure(walk.failure);
 }
 
 /** `key`의 조회 결과가 있으면 그것을, 없으면 `load`로 조회해 남긴 결과를 돌려준다. */

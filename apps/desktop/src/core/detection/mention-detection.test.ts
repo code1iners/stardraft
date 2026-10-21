@@ -55,16 +55,18 @@ async function setup({ baseline = '100' as string | null } = {}) {
   const notifier = new RecordingNotifier();
   /** Flow가 키를 거부했다고 알린 횟수. */
   const rejected = { count: 0 };
+  /** 남긴 진단 로그 줄. */
+  const logLines: string[] = [];
   const detection = new MentionDetection({
     stateStore,
     notifier,
     clock,
-    logger: createLogger([], clock),
+    logger: createLogger([{ write: (line) => logLines.push(line) }], clock),
     connectFlow: () => ({ api: flow, reportKeyRejected: () => (rejected.count += 1) }),
   });
   await detection.load();
   flow.addPost({ postId: POST_ID, textComponents: [{ contents: '본문', mentions: [] }] });
-  return { clock, flow, stateStore, notifier, rejected, detection };
+  return { clock, flow, stateStore, notifier, rejected, logLines, detection };
 }
 
 describe('멘션 감지: 폴링', () => {
@@ -420,10 +422,23 @@ describe('멘션 감지: 조용히 버리는 알림', () => {
     expect(flow.requests).toEqual(['GET /user/alarms']);
   });
 
-  it('받는 사람(receiverId)이 키 확인 때 얻은 내 ID와 다르면 버린다', async () => {
+  it('알림의 receiverId를 내 ID로 써서 판정하고, 키 확인 때 얻은 사용자 ID와 다르면 버리지 않고 경고만 남긴다', async () => {
+    /** 키 확인 때와 다른 모양으로 온 내 ID. */
+    const receiverId = 'me.alias@example.test';
+    const { stored, logLines } = await detectOne(
+      (flow) => flow.addComment(POST_ID, { commentId: '700', contents: `@[테스트 사용자](${receiverId}) 질문` }),
+      alarm('101', { remarkId: '700', receiverId }),
+    );
+
+    expect(stored).toEqual([[POST_ID, '700', '-1']]);
+    expect(logLines.some((line) => line.includes('"detection.receiver-mismatch"') && line.includes('"warn"'))).toBe(true);
+    expect(logLines.join('')).not.toContain(receiverId);
+  });
+
+  it('송신자가 키 확인 때 얻은 내 사용자 ID와 같아도 송신자가 나인 알림으로 버린다', async () => {
     const { stored } = await detectOne(
       (flow) => addPostMentioningMe(flow, 'p1'),
-      alarm('101', { postId: 'p1', receiverId: 'other@example.test' }),
+      alarm('101', { postId: 'p1', receiverId: 'me.alias@example.test', registerId: ME }),
     );
 
     expect(stored).toEqual([]);
@@ -620,6 +635,43 @@ describe('멘션 감지: 오류', () => {
 
     clock.advance(60_000);
     await settle();
+    expect(await stateStore.countMentions()).toBe(1);
+  });
+
+  it('모르는 응답 모양이나 그 밖의 응답 코드로 판정하지 못한 알림은 다음 조회에서 다시 판정하고, 세 번 연속 실패하면 버리고 넘어간다', async () => {
+    const { clock, flow, stateStore, logLines, detection } = await setup({ baseline: '100' });
+    addPostMentioningMe(flow, 'broken');
+    addPostMentioningMe(flow, 'p2');
+    flow.failOn('GET /user/posts/broken', { kind: 'unexpected-response' });
+    flow.respondToListMentionAlarms([alarm('102', { postId: 'p2' }), alarm('101', { postId: 'broken' })]);
+
+    await detection.start();
+    clock.advance(60_000);
+    await settle();
+    // 두 번째 실패까지는 그 알림에서 멈추므로 뒤의 멘션도 아직 저장하지 않는다.
+    expect(await stateStore.countMentions()).toBe(0);
+    expect(stateStore.baselineAlarmId).toBe('100');
+
+    clock.advance(60_000);
+    await settle();
+    expect((await stateStore.listMentions()).map((mention) => mention.postId)).toEqual(['p2']);
+    expect(stateStore.baselineAlarmId).toBe('102');
+    expect(flow.requests.filter((request) => request === 'GET /user/posts/broken')).toHaveLength(3);
+    expect(logLines.some((line) => line.includes('"detection.alarm-given-up"') && line.includes('"101"'))).toBe(true);
+  });
+
+  it('판정에 한 번 실패한 알림도 다음 조회에서 판정되면 멘션으로 저장한다', async () => {
+    const { clock, flow, stateStore, detection } = await setup({ baseline: '100' });
+    addPostMentioningMe(flow, 'p1');
+    flow.failOn('GET /user/posts/p1', { kind: 'http', status: 400 }, 2);
+    flow.respondToListMentionAlarms([alarm('101', { postId: 'p1' })]);
+
+    await detection.start();
+    clock.advance(60_000);
+    await settle();
+    clock.advance(60_000);
+    await settle();
+
     expect(await stateStore.countMentions()).toBe(1);
   });
 

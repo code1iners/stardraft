@@ -78,6 +78,11 @@ export class GlobalProblems {
     return null;
   }
 
+  /** 이 원인의 문제가 지금 있는지 본다. 맨 앞에 보이지 않는 원인도 있으면 `true`다. */
+  has(cause: GlobalProblemCause): boolean {
+    return this.active.has(cause);
+  }
+
   /** 맨 앞 전역 문제가 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
   onChange(listener: (current: ActiveGlobalProblem | null) => void): () => void {
     this.listeners.add(listener);

@@ -323,12 +323,17 @@ function readCommentPage(data: unknown): FlowCommentPage | null {
   };
 }
 
-/** 대댓글 목록 한 쪽을 읽는다. 대댓글 배열을 찾지 못하면 `null`. */
+/**
+ * 대댓글 목록 한 쪽을 읽는다. 대댓글 배열을 찾지 못하면 `null`.
+ * 알림 목록(`data.alarms.alarms`)처럼 `data.replies` 아래에 `hasNext`·`lastCursor`·`replies[]`가 한 겹 더 올 수도 있어 그 모양도 읽는다.
+ */
 function readReplyPage(data: unknown): FlowReplyPage | null {
-  /** 대댓글 항목 배열. data 자체가 배열이거나 data 바로 아래의 배열이다. */
-  const items = Array.isArray(data) ? data : isRecord(data) ? listIn(Object.values(data), 'replyId') : null;
+  /** 쪽 정보와 대댓글 배열을 담은 객체. 한 겹 더 감싸여 왔으면 그 안쪽이다. */
+  const list = isRecord(data) && isRecord(data.replies) ? data.replies : data;
+  /** 대댓글 항목 배열. 목록 객체 자체가 배열이거나 그 바로 아래의 배열이다. */
+  const items = Array.isArray(list) ? list : isRecord(list) ? listIn(Object.values(list), 'replyId') : null;
   if (!items) return null;
-  return { replies: readReplies(items), nextCursor: nextCursorOf(data) };
+  return { replies: readReplies(items), nextCursor: nextCursorOf(list) };
 }
 
 /** 대댓글 항목들을 읽는다. `replyId`가 없는 항목은 건너뛴다. */

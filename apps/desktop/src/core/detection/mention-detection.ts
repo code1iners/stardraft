@@ -1,6 +1,6 @@
 import { compareAlarmIds, latestAlarmId } from '../flow/alarm-id';
-import { flowTimeToEpochMs } from '../flow/flow-time';
-import { MentionJudge } from '../flow/mention-judgement';
+import { listMentionAlarmsAfter } from '../flow/mention-alarms';
+import { MentionJudge, type MentionJudgement } from '../flow/mention-judgement';
 import { isSameFlowUser } from '../flow/user-id';
 import { errorFields, type Logger } from '../logging/logger';
 import type { CancelScheduled, Clock } from '../ports/clock';
@@ -13,8 +13,11 @@ import { mentionLocationKey, type Mention } from './mention';
 export const POLL_INTERVAL_MS = 60_000;
 /** 가져오는 멘션의 범위(밀리초). 이보다 오래된 알림은 건너뛴다. 설정에서 바꿀 수 없다. */
 export const LOOKBACK_MS = 72 * 60 * 60 * 1000;
-/** 한 번의 조회에서 넘기는 최대 쪽 수. 서버가 다음 쪽이 있다고 계속 답해도 여기서 멈춘다. */
-const MAX_ALARM_PAGES = 50;
+/**
+ * 같은 알림의 판정을 시도하는 최대 횟수. 서버 오류나 모르는 응답처럼 그 글에서만 생기는 실패가 이만큼 이어지면 버리고 넘어간다.
+ * 판정은 실패한 알림에서 멈추므로, 한 글 때문에 뒤의 멘션이 72시간 동안 막히지 않게 한다.
+ */
+const MAX_JUDGE_ATTEMPTS = 3;
 /** 요청 한도(`429`)에 걸린 뒤 다시 조회하기까지 기다리는 가장 짧은 시간(밀리초). */
 const MIN_RETRY_DELAY_MS = 1_000;
 
@@ -41,9 +44,6 @@ type NextPoll =
   /** Flow가 키를 거부해 멈춘다. */
   | { kind: 'stop' };
 
-/** 기준점 뒤의 알림을 모은 결과. */
-type Collected = { ok: true; alarms: FlowAlarm[] } | { ok: false; failure: FlowApiFailure };
-
 /** 다음 주기에 다시 조회한다. */
 const NEXT_INTERVAL: NextPoll = { kind: 'interval' };
 
@@ -69,6 +69,8 @@ export class MentionDetection {
   private notBefore = 0;
   /** 저장한 멘션 수. */
   private mentionCount = 0;
+  /** 그 글에서만 생기는 실패로 판정하지 못한 알림마다 이어진 실패 횟수. */
+  private readonly judgeFailures = new Map<string, number>();
   /** 트레이 숫자가 바뀔 때 부를 함수. */
   private readonly listeners = new Set<(reviewCount: number) => void>();
 
@@ -182,7 +184,7 @@ export class MentionDetection {
     /** 키 확인 때 저장한 계정. 내 ID를 여기서 읽는다. */
     const account = await this.options.stateStore.getAccount();
     if (!flow || !account) {
-      this.options.logger.info('detection.poll-skipped', { hasKey: flow !== null, hasAccount: account !== null });
+      this.options.logger.info('detection.poll-skipped', { hasFlowConnection: flow !== null, hasAccount: account !== null });
       return NEXT_INTERVAL;
     }
 
@@ -190,14 +192,15 @@ export class MentionDetection {
     const baseline = await this.options.stateStore.getBaselineAlarmId();
     if (baseline === null) return this.setFreshBaseline(flow);
 
-    /** 기준점 뒤의 새 알림. */
-    const collected = await this.collectNewAlarms(flow, baseline);
+    /** 기준점 뒤의 새 알림. 72시간보다 먼저 온 알림은 모으지 않는다. */
+    const collected = await listMentionAlarmsAfter(flow.api, baseline, this.options.clock.now() - LOOKBACK_MS);
     if (!collected.ok) return this.nextAfterFailure(flow, collected.failure);
+    if (collected.value.pageLimitReached) this.options.logger.warn('detection.page-limit', { alarmCount: collected.value.alarms.length });
 
     // 판정은 오래된 알림부터 한다. 중간에 멈춰도 그 앞까지는 모두 판정을 마친 상태가 된다.
     // 쪽을 넘기는 사이에 새 알림이 와서 같은 알림이 두 번 오거나, 같은 멘션 위치에서 알림이 여럿 와도 멘션 위치로 한 번만 판정한다.
     /** 판정할 알림. alarmId 오름차순, 같은 알림은 하나만. */
-    const alarms = [...new Map(collected.alarms.map((alarm) => [alarm.alarmId, alarm])).values()].sort((a, b) =>
+    const alarms = [...new Map(collected.value.alarms.map((alarm) => [alarm.alarmId, alarm])).values()].sort((a, b) =>
       compareAlarmIds(a.alarmId, b.alarmId),
     );
     /** 이번 조회에서 판정을 마친 멘션 위치. */
@@ -208,6 +211,8 @@ export class MentionDetection {
     let decidedUpTo: string | null = null;
     /** 판정하지 못하게 한 실패. */
     let stoppedBy: FlowApiFailure | null = null;
+    /** 알림의 receiverId가 키 확인 때 얻은 내 사용자 ID와 다른 알림 수. */
+    let receiverMismatches = 0;
     /** 멘션된 글을 조회해 판정한다. 같은 게시물의 댓글은 이번 조회에서 한 번만 받는다. */
     const judge = new MentionJudge(flow.api, account.userId);
 
@@ -215,20 +220,23 @@ export class MentionDetection {
       /** 이 알림의 멘션 위치. */
       const location = mentionLocationKey(alarm);
       if (!decided.has(location)) {
+        if (alarm.receiverId && !isSameFlowUser(alarm.receiverId, account.userId)) receiverMismatches += 1;
         /** 판정 결과. */
-        const judgement = (await this.options.stateStore.hasMentionLocation(alarm))
-          ? ({ kind: 'dropped', reason: 'already-recorded' } as const)
-          : await judge.judge(alarm);
-        if (judgement.kind === 'undecided') {
+        const judgement = await this.judgeAlarm(judge, alarm);
+        if (judgement.kind === 'undecided' && !this.giveUp(alarm, judgement.failure)) {
           stoppedBy = judgement.failure;
           break;
         }
         decided.add(location);
+        this.judgeFailures.delete(alarm.alarmId);
         if (judgement.kind === 'mention') mentions.push(mentionOf(alarm, this.options.clock.now()));
-        else this.options.logger.info('detection.alarm-dropped', { alarmId: alarm.alarmId, reason: judgement.reason });
+        else if (judgement.kind === 'dropped') this.options.logger.info('detection.alarm-dropped', { alarmId: alarm.alarmId, reason: judgement.reason });
       }
       decidedUpTo = alarm.alarmId;
     }
+
+    // 내 ID는 알림의 receiverId로 판정한다. 키 확인 때 얻은 사용자 ID와 달라도 멘션을 잃지 않게 버리지 않고 알아챌 수 있게만 남긴다.
+    if (receiverMismatches > 0) this.options.logger.warn('detection.receiver-mismatch', { alarmCount: receiverMismatches });
 
     if (decidedUpTo !== null) await this.save(mentions, decidedUpTo, account.userId);
     this.options.logger.info('detection.poll-finished', {
@@ -237,35 +245,6 @@ export class MentionDetection {
       stopped: stoppedBy?.kind ?? null,
     });
     return stoppedBy ? this.nextAfterFailure(flow, stoppedBy) : NEXT_INTERVAL;
-  }
-
-  /**
-   * 최신 알림부터 쪽을 넘기며 기준점 뒤의 알림을 모은다.
-   * 기준점 이하의 알림, 72시간보다 오래된 알림, 마지막 쪽 가운데 하나를 만나면 멈춘다. 알림은 alarmId 내림차순으로 오기 때문이다.
-   */
-  private async collectNewAlarms(flow: FlowConnection, baseline: string): Promise<Collected> {
-    /** 이보다 먼저 온 알림은 건너뛴다(Unix epoch 밀리초). */
-    const cutoff = this.options.clock.now() - LOOKBACK_MS;
-    /** 모은 알림. */
-    const alarms: FlowAlarm[] = [];
-    /** 다음 쪽 커서. 첫 쪽은 `null`. */
-    let cursor: string | null = null;
-    for (let page = 0; page < MAX_ALARM_PAGES; page += 1) {
-      /** 이번 쪽. */
-      const result = await flow.api.listMentionAlarms(cursor);
-      if (!result.ok) return result;
-
-      for (const alarm of result.value.alarms) {
-        if (compareAlarmIds(alarm.alarmId, baseline) <= 0 || isOlderThan(alarm, cutoff)) return { ok: true, alarms };
-        alarms.push(alarm);
-      }
-      /** 다음 쪽 커서. */
-      const next = result.value.nextCursor;
-      if (next === null || next === cursor) return { ok: true, alarms };
-      cursor = next;
-    }
-    this.options.logger.warn('detection.page-limit', { pages: MAX_ALARM_PAGES });
-    return { ok: true, alarms };
   }
 
   /**
@@ -300,6 +279,33 @@ export class MentionDetection {
     this.options.notifier.notify(newMentionNotification(added));
   }
 
+  /** 알림 하나를 판정한다. 이미 기록한 멘션 위치에서 다시 온 알림은 글을 조회하지 않고 버린다(최소 기록 입구). */
+  private async judgeAlarm(judge: MentionJudge, alarm: FlowAlarm): Promise<MentionJudgement | { kind: 'dropped'; reason: 'already-recorded' }> {
+    if (await this.options.stateStore.hasMentionLocation(alarm)) return { kind: 'dropped', reason: 'already-recorded' };
+    return judge.judge(alarm);
+  }
+
+  /**
+   * 판정하지 못한 알림을 버리고 넘어갈지 정한다. 서버 오류나 모르는 응답처럼 그 글에서만 생기는 실패가
+   * `MAX_JUDGE_ATTEMPTS`번 이어지면 버린다. 키 거부, 연결 실패, 요청 한도는 모든 글에 같으므로 버리지 않고 기다린다.
+   */
+  private giveUp(alarm: FlowAlarm, failure: FlowApiFailure): boolean {
+    if (failure.kind !== 'http' && failure.kind !== 'unexpected-response') return false;
+    /** 이번까지 이어진 실패 횟수. */
+    const attempts = (this.judgeFailures.get(alarm.alarmId) ?? 0) + 1;
+    if (attempts < MAX_JUDGE_ATTEMPTS) {
+      this.judgeFailures.set(alarm.alarmId, attempts);
+      return false;
+    }
+    this.options.logger.warn('detection.alarm-given-up', {
+      alarmId: alarm.alarmId,
+      failure: failure.kind,
+      status: failure.kind === 'http' ? failure.status : null,
+      attempts,
+    });
+    return true;
+  }
+
   /** 조회가 실패한 뒤 다음 조회를 정한다. */
   private nextAfterFailure(flow: FlowConnection, failure: FlowApiFailure): NextPoll {
     this.options.logger.warn('detection.flow-failed', {
@@ -324,13 +330,6 @@ export class MentionDetection {
     this.mentionCount = count;
     for (const listener of this.listeners) listener(count);
   }
-}
-
-/** 알림이 `cutoff`보다 먼저 왔는지 본다. 시각을 읽을 수 없으면 범위 안으로 본다. */
-function isOlderThan(alarm: FlowAlarm, cutoff: number): boolean {
-  /** 알림 시각. */
-  const at = flowTimeToEpochMs(alarm.registeredDateTime);
-  return at !== null && at < cutoff;
 }
 
 /** 판정을 통과한 알림으로 저장할 멘션을 만든다. */

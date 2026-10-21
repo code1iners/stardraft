@@ -527,4 +527,17 @@ describe('Flow 어댑터: 댓글·대댓글 조회', () => {
     });
     expect(server.requests[0]?.url).toBe('https://api.flow.team/user/comments/9/replies/8');
   });
+
+  it('대댓글 목록이 알림 목록처럼 한 겹 더 감싸여 와도 읽고, 그 안의 커서를 쓴다', async () => {
+    const server = new FakeFlowServer();
+    server.replyNext({
+      status: 200,
+      body: flowEnvelope({ replies: { hasNext: true, lastCursor: 30, replies: [{ replyId: '1', contents: '하나' }] } }),
+    });
+
+    await expect(connect(server).listReplies('9', '8', '20')).resolves.toEqual({
+      ok: true,
+      value: { replies: [{ replyId: '1', contents: '하나' }], nextCursor: '30' },
+    });
+  });
 });

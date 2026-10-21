@@ -62,6 +62,20 @@ describe('전역 문제', () => {
     expect(problems.current()).toEqual({ problem: KEY_REJECTED, since: START + 10_000 });
   });
 
+  it('원인마다 지금 문제가 있는지 물을 수 있다. 맨 앞에 보이지 않는 원인도 있다고 답한다', () => {
+    const { problems } = setup();
+    problems.raise({ cause: 'agent', reason: 'not-logged-in' });
+
+    expect(problems.has('agent')).toBe(true);
+    expect(problems.has('flow-key')).toBe(false);
+
+    problems.raise(KEY_UNREADABLE);
+    problems.resolve('agent');
+
+    expect(problems.has('agent')).toBe(false);
+    expect(problems.has('flow-key')).toBe(true);
+  });
+
   it('없는 문제를 해결해도 아무 일도 없다', () => {
     const { notifier, problems } = setup();
     /** 바뀐 상태를 받은 횟수. */

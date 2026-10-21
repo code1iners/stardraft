@@ -4,7 +4,7 @@ import { isSameFlowUser } from './user-id';
 const MENTION_MARKUP = /@\[([^\]]*)\]\(([^)\s]*)\)/g;
 
 /** 글 안의 멘션 표기가 가리키는 사용자 ID. 나온 순서대로다. */
-export function mentionedUserIds(text: string): string[] {
+function mentionedUserIds(text: string): string[] {
   return [...text.matchAll(MENTION_MARKUP)].map((match) => match[2] ?? '');
 }
 

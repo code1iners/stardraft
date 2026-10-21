@@ -1,29 +1,37 @@
 import type { AgentPreferencesState } from '../agent/agent-preferences';
 import { suspectsGlobalFailure } from '../agent/run-failures';
 import { withDefaultSecretPatterns } from '../agent/secret-patterns';
-import { FETCHING_CONTEXT_STEP, WRITING_DRAFT_STEP } from '../agent/progress-steps';
-import { activeMentions, mentionSetKey } from '../bundles/mention-bundle';
+import { CHOOSING_REPO_STEP, FETCHING_CONTEXT_STEP, WRITING_DRAFT_STEP } from '../agent/progress-steps';
+import { activeMentions, mentionSetKey, type RepoCheck } from '../bundles/mention-bundle';
 import type { MentionBundles, RunPreparation } from '../bundles/mention-bundles';
 import { contextDocument, omittedItemCount } from '../flow/bundle-context';
 import { errorFields, type Logger } from '../logging/logger';
 import type { CancelScheduled, Clock } from '../ports/clock';
 import type { Executor, ExecutorOutcome, ExecutorReport, ExecutorRunRequest } from '../ports/executor';
 import type { SettingsStore } from '../ports/settings-store';
+import { findSelectionScope } from '../repos/repo-candidates';
 import {
   draftOutputSchema,
   readDraftOutput,
   sentenceCount,
+  type AutoSelection,
+  type DraftFailure,
+  type DraftFailureReason,
   type DraftOutput,
+  type GenerationRunKind,
   type RunFailureReason,
   type RunRecord,
   type RunResult,
 } from './draft';
 import { checkDraftOutput, type CheckedDraftOutput } from './draft-check';
-import { draftInputDocument, draftInstructions } from './draft-input';
+import { draftInputDocument, draftInstructions, type RunDataSource } from './draft-input';
+import { readSelectionOutput, SELECTION_INSTRUCTIONS, selectionInputDocument, selectionOutputSchema, type SelectionOutput } from './repo-selection';
 
 /** 초안 실행의 제한 시간(밀리초). 넘기면 프로세스 트리를 끝내고 "시간 초과"로 실패한다. 설정에서 바꿀 수 없다. */
 export const DRAFT_TIMEOUT_MS = 10 * 60 * 1000;
-/** 생성 한 번에 실행하는 최대 횟수. 처음 실행과 일시적 실패의 자동 재시도 1회다. */
+/** 선택 실행의 제한 시간(밀리초). 넘기면 프로세스 트리를 끝내고 "시간 초과"로 실패한다. 설정에서 바꿀 수 없다. */
+export const SELECTION_TIMEOUT_MS = 5 * 60 * 1000;
+/** 실행 단계(선택 실행, 초안 실행)마다 실행하는 최대 횟수. 처음 실행과 일시적 실패의 자동 재시도 1회다. */
 const MAX_ATTEMPTS = 2;
 /**
  * 일시적 실패. 자동으로 다시 실행하는 실패는 이것뿐이다. 구조 실패(구조화 출력 없음), 모델 과부하, 네트워크 오류다.
@@ -46,14 +54,14 @@ export interface RunnableAgent {
   confirmForRun(): Promise<boolean>;
 }
 
-/** 초안 실행에 쓸 에이전트. 기본 에이전트의 연결과 그 에이전트에 고른 모델이다. 실행 직전 확인이 거짓이면 실행하지 않고 대기열을 멈춘다. */
+/** 선택 실행과 초안 실행에 쓸 에이전트. 기본 에이전트의 연결과 그 에이전트에 고른 모델이다. 실행 직전 확인이 거짓이면 실행하지 않고 대기열을 멈춘다. */
 export interface DraftAgent extends RunnableAgent {
   /** 고른 모델. 기본 모델(에이전트가 정함)이면 `null`. */
   model: string | null;
 }
 
 /**
- * 초안 실행에 쓸 에이전트를 고른다. 기본 에이전트의 연결이 만든 실행기와 실행 직전 확인, 그 에이전트에 고른 모델이다.
+ * 선택 실행과 초안 실행에 쓸 에이전트를 고른다. 기본 에이전트의 연결이 만든 실행기와 실행 직전 확인, 그 에이전트에 고른 모델이다.
  * 연결된 에이전트가 없거나(기본 에이전트가 없음) 기본 에이전트의 연결이 없으면 `null`이고, 초안 대기열은 기다린다.
  */
 export function draftAgentFrom(preferences: AgentPreferencesState, agents: readonly RunnableAgent[]): DraftAgent | null {
@@ -142,24 +150,74 @@ interface RunningDraft {
   step: string;
   /** 지금 실행에서 읽은 파일 수. */
   filesRead: number;
+  /** 마지막으로 시작한 실행 단계의 종류. 실행 단계를 시작하기 전(맥락 조회 등)이면 `null`. 실패에 남긴다. */
+  runKind: GenerationRunKind | null;
+}
+
+/** 초안 실행에 넘길 저장소와, 그 저장소를 자동 선택으로 정했으면 그 내력. */
+interface SelectedRepos {
+  /** 읽을 저장소(절대 경로). 첫 저장소가 cwd가 된다. */
+  repositories: string[];
+  /** 자동 선택의 내력. 저장소 매핑으로 정했으면 `null`. */
+  autoSelection: AutoSelection | null;
 }
 
 /** 실패한 실행의 결과. `retry`는 일시적 실패라 한 번 더 실행할 실패인지 여부다. */
 type FailedVerdict = { kind: 'failed'; reason: RunFailureReason; detail: string | null; retry: boolean };
 
-/** 에이전트 실행 한 번의 결과를 읽은 것. 초안은 에이전트가 낸 그대로다. */
-type RunVerdict = { kind: 'draft'; output: DraftOutput } | FailedVerdict;
+/** 에이전트 실행 한 번의 결과를 읽은 것. 출력은 앱이 읽은 모양이고, 초안이면 에이전트가 낸 그대로다. */
+type RunVerdict<T> = { kind: 'output'; output: T } | FailedVerdict;
 
-/** 출력 검증까지 마친 결과. 초안은 내용 불일치를 고치고 근거 위치를 확인한 것이다. */
-type CheckedVerdict = { kind: 'draft'; output: CheckedDraftOutput } | FailedVerdict;
+/** 출력 검증까지 마친 초안 실행의 결과. 초안은 내용 불일치를 고치고 근거 위치를 확인한 것이다. */
+type CheckedVerdict = RunVerdict<CheckedDraftOutput>;
+
+/** 실행기에 넘길 실행 하나의 요청. 중단 신호와 진행 알림은 대기열이 실행할 때 붙인다. */
+type RunRequest = Omit<ExecutorRunRequest, 'signal' | 'onProgress'>;
+
+/** 실행 단계가 만드는 요청. 실행의 종류는 실행 단계가 붙인다. */
+type PhaseRequest = Omit<RunRequest, 'kind'>;
+
+/** 실행 단계 하나. 선택 실행이나 초안 실행이고, 일시적 실패의 재시도와 전역 실패 확인을 함께 거친다. */
+interface RunPhase<T> {
+  /** 실행의 종류. */
+  kind: GenerationRunKind;
+  /** 실행을 시작할 때의 진행 단계. 도구를 부르기 전까지 보인다. */
+  step: string;
+  /** 이번 실행에 쓸 에이전트로 실행 요청을 만든다. 설정은 실행마다 새로 읽는다. */
+  request: (agent: DraftAgent) => Promise<PhaseRequest>;
+  /** 구조화 출력을 읽는다. 읽을 수 없으면 구조 실패다. */
+  read: (output: unknown) => RunVerdict<T>;
+}
+
+/** 실행 단계의 끝. */
+type PhaseResult<T> =
+  /** 마지막 실행의 결과와 실행 기록, 그 실행의 요청. 기록은 아직 실행 기록에 넣지 않았다. */
+  | { kind: 'ran'; verdict: RunVerdict<T>; record: RunRecord; request: RunRequest }
+  /** 앱이 실행을 멈췄거나 전역 실패로 묶음을 대기열에 되돌려 이번 생성이 끝났다. */
+  | { kind: 'stopped' };
+
+/** 묶음 하나를 만드는 생성 한 번. 선택 실행과 초안 실행이 함께 쓴다. */
+interface Generation {
+  /** 실행하는 묶음. */
+  entry: RunningDraft;
+  /** 생성을 시작할 때 묶음에 든 멘션 위치. 결과를 저장하는 순간 다르면 새 멘션이 합쳐진 것이라 처음부터 다시 만든다. */
+  mentionSet: string;
+  /** 이번 생성에서 남긴 실행 기록. 실행한 순서다. */
+  runs: RunRecord[];
+  /** 입력 문서의 데이터 구획에 넣을 Flow 내용. 선택 실행과 초안 실행에 같은 것을 넘긴다. */
+  data: RunDataSource;
+  /** 맥락에서 길이 상한 때문에 뺀 항목 수. 실행 기록에 남긴다. */
+  omitted: number;
+}
 
 /**
  * 초안 대기열. 생성 중 묶음을 하나씩 꺼내 초안 실행을 돌리는 직렬 대기열이다(한 번에 하나만 실행한다).
+ * 저장소 매핑이 없는 묶음은 작업 폴더에서 자동 선택으로 저장소를 정하고, 선택 실행이 고르면 그 묶음의 초안 실행을 바로 잇는다.
  * 끊긴 생성과 사용자 행동은 감지한 묶음보다 앞에 넣는다. 실행마다 직전에 에이전트를 확인하고,
  * 실행 직전에 저장소 매핑과 "이미 답함"을 다시 확인하고, 맥락을 새로 조회해 입력 문서를 만든다.
  * 일시적 실패는 한 번 다시 실행하고, 전역 실패는 묶음을 실패로 두지 않고 대기열을 멈췄다가 원인이 풀리면 다시 돈다.
  * Flow에 닿지 못하면(네트워크 오류, 요청 한도) 묶음을 실패로 두지 않고 잠시 멈췄다가 다시 조회한다.
- * 결과는 멘션 묶음에 맡겨 준비됨이나 실패로 옮기고, 실행마다 실행 기록을 남긴다. 실행 중인 묶음의 진행 단계는 메모리에만 둔다.
+ * 결과는 멘션 묶음에 맡겨 준비됨, 실패, 저장소 확인 필요로 옮기고, 실행마다 실행 기록을 남긴다. 실행 중인 묶음의 진행 단계는 메모리에만 둔다.
  */
 export class DraftQueue {
   /** 차례를 기다리는 생성 중 묶음. 자리 순서대로 서 있고 앞에서부터 꺼낸다. */
@@ -234,7 +292,7 @@ export class DraftQueue {
       this.interrupt(this.running, 'user');
       return;
     }
-    await this.options.bundles.markFailed(bundleId, { reason: 'cancelled', detail: null, lastStep: null }, [], null);
+    await this.options.bundles.markFailed(bundleId, { reason: 'cancelled', detail: null, lastStep: null, runKind: null }, [], null);
   }
 
   /** 실패 묶음을 [다시 시도]한다. 사용자 행동이라 생성 중으로 돌아가면 감지해서 기다리는 묶음보다 앞에 들어간다. */
@@ -341,6 +399,7 @@ export class DraftQueue {
       mentionSet: null,
       step: FETCHING_CONTEXT_STEP,
       filesRead: 0,
+      runKind: null,
     };
     this.running = entry;
     this.emit();
@@ -420,8 +479,9 @@ export class DraftQueue {
   }
 
   /**
-   * 묶음 하나의 초안을 만든다. 저장소 매핑 확인 → 맥락 조회와 "이미 답함" 확인 → 초안 실행 순서다.
-   * 일시적 실패는 종류가 달라도 한 번만 다시 실행하고, 그 밖의 실패는 다시 실행하지 않는다.
+   * 묶음 하나의 초안을 만든다. 저장소 매핑 확인 → 맥락 조회와 "이미 답함" 확인 → (매핑이 없으면) 자동 선택 → 초안 실행 순서다.
+   * 자동 선택의 선택 실행이 고르면 다른 묶음에 차례를 넘기지 않고 이 묶음의 초안 실행을 바로 잇는다.
+   * 실행마다 일시적 실패는 종류가 달라도 한 번만 다시 실행하고, 그 밖의 실패는 다시 실행하지 않는다.
    * 전역 실패(에이전트를 쓸 수 없음, Flow 키를 쓸 수 없음)나 Flow에 닿지 못함이면 묶음을 실패로 두지 않고 대기열 맨 앞에 되돌려,
    * 대기열이 다시 돌 때 처음부터 만든다.
    */
@@ -433,11 +493,11 @@ export class DraftQueue {
     const mentionSet = mentionSetKey(bundle);
     entry.mentionSet = mentionSet;
 
-    // 기다리는 사이에 저장소 매핑이 지워졌거나 폴더가 사라졌으면 멘션 묶음이 저장소 확인 필요로 올린다.
-    /** 읽을 저장소. 저장소 확인 필요가 되었으면 `null`. */
-    const repositories = await this.options.bundles.reposForRun(entry.bundleId);
+    // 기다리는 사이에 매핑된 폴더가 사라졌으면 멘션 묶음이 저장소 확인 필요로 올린다.
+    /** 저장소 매핑을 확인한 결과. 저장소 확인 필요가 되었으면 `null`. */
+    const mapping = await this.options.bundles.reposForRun(entry.bundleId);
     if (entry.interruption) return this.afterInterruption(entry, []);
-    if (!repositories) return;
+    if (!mapping) return;
 
     // 맥락을 새로 조회하고, 그 사이 Flow에 내 답이 생겼으면 실행하지 않는다.
     /** 맥락을 조회하기 전까지 받은 Flow 키 변경 알림 수. */
@@ -457,105 +517,158 @@ export class DraftQueue {
       return this.requeueFromStart(entry, []);
     }
     if (prepared.kind === 'unavailable') {
-      /** 실패로 두었는지 여부. 그사이 새 멘션이 합쳐졌으면 처음부터 다시 만든다. */
-      const failed = await this.options.bundles.markFailed(entry.bundleId, { reason: prepared.reason, detail: null, lastStep: entry.step }, [], mentionSet);
-      if (!failed) await this.requeueFromStart(entry, []);
-      return;
+      return this.restartUnlessFinished(entry, [], await this.options.bundles.markFailed(entry.bundleId, failureOf(entry, prepared.reason, null), [], mentionSet));
     }
 
-    /** 입력 문서와 맥락에서 뺀 항목 수. 다시 실행해도 같은 입력을 넘긴다. */
-    const { input, omitted } = await this.draftInput(prepared, repositories);
-    /** 이번 생성에서 남긴 실행 기록. */
-    const runs: RunRecord[] = [];
-    /** 실행 직전 확인을 마친 에이전트. 대기열에서 꺼낼 때 확인했고, 다시 실행할 때는 새로 확인한다. */
-    let confirmed: DraftAgent | null = agent;
-    for (let attempt = 1; ; attempt += 1) {
-      /** 이번 실행에 쓸 에이전트. 쓸 수 없으면 `null`. */
-      const current = await this.agentForRun(confirmed);
-      if (entry.interruption) return this.afterInterruption(entry, runs);
-      if (!current) return this.requeueFromStart(entry, runs);
-      confirmed = null;
-      /** 실행기에 넘길 요청. 지침과 비밀 파일 패턴은 실행마다 설정에서 새로 읽는다. */
-      const request = await this.runRequest(input, repositories, current);
-      /** 실행 한 번의 결과와 실행 기록. */
-      const ran = await this.runOnce(entry, current, request, omitted);
-      if (entry.interruption) return this.afterInterruption(entry, [...runs, ran.record]);
-      /** 전역 실패가 의심됐지만 다시 한 연결 확인이 통과했는지 여부. 실행하는 사이 CLI가 바뀐 경우 등이라 일시적 실패처럼 다룬다. */
-      let recovered = false;
-      // 전역 실패가 의심되면 에이전트가 다시 하는 연결 확인을 기다린다. 확인도 실패하면 전역 실패라 묶음을 실패로 두지 않고 대기열을 멈춘다.
-      if (ran.verdict.kind === 'failed' && suspectsGlobalFailure(ran.verdict.reason)) {
-        /** 연결 확인을 통과했는지 여부. */
-        const healthy = await this.confirmAgent(current);
-        if (entry.interruption) return this.afterInterruption(entry, [...runs, ran.record]);
-        if (!healthy) {
-          this.options.logger.warn('draft.global-failure', { bundleId: entry.bundleId, reason: ran.verdict.reason });
-          return this.requeueFromStart(entry, [...runs, ran.record]);
-        }
-        recovered = true;
-        confirmed = current;
-      }
-      // 일시적 실패는 한 번 더 실행한다. 다시 실행도 새 실행이라 실행 직전 확인을 다시 거친다.
-      // 두 번째도 실패면 실패로 둔다. 연결 확인이 통과하는데도 같은 실패가 되풀이되며 대기열이 끝없이 돌지 않게 하려는 것이다.
-      if (ran.verdict.kind === 'failed' && (ran.verdict.retry || recovered) && attempt < MAX_ATTEMPTS) {
-        this.options.logger.info('draft.run-retrying', { bundleId: entry.bundleId, reason: ran.verdict.reason });
-        runs.push(ran.record);
-        continue;
-      }
-      /** 출력 검증까지 마친 결과와 실행 기록. */
-      const { verdict, record } = await checkVerdict(ran, repositories, request.secretPatterns);
-      // 검증하는 사이에 [취소]나 새 멘션으로 멈췄을 수 있으므로 기록의 결과는 검증 뒤에 정한다.
-      runs.push({ ...record, result: runResultOf(entry.interruption, verdict) });
-      if (entry.interruption) return this.afterInterruption(entry, runs);
+    /** 이번 생성. 맥락 문서는 한 번 만들어 선택 실행과 초안 실행에 같은 것을 넘긴다. */
+    const generation: Generation = { entry, mentionSet, runs: [], ...(await this.runData(prepared)) };
+    /** 초안 실행에 넘길 저장소와 자동 선택의 내력. 매핑이 없으면 자동 선택으로 정하고, 정하지 못했으면 `null`이다. */
+    const selected: SelectedRepos | null =
+      mapping.kind === 'mapped' ? { repositories: mapping.repos, autoSelection: null } : await this.selectRepos(generation, agent);
+    if (!selected) return;
+    /** 초안 실행에 넘길 저장소. 첫 저장소가 cwd가 된다. */
+    const { repositories } = selected;
+    /** 입력 문서. 다시 실행해도 같은 입력을 넘긴다. */
+    const input = draftInputDocument({ ...generation.data, repositories });
 
-      // 실행이 끝난 뒤 저장하기 전에도 새 멘션이 합쳐질 수 있으므로, 멘션 묶음이 저장하는 순간 멘션 위치를 다시 본다.
-      /** 결과를 저장했는지 여부. */
-      const finished =
-        verdict.kind === 'draft'
-          ? await this.options.bundles.saveDraft(
-              entry.bundleId,
-              { ...verdict.output, repositories: [...repositories], createdAt: this.options.clock.now() },
-              runs,
-              mentionSet,
-            )
-          : await this.options.bundles.markFailed(
-              entry.bundleId,
-              { reason: verdict.reason, detail: verdict.detail, lastStep: entry.step },
-              runs,
-              mentionSet,
-            );
-      if (!finished) await this.requeueFromStart(entry, [...runs.slice(0, -1), { ...record, result: 'bundle-changed' }]);
-      return;
-    }
+    // 대기열에서 꺼낼 때 실행 직전 확인을 마쳤다. 선택 실행을 돌렸으면 초안 실행도 새 실행이라 다시 확인한다.
+    /** 초안 실행 단계의 마지막 실행. */
+    const ran = await this.runPhase(generation, generation.runs.length === 0 ? agent : null, {
+      kind: 'draft',
+      step: WRITING_DRAFT_STEP,
+      request: (current) => this.draftRequest(input, repositories, current),
+      read: readDraftVerdict,
+    });
+    if (ran.kind === 'stopped') return;
+    /** 출력 검증까지 마친 결과와 실행 기록. */
+    const { verdict, record } = await checkVerdict(ran, repositories, ran.request.secretPatterns);
+    // 검증하는 사이에 [취소]나 새 멘션으로 멈췄을 수 있으므로 기록의 결과는 검증 뒤에 정한다.
+    generation.runs.push({ ...record, result: runResultOf(entry.interruption, verdict) });
+    if (entry.interruption) return this.afterInterruption(entry, generation.runs);
+
+    // 실행이 끝난 뒤 저장하기 전에도 새 멘션이 합쳐질 수 있으므로, 멘션 묶음이 저장하는 순간 멘션 위치를 다시 본다.
+    /** 결과를 저장했는지 여부. */
+    const finished =
+      verdict.kind === 'output'
+        ? await this.options.bundles.saveDraft(
+            entry.bundleId,
+            { ...verdict.output, repositories: [...repositories], autoSelection: selected.autoSelection, createdAt: this.options.clock.now() },
+            generation.runs,
+            mentionSet,
+          )
+        : await this.options.bundles.markFailed(entry.bundleId, failureOf(entry, verdict.reason, verdict.detail), generation.runs, mentionSet);
+    await this.restartUnlessFinished(entry, generation.runs, finished);
   }
 
-  /** 표준 입력으로 넘길 입력 문서와 맥락에서 길이 상한 때문에 뺀 항목 수를 만든다. 생성 한 번에 한 번 만든다. */
-  private async draftInput(
-    prepared: Extract<RunPreparation, { kind: 'prepared' }>,
-    repositories: readonly string[],
-  ): Promise<{ input: string; omitted: number }> {
+  /**
+   * 저장소 매핑이 없는 묶음의 저장소를 자동 선택으로 정한다. 작업 폴더는 이때 설정에서 읽어, 바꾸면 다음 생성부터 쓴다.
+   * 후보가 1개면 선택 실행 없이 그 저장소를 쓰고, 여럿이면 선택 실행이 고른다.
+   * 후보가 0개이거나 선택 실행이 고르지 않았으면 묶음을 저장소 확인 필요로, 선택 실행이 실패했으면 실패로 옮기고 `null`을 돌려준다.
+   * 앱이 실행을 멈췄거나 전역 실패로 대기열에 되돌렸을 때도 `null`이다.
+   * @param agent 대기열에서 꺼낼 때 실행 직전 확인을 마친 에이전트. 선택 실행의 첫 실행은 다시 확인하지 않는다.
+   */
+  private async selectRepos(generation: Generation, agent: DraftAgent): Promise<SelectedRepos | null> {
+    /** 실행하는 묶음과 이번 생성의 실행 기록. */
+    const { entry, runs } = generation;
+    /** 지금 설정. */
+    const settings = await this.options.settingsStore.load();
+    /** 자동 선택의 범위. */
+    const scope = await findSelectionScope(settings.workFolders);
+    if (entry.interruption) {
+      await this.afterInterruption(entry, runs);
+      return null;
+    }
+    if (scope.candidates.length === 0) {
+      await this.finishWithRepoCheck(generation, { kind: 'no-candidates' });
+      return null;
+    }
+    if (scope.candidates.length === 1) return { repositories: [scope.candidates[0]!.path], autoSelection: { kind: 'single-candidate' } };
+
+    /** 후보의 절대 경로. 출력 스키마의 `enum`이다. */
+    const candidates = scope.candidates.map((candidate) => candidate.path);
+    /** 입력 문서. 다시 실행해도 같은 입력을 넘긴다. */
+    const input = selectionInputDocument({ ...generation.data, candidates });
+    /** 선택 실행 단계의 마지막 실행. */
+    const ran = await this.runPhase(generation, agent, {
+      kind: 'selection',
+      step: CHOOSING_REPO_STEP,
+      request: (current) => this.selectionRequest(input, scope.workFolders, candidates, current),
+      read: (output) => readSelectionVerdict(output, candidates),
+    });
+    if (ran.kind === 'stopped') return null;
+    if (ran.verdict.kind === 'failed') {
+      runs.push({ ...ran.record, result: runResultOf(entry.interruption, ran.verdict) });
+      /** 실패로 두었는지 여부. */
+      const failed = await this.options.bundles.markFailed(entry.bundleId, failureOf(entry, ran.verdict.reason, ran.verdict.detail), runs, generation.mentionSet);
+      await this.restartUnlessFinished(entry, runs, failed);
+      return null;
+    }
+
+    /** 선택 실행의 판정. 내용 불일치는 고쳤다. */
+    const selection = ran.verdict.output;
+    runs.push({ ...ran.record, fixes: selection.fixes, result: 'succeeded' });
+    if (selection.verdict !== 'chosen') {
+      await this.finishWithRepoCheck(generation, { kind: selection.verdict, reason: selection.reason, candidates: scope.candidates, picked: selection.repositories });
+      return null;
+    }
+    return { repositories: selection.repositories, autoSelection: { kind: 'chosen', reason: selection.reason } };
+  }
+
+  /** 묶음을 저장소 확인 필요로 옮긴다. 그사이 새 멘션이 합쳐져 옮기지 못했으면 처음부터 다시 만든다. */
+  private async finishWithRepoCheck({ entry, runs, mentionSet }: Generation, repoCheck: RepoCheck): Promise<void> {
+    await this.restartUnlessFinished(entry, runs, await this.options.bundles.markRepoCheckNeeded(entry.bundleId, repoCheck, runs, mentionSet));
+  }
+
+  /**
+   * 생성을 끝내지 못했으면(결과를 저장하는 순간 새 멘션이 합쳐져 있었음) 처음부터 다시 만든다.
+   * 마지막 실행은 끝났지만 그 결과를 쓰지 못했으므로 실행 기록에는 묶음이 바뀌어 멈춘 것으로 남긴다.
+   */
+  private async restartUnlessFinished(entry: RunningDraft, runs: readonly RunRecord[], finished: boolean): Promise<void> {
+    if (!finished) await this.requeueFromStart(entry, withLastResult(runs, 'bundle-changed'));
+  }
+
+  /** 데이터 구획에 넣을 Flow 내용과 맥락에서 길이 상한 때문에 뺀 항목 수를 만든다. 생성 한 번에 한 번 만든다. */
+  private async runData(prepared: Extract<RunPreparation, { kind: 'prepared' }>): Promise<Pick<Generation, 'data' | 'omitted'>> {
     /** 길이 상한을 적용한 맥락 문서. */
     const document = contextDocument(prepared.context);
-    /** 입력 문서. */
-    const input = draftInputDocument({
-      mentions: activeMentions(prepared.bundle),
-      context: prepared.context,
-      contextText: document.text,
-      myName: this.options.myName(),
-      projectTitle: await this.options.projectTitle(prepared.bundle.projectId).catch(() => null),
-      repositories,
-    });
-    return { input, omitted: omittedItemCount(document.omissions) };
+    return {
+      data: {
+        mentions: activeMentions(prepared.bundle),
+        context: prepared.context,
+        contextText: document.text,
+        myName: this.options.myName(),
+        projectTitle: await this.options.projectTitle(prepared.bundle.projectId).catch(() => null),
+      },
+      omitted: omittedItemCount(document.omissions),
+    };
+  }
+
+  /**
+   * 선택 실행 한 번의 요청을 만든다. 작업 폴더 전부를 읽기 범위로 넘기고(첫 폴더가 cwd), 비밀 파일 패턴은 실행마다 설정에서 새로 읽는다.
+   * 추가 지침은 초안 문체를 바꾸는 것이라 넘기지 않는다. 모델은 초안 실행과 같이 이 실행의 에이전트에 고른 것이다.
+   */
+  private async selectionRequest(input: string, workFolders: readonly string[], candidates: readonly string[], agent: DraftAgent): Promise<PhaseRequest> {
+    /** 지금 설정. */
+    const settings = await this.options.settingsStore.load();
+    return {
+      instructions: SELECTION_INSTRUCTIONS,
+      input,
+      outputSchema: selectionOutputSchema(candidates),
+      readRoots: [...workFolders],
+      secretPatterns: [...settings.extraSecretPatterns],
+      model: agent.model,
+      timeoutMs: SELECTION_TIMEOUT_MS,
+    };
   }
 
   /**
    * 초안 실행 한 번의 요청을 만든다. 지침과 비밀 파일 패턴은 실행마다 설정에서 새로 읽고, 모델은 이 실행의 에이전트에 고른 것이다.
    * 그래서 설정을 바꾸면 실행 중인 실행은 그대로 끝나고 다음 실행부터 바뀐 값을 쓴다. 첫 저장소가 cwd가 된다.
    */
-  private async runRequest(input: string, repositories: readonly string[], agent: DraftAgent): Promise<Omit<ExecutorRunRequest, 'signal' | 'onProgress'>> {
+  private async draftRequest(input: string, repositories: readonly string[], agent: DraftAgent): Promise<PhaseRequest> {
     /** 지금 설정. */
     const settings = await this.options.settingsStore.load();
     return {
-      kind: 'draft',
       instructions: draftInstructions(settings.extraInstructions),
       input,
       outputSchema: draftOutputSchema(),
@@ -566,17 +679,65 @@ export class DraftQueue {
     };
   }
 
-  /** 에이전트를 한 번 실행하고 결과와 실행 기록을 돌려준다. 진행 단계는 실행기가 알리는 대로 바꾼다. */
-  private async runOnce(
+  /**
+   * 실행 단계 하나(선택 실행이나 초안 실행)를 돌린다. 실행마다 직전에 에이전트를 확인하고, 일시적 실패는 종류가 달라도 한 번만 다시 실행한다.
+   * 전역 실패가 의심되면 에이전트가 다시 하는 연결 확인을 기다려, 확인도 실패하면 묶음을 실패로 두지 않고 대기열 맨 앞에 되돌린다.
+   * 마지막 실행의 기록은 부르는 쪽이 결과를 정해 실행 기록에 넣는다. 앱이 실행을 멈췄거나 대기열에 되돌렸으면 `stopped`다.
+   * @param confirmed 실행 직전 확인을 이미 마친 에이전트. 그 실행기로 하는 첫 실행은 다시 확인하지 않는다.
+   */
+  private async runPhase<T>(generation: Generation, confirmed: DraftAgent | null, phase: RunPhase<T>): Promise<PhaseResult<T>> {
+    /** 실행하는 묶음과 이번 생성의 실행 기록. */
+    const { entry, runs } = generation;
+    entry.runKind = phase.kind;
+    for (let attempt = 1; ; attempt += 1) {
+      // 실행마다 그 단계의 첫 줄과 읽은 파일 0개로 시작한다. 선택 실행 뒤 초안 실행으로 넘어가면 실행 직전 확인을 기다리는 동안에도 "초안 쓰는 중"으로 보인다.
+      this.setProgress(entry, phase.step, 0);
+      /** 이번 실행에 쓸 에이전트. 쓸 수 없으면 `null`. */
+      const current = await this.agentForRun(confirmed);
+      if (entry.interruption) return stopAfter(this.afterInterruption(entry, runs));
+      if (!current) return stopAfter(this.requeueFromStart(entry, runs));
+      confirmed = null;
+      /** 실행기에 넘길 요청. */
+      const request: RunRequest = { kind: phase.kind, ...(await phase.request(current)) };
+      /** 실행 한 번의 결과와 실행 기록. */
+      const ran = await this.runOnce(entry, current, request, phase.read, generation.omitted);
+      if (entry.interruption) return stopAfter(this.afterInterruption(entry, [...runs, ran.record]));
+      /** 전역 실패가 의심됐지만 다시 한 연결 확인이 통과했는지 여부. 실행하는 사이 CLI가 바뀐 경우 등이라 일시적 실패처럼 다룬다. */
+      let recovered = false;
+      // 전역 실패가 의심되면 에이전트가 다시 하는 연결 확인을 기다린다. 확인도 실패하면 전역 실패라 묶음을 실패로 두지 않고 대기열을 멈춘다.
+      if (ran.verdict.kind === 'failed' && suspectsGlobalFailure(ran.verdict.reason)) {
+        /** 연결 확인을 통과했는지 여부. */
+        const healthy = await this.confirmAgent(current);
+        if (entry.interruption) return stopAfter(this.afterInterruption(entry, [...runs, ran.record]));
+        if (!healthy) {
+          this.options.logger.warn('draft.global-failure', { bundleId: entry.bundleId, kind: request.kind, reason: ran.verdict.reason });
+          return stopAfter(this.requeueFromStart(entry, [...runs, ran.record]));
+        }
+        recovered = true;
+        confirmed = current;
+      }
+      // 일시적 실패는 한 번 더 실행한다. 다시 실행도 새 실행이라 실행 직전 확인을 다시 거친다.
+      // 두 번째도 실패면 실패로 둔다. 연결 확인이 통과하는데도 같은 실패가 되풀이되며 대기열이 끝없이 돌지 않게 하려는 것이다.
+      if (ran.verdict.kind === 'failed' && (ran.verdict.retry || recovered) && attempt < MAX_ATTEMPTS) {
+        this.options.logger.info('draft.run-retrying', { bundleId: entry.bundleId, kind: request.kind, reason: ran.verdict.reason });
+        runs.push(ran.record);
+        continue;
+      }
+      return { kind: 'ran', ...ran, request };
+    }
+  }
+
+  /** 에이전트를 한 번 실행하고 결과와 실행 기록을 돌려준다. 진행 단계는 실행기가 알리는 대로 바꾸고, 구조화 출력은 `read`로 읽는다. */
+  private async runOnce<T>(
     entry: RunningDraft,
     agent: DraftAgent,
-    request: Omit<ExecutorRunRequest, 'signal' | 'onProgress'>,
+    request: RunRequest,
+    read: RunPhase<T>['read'],
     omitted: number,
-  ): Promise<{ verdict: RunVerdict; record: RunRecord }> {
-    this.setProgress(entry, WRITING_DRAFT_STEP, 0);
+  ): Promise<{ verdict: RunVerdict<T>; record: RunRecord }> {
     /** 시작 시각. */
     const startedAt = this.options.clock.now();
-    this.options.logger.info('draft.run-started', { bundleId: entry.bundleId, agent: agent.executor.agent });
+    this.options.logger.info('draft.run-started', { bundleId: entry.bundleId, kind: request.kind, agent: agent.executor.agent });
 
     /** 실행기가 알려 준 것. 실행기가 예외를 던지면 `null`. */
     let report: ExecutorReport | null = null;
@@ -591,17 +752,17 @@ export class DraftQueue {
     }
 
     /** 결과를 읽은 것. */
-    const verdict: RunVerdict = report ? readVerdict(report.outcome) : failedVerdict('app-error', null);
+    const verdict: RunVerdict<T> = report ? verdictOf(report.outcome, read) : failedVerdict('app-error', null);
     /** 실행 기록. 앱이 실행을 멈췄으면 그 까닭이 결과다. */
     const record: RunRecord = {
-      kind: 'draft',
+      kind: request.kind,
       agent: agent.executor.agent,
       cliVersion: report?.cliVersion ?? null,
       model: report?.model ?? agent.model,
       startedAt,
       finishedAt: this.options.clock.now(),
       result: runResultOf(entry.interruption, verdict),
-      detail: verdict.kind === 'draft' ? null : verdict.detail,
+      detail: verdict.kind === 'output' ? null : verdict.detail,
       lastStep: entry.step,
       fixes: [],
       omittedContextItems: omitted,
@@ -609,6 +770,7 @@ export class DraftQueue {
     };
     this.options.logger.info('draft.run-finished', {
       bundleId: entry.bundleId,
+      kind: request.kind,
       result: record.result,
       durationMs: record.finishedAt - record.startedAt,
       filesRead: entry.filesRead,
@@ -623,7 +785,7 @@ export class DraftQueue {
   private async afterInterruption(entry: RunningDraft, runs: RunRecord[]): Promise<void> {
     switch (entry.interruption) {
       case 'user':
-        await this.options.bundles.markFailed(entry.bundleId, { reason: 'cancelled', detail: null, lastStep: entry.step }, runs, null);
+        await this.options.bundles.markFailed(entry.bundleId, failureOf(entry, 'cancelled', null), runs, null);
         return;
       case 'bundle-changed':
         await this.requeueFromStart(entry, runs);
@@ -642,7 +804,7 @@ export class DraftQueue {
     await this.options.bundles.addRuns(entry.bundleId, runs);
     // 기록을 남기는 사이에 [취소]를 눌렀으면 다시 넣지 않고 "취소함" 실패로 둔다.
     if (entry.interruption === 'user') {
-      await this.options.bundles.markFailed(entry.bundleId, { reason: 'cancelled', detail: null, lastStep: entry.step }, [], null);
+      await this.options.bundles.markFailed(entry.bundleId, failureOf(entry, 'cancelled', null), [], null);
       return;
     }
     if (this.status === 'started' && this.options.bundles.get(entry.bundleId)?.status === 'generating') this.enqueue(entry.bundleId, 'resume');
@@ -653,7 +815,7 @@ export class DraftQueue {
     this.options.logger.error('draft.generation-crashed', { bundleId: entry.bundleId, ...errorFields(error) });
     if (this.status !== 'started') return;
     try {
-      await this.options.bundles.markFailed(entry.bundleId, { reason: 'app-error', detail: null, lastStep: entry.step }, [], null);
+      await this.options.bundles.markFailed(entry.bundleId, failureOf(entry, 'app-error', null), [], null);
     } catch (saveError) {
       this.options.logger.error('draft.failure-save-failed', { bundleId: entry.bundleId, ...errorFields(saveError) });
     }
@@ -679,16 +841,11 @@ export class DraftQueue {
   }
 }
 
-/** 실행기의 결과를 읽는다. 구조화 출력은 초안 실행 스키마 모양인지와 문장이 있는지만 본다. 일시적 실패만 다시 실행한다. */
-function readVerdict(outcome: ExecutorOutcome): RunVerdict {
+/** 실행기의 결과를 읽는다. 구조화 출력은 `read`로 읽는다. 일시적 실패만 다시 실행한다. */
+function verdictOf<T>(outcome: ExecutorOutcome, read: (output: unknown) => RunVerdict<T>): RunVerdict<T> {
   switch (outcome.type) {
-    case 'completed': {
-      /** 앱이 읽은 초안. 스키마 모양이 아니면 `null`. */
-      const output = readDraftOutput(outcome.output);
-      if (!output) return failedVerdict('invalid-output', '구조화 출력이 초안 실행 스키마 모양이 아닙니다.');
-      if (sentenceCount(output) === 0) return failedVerdict('empty-draft', null);
-      return { kind: 'draft', output };
-    }
+    case 'completed':
+      return read(outcome.output);
     case 'invalid-output':
       return failedVerdict('invalid-output', outcome.detail);
     case 'timed-out':
@@ -698,6 +855,28 @@ function readVerdict(outcome: ExecutorOutcome): RunVerdict {
     case 'failed':
       return failedVerdict(outcome.reason, outcome.detail);
   }
+}
+
+/** 초안 실행의 구조화 출력을 읽는다. 초안 실행 스키마 모양인지와 문장이 있는지만 본다. */
+function readDraftVerdict(output: unknown): RunVerdict<DraftOutput> {
+  /** 앱이 읽은 초안. 스키마 모양이 아니면 `null`. */
+  const draft = readDraftOutput(output);
+  if (!draft) return failedVerdict('invalid-output', '구조화 출력이 초안 실행 스키마 모양이 아닙니다.');
+  if (sentenceCount(draft) === 0) return failedVerdict('empty-draft', null);
+  return { kind: 'output', output: draft };
+}
+
+/** 선택 실행의 구조화 출력을 읽는다. 판정과 후보 안의 저장소, 이유가 있는지 보고 내용 불일치를 고친다. */
+function readSelectionVerdict(output: unknown, candidates: readonly string[]): RunVerdict<SelectionOutput> {
+  /** 앱이 읽은 판정. 스키마 모양이 아니면 `null`. */
+  const selection = readSelectionOutput(output, candidates);
+  if (!selection) return failedVerdict('invalid-output', '구조화 출력이 선택 실행 스키마 모양이 아닙니다.');
+  return { kind: 'output', output: selection };
+}
+
+/** 실행하던 묶음의 실패. 마지막 진행 단계와 마지막으로 시작한 실행 단계의 종류를 함께 남긴다. */
+function failureOf(entry: RunningDraft, reason: DraftFailureReason, detail: string | null): DraftFailure {
+  return { reason, detail, lastStep: entry.step, runKind: entry.runKind };
 }
 
 /** 실패한 실행의 결과를 만든다. 일시적 실패면 한 번 더 실행할 실패로 둔다. */
@@ -711,11 +890,11 @@ function failedVerdict(reason: RunFailureReason, detail: string | null): FailedV
  * 초안이 아닌 결과는 그대로 돌려준다.
  */
 async function checkVerdict(
-  ran: { verdict: RunVerdict; record: RunRecord },
+  ran: { verdict: RunVerdict<DraftOutput>; record: RunRecord },
   repositories: readonly string[],
   extraSecretPatterns: readonly string[],
 ): Promise<{ verdict: CheckedVerdict; record: RunRecord }> {
-  if (ran.verdict.kind !== 'draft') return { verdict: ran.verdict, record: ran.record };
+  if (ran.verdict.kind !== 'output') return { verdict: ran.verdict, record: ran.record };
   /** 출력 검증의 결과. 요구 고치기 재생성은 아직 없어 고친 요구가 없다. */
   const check = await checkDraftOutput(ran.verdict.output, {
     repositories,
@@ -725,11 +904,22 @@ async function checkVerdict(
   if (check.kind === 'secret-evidence') {
     return { verdict: { kind: 'failed', reason: 'secret-evidence', detail: null, retry: false }, record: { ...ran.record, fixes: check.fixes } };
   }
-  return { verdict: { kind: 'draft', output: check.output }, record: { ...ran.record, fixes: check.fixes } };
+  return { verdict: { kind: 'output', output: check.output }, record: { ...ran.record, fixes: check.fixes } };
 }
 
 /** 실행 기록의 결과. 앱이 실행을 멈췄으면 그 까닭(묶음이 바뀜, 그 밖에는 취소함)이고, 아니면 실행의 결과다. */
-function runResultOf(interruption: Interruption | null, verdict: RunVerdict | CheckedVerdict): RunResult {
+function runResultOf(interruption: Interruption | null, verdict: RunVerdict<unknown>): RunResult {
   if (interruption) return interruption === 'bundle-changed' ? 'bundle-changed' : 'cancelled';
-  return verdict.kind === 'draft' ? 'succeeded' : verdict.reason;
+  return verdict.kind === 'output' ? 'succeeded' : verdict.reason;
+}
+
+/** 마지막 실행 기록의 결과만 바꾼 실행 기록. 실행이 끝난 뒤 저장하기 전에 묶음이 바뀐 실행을 남길 때 쓴다. */
+function withLastResult(runs: readonly RunRecord[], result: RunResult): RunRecord[] {
+  return runs.map((run, index) => (index === runs.length - 1 ? { ...run, result } : run));
+}
+
+/** 정리할 일을 마친 뒤 실행 단계가 멈췄다고 돌려준다. */
+async function stopAfter(cleanup: Promise<void>): Promise<{ kind: 'stopped' }> {
+  await cleanup;
+  return { kind: 'stopped' };
 }

@@ -23,6 +23,30 @@ export type RepoScanResult =
 /** 작업 폴더로 받지 않는 경로의 이유. `network`는 네트워크 경로, `wsl`은 WSL 경로다. */
 export type RejectedFolderReason = 'network' | 'wsl';
 
+/** 자동 선택의 범위. 선택 실행이 읽을 작업 폴더와 고를 수 있는 저장소 후보다. */
+export interface SelectionScope {
+  /** 있는 작업 폴더. 설정의 순서이고 첫 폴더가 선택 실행의 cwd가 된다. */
+  workFolders: string[];
+  /** 작업 폴더에서 찾은 저장소 후보. 작업 폴더 순서대로 모았고, 같은 저장소는 한 번만 든다. */
+  candidates: RepoCandidate[];
+}
+
+/** 작업 폴더들을 훑어 자동 선택의 범위를 정한다. 없거나 읽을 수 없는 작업 폴더는 읽기 범위에서도 뺀다. */
+export async function findSelectionScope(folders: readonly string[]): Promise<SelectionScope> {
+  /** 작업 폴더마다 훑은 결과. */
+  const scans = await Promise.all(folders.map(async (folder) => ({ folder, result: await findRepoCandidates(folder) })));
+  /** 있는 작업 폴더. */
+  const workFolders: string[] = [];
+  /** 모은 후보. 작업 폴더가 겹치면 같은 저장소가 거듭 나올 수 있어 경로로 거른다. */
+  const candidates = new Map<string, RepoCandidate>();
+  for (const { folder, result } of scans) {
+    if (result.status !== 'found') continue;
+    workFolders.push(folder);
+    for (const repo of result.repos) if (!candidates.has(repo.path)) candidates.set(repo.path, repo);
+  }
+  return { workFolders, candidates: [...candidates.values()] };
+}
+
 /**
  * 작업 폴더에서 저장소 후보를 찾는다.
  * `.git` 디렉터리나 worktree의 `.git` 파일이 있으면 저장소로 보고 그 안으로는 내려가지 않는다.

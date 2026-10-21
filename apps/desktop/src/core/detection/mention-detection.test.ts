@@ -7,6 +7,7 @@ import { MemoryStateStore } from '../fakes/memory-state-store';
 import { RecordingNotifier } from '../fakes/recording-notifier';
 import { createLogger } from '../logging/logger';
 import type { FlowAlarm } from '../ports/flow-api';
+import type { RepoResolution } from '../repos/repo-mappings';
 import { MentionDetection } from './mention-detection';
 
 /** 지금 시각. 2026-10-20 09:00:00 한국 표준시(00:00:00 UTC). */
@@ -36,6 +37,11 @@ function alarm(alarmId: string, overrides: Partial<FlowAlarm> = {}): FlowAlarm {
 
 /** 나를 지목한 표기. */
 const MY_MARKUP = `@[테스트 사용자](${ME})`;
+/**
+ * 매핑된 저장소 폴더가 사라졌다는 확인 결과. 이 테스트의 멘션 묶음은 초안 실행 없이 저장소 확인 필요로 기다리며 트레이 숫자와 OS 알림에 오른다.
+ * 생성 중 묶음(매핑, 자동 선택)은 초안 대기열 테스트가 다룬다.
+ */
+const GONE_REPO: RepoResolution = { kind: 'missing-folders', paths: ['/fake/work/gone'] };
 
 /** 가짜 시계가 부른 조회가 끝나도록 대기 중인 비동기 일을 모두 돌린다. 가짜 포트는 모두 바로 답한다. */
 async function settle(): Promise<void> {
@@ -72,7 +78,7 @@ async function setup({ baseline = '100' as string | null } = {}) {
     logger,
     findMyAnswers: async () => null,
     collectContext: async () => null,
-    resolveRepos: async () => ({ kind: 'unmapped' }),
+    resolveRepos: async () => GONE_REPO,
   });
   await bundles.load();
   const detection = new MentionDetection({
@@ -727,7 +733,7 @@ describe('멘션 감지: 오류', () => {
         logger,
         findMyAnswers: async () => null,
         collectContext: async () => null,
-        resolveRepos: async () => ({ kind: 'unmapped' }),
+        resolveRepos: async () => GONE_REPO,
       }),
       clock,
       logger,

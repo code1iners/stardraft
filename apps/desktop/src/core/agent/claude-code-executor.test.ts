@@ -319,6 +319,22 @@ describe('Claude Code 실행기: 결과', () => {
     expect(outcome).toEqual({ type: 'completed', output: { requirement: '재시도 횟수를 알고 싶다' } });
   });
 
+  it('선택 실행은 첫 작업 폴더를 cwd로, 나머지 작업 폴더를 --add-dir로 붙이고, 턴 상한은 초안 실행(60)보다 짧은 40이다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: { verdict: 'unrelated' } }))));
+
+    await executor.run(draftRequest({ kind: 'selection', readRoots: ['/fake/work', '/fake/side'], timeoutMs: 300_000 }));
+    await executor.run(draftRequest());
+
+    /** 선택 실행과 초안 실행의 프로세스 요청. */
+    const [selection, draft] = runner.requests;
+    expect(selection).toMatchObject({ cwd: '/fake/work', timeoutMs: 300_000 });
+    expect(selection?.args.slice(-2)).toEqual(['--add-dir', '/fake/side']);
+    /** 요청의 `--max-turns` 값. */
+    const maxTurns = (args: readonly string[] | undefined) => args?.[args.indexOf('--max-turns') + 1];
+    expect([maxTurns(selection?.args), maxTurns(draft?.args)]).toEqual(['40', '60']);
+  });
+
   it('실행에서 본 CLI 버전과 결과를 보고한다', async () => {
     const { runner, executor, reports } = setup();
     answerCli(runner, exited(0, stream(fakeClaudeEvent.init('2.1.310'), fakeClaudeEvent.result({ structured_output: { ok: true } }))));

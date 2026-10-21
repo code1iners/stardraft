@@ -4,13 +4,11 @@ import type { Draft, DraftFailure, RunRecord } from '../drafts/draft';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { MyAnswer } from '../flow/mention-judgement';
+import type { RepoCandidate } from '../repos/repo-candidates';
 
-/**
- * 멘션 묶음의 상태. 게시 중·게시 실패·게시됨·원문 사라짐은 게시와 변화 감시 기능이 더한다.
- * 저장소 매핑이 없는 묶음은 자동 선택이 생기기 전까지 "저장소 확인 필요"로 올라온다.
- */
+/** 멘션 묶음의 상태. 게시 중·게시 실패·게시됨·원문 사라짐은 게시와 변화 감시 기능이 더한다. */
 export type BundleStatus =
-  /** 생성 중. 초안 실행이 대기열에 있거나 돌고 있다. */
+  /** 생성 중. 선택 실행이나 초안 실행이 대기열에 있거나 돌고 있다. */
   | 'generating'
   /** 준비됨. 초안이 있고 사용자 행동을 기다린다. */
   | 'ready'
@@ -57,13 +55,28 @@ export function countsForReview(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
 }
 
-/** 저장소 확인 필요의 사유. 저장소 매핑이 없어서 확인이 필요한 묶음은 사유가 없다(`null`). */
-export interface RepoCheck {
+/**
+ * 저장소 확인 필요의 사유. 자동 선택이 생기기 전에 저장소 매핑이 없어 저장소 확인 필요가 된 묶음은 사유가 없다(`null`).
+ */
+export type RepoCheck =
   /** 저장소 매핑에 연결된 폴더 가운데 없는 것이 있다. 화면 사유는 "연결된 저장소 폴더를 찾을 수 없음"이다. */
-  kind: 'missing-folders';
-  /** 찾을 수 없는 폴더의 절대 경로. */
-  paths: string[];
-}
+  | {
+      kind: 'missing-folders';
+      /** 찾을 수 없는 폴더의 절대 경로. */
+      paths: string[];
+    }
+  /** 자동 선택을 하려 했지만 작업 폴더에서 저장소 후보를 찾지 못했다(작업 폴더가 없거나 비어 있음). */
+  | { kind: 'no-candidates' }
+  /** 선택 실행이 저장소를 확신하지 못했거나(`unsure`) 코드와 무관한 멘션이라고(`unrelated`) 판정했다. */
+  | {
+      kind: 'unsure' | 'unrelated';
+      /** 선택 실행이 적은 사유. 에이전트가 비워 두었으면 빈 문자열이고 화면에는 "이유 없음"으로 보인다. */
+      reason: string;
+      /** 선택 실행에 넘긴 후보. 작업 폴더에서 찾은 저장소 전부이고 찾은 순서다. */
+      candidates: RepoCandidate[];
+      /** 선택 실행이 짚은 후보의 절대 경로. 판정이 고름이 아니어도 가능성이 있는 저장소를 넣을 수 있다. 에이전트가 낸 순서이고, 짚지 않았으면 비어 있다. */
+      picked: string[];
+    };
 
 /** 묶음에 든 멘션. */
 export interface BundledMention extends Mention {
@@ -116,7 +129,7 @@ export interface MentionBundle extends BundlePlace {
    * 원문 영역의 "스레드 보기"도 이것을 보인다. 아직 조회하지 못했으면 `null`.
    */
   context: BundleContext | null;
-  /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나 저장소 매핑이 없어서면 `null`. */
+  /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
   repoCheck: RepoCheck | null;
   /** 초안 실행이 만든 초안(원래 초안). 아직 없으면 `null`. */
   draft: Draft | null;

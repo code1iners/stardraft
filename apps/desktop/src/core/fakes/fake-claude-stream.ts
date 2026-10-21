@@ -1,6 +1,6 @@
 /**
  * 가짜 Claude Code stream-json 이벤트. 실제 CLI(2.1.303)의 출력 모양에서 앱이 읽는 필드만 남겼다.
- * 한 줄에 이벤트 하나이고, 마지막 줄이 `result` 메시지다.
+ * 한 줄에 이벤트 하나이고, 마지막 줄이 `result` 메시지다. 연결 확인이 읽는 `claude auth status` 출력도 이 파일에 둔다.
  */
 export const fakeClaudeEvent = {
   /** 첫 이벤트. CLI 버전과 이 실행의 모델을 알려 준다. */
@@ -52,6 +52,16 @@ export function claudeStream(...events: string[]): string {
 export function claudeSuccessStream(output: Record<string, unknown>, version = '2.1.303'): string {
   return claudeStream(fakeClaudeEvent.init(version), fakeClaudeEvent.result({ structured_output: output }));
 }
+
+/** 가짜 `claude auth status` 출력(JSON 한 줄). 실제 CLI(2.1.303)의 모양이다. */
+export const fakeClaudeAuthStatus = {
+  /** Claude 계정으로 로그인되어 있다(종료 코드 0). */
+  loggedIn: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty' }),
+  /** 로그인되어 있지 않다(종료 코드 1). */
+  notLoggedIn: JSON.stringify({ loggedIn: false, authMethod: 'none', apiProvider: 'firstParty' }),
+  /** `apiKeyHelper`만 설정했다(종료 코드 0). `--restricted`를 붙이면 로그인되지 않은 것으로 나온다. */
+  apiKeyHelper: JSON.stringify({ loggedIn: true, authMethod: 'api_key_helper', apiProvider: 'firstParty', apiKeySource: 'apiKeyHelper' }),
+};
 
 /** 로그인되어 있지 않을 때의 표준 출력(실측: 종료 코드 1). */
 export function claudeNotLoggedInStream(): string {

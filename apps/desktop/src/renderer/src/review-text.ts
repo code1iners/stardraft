@@ -85,7 +85,10 @@ export function ignoredText(bundle: BundleSnapshot): string {
   return `무시했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
 }
 
-/** 실패 사유마다 실패 화면에 보일 오류 문장. 개발자가 아닌 사람도 읽을 수 있게 쓴다. */
+/**
+ * 실패 사유마다 실패 화면에 보일 오류 문장. 개발자가 아닌 사람도 읽을 수 있게 쓴다.
+ * 일시적 실패(구조 실패, 과부하, 네트워크 오류)는 자동으로 한 번 더 실행한 뒤에야 실패가 되므로 두 번 시도했다고 함께 적는다.
+ */
 export const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
   cancelled: '취소함: 초안 만들기를 취소했습니다.',
   'timed-out': '에이전트가 10분 안에 끝내지 못해 멈췄습니다.',
@@ -98,8 +101,8 @@ export const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
   'cli-missing': '에이전트 CLI를 실행하지 못했습니다.',
   'cli-error': '에이전트 CLI가 오류로 끝났습니다.',
   'not-logged-in': '에이전트에 로그인되어 있지 않습니다.',
-  overloaded: '모델이 바빠서 답하지 못했습니다.',
-  network: '모델 서버에 연결하지 못했습니다.',
+  overloaded: '모델이 바빠서 답하지 못했습니다. 두 번 시도했습니다.',
+  network: '모델 서버에 연결하지 못했습니다. 두 번 시도했습니다.',
   'max-turns': '에이전트가 정해진 단계 수 안에 끝내지 못했습니다.',
   'agent-error': '에이전트가 오류로 끝났습니다.',
 };

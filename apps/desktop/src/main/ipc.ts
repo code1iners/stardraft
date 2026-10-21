@@ -58,7 +58,7 @@ export interface IpcServices {
   launchAtLogin: LaunchAtLogin;
   /** 작은 창과 펼친 창의 멘션 묶음. */
   bundles: MentionBundles;
-  /** 생성 중 묶음의 진행과 취소. */
+  /** 생성 중 묶음의 진행과 취소, 생성을 다시 시작하는 사용자 행동(다시 시도, 되돌리기). */
   drafts: DraftQueue;
   /** 작은 창과 펼친 창의 영역 펼침 상태. */
   reviewSections: ReviewSections;
@@ -235,14 +235,15 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'ignore-bundle':
       await bundles.ignore(command.bundleId);
       return;
+    // 되돌리기와 [다시 시도]는 사용자 행동이라, 새로 만들게 되면 초안 대기열이 감지한 묶음보다 앞에 넣는다.
     case 'restore-bundle':
-      await bundles.restore(command.bundleId);
+      await drafts.restore(command.bundleId);
       return;
     case 'cancel-generation':
       await drafts.cancel(command.bundleId);
       return;
     case 'retry-bundle':
-      await bundles.retry(command.bundleId);
+      await drafts.retry(command.bundleId);
       return;
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);

@@ -2,22 +2,28 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AgentConnection } from '../agent/agent-connection';
+import { AgentPreferences } from '../agent/agent-preferences';
+import { CHECK_RUN_INPUT } from '../agent/check-run';
 import { MentionBundles } from '../bundles/mention-bundles';
 import { MentionDetection } from '../detection/mention-detection';
+import { claudeNotLoggedInStream, claudeSuccessStream, fakeClaudeAuthStatus } from '../fakes/fake-claude-stream';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeExecutor } from '../fakes/fake-executor';
 import { FAKE_ME, FakeFlowApi } from '../fakes/fake-flow-api';
+import { exited, FakeProcessRunner } from '../fakes/fake-process-runner';
 import { MemorySettingsStore } from '../fakes/memory-settings-store';
 import { MemoryStateStore } from '../fakes/memory-state-store';
 import { RecordingNotifier } from '../fakes/recording-notifier';
 import { collectBundleContext } from '../flow/bundle-context';
 import { MentionJudge } from '../flow/mention-judgement';
 import { createLogger } from '../logging/logger';
-import type { ExecutorOutcome } from '../ports/executor';
+import type { ExecutorOutcome, ExecutorRunRequest } from '../ports/executor';
 import type { FlowAlarm } from '../ports/flow-api';
+import { GlobalProblems } from '../problems/global-problems';
 import { RepoMappings } from '../repos/repo-mappings';
 import { DRAFT_INSTRUCTIONS } from './draft-input';
-import { draftAgentFrom, DraftQueue } from './draft-queue';
+import { draftAgentFrom, DraftQueue, type DraftQueueOptions } from './draft-queue';
 
 /** 지금 시각. 2026-10-20 09:00:00 한국 표준시(00:00:00 UTC). */
 const NOW = Date.UTC(2026, 9, 20, 0, 0, 0);
@@ -63,14 +69,25 @@ function alarm(alarmId: string, overrides: Partial<FlowAlarm> = {}): FlowAlarm {
   };
 }
 
+/** `settle`이 한 번에 기다리는 가장 긴 실제 시간(밀리초). 파일 작업이 끝나지 않는 고장이 있어도 테스트가 멈추지 않게 한다. */
+const SETTLE_LIMIT_MS = 3_000;
+
 /**
  * 가짜 시계가 부른 일과 가짜 포트의 응답이 모두 끝나도록 대기 중인 비동기 일을 여러 번 돌린다. 가짜 포트는 모두 바로 답한다.
- * 저장소 폴더 확인과 근거 위치 검증은 임시 폴더의 실제 파일을 읽으므로, 파일 읽기가 끝날 틈을 실제 시간으로도 준다.
+ * 저장소 폴더 확인, 근거 위치 검증, 지침 파일 쓰기는 임시 폴더의 실제 파일을 다루므로, 끝나지 않은 파일 작업이 없는 차례가
+ * 연달아 지날 때까지 기다린다. 정해진 시간만 기다리면 기계가 바빠 파일 작업이 늦을 때 흔들린다.
  */
 async function settle(): Promise<void> {
-  for (let round = 0; round < 3; round += 1) {
+  /** 그만 기다릴 시각. */
+  const deadline = Date.now() + SETTLE_LIMIT_MS;
+  /** 끝나지 않은 파일 작업 없이 연달아 지나간 차례 수. */
+  let quietRounds = 0;
+  while (quietRounds < 3 && Date.now() < deadline) {
     for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    /** 끝나기를 기다리는 파일 작업이 있는지 여부. Node는 진행 중인 파일 작업을 `FSReq`로 시작하는 이름으로 보인다. */
+    const filesPending = process.getActiveResourcesInfo().some((resource) => resource.startsWith('FSReq'));
+    quietRounds = filesPending ? 0 : quietRounds + 1;
+    await new Promise((resolve) => setTimeout(resolve, filesPending ? 5 : 1));
   }
 }
 
@@ -99,6 +116,17 @@ function draftOutput(repository: string) {
   };
 }
 
+/** 가짜 게시물에 나를 멘션한 댓글 스레드를 하나 더하고 그 멘션의 알림을 돌려준다. 댓글 스레드마다 다른 멘션 묶음이 된다. */
+function addThreadMention(flow: FakeFlowApi, alarmId: string, commentId: string, text: string, registeredDateTime: string): FlowAlarm {
+  flow.addComment(POST_ID, { commentId, contents: `${MY_MARKUP} ${text}`, registerId: SENDER, registeredDateTime });
+  return alarm(alarmId, { remarkId: commentId, registeredDateTime });
+}
+
+/** 실행 요청이 답할 멘션의 글. 입력 문서의 멘션 목록에서 "[답할 대상]"을 붙인 줄 바로 아래 줄이다. */
+function targetMentionOf(request: ExecutorRunRequest | undefined): string | undefined {
+  return /^\d+\. \[답할 대상\][^\n]*\n\s*(.*)$/m.exec(request?.input ?? '')?.[1];
+}
+
 /** 풀어 줄 때까지 끝나지 않는 실행 결과. */
 function heldOutcome(): { outcome: Promise<ExecutorOutcome>; release: (outcome: ExecutorOutcome) => void } {
   /** 결과를 풀어 줄 함수. */
@@ -108,22 +136,37 @@ function heldOutcome(): { outcome: Promise<ExecutorOutcome>; release: (outcome: 
   return { outcome, release };
 }
 
-/** 감지한 묶음을 저장하는 일을 붙잡아 둘 수 있는 상태 저장소. 저장이 끝나기 전에 다른 일이 줄을 서는 경우를 만든다. */
+/** 감지한 묶음이나 묶음 하나를 저장하는 일을 붙잡아 둘 수 있는 상태 저장소. 저장이 끝나기 전에 다른 일이 끼어드는 경우를 만든다. */
 class GatedStateStore extends MemoryStateStore {
-  /** 붙잡은 저장을 놓아 줄 함수. 붙잡지 않으면 `null`. */
+  /** 붙잡은 감지 저장을 놓아 줄 함수. 붙잡지 않으면 `null`. */
   private open: (() => void) | null = null;
-  /** 다음 저장을 붙잡을지 여부. */
+  /** 다음 감지 저장을 붙잡을지 여부. */
   private armed = false;
+  /** 붙잡은 묶음 저장을 놓아 줄 함수. 붙잡지 않으면 `null`. */
+  private openSave: (() => void) | null = null;
+  /** 다음 묶음 저장을 붙잡을지 여부. */
+  private armedSave = false;
 
   /** 다음 감지 저장을 놓아 줄 때까지 붙잡는다. */
   holdNextDetection(): void {
     this.armed = true;
   }
 
-  /** 붙잡은 저장을 놓아 준다. */
+  /** 붙잡은 감지 저장을 놓아 준다. */
   releaseDetection(): void {
     this.open?.();
     this.open = null;
+  }
+
+  /** 다음 묶음 저장(실행 기록 더하기, 실패로 두기 등)을 놓아 줄 때까지 붙잡는다. */
+  holdNextSave(): void {
+    this.armedSave = true;
+  }
+
+  /** 붙잡은 묶음 저장을 놓아 준다. */
+  releaseSave(): void {
+    this.openSave?.();
+    this.openSave = null;
   }
 
   override async saveDetectedBundles(...args: Parameters<MemoryStateStore['saveDetectedBundles']>) {
@@ -133,10 +176,21 @@ class GatedStateStore extends MemoryStateStore {
     }
     return super.saveDetectedBundles(...args);
   }
+
+  override async saveBundle(...args: Parameters<MemoryStateStore['saveBundle']>) {
+    if (this.armedSave) {
+      this.armedSave = false;
+      await new Promise<void>((resolve) => (this.openSave = resolve));
+    }
+    return super.saveBundle(...args);
+  }
 }
 
-/** 가짜 포트로 멘션 감지, 멘션 묶음, 초안 대기열을 만든다. 기준점은 `'100'`, 계정은 가짜 키 소유자다. */
-async function setup() {
+/**
+ * 가짜 포트로 멘션 감지, 멘션 묶음, 초안 대기열을 만든다. 기준점은 `'100'`, 계정은 가짜 키 소유자다.
+ * `queueAgent`를 주면 대기열이 그 에이전트를 쓰고, 주지 않으면 테스트가 바꿀 수 있는 가짜 에이전트 연결(`agent`)을 쓴다.
+ */
+async function setup(queueAgent?: Pick<DraftQueueOptions, 'agent' | 'onAgentChange'>) {
   /** 매핑된 가짜 저장소 둘. */
   const repos = { a: join(workDir, 'repo-a'), b: join(workDir, 'repo-b') };
   mkdirSync(repos.a);
@@ -158,33 +212,69 @@ async function setup() {
   const connectFlow = () => ({ api: flow, reportKeyRejected: () => {} });
   const repoMappings = new RepoMappings({ settingsStore, logger, connectFlow });
   await repoMappings.load();
+  /** 전역 문제. 앱처럼 맥락을 조회할 때 Flow가 키를 거부하면 "키 확인 필요"가 생긴다. */
+  const problems = new GlobalProblems({
+    notifier: new RecordingNotifier(),
+    clock,
+    logger,
+    notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }),
+  });
   const bundles = new MentionBundles({
     stateStore,
     notifier,
     clock,
     logger,
     findMyAnswers: (place) => new MentionJudge(flow, ME).myAnswers(place, [ME]),
-    collectContext: (bundle) => collectBundleContext(flow, bundle, clock.now(), [ME]),
+    collectContext: async (bundle) => {
+      /** 조회한 결과. */
+      const result = await collectBundleContext(flow, bundle, clock.now(), [ME]);
+      if (!result.ok && result.failure.kind === 'unauthorized') problems.raise({ cause: 'flow-key', reason: 'rejected' });
+      return result;
+    },
     resolveRepos: (projectId) => repoMappings.resolve(projectId),
   });
   await bundles.load();
   const executor = new FakeExecutor('claude-code');
-  /** 에이전트 연결 상태와 바뀔 때 부를 함수. */
-  const agent = { connected: true, listeners: new Set<() => void>() };
-  const drafts = new DraftQueue({
-    bundles,
-    agent: () => (agent.connected ? { executor, model: 'sonnet' } : null),
-    onAgentChange: (listener) => {
-      agent.listeners.add(listener);
-      return () => agent.listeners.delete(listener);
-    },
-    settingsStore,
-    myName: () => FAKE_ME.name,
-    projectTitle: (projectId) => repoMappings.projectTitle(projectId),
-    clock,
-    logger,
-  });
+  /**
+   * 가짜 에이전트 연결. 연결되어 있는지, 기본 에이전트의 실행기와 고른 모델, 바뀔 때 부를 함수, 실행 직전 확인을 든다.
+   * 실행 직전 확인은 기본으로 연결되어 있는지를 돌려준다. 테스트가 바꿔 CLI 버전이 바뀌어 돌린 작동 확인 같은 것을 흉내 낸다.
+   */
+  const agent = {
+    connected: true,
+    executor,
+    model: 'sonnet' as string | null,
+    listeners: new Set<() => void>(),
+    confirmForRun: async (): Promise<boolean> => agent.connected,
+  };
+  /** 초안 대기열을 만든다. 앱을 다시 켤 때처럼 같은 묶음과 포트로 새로 만들 수 있다. */
+  const createQueue = () =>
+    new DraftQueue({
+      bundles,
+      ...(queueAgent ?? {
+        agent: () => (agent.connected ? { executor: agent.executor, model: agent.model, confirmForRun: () => agent.confirmForRun() } : null),
+        onAgentChange: (listener: () => void) => {
+          agent.listeners.add(listener);
+          return () => agent.listeners.delete(listener);
+        },
+      }),
+      flowKeyUsable: () => !problems.has('flow-key'),
+      onFlowKeyChange: (listener) => problems.onChange(listener),
+      settingsStore,
+      myName: () => FAKE_ME.name,
+      projectTitle: (projectId) => repoMappings.projectTitle(projectId),
+      clock,
+      logger,
+    });
+  const drafts = createQueue();
   drafts.start();
+  /** 앱을 끄고 다시 켠 것처럼 대기열을 멈추고 새 대기열을 시작한다. 새 대기열을 돌려준다. */
+  const restartApp = () => {
+    drafts.stop();
+    /** 다시 켠 앱의 대기열. */
+    const restarted = createQueue();
+    restarted.start();
+    return restarted;
+  };
   const detection = new MentionDetection({ stateStore, bundles, clock, logger, connectFlow });
   flow.addPost({
     postId: POST_ID,
@@ -221,7 +311,68 @@ async function setup() {
     agent.connected = connected;
     for (const listener of agent.listeners) listener();
   };
-  return { clock, flow, stateStore, settingsStore, notifier, bundles, executor, drafts, repos, poll, setConnected };
+  return { clock, flow, stateStore, settingsStore, notifier, problems, bundles, executor, agent, drafts, repos, poll, setConnected, restartApp, createQueue };
+}
+
+/** 가짜 CLI 경로. 실제 파일은 없고, 연결 확인이 실행할 수 있는 파일로 본다. */
+const FAKE_CLI = '/fake/bin/claude';
+
+/**
+ * 가짜 프로세스 실행기 위에 실제 에이전트 연결 확인과 기본 에이전트·모델 선택을 만든다. 감지를 시작한 뒤라 연결이 끊기면 전역 문제로 알린다.
+ * 가짜 CLI는 처음에 2.1.303으로 로그인되어 있고 작동 확인과 초안 실행이 성공한다. 테스트가 `cli`를 바꿔 CLI의 대답을 바꾼다.
+ * 초안 실행은 cwd(첫 저장소)를 근거의 저장소로 드는 초안을 낸다.
+ */
+async function realAgent(tempRoot: string) {
+  /** 가짜 CLI의 상태. */
+  const cli = { version: '2.1.303', loggedIn: true, checkRunWorks: true };
+  const runner = new FakeProcessRunner();
+  runner.respond(FAKE_CLI, ['--version'], () => exited(0, `${cli.version} (Claude Code)\n`));
+  /** 지금 로그인 상태의 `claude auth status` 대답. 로그인되어 있지 않으면 종료 코드 1이다. */
+  const authStatus = () => (cli.loggedIn ? exited(0, fakeClaudeAuthStatus.loggedIn) : exited(1, fakeClaudeAuthStatus.notLoggedIn));
+  runner.respond(FAKE_CLI, ['--restricted', 'auth', 'status'], authStatus);
+  runner.respond(FAKE_CLI, ['auth', 'status'], authStatus);
+  runner.respondWhen(
+    (request) => request.command === FAKE_CLI && request.args[0] === '-p',
+    (request) => {
+      if (!cli.loggedIn) return exited(1, claudeNotLoggedInStream());
+      if (request.stdin !== CHECK_RUN_INPUT) return exited(0, claudeSuccessStream(draftOutput(request.cwd), cli.version));
+      return cli.checkRunWorks ? exited(0, claudeSuccessStream({ ok: true }, cli.version)) : exited(1, '', 'error: something broke');
+    },
+  );
+  const clock = new FakeClock(NOW);
+  const logger = createLogger([{ write: () => {} }], clock);
+  const notifier = new RecordingNotifier();
+  const problems = new GlobalProblems({ notifier, clock, logger, notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }) });
+  const settingsStore = new MemorySettingsStore({ detectionStarted: true, agentCliPaths: { 'claude-code': FAKE_CLI } });
+  const connection = new AgentConnection({
+    platform: 'darwin',
+    env: { PATH: '/usr/bin:/bin', HOME: tempRoot },
+    homeDir: tempRoot,
+    loginShell: '/bin/fake-login-shell',
+    runner,
+    settingsStore,
+    logger,
+    problems,
+    checkDir: join(tempRoot, 'agent-check'),
+    tempRoot,
+    isExecutableFile: async (filePath) => filePath === FAKE_CLI,
+  });
+  const preferences = new AgentPreferences({
+    settingsStore,
+    logger,
+    connectedAgents: () => (connection.isConnected() ? [connection.state().agent] : []),
+  });
+  await preferences.load();
+  /** 앱처럼 기본 에이전트의 연결로 실행하고, 연결이 바뀌면 대기열에 알리는 에이전트. */
+  const queueAgent: Pick<DraftQueueOptions, 'agent' | 'onAgentChange'> = {
+    agent: () => draftAgentFrom(preferences.state(), [connection]),
+    onAgentChange: (listener) => connection.onChange(listener),
+  };
+  /** 연결 확인이 로그인을 확인한 횟수. */
+  const loginChecks = () => runner.requests.filter((request) => request.args.join(' ') === '--restricted auth status').length;
+  /** 초안 실행 요청 수. 작동 확인은 세지 않는다. */
+  const draftRuns = () => runner.requests.filter((request) => request.args[0] === '-p' && request.stdin !== CHECK_RUN_INPUT).length;
+  return { cli, connection, problems, notifier, queueAgent, loginChecks, draftRuns };
 }
 
 describe('초안 실행: 생성 중에서 준비됨으로', () => {
@@ -562,6 +713,20 @@ describe('초안 실행: 진행 단계와 취소', () => {
     expect(executor.requests).toHaveLength(1);
   });
 
+  it('대기열을 시작하기 전(저장된 키를 읽기 전)에도 생성 중 묶음을 취소할 수 있다', async () => {
+    const { bundles, poll, setConnected, createQueue } = await setup();
+    setConnected(false);
+    await poll(alarm('101'));
+    /** 생성 중 묶음. */
+    const [bundle] = bundles.state();
+    /** 아직 시작하지 않은 대기열. */
+    const notStarted = createQueue();
+
+    await notStarted.cancel(bundle!.id);
+
+    expect(bundles.get(bundle!.id)).toMatchObject({ status: 'failed', failure: { reason: 'cancelled', lastStep: null } });
+  });
+
   it('에이전트 연결이 없으면 실행하지 않고 기다리다가, 연결되면 실행한다', async () => {
     const { executor, drafts, bundles, repos, poll, setConnected } = await setup();
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
@@ -779,7 +944,7 @@ describe('초안 실행: 다시 시도와 되돌리기', () => {
   it('준비됨에서 무시한 묶음을 되돌리면 초안 그대로 준비됨이 되고, 실패에서 무시한 묶음을 되돌리면 생성 중으로 새로 만든다', async () => {
     const { flow, executor, bundles, repos, poll } = await setup();
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    executor.script({ outcome: { type: 'failed', reason: 'overloaded', detail: 'Overloaded' } });
+    executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: 'Claude usage limit reached.' } });
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.b) } });
     flow.addComment(POST_ID, { commentId: '701', contents: `${MY_MARKUP} 다른 질문`, registerId: SENDER, registeredDateTime: '20261020085600' });
     await poll(alarm('101'), alarm('102', { remarkId: '701', registeredDateTime: '20261020085600' }));
@@ -799,16 +964,589 @@ describe('초안 실행: 다시 시도와 되돌리기', () => {
   });
 });
 
+describe('대기열: 순서와 우선순위', () => {
+  it('사용자가 누른 다시 시도는 감지해서 기다리는 묶음보다 앞에 들어가, 실행 중인 실행이 끝나면 바로 돈다', async () => {
+    const { flow, executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: 'Claude usage limit reached.' } });
+    await poll(alarm('101'));
+    /** 실패한 묶음. */
+    const [failed] = bundles.state();
+    expect(failed?.status).toBe('failed');
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(
+      addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'),
+      addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085700'),
+    );
+
+    await drafts.retry(failed!.id);
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    expect(executor.requests.map(targetMentionOf)).toEqual([
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 두 번째 질문',
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 세 번째 질문',
+    ]);
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready', 'ready']);
+  });
+
+  it('사용자 행동끼리는 누른 순서대로 돌고, 실행 중에 새 멘션이 합쳐져 처음부터 다시 만드는 묶음은 그보다도 앞에서 바로 다시 돈다', async () => {
+    const { flow, executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: '첫 실패' } });
+    executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: '둘째 실패' } });
+    executor.script({ outcome: 'wait-for-abort' });
+    for (let run = 0; run < 4; run += 1) executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085100'));
+    /** 실패한 두 묶음. */
+    const [first, second] = bundles.state();
+    expect([first?.status, second?.status]).toEqual(['failed', 'failed']);
+    await poll(addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085600'), addThreadMention(flow, '104', '703', '네 번째 질문', '20261020085700'));
+
+    await drafts.retry(first!.id);
+    await drafts.retry(second!.id);
+    flow.addReply(POST_ID, '702', { replyId: '801', contents: `${MY_MARKUP} 하나 더`, registerId: SENDER, registeredDateTime: '20261020085800' });
+    await poll(alarm('105', { remarkId: '702', replyId: '801', registeredDateTime: '20261020085800' }));
+
+    expect(executor.requests.map(targetMentionOf)).toEqual([
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 두 번째 질문',
+      '@테스트 사용자 세 번째 질문',
+      '@테스트 사용자 하나 더',
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 두 번째 질문',
+      '@테스트 사용자 네 번째 질문',
+    ]);
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready', 'ready', 'ready']);
+  });
+
+  it('실패해서 무시한 묶음을 되돌려 새로 만들게 되면, 사용자 행동이라 감지해서 기다리는 묶음보다 앞에 든다', async () => {
+    const { flow, executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: 'Claude usage limit reached.' } });
+    await poll(alarm('101'));
+    /** 실패해서 무시한 묶음. */
+    const [ignored] = bundles.state();
+    await bundles.ignore(ignored!.id);
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(
+      addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'),
+      addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085700'),
+    );
+
+    await drafts.restore(ignored!.id);
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    expect(bundles.get(ignored!.id)?.status).toBe('ready');
+    expect(executor.requests.map(targetMentionOf)).toEqual([
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 두 번째 질문',
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 세 번째 질문',
+    ]);
+  });
+});
+
+describe('대기열: 자동 재시도', () => {
+  it.each([
+    ['모델 과부하', { type: 'failed', reason: 'overloaded', detail: 'API Error: 529 Overloaded' }],
+    ['네트워크 오류', { type: 'failed', reason: 'network', detail: 'API Error: Connection refused' }],
+  ] as const)('일시적 실패(%s)면 한 번 더 실행하고, 두 번째에 초안을 받으면 준비됨이 된다', async (_label, outcome) => {
+    const { executor, bundles, repos, poll } = await setup();
+    executor.script({ outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+
+    await poll(alarm('101'));
+
+    expect(bundles.state()[0]).toMatchObject({ status: 'ready', failure: null });
+    expect(bundles.state()[0]?.runs.map((run) => run.result)).toEqual([outcome.reason, 'succeeded']);
+    expect(executor.requests).toHaveLength(2);
+  });
+
+  it('일시적 실패는 종류가 달라도 생성 한 번에 한 번만 다시 실행하고, 두 번째도 일시적 실패면 그 사유로 실패가 된다', async () => {
+    const { executor, bundles, poll } = await setup();
+    executor.script({ outcome: { type: 'failed', reason: 'overloaded', detail: 'API Error: 529 Overloaded' } });
+    executor.script({ outcome: { type: 'invalid-output', detail: '결과에 구조화 출력이 없습니다.' } });
+
+    await poll(alarm('101'));
+
+    expect(bundles.state()[0]).toMatchObject({ status: 'failed', failure: { reason: 'invalid-output', detail: '결과에 구조화 출력이 없습니다.' } });
+    expect(bundles.state()[0]?.runs.map((run) => run.result)).toEqual(['overloaded', 'invalid-output']);
+    expect(executor.requests).toHaveLength(2);
+  });
+
+  it.each([
+    ['턴 수 상한', { type: 'failed', reason: 'max-turns', detail: '턴 수 상한에 닿았습니다.' }],
+    ['사용량 한도 같은 에이전트 오류', { type: 'failed', reason: 'agent-error', detail: 'Claude usage limit reached.' }],
+  ] as const)('일시적 실패가 아닌 실패(%s)는 다시 실행하지 않는다', async (_label, outcome) => {
+    const { executor, bundles, poll } = await setup();
+    executor.script({ outcome });
+
+    await poll(alarm('101'));
+
+    expect(bundles.state()[0]).toMatchObject({ status: 'failed', failure: { reason: outcome.reason } });
+    expect(executor.requests).toHaveLength(1);
+  });
+
+  it('앱 종료로 끊긴 실행은 자동 재시도 1회에 세지 않는다. 다시 켠 뒤 일시적 실패가 나면 한 번 더 실행한다', async () => {
+    const { executor, bundles, repos, poll, restartApp } = await setup();
+    executor.script({ progress: [{ step: '파일 읽는 중: RetryConfig.kt', filesRead: 1 }], outcome: 'wait-for-abort' });
+    executor.script({ outcome: { type: 'failed', reason: 'network', detail: 'API Error: Connection refused' } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+
+    restartApp();
+    await settle();
+
+    expect(executor.requests[0]?.signal.aborted).toBe(true);
+    expect(executor.requests).toHaveLength(3);
+    expect(bundles.state()[0]?.status).toBe('ready');
+  });
+});
+
+describe('대기열: 에이전트 전역 실패', () => {
+  it.each([
+    ['미로그인', 'not-logged-in', 'Not logged in · Please run /login'],
+    ['CLI 없음', 'cli-missing', 'spawn /fake/bin/claude ENOENT'],
+    ['결과 메시지 없음', 'cli-error', "error: unknown option '--permission-prompts'"],
+  ] as const)(
+    '실행이 %s으로 끝나고 다시 한 연결 확인도 실패하면, 묶음을 실패로 두지 않고 대기열을 멈춘다. 연결되면 그 묶음부터 처음부터 다시 돈다',
+    async (_label, reason, detail) => {
+      const { flow, executor, drafts, bundles, repos, poll, setConnected } = await setup();
+      /** 끝나지 않고 기다리는 실행. */
+      const run = heldOutcome();
+      executor.script({ outcome: run.outcome });
+      executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+      executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+      await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+      /** 실행하던 묶음과 기다리던 묶음. */
+      const [first, second] = bundles.state();
+
+      // 실행하는 사이에 CLI가 지워지거나 로그아웃되어, 실행이 끝난 뒤 다시 한 연결 확인도 실패한다.
+      setConnected(false);
+      run.release({ type: 'failed', reason, detail });
+      await settle();
+
+      expect(bundles.get(first!.id)).toMatchObject({ status: 'generating', failure: null });
+      expect(bundles.get(first!.id)?.runs.map((record) => record.result)).toEqual([reason]);
+      expect([drafts.progress(first!.id), drafts.progress(second!.id)]).toEqual([{ status: 'waiting' }, { status: 'waiting' }]);
+      expect(executor.requests).toHaveLength(1);
+
+      setConnected(true);
+      await settle();
+
+      expect(executor.requests.map(targetMentionOf)).toEqual([
+        '@테스트 사용자 재시도는 몇 번 하나요?',
+        '@테스트 사용자 재시도는 몇 번 하나요?',
+        '@테스트 사용자 두 번째 질문',
+      ]);
+      expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready']);
+      expect(bundles.get(first!.id)?.runs.map((record) => record.result)).toEqual([reason, 'succeeded']);
+    },
+  );
+
+  it('실행이 전역 실패를 의심하게 끝나면 다시 한 연결 확인을 기다리고, 확인이 통과하면(실행하는 사이 CLI가 새 버전으로 바뀐 경우 등) 일시적 실패처럼 한 번 더 실행한다', async () => {
+    const { executor, agent, bundles, repos, poll } = await setup();
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 실행하던 묶음. */
+    const [bundle] = bundles.state();
+    /** 다시 하는 연결 확인을 끝내는 함수. */
+    let finishRecheck: (connected: boolean) => void = () => {};
+    agent.confirmForRun = () => new Promise((resolve) => (finishRecheck = resolve));
+
+    run.release({ type: 'failed', reason: 'cli-missing', detail: 'spawn /fake/bin/claude ENOENT' });
+    await settle();
+
+    expect(bundles.get(bundle!.id)).toMatchObject({ status: 'generating', failure: null });
+    expect(executor.requests).toHaveLength(1);
+
+    agent.confirmForRun = async () => agent.connected;
+    finishRecheck(true);
+    await settle();
+
+    expect(bundles.get(bundle!.id)?.status).toBe('ready');
+    expect(bundles.get(bundle!.id)?.runs.map((record) => record.result)).toEqual(['cli-missing', 'succeeded']);
+    expect(executor.requests).toHaveLength(2);
+  });
+
+  it('전역 실패로 묶음을 대기열 맨 앞에 되돌리는 사이에 [취소]를 누르면, 다시 넣지 않고 "취소함" 실패로 둔다', async () => {
+    const { executor, stateStore, drafts, bundles, poll, setConnected } = await setup();
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    await poll(alarm('101'));
+    /** 실행하던 묶음. */
+    const [bundle] = bundles.state();
+
+    // 실행 기록을 남기는 저장을 붙잡아, 그사이에 [취소]를 누른다.
+    stateStore.holdNextSave();
+    setConnected(false);
+    run.release({ type: 'failed', reason: 'not-logged-in', detail: 'Not logged in · Please run /login' });
+    await settle();
+    await drafts.cancel(bundle!.id);
+    stateStore.releaseSave();
+    await settle();
+
+    expect(bundles.get(bundle!.id)).toMatchObject({ status: 'failed', failure: { reason: 'cancelled' } });
+    expect(bundles.get(bundle!.id)?.runs.map((record) => record.result)).toEqual(['not-logged-in']);
+
+    setConnected(true);
+    await settle();
+
+    expect(executor.requests).toHaveLength(1);
+  });
+
+  it('다시 한 연결 확인이 통과했는데 한 번 더 실행해도 같은 실패면, 그 묶음만 실패로 두고 다음 묶음을 실행한다', async () => {
+    const { flow, executor, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'failed', reason: 'cli-error', detail: 'Segmentation fault' } });
+    executor.script({ outcome: { type: 'failed', reason: 'cli-error', detail: 'Segmentation fault' } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+
+    /** 실패한 묶음과 다음 묶음. */
+    const [first, second] = bundles.state();
+    expect(first).toMatchObject({ status: 'failed', failure: { reason: 'cli-error', detail: 'Segmentation fault' } });
+    expect(first?.runs.map((record) => record.result)).toEqual(['cli-error', 'cli-error']);
+    expect(second?.status).toBe('ready');
+    expect(executor.requests).toHaveLength(3);
+  });
+
+  it('실행 직전 확인이 실패하면(CLI 버전이 바뀌어 돌린 작동 확인이 실패하는 등) 실행하지 않고 대기열을 멈추며, 에이전트 연결이 바뀌었다는 알림이 오기 전에는 다시 확인하지 않는다', async () => {
+    const { executor, agent, drafts, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    // 처음 확인만 실패하고 그 뒤로는 통과한다. 알림 없이 다시 확인하는 대기열이면 곧바로 실행해 버린다.
+    /** 실패를 이미 한 번 돌려줬는지 여부. */
+    let failedOnce = false;
+    agent.confirmForRun = async () => {
+      if (failedOnce) return true;
+      failedOnce = true;
+      return false;
+    };
+
+    await poll(alarm('101'));
+
+    /** 기다리는 묶음. */
+    const [bundle] = bundles.state();
+    expect(bundle).toMatchObject({ status: 'generating', failure: null, runs: [] });
+    expect(drafts.progress(bundle!.id)).toEqual({ status: 'waiting' });
+    expect(executor.requests).toEqual([]);
+
+    setConnected(true);
+    await settle();
+
+    expect(bundles.get(bundle!.id)?.status).toBe('ready');
+  });
+});
+
+describe('대기열: 설정 변경의 반영', () => {
+  it('실행 중에 기본 에이전트·모델·추가 지침을 바꾸면 실행 중인 실행은 그대로 끝내고, 다음 실행부터 바뀐 값을 쓴다', async () => {
+    const { flow, executor, agent, settingsStore, bundles, repos, poll, setConnected } = await setup();
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    /** 바꾼 기본 에이전트의 실행기. */
+    const codex = new FakeExecutor('codex');
+    codex.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+
+    agent.executor = codex;
+    agent.model = 'fake-codex-model';
+    settingsStore.settings.extraInstructions = '맺음말로 "확인 부탁드립니다"를 붙입니다.';
+    // 기본 에이전트와 모델이 바뀌었다고 알린다.
+    setConnected(true);
+    await settle();
+
+    expect(executor.requests[0]?.signal.aborted).toBe(false);
+    expect(codex.requests).toEqual([]);
+
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    expect(executor.requests).toHaveLength(1);
+    expect(executor.requests[0]?.model).toBe('sonnet');
+    expect(executor.requests[0]?.instructions).not.toContain('확인 부탁드립니다');
+    expect(codex.requests).toHaveLength(1);
+    expect(codex.requests[0]?.model).toBe('fake-codex-model');
+    expect(codex.requests[0]?.instructions.endsWith('## 사용자의 추가 지침\n맺음말로 "확인 부탁드립니다"를 붙입니다.')).toBe(true);
+    expect(bundles.state().map((bundle) => [bundle.status, bundle.runs[0]?.agent])).toEqual([
+      ['ready', 'claude-code'],
+      ['ready', 'codex'],
+    ]);
+  });
+
+  it('맥락을 조회하는 사이에 모델을 바꾸면, 아직 에이전트를 띄우기 전이라 그 실행부터 바뀐 모델을 쓴다', async () => {
+    const { flow, executor, agent, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    setConnected(false);
+    await poll(alarm('101'));
+    // 초안 실행 직전의 맥락 조회(게시물부터 받는다)가 도는 사이에 모델을 바꾼다.
+    flow.whenRequested(`GET /user/posts/${POST_ID}`, () => {
+      agent.model = 'opus';
+    });
+
+    setConnected(true);
+    await settle();
+
+    expect(executor.requests.map((request) => request.model)).toEqual(['opus']);
+  });
+
+  it('일시적 실패로 다시 실행하는 것도 다음 실행이라, 그 사이 바뀐 모델과 추가 지침을 쓴다', async () => {
+    const { executor, agent, settingsStore, bundles, repos, poll } = await setup();
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+
+    agent.model = 'opus';
+    settingsStore.settings.extraInstructions = '맺음말로 "확인 부탁드립니다"를 붙입니다.';
+    run.release({ type: 'failed', reason: 'overloaded', detail: 'API Error: 529 Overloaded' });
+    await settle();
+
+    expect(executor.requests.map((request) => request.model)).toEqual(['sonnet', 'opus']);
+    expect(executor.requests[0]?.instructions).not.toContain('확인 부탁드립니다');
+    expect(executor.requests[1]?.instructions).toContain('확인 부탁드립니다');
+    expect(bundles.state()[0]?.runs.map((record) => record.model)).toEqual(['sonnet', 'opus']);
+    expect(bundles.state()[0]?.status).toBe('ready');
+  });
+
+  it('일시적 실패로 다시 실행하기 직전 확인이 실패하면, 묶음을 실패로 두지 않고 대기열을 멈췄다가 연결되면 처음부터 다시 만든다', async () => {
+    const { executor, agent, bundles, repos, poll, setConnected } = await setup();
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 실행하던 묶음. */
+    const [bundle] = bundles.state();
+
+    // 다시 실행하기 전에 CLI 버전이 바뀌어 돌린 작동 확인이 실패해 연결이 끊긴다.
+    agent.confirmForRun = async () => {
+      agent.connected = false;
+      return false;
+    };
+    run.release({ type: 'failed', reason: 'network', detail: 'API Error: Connection refused' });
+    await settle();
+
+    expect(bundles.get(bundle!.id)).toMatchObject({ status: 'generating', failure: null });
+    expect(executor.requests).toHaveLength(1);
+
+    agent.confirmForRun = async () => agent.connected;
+    setConnected(true);
+    await settle();
+
+    expect(bundles.get(bundle!.id)?.status).toBe('ready');
+    expect(bundles.get(bundle!.id)?.runs.map((record) => record.result)).toEqual(['network', 'succeeded']);
+  });
+});
+
+describe('대기열과 에이전트 연결 확인', () => {
+  it('실행 직전에 CLI 버전이 바뀐 것을 알아채면 작동 확인을 먼저 돌리고, 실패하면 대기열을 멈추고 에이전트 확인 필요를 한 번 알린다. 고친 뒤 다시 확인하면 다시 돈다', async () => {
+    const real = await realAgent(workDir);
+    await real.connection.check();
+    const { flow, bundles, poll } = await setup(real.queueAgent);
+
+    await poll(alarm('101'));
+
+    // 매 실행 전에는 버전만 읽고, 로그인은 앱을 시작할 때 한 번만 확인했다.
+    expect(bundles.state()[0]?.status).toBe('ready');
+    expect(real.loginChecks()).toBe(1);
+
+    // CLI가 스스로 새 버전으로 바뀌었는데, 새 버전에서는 작동 확인이 실패한다.
+    real.cli.version = '2.1.310';
+    real.cli.checkRunWorks = false;
+    await poll(addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    await settle();
+
+    /** 새 버전을 알아챈 뒤 기다리는 묶음. */
+    const second = bundles.state()[1];
+    expect(second).toMatchObject({ status: 'generating', failure: null, runs: [] });
+    expect(real.draftRuns()).toBe(1);
+    expect(real.problems.current()?.problem).toEqual({ cause: 'agent', reason: 'check-failed' });
+    expect(real.notifier.sent).toHaveLength(1);
+
+    // 사용자가 고친 뒤 설정의 에이전트 칸에서 다시 확인한다.
+    real.cli.checkRunWorks = true;
+    await real.connection.check();
+    await settle();
+
+    expect(bundles.get(second!.id)?.status).toBe('ready');
+    expect(real.draftRuns()).toBe(2);
+    expect(real.problems.current()).toBeNull();
+    expect(real.notifier.sent).toHaveLength(1);
+  });
+
+  it('초안 실행이 미로그인으로 끝나 다시 한 연결 확인도 실패하면, 묶음을 실패로 두지 않고 대기열을 멈추며 에이전트 확인 필요를 알린다. 로그인한 뒤 다시 확인하면 그 묶음부터 다시 돈다', async () => {
+    const real = await realAgent(workDir);
+    await real.connection.check();
+    const { bundles, poll } = await setup(real.queueAgent);
+    // 앱을 켠 뒤 로그인이 만료됐다. 실행 직전에는 버전만 읽으므로 실행해 보고서야 알아챈다.
+    real.cli.loggedIn = false;
+
+    await poll(alarm('101'));
+    await settle();
+
+    /** 실행했던 묶음. */
+    const [bundle] = bundles.state();
+    expect(bundle).toMatchObject({ status: 'generating', failure: null });
+    expect(bundle?.runs.map((run) => run.result)).toEqual(['not-logged-in']);
+    expect(real.problems.current()?.problem).toEqual({ cause: 'agent', reason: 'not-logged-in' });
+    expect(real.notifier.sent).toHaveLength(1);
+
+    real.cli.loggedIn = true;
+    await real.connection.check();
+    await settle();
+
+    expect(bundles.get(bundle!.id)?.status).toBe('ready');
+    expect(bundles.get(bundle!.id)?.runs.map((run) => run.result)).toEqual(['not-logged-in', 'succeeded']);
+    expect(real.problems.current()).toBeNull();
+  });
+});
+
+describe('대기열: 키 확인 필요', () => {
+  it('맥락을 조회할 때 Flow가 키를 거부하면(401) 묶음을 실패로 두지 않고 대기열을 멈추고, 키 확인 필요가 풀리면 그 묶음부터 다시 돈다', async () => {
+    const { flow, executor, problems, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    setConnected(false);
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    // 감지가 끝난 뒤 Flow가 키를 거부하기 시작해, 초안 실행 직전의 맥락 조회(게시물부터 받는다)가 401을 받는다.
+    flow.failOn(`GET /user/posts/${POST_ID}`, { kind: 'unauthorized' }, 1);
+
+    setConnected(true);
+    await settle();
+
+    expect(problems.current()?.problem).toEqual({ cause: 'flow-key', reason: 'rejected' });
+    expect(bundles.state().map(({ status, failure }) => ({ status, failure }))).toEqual([
+      { status: 'generating', failure: null },
+      { status: 'generating', failure: null },
+    ]);
+    expect(executor.requests).toEqual([]);
+
+    problems.resolve('flow-key');
+    await settle();
+
+    expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 재시도는 몇 번 하나요?', '@테스트 사용자 두 번째 질문']);
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready']);
+  });
+
+  it('키 확인 필요인 동안에는 생성을 시작하지 않고, 풀리면 기다리던 묶음을 실행한다', async () => {
+    const { executor, problems, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    problems.raise({ cause: 'flow-key', reason: 'unreadable' });
+
+    await poll(alarm('101'));
+
+    /** 기다리는 묶음. */
+    const [bundle] = bundles.state();
+    expect(bundle?.status).toBe('generating');
+    expect(drafts.progress(bundle!.id)).toEqual({ status: 'waiting' });
+    expect(executor.requests).toEqual([]);
+
+    problems.resolve('flow-key');
+    await settle();
+
+    expect(bundles.get(bundle!.id)?.status).toBe('ready');
+  });
+});
+
+describe('대기열: Flow에 닿지 못할 때', () => {
+  it('맥락을 조회할 때 Flow에 닿지 못하면(네트워크 오류) 묶음을 실패로 두지 않고 대기열을 멈췄다가, 폴링 주기(1분) 뒤 다시 조회해 실행한다', async () => {
+    const { flow, executor, clock, drafts, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    setConnected(false);
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    // 감지가 끝난 뒤 네트워크가 끊겨, 초안 실행 직전의 맥락 조회(게시물부터 받는다)가 Flow에 닿지 못한다.
+    flow.failOn(`GET /user/posts/${POST_ID}`, { kind: 'network' }, 1);
+
+    setConnected(true);
+    await settle();
+
+    /** 맥락을 조회하던 묶음과 기다리던 묶음. */
+    const [first, second] = bundles.state();
+    expect([first?.status, second?.status]).toEqual(['generating', 'generating']);
+    expect(first?.failure).toBeNull();
+    expect(drafts.progress(first!.id)).toEqual({ status: 'waiting' });
+    expect(executor.requests).toEqual([]);
+
+    clock.advance(59_000);
+    await settle();
+
+    expect(executor.requests).toEqual([]);
+
+    clock.advance(1_000);
+    await settle();
+
+    expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 재시도는 몇 번 하나요?', '@테스트 사용자 두 번째 질문']);
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready']);
+  });
+
+  it('맥락을 조회할 때 요청 한도(429)에 걸리면 Flow가 알려 준 Retry-After만큼 기다렸다가 다시 조회한다', async () => {
+    const { flow, executor, clock, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    setConnected(false);
+    await poll(alarm('101'));
+    flow.failOn(`GET /user/posts/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: 20_000 }, 1);
+
+    setConnected(true);
+    await settle();
+    clock.advance(19_000);
+    await settle();
+
+    expect(bundles.state()[0]).toMatchObject({ status: 'generating', failure: null });
+    expect(executor.requests).toEqual([]);
+
+    clock.advance(1_000);
+    await settle();
+
+    expect(bundles.state()[0]?.status).toBe('ready');
+  });
+
+  it('Flow 서버 오류(5xx)는 그 글에서만 생길 수 있어 대기열을 멈추지 않고 그 묶음을 실패로 둔다', async () => {
+    const { flow, executor, bundles, repos, poll, setConnected } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    setConnected(false);
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    flow.failOn(`GET /user/posts/${POST_ID}`, { kind: 'http', status: 503 }, 1);
+
+    setConnected(true);
+    await settle();
+
+    /** 맥락을 조회하지 못한 묶음과 다음 묶음. */
+    const [first, second] = bundles.state();
+    expect(first).toMatchObject({ status: 'failed', failure: { reason: 'flow-unavailable' } });
+    expect(second?.status).toBe('ready');
+  });
+});
+
 describe('초안 실행에 쓸 에이전트', () => {
-  it('기본 에이전트의 실행기와 그 에이전트에 고른 모델을 쓰고, 기본 모델이면 모델을 넘기지 않는다. 연결된 에이전트가 없거나 실행기가 없으면 기다린다', () => {
-    const claude = new FakeExecutor('claude-code');
+  it('기본 에이전트의 연결이 만든 실행기와 실행 직전 확인, 그 에이전트에 고른 모델을 쓰고, 기본 모델이면 모델을 넘기지 않는다. 연결된 에이전트가 없거나 그 연결이 없으면 기다린다', async () => {
+    /** Claude Code 연결. 실행 직전 확인은 실행하면 안 된다고 답한다. */
+    const claude = { executor: new FakeExecutor('claude-code'), confirmForRun: async () => false };
     /** 모델 선택 상자. */
     const models = { 'claude-code': { options: [{ id: 'sonnet', label: 'Sonnet', unlisted: false }], selected: 'sonnet' } };
 
-    expect(draftAgentFrom({ connectedAgents: ['claude-code'], defaultAgent: 'claude-code', models }, [claude])).toEqual({ executor: claude, model: 'sonnet' });
+    /** 고른 에이전트. */
+    const picked = draftAgentFrom({ connectedAgents: ['claude-code'], defaultAgent: 'claude-code', models }, [claude]);
+    expect(picked).toMatchObject({ executor: claude.executor, model: 'sonnet' });
+    await expect(picked?.confirmForRun()).resolves.toBe(false);
     expect(
       draftAgentFrom({ connectedAgents: ['claude-code'], defaultAgent: 'claude-code', models: { 'claude-code': { options: [], selected: null } } }, [claude]),
-    ).toEqual({ executor: claude, model: null });
+    ).toMatchObject({ executor: claude.executor, model: null });
     expect(draftAgentFrom({ connectedAgents: [], defaultAgent: null, models: {} }, [claude])).toBeNull();
     expect(draftAgentFrom({ connectedAgents: ['codex'], defaultAgent: 'codex', models: {} }, [claude])).toBeNull();
   });

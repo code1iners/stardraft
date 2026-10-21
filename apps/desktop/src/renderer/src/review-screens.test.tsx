@@ -360,6 +360,17 @@ describe('작은 창: 초안 실행', () => {
     expect(withDetail).not.toContain('마지막 단계');
   });
 
+  it.each([
+    ['모델 과부하', 'overloaded', '모델이 바빠서 답하지 못했습니다.'],
+    ['네트워크 오류', 'network', '모델 서버에 연결하지 못했습니다.'],
+  ] as const)('일시적 실패(%s)로 실패한 묶음은 자동으로 한 번 더 시도한 뒤라는 것을 함께 보인다', (_label, reason, sentence) => {
+    const text = textOf(
+      <PopoverContent snapshot={snapshot([bundle(12, { status: 'failed', group: 'failed', failure: { reason, detail: null, lastStep: '초안 쓰는 중' } })])} />,
+    );
+
+    expect(text).toContain(`${sentence} 두 번 시도했습니다.`);
+  });
+
   it('비밀 파일을 근거로 들어 실패한 묶음은 그 사유를 보이고 초안을 보이지 않는다', () => {
     const text = textOf(
       <PopoverContent snapshot={snapshot([bundle(11, { status: 'failed', group: 'failed', failure: { reason: 'secret-evidence', detail: null, lastStep: '초안 쓰는 중' } })])} />,

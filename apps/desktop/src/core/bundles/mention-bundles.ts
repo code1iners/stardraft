@@ -6,11 +6,12 @@ import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
-import type { RepoResolution } from '../repos/repo-mappings';
+import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
 import {
   activeMentions,
   bundlePlaceKey,
+  canPickRepos,
   compareBundles,
   compareMentions,
   countsForReview,
@@ -45,10 +46,10 @@ export interface MentionBundlesOptions {
 }
 
 /**
- * 생성을 시작할 때 저장소 매핑을 확인한 결과. 매핑의 폴더가 모두 있으면 그 저장소(`mapped`)를 읽고,
- * 매핑이 없으면(`unmapped`) 작업 폴더에서 자동 선택으로 저장소를 정한다.
+ * 생성을 시작할 때 읽을 저장소를 확인한 결과. 사용자가 저장소 선택 창에서 고른 구성이 있으면 그 구성(`user`)을,
+ * 없으면 저장소 매핑을 보고 매핑의 폴더가 모두 있으면 그 저장소(`mapped`)를 읽고, 매핑이 없으면(`unmapped`) 작업 폴더에서 자동 선택으로 정한다.
  */
-export type RunRepos = Exclude<RepoResolution, { kind: 'missing-folders' }>;
+export type RunRepos = Exclude<RepoResolution, { kind: 'missing-folders' }> | { kind: 'user'; repos: string[] };
 
 /** 초안 실행 직전 준비의 결과. */
 export type RunPreparation =
@@ -315,16 +316,16 @@ export class MentionBundles {
   }
 
   /**
-   * 생성을 시작할 때 저장소 매핑을 지금 폴더 상태로 다시 확인한다. 기다리는 사이에 매핑이 생겼거나 지워졌거나 폴더가 사라졌을 수 있다.
-   * 폴더가 모두 있으면 읽을 저장소를, 매핑이 없으면 자동 선택으로 정하라고 돌려준다.
-   * 매핑된 폴더가 하나라도 없으면 자동 선택으로 넘어가지 않고, 생성 중 묶음을 초안 없이 저장소 확인 필요로 올리고 OS 알림을 띄운 뒤 `null`을 돌려준다.
+   * 생성을 시작할 때 읽을 저장소를 지금 폴더 상태로 다시 확인한다. 기다리는 사이에 매핑이 생겼거나 지워졌거나 폴더가 사라졌을 수 있다.
+   * 사용자가 고른 구성이 있으면 저장소 매핑 대신 그 구성을 본다. 폴더가 모두 있으면 읽을 저장소를, 매핑이 없으면 자동 선택으로 정하라고 돌려준다.
+   * 읽을 폴더가 하나라도 없으면 자동 선택으로 넘어가지 않고, 생성 중 묶음을 초안 없이 저장소 확인 필요로 올리고 OS 알림을 띄운 뒤 `null`을 돌려준다.
    */
   async reposForRun(bundleId: number): Promise<RunRepos | null> {
     /** 실행할 묶음. */
     const bundle = this.bundles.find((item) => item.id === bundleId);
     if (!bundle || bundle.status !== 'generating') return null;
-    /** 저장소 매핑을 확인한 결과. */
-    const resolution = await this.options.resolveRepos(bundle.projectId);
+    /** 읽을 저장소를 확인한 결과. */
+    const resolution = bundle.userRepos ? await resolveUserRepos(bundle.userRepos) : await this.options.resolveRepos(bundle.projectId);
     if (resolution.kind !== 'missing-folders') return resolution;
 
     /** 저장소 확인 필요가 된 묶음. 그사이 생성 중이 아니게 되었으면 `null`. */
@@ -408,6 +409,20 @@ export class MentionBundles {
   async retry(bundleId: number): Promise<void> {
     await this.change(bundleId, 'bundle.retried', (bundle) =>
       bundle.status === 'failed' ? { ...bundle, status: 'generating', failure: null, newMentionCount: 0 } : null,
+    );
+  }
+
+  /**
+   * 준비됨이나 저장소 확인 필요 묶음을 저장소 선택 창에서 고른 구성으로 다시 만든다. 생성 중으로 올라 초안 대기열에 들어간다.
+   * 직전 초안과 저장소 확인 필요 사유는 지운다. 재생성 입력은 처음 입력에 읽을 저장소만 바뀐 것이라 직전 결과를 남겨 둘 까닭이 없다.
+   * 고른 구성은 묶음에만 두고 저장소 매핑으로 저장하지 않는다. 구성이 비었거나 그 밖의 상태면 아무것도 하지 않는다.
+   */
+  async regenerateWithRepos(bundleId: number, repos: readonly string[]): Promise<void> {
+    if (repos.length === 0) return;
+    await this.change(bundleId, 'bundle.regenerated-with-repos', (bundle) =>
+      canPickRepos(bundle.status)
+        ? { ...bundle, status: 'generating', userRepos: [...repos], draft: null, repoCheck: null, failure: null, newMentionCount: 0 }
+        : null,
     );
   }
 
@@ -513,10 +528,18 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
     createdAt: now,
     processedAt: null,
     context: null,
+    userRepos: null,
     draft: null,
     failure: null,
     runs: [],
   };
+}
+
+/** 사용자가 고른 구성의 폴더가 지금 모두 있는지 본다. 매핑과 같은 모양으로 돌려준다. */
+async function resolveUserRepos(repos: readonly string[]): Promise<RunRepos | Extract<RepoResolution, { kind: 'missing-folders' }>> {
+  /** 없는 폴더. */
+  const missing = await missingFolders(repos);
+  return missing.length > 0 ? { kind: 'missing-folders', paths: missing } : { kind: 'user', repos: [...repos] };
 }
 
 /**

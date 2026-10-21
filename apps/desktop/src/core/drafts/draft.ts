@@ -64,7 +64,7 @@ export interface Draft {
   evidence: DraftEvidence[];
   /** 초안을 만들 때 읽기 범위로 넘긴 저장소(절대 경로). 첫 저장소가 실행의 cwd였다. */
   repositories: string[];
-  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑으로 정했으면 `null`. 자동 선택 결과는 매핑으로 저장하지 않는다. */
+  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑이나 사용자가 고른 구성으로 정했으면 `null`. 자동 선택 결과는 매핑으로 저장하지 않는다. */
   autoSelection: AutoSelection | null;
   /** 만든 시각(Unix epoch 밀리초). */
   createdAt: number;

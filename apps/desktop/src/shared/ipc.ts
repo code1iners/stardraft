@@ -421,9 +421,39 @@ export interface DraftSnapshot {
   evidence: EvidenceSnapshot[];
   /** 쓴 저장소. 첫 저장소가 실행의 cwd였다. */
   repositories: RepositorySnapshot[];
-  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑으로 정했으면 `null`. */
+  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑이나 사용자가 고른 구성으로 정했으면 `null`. */
   autoSelection: AutoSelectionSnapshot | null;
+  /** 쓴 저장소 구성을 그 Flow 프로젝트의 저장소 매핑과 견준 것. 저장소 영역의 연결 버튼 문구를 정한다. */
+  mapping: MappingMatchSnapshot;
 }
+
+/**
+ * 저장소 구성을 Flow 프로젝트의 저장소 매핑과 견준 결과. `unmapped`면 "이 Flow 프로젝트에 연결",
+ * `different`면 "매핑을 이 구성으로 바꾸기", `same`이면 이미 이 구성이 매핑이다. 순서까지 같아야 같은 구성이다.
+ */
+export type MappingMatchSnapshot = 'unmapped' | 'same' | 'different';
+
+/** 저장소 선택 창의 후보 무리. 지금 쓰는 저장소, 작업 폴더에서 찾은 저장소, 매핑에 쓰인 저장소, "폴더 직접 고르기"로 더한 폴더 순서다. */
+export type RepoChoiceGroupSnapshot = 'current' | 'work-folder' | 'mapping' | 'added';
+
+/** 저장소 선택 창의 후보 하나. */
+export interface RepoChoiceSnapshot {
+  /** 화면에 보일 이름. */
+  name: string;
+  /** 저장소 폴더의 절대 경로. 체크 명령에 실어 보낸다. */
+  path: string;
+  /** 든 무리. */
+  group: RepoChoiceGroupSnapshot;
+  /** 체크했는지 여부. */
+  checked: boolean;
+}
+
+/** 열린 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. */
+export type RepoPickerSnapshot =
+  /** 작업 폴더를 훑고 있다. */
+  | { bundleId: number; status: 'loading' }
+  /** 후보를 보이고 있다. `mapping`은 체크한 구성을 그 묶음 Flow 프로젝트의 저장소 매핑과 견준 것이다. */
+  | { bundleId: number; status: 'ready'; choices: RepoChoiceSnapshot[]; mapping: MappingMatchSnapshot };
 
 /** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"처럼 보인다. 비용은 넘기지 않는다. */
 export interface RunLineSnapshot {
@@ -477,8 +507,11 @@ export interface FailureSnapshot {
 
 /** 저장소 확인 필요의 사유. */
 export type RepoCheckSnapshot =
-  /** 연결된 저장소 폴더를 찾을 수 없음. `paths`는 찾을 수 없는 폴더의 절대 경로다. */
-  | { kind: 'missing-folders'; paths: string[] }
+  /**
+   * 연결된 저장소 폴더를 찾을 수 없음. `paths`는 찾을 수 없는 폴더의 절대 경로다.
+   * `chosenByUser`면 저장소 매핑이 아니라 저장소 선택 창에서 고른 구성의 폴더라 "고른 저장소 폴더를 찾을 수 없음"으로 보인다.
+   */
+  | { kind: 'missing-folders'; paths: string[]; chosenByUser: boolean }
   /** 자동 선택을 하려 했지만 작업 폴더에서 저장소를 찾지 못함. */
   | { kind: 'no-candidates' }
   /**
@@ -550,6 +583,8 @@ export interface ReviewSnapshot {
   bundles: BundleSnapshot[];
   /** 창마다 영역의 펼침 상태. 다른 묶음으로 넘어가도 유지한다. */
   sections: Record<ReviewWindow, Record<ReviewSection, boolean>>;
+  /** 열린 저장소 선택 창. 닫혀 있으면 `null`. */
+  repoPicker: RepoPickerSnapshot | null;
 }
 
 /** 렌더러가 그릴 앱 상태 전체. */
@@ -661,6 +696,20 @@ export type AppCommand =
   | { type: 'retry-bundle'; bundleId: number }
   /** 묶음의 게시물을 Flow에서 연다. 주소는 main이 정한다. */
   | { type: 'open-bundle-in-flow'; bundleId: number }
+  /** 준비됨 묶음의 저장소 영역 연결 버튼. 그 초안의 구성으로 Flow 프로젝트의 저장소 매핑을 덮어쓴다. 구성은 main이 묶음에서 읽는다. */
+  | { type: 'link-bundle-repos'; bundleId: number }
+  /** 묶음의 저장소 선택 창을 연다. 준비됨이나 저장소 확인 필요 묶음이 아니면 main이 무시한다. */
+  | { type: 'open-repo-picker'; bundleId: number }
+  /** 저장소 선택 창의 후보 하나를 체크하거나 뺀다. 후보에 없는 경로는 main이 받지 않는다. */
+  | { type: 'set-repo-picker-checked'; path: string; checked: boolean }
+  /** 저장소 선택 창의 "폴더 직접 고르기". 폴더 선택 창의 경로는 main이 받으므로 렌더러는 보내지 않는다. */
+  | { type: 'pick-repo-picker-folders' }
+  /** 저장소 선택 창의 연결 버튼. 체크한 구성으로 저장소 매핑을 덮어쓴다. */
+  | { type: 'link-repo-picker' }
+  /** 저장소 선택 창에서 체크한 구성으로 초안을 만들고 창을 닫는다. */
+  | { type: 'generate-with-repo-picker' }
+  /** 저장소 선택 창을 닫는다. */
+  | { type: 'close-repo-picker' }
   /** 작은 창을 닫고 펼친 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
   | { type: 'expand-review'; bundleId: number | null }
   /** 펼친 창을 닫고 작은 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
@@ -762,6 +811,10 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isFlowProjectIdInput(candidate.projectId) && isWorkFolderPathInput(candidate.path)
         ? { type: 'remove-mapping-repo', projectId: candidate.projectId, path: candidate.path }
         : null;
+    case 'set-repo-picker-checked':
+      return isWorkFolderPathInput(candidate.path) && typeof candidate.checked === 'boolean'
+        ? { type: 'set-repo-picker-checked', path: candidate.path, checked: candidate.checked }
+        : null;
     case 'set-launch-at-login':
       return typeof candidate.enabled === 'boolean' ? { type: 'set-launch-at-login', enabled: candidate.enabled } : null;
     case 'ignore-bundle':
@@ -769,6 +822,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'cancel-generation':
     case 'retry-bundle':
     case 'open-bundle-in-flow':
+    case 'link-bundle-repos':
+    case 'open-repo-picker':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
     case 'expand-review':
     case 'collapse-review':
@@ -787,6 +842,10 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'refresh-work-folders':
     case 'refresh-repo-mappings':
     case 'start-detection':
+    case 'pick-repo-picker-folders':
+    case 'link-repo-picker':
+    case 'generate-with-repo-picker':
+    case 'close-repo-picker':
       return { type: candidate.type };
     default:
       return null;

@@ -59,6 +59,13 @@ export type RepoResolution =
   /** 연결된 폴더가 모두 있다. 연결한 순서이고 첫 저장소가 초안 실행의 cwd가 된다. */
   | { kind: 'mapped'; repos: string[] };
 
+/**
+ * 저장소 구성을 Flow 프로젝트의 저장소 매핑과 견준 결과. 연결 버튼의 문구를 정한다.
+ * `unmapped`는 매핑이 없음("이 Flow 프로젝트에 연결"), `different`는 다른 구성의 매핑이 있음("매핑을 이 구성으로 바꾸기"),
+ * `same`은 매핑이 이미 이 구성임이다. 첫 저장소가 cwd가 되므로 순서까지 같아야 같은 구성이다.
+ */
+export type MappingMatch = 'unmapped' | 'same' | 'different';
+
 /** 저장소 매핑에 필요한 것. */
 export interface RepoMappingsOptions {
   /** 매핑을 두는 설정 저장소. */
@@ -142,10 +149,8 @@ export class RepoMappings {
     /** 연결된 폴더. */
     const paths = this.mappings[projectId] ?? [];
     if (paths.length === 0) return { kind: 'unmapped' };
-    /** 폴더마다 있는지 여부. */
-    const found = await Promise.all(paths.map((path) => isFolder(path)));
     /** 없는 폴더. */
-    const missing = paths.filter((_, index) => !found[index]);
+    const missing = await missingFolders(paths);
     return missing.length > 0 ? { kind: 'missing-folders', paths: missing } : { kind: 'mapped', repos: [...paths] };
   }
 
@@ -185,6 +190,26 @@ export class RepoMappings {
     if (added.length === 0) return;
     this.emit();
     await Promise.all(added.map((path) => this.check(path)));
+  }
+
+  /**
+   * 검토 화면의 "이 Flow 프로젝트에 연결"이다. 기존 매핑에 더하지 않고 지금 구성으로 덮어쓴다. 매핑이 없으면 새로 만든다.
+   * 멘션이 온 Flow 프로젝트라 참여 목록에 없어도 받는다. 빈 구성으로는 매핑을 지우지 않는다.
+   */
+  async replaceRepos(projectId: string, paths: readonly string[]): Promise<void> {
+    /** 저장할 구성. OS 고유 형식의 절대 경로로 맞추고 같은 폴더는 한 번만 둔다. */
+    const repos = [...new Set(paths.map((path) => resolve(path)))];
+    if (repos.length === 0) return;
+    await this.change(() => ({ ...this.mappings, [projectId]: repos }));
+    await Promise.all(repos.filter((path) => !this.statuses.has(path)).map((path) => this.check(path)));
+  }
+
+  /** 저장소 구성(절대 경로, 순서대로)을 Flow 프로젝트의 저장소 매핑과 견준다. */
+  matchOf(projectId: string, repos: readonly string[]): MappingMatch {
+    /** 지금 매핑. */
+    const mapped = this.mappings[projectId];
+    if (!mapped) return 'unmapped';
+    return mapped.length === repos.length && mapped.every((path, index) => path === repos[index]) ? 'same' : 'different';
   }
 
   /** 매핑에서 저장소 하나를 뺀다. 마지막 저장소를 빼면 매핑도 없앤다. */
@@ -300,6 +325,13 @@ export async function isFolder(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** 폴더 가운데 지금 없는 것. 준 순서다. */
+export async function missingFolders(paths: readonly string[]): Promise<string[]> {
+  /** 폴더마다 있는지 여부. */
+  const found = await Promise.all(paths.map((path) => isFolder(path)));
+  return paths.filter((_, index) => !found[index]);
 }
 
 /** `settings.json`의 매핑을 읽는다. 문자열 경로가 하나도 없는 매핑과 형식이 맞지 않는 값은 건너뛴다. */

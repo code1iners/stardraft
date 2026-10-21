@@ -50,6 +50,11 @@ export function isRestorable(status: BundleStatus): boolean {
   return status === 'ignored' || status === 'already-answered';
 }
 
+/** 저장소 선택 창으로 고른 구성으로 만들 수 있는 상태인지 본다. 준비됨(다른 저장소로 다시 만들기)과 저장소 확인 필요(저장소를 골라 만들기)다. */
+export function canPickRepos(status: BundleStatus): boolean {
+  return status === 'ready' || status === 'repo-check-needed';
+}
+
 /** 트레이 숫자에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. */
 export function countsForReview(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
@@ -131,6 +136,11 @@ export interface MentionBundle extends BundlePlace {
   context: BundleContext | null;
   /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
   repoCheck: RepoCheck | null;
+  /**
+   * 사용자가 저장소 선택 창에서 고른 구성(절대 경로). 첫 저장소가 초안 실행의 cwd가 된다.
+   * 있으면 저장소 매핑과 자동 선택 대신 이 구성으로 초안 실행만 돌린다. 저장소 매핑은 아니고, 고른 적이 없으면 `null`.
+   */
+  userRepos: string[] | null;
   /** 초안 실행이 만든 초안(원래 초안). 아직 없으면 `null`. */
   draft: Draft | null;
   /** 생성이 실패한 까닭. 실패가 아니면 `null`. */

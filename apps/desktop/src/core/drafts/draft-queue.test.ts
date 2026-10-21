@@ -1392,6 +1392,94 @@ describe('초안 실행: 다시 시도와 되돌리기', () => {
   });
 });
 
+describe('저장소 선택 창으로 다시 만들기', () => {
+  it('준비됨 묶음을 다른 저장소로 다시 만들면 직전 초안을 지우고, 처음 입력에서 읽을 저장소만 바꾼 새 초안 실행이 돈다', async () => {
+    const { executor, drafts, bundles, settingsStore, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 저장소 매핑으로 만든 준비됨 묶음. */
+    const [ready] = bundles.state();
+    expect(ready).toMatchObject({ status: 'ready', draft: { repositories: [repos.a, repos.b] } });
+    /** 끝나지 않고 기다리는 두 번째 초안 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+
+    await drafts.regenerateWithRepos(ready!.id, [repos.b]);
+    await settle();
+
+    // 생성 중에는 직전 초안이 남지 않는다.
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'generating', draft: null, userRepos: [repos.b] });
+    /** 처음 초안 실행과 다시 만든 초안 실행. */
+    const [first, second] = executor.requests;
+    expect(executor.requests.map((request) => request.kind)).toEqual(['draft', 'draft']);
+    expect(second?.readRoots).toEqual([repos.b]);
+    // 처음 입력과 읽을 저장소만 다르다. 직전 초안은 넘기지 않는다.
+    expect(second?.input).toBe(first?.input.replace(`# 읽을 저장소\n- ${repos.a}\n- ${repos.b}\n`, `# 읽을 저장소\n- ${repos.b}\n`));
+    expect(second?.input).not.toContain('다섯 번까지 다시 시도합니다');
+
+    run.release({ type: 'completed', output: draftOutput(repos.b) });
+    await settle();
+
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', draft: { repositories: [repos.b], autoSelection: null } });
+    // 고른 구성은 연결 버튼을 누르기 전까지 저장소 매핑이 아니다.
+    expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [repos.a, repos.b] });
+  });
+
+  it('저장소 확인 필요 묶음에서 고른 구성으로 만들면, 저장소 매핑이 없어도 선택 실행 없이 그 구성으로 초안 실행만 돈다', async () => {
+    const { executor, drafts, bundles, settingsStore, poll } = await setup();
+    /** 저장소가 둘인 작업 폴더. */
+    const work = makeWorkFolder('work', ['api', 'web']);
+    /** 후보 저장소. */
+    const [api, web] = work.repos as [string, string];
+    settingsStore.settings.workFolders = [work.folder];
+    executor.script({ outcome: { type: 'completed', output: { verdict: 'unsure', repositories: [api], reason: '알 수 없습니다.' } } });
+    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
+    /** 저장소 확인 필요 묶음. */
+    const [check] = bundles.state();
+    expect(check?.status).toBe('repo-check-needed');
+    executor.script({ outcome: { type: 'completed', output: draftOutput(web) } });
+
+    await drafts.regenerateWithRepos(check!.id, [web, api]);
+    await settle();
+
+    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'draft']);
+    expect(executor.requests[1]?.readRoots).toEqual([web, api]);
+    expect(bundles.get(check!.id)).toMatchObject({ status: 'ready', repoCheck: null, draft: { repositories: [web, api], autoSelection: null } });
+  });
+
+  it('고른 저장소 폴더가 실행 직전에 사라졌으면 실행하지 않고 저장소 확인 필요가 된다', async () => {
+    const { executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+    /** 사라진 폴더. */
+    const gone = join(workDir, 'gone');
+
+    await drafts.regenerateWithRepos(ready!.id, [repos.a, gone]);
+    await settle();
+
+    expect(executor.requests).toHaveLength(1);
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: [gone] } });
+  });
+
+  it('생성 중이거나 처리됨 묶음, 빈 구성은 받지 않는다', async () => {
+    const { executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+
+    await drafts.regenerateWithRepos(ready!.id, []);
+    await bundles.ignore(ready!.id);
+    await drafts.regenerateWithRepos(ready!.id, [repos.b]);
+    await settle();
+
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ignored', userRepos: null });
+    expect(executor.requests).toHaveLength(1);
+  });
+});
+
 describe('대기열: 순서와 우선순위', () => {
   it('사용자가 누른 다시 시도는 감지해서 기다리는 묶음보다 앞에 들어가, 실행 중인 실행이 끝나면 바로 돈다', async () => {
     const { flow, executor, drafts, bundles, repos, poll } = await setup();

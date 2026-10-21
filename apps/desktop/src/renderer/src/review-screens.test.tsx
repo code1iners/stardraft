@@ -96,7 +96,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
       start: { status: 'idle' },
     },
     launchAtLogin: true,
-    review: { bundles, sections: SECTIONS },
+    review: { bundles, sections: SECTIONS, repoPicker: null },
     ...overrides,
   };
 }
@@ -133,14 +133,14 @@ describe('작은 창: 멘션 묶음', () => {
     expect(
       textOf(
         <PopoverContent
-          snapshot={snapshot([bundle(1)], { review: { bundles: [bundle(1)], sections: { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } } } })}
+          snapshot={snapshot([bundle(1)], { review: { bundles: [bundle(1)], sections: { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } }, repoPicker: null } })}
         />,
       ),
     ).toEqual(expect.stringContaining(note));
     expect(
       textOf(
         <PopoverContent
-          snapshot={snapshot([bundle(1)], { review: { bundles: [bundle(1)], sections: { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } } } })}
+          snapshot={snapshot([bundle(1)], { review: { bundles: [bundle(1)], sections: { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } }, repoPicker: null } })}
         />,
       ),
     ).not.toContain('첫 질문입니다');
@@ -263,6 +263,7 @@ const READY = bundle(4, {
       { name: 'billing-web', path: '/fake/work/billing-web' },
     ],
     autoSelection: null,
+    mapping: 'unmapped',
   },
   run: { agent: 'claude-code', durationMs: 134_000, contextOmitted: true },
 });
@@ -303,7 +304,7 @@ describe('작은 창: 초안 실행', () => {
   it('근거를 펼치면 근거마다 자연어 설명과 "저장소 · 파일 · 줄" 위치를, 저장소를 펼치면 쓴 저장소를 보인다', () => {
     /** 근거와 저장소를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, evidence: true, repository: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections, repoPicker: null } })} />);
 
     expect(text).toContain('① 운영 설정에서 다시 시도하는 횟수를 5로 정해 둡니다.');
     expect(text).toContain('billing-api · application-prod.yml · 88번째 줄');
@@ -321,7 +322,7 @@ describe('작은 창: 초안 실행', () => {
     });
     /** 근거를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, evidence: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], sections } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], sections, repoPicker: null } })} />);
 
     expect(text).toContain('설정을 바꾸면 다음 배포부터 적용됩니다. ① ②');
     expect(text).toContain('billing-api · application-prod.yml · 88번째 줄');
@@ -384,14 +385,25 @@ describe('작은 창: 초안 실행', () => {
 
   it('매핑된 폴더가 없어 저장소 확인 필요가 된 묶음은 저장소 영역에 사유와 찾을 수 없는 폴더를 보인다', () => {
     /** 폴더가 사라진 묶음. */
-    const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } });
+    const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false } });
     /** 저장소를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
 
     expect(text).toContain('연결된 저장소 폴더를 찾을 수 없음');
     expect(text).toContain('/fake/work/gone');
     expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+  });
+
+  it('저장소 선택 창에서 고른 폴더가 사라진 묶음은 "고른 저장소 폴더를 찾을 수 없음"을 보인다', () => {
+    /** 고른 폴더가 사라진 묶음. */
+    const missing = bundle(10, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true } });
+    /** 저장소를 편 작은 창. */
+    const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
+    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
+
+    expect(text).toContain('고른 저장소 폴더를 찾을 수 없음');
+    expect(text).not.toContain('연결된 저장소 폴더를 찾을 수 없음');
   });
 });
 
@@ -401,7 +413,7 @@ describe('저장소 확인 필요와 자동 선택', () => {
 
   /** 저장소 영역을 편 작은 창에 묶음 하나를 그린 마크업. */
   function popoverMarkup(item: BundleSnapshot): string {
-    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], sections: repositoryOpen } })} />);
+    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], sections: repositoryOpen, repoPicker: null } })} />);
   }
 
   /** 저장소 영역을 편 작은 창에 묶음 하나를 그린 글자. 마크업이 바꾼 따옴표는 되돌린다. */
@@ -436,8 +448,8 @@ describe('저장소 확인 필요와 자동 선택', () => {
     expect(text).toContain('Claude Code · 1분 2초');
     expect(text).toContain('Flow에서 열기');
     expect(text).toContain('무시');
-    // 저장소 선택 창이 생기기 전이라 버튼은 꺼 둔다.
-    expect(markup).toMatch(/<button[^>]*disabled[^>]*>저장소를 골라 만들기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>저장소를 골라 만들기<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*disabled[^>]*>저장소를 골라 만들기<\/button>/);
     expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
   });
 
@@ -522,5 +534,90 @@ describe('펼친 창: 초안 실행', () => {
     const order = ['에이전트가 이해한 요구', '저장소', '초안', '근거 2개'].map((title) => text.indexOf(title, text.indexOf('원문')));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(text).toContain('billing-api · application-prod.yml · 88번째 줄');
+  });
+});
+
+describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
+  /** 저장소 영역을 편 작은 창의 영역 펼침 상태. */
+  const repositoryOpen = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
+
+  /** 저장소 영역을 편 작은 창에 묶음 하나와 저장소 선택 창을 그린 마크업. */
+  function popoverMarkup(item: BundleSnapshot, repoPicker: ReviewSnapshot['repoPicker'] = null): string {
+    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], sections: repositoryOpen, repoPicker } })} />);
+  }
+
+  /** 마크업의 글자. */
+  function textIn(markup: string): string {
+    return markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  }
+
+  /** 초안이 준비된 묶음. 저장소 매핑과 견준 결과만 바꾼다. */
+  function readyWith(mapping: 'unmapped' | 'same' | 'different'): BundleSnapshot {
+    return { ...READY, draft: { ...READY.draft!, mapping } };
+  }
+
+  it('준비됨 묶음의 저장소 영역에 연결 버튼을 둔다. 매핑이 없으면 "이 Flow 프로젝트에 연결", 다른 구성의 매핑이 있으면 "매핑을 이 구성으로 바꾸기"다', () => {
+    expect(popoverMarkup(readyWith('unmapped'))).toMatch(/<button[^>]*>이 Flow 프로젝트에 연결<\/button>/);
+    expect(popoverMarkup(readyWith('different'))).toMatch(/<button[^>]*>매핑을 이 구성으로 바꾸기<\/button>/);
+    // 이미 이 구성이 매핑이면 누를 일이 없어 꺼 두고 그렇다고 알린다.
+    /** 같은 구성의 마크업. */
+    const same = popoverMarkup(readyWith('same'));
+    expect(same).toMatch(/<button[^>]*disabled[^>]*>매핑을 이 구성으로 바꾸기<\/button>/);
+    expect(textIn(same)).toContain('이 Flow 프로젝트의 저장소 매핑이 이 구성입니다.');
+  });
+
+  it('준비됨 묶음의 바닥 줄 재생성 메뉴에 "다른 저장소로 다시 만들기"가 있다. 게시 확인 대화상자("앞으로도 이 저장소로?")는 없다', () => {
+    /** 글자. */
+    const text = textIn(popoverMarkup(readyWith('unmapped')));
+
+    expect(text).toContain('다시 만들기');
+    expect(text).toContain('다른 저장소로 다시 만들기');
+    expect(text).not.toContain('앞으로도');
+  });
+
+  it('저장소 선택 창은 후보를 무리별로 체크 상자와 함께 보이고, "폴더 직접 고르기"·연결 버튼·만들기 버튼을 둔다', () => {
+    /** 열린 저장소 선택 창. */
+    const picker = {
+      bundleId: READY.id,
+      status: 'ready' as const,
+      choices: [
+        { name: 'billing-api', path: '/fake/work/billing-api', group: 'current' as const, checked: true },
+        { name: 'team/billing-web', path: '/fake/work/team/billing-web', group: 'work-folder' as const, checked: false },
+        { name: 'tool', path: '/fake/other/tool', group: 'mapping' as const, checked: true },
+        { name: 'extra', path: '/fake/elsewhere/extra', group: 'added' as const, checked: true },
+      ],
+      mapping: 'different' as const,
+    };
+    /** 마크업. */
+    const markup = popoverMarkup(readyWith('unmapped'), picker);
+    /** 글자. */
+    const text = textIn(markup);
+
+    expect(text).toContain('저장소 고르기');
+    expect(text).toContain('지금 쓰는 저장소 billing-api /fake/work/billing-api');
+    expect(text).toContain('작업 폴더에서 찾은 저장소 team/billing-web /fake/work/team/billing-web');
+    expect(text).toContain('다른 매핑에 쓰인 저장소 tool /fake/other/tool');
+    expect(text).toContain('직접 고른 폴더 extra /fake/elsewhere/extra');
+    expect(markup.match(/type="checkbox" checked=""/g)).toHaveLength(3);
+    expect(text).toContain('폴더 직접 고르기');
+    expect(markup).toMatch(/<button[^>]*>매핑을 이 구성으로 바꾸기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>이 저장소로 다시 만들기<\/button>/);
+    expect(text).toContain('3개 고름');
+  });
+
+  it('저장소 확인 필요 묶음의 선택 창은 "이 저장소로 만들기"이고, 고른 것이 없으면 만들기와 연결을 끈다. 훑는 동안에는 찾는 중이라고 보인다', () => {
+    /** 저장소 확인 필요 묶음. */
+    const check = bundle(21, { repoCheck: { kind: 'no-candidates' } });
+    /** 아무것도 고르지 않은 창. */
+    const markup = popoverMarkup(check, {
+      bundleId: 21,
+      status: 'ready',
+      choices: [{ name: 'billing-api', path: '/fake/work/billing-api', group: 'work-folder', checked: false }],
+      mapping: 'unmapped',
+    });
+
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>이 저장소로 만들기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>이 Flow 프로젝트에 연결<\/button>/);
+    expect(textIn(popoverMarkup(check, { bundleId: 21, status: 'loading' }))).toContain('작업 폴더에서 저장소를 찾는 중입니다.');
   });
 });

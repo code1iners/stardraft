@@ -177,6 +177,49 @@ describe('저장소 연결', () => {
   });
 });
 
+describe('이 Flow 프로젝트에 연결', () => {
+  it('지금 구성으로 저장소 매핑을 덮어쓴다. 기존 매핑에 더하지 않고, 고른 순서대로 저장하며 다른 매핑은 그대로 둔다', async () => {
+    const [api, web, batch] = [await folder('api'), await folder('web'), await folder('batch')];
+    const { settingsStore, mappings } = await setup({ repoMappings: { '101': [api, web], '102': [api] } });
+
+    await mappings.replaceRepos('101', [batch, web]);
+
+    expect(settingsStore.settings.repoMappings).toEqual({ '101': [batch, web], '102': [api] });
+    expect(mappings.state().mappings.find((mapping) => mapping.projectId === '101')?.repos).toEqual([
+      { path: batch, status: 'found' },
+      { path: web, status: 'found' },
+    ]);
+  });
+
+  it('매핑이 없던 Flow 프로젝트에는 새로 만든다. 참여 목록을 받지 못했어도 멘션이 온 프로젝트라 받는다', async () => {
+    const api = await folder('api');
+    const { settingsStore, mappings } = await setup({}, null);
+
+    await mappings.replaceRepos('103', [api, api]);
+
+    expect(settingsStore.settings.repoMappings).toEqual({ '103': [api] });
+  });
+
+  it('빈 구성으로는 매핑을 지우지 않는다', async () => {
+    const api = await folder('api');
+    const { settingsStore, mappings } = await setup({ repoMappings: { '101': [api] } });
+
+    await mappings.replaceRepos('101', []);
+
+    expect(settingsStore.settings.repoMappings).toEqual({ '101': [api] });
+  });
+
+  it('구성이 저장소 매핑과 같은지 본다. 순서까지 같아야 같은 구성이다', async () => {
+    const [api, web] = [await folder('api'), await folder('web')];
+    const { mappings } = await setup({ repoMappings: { '101': [api, web] } });
+
+    expect(mappings.matchOf('101', [api, web])).toBe('same');
+    expect(mappings.matchOf('101', [web, api])).toBe('different');
+    expect(mappings.matchOf('101', [api])).toBe('different');
+    expect(mappings.matchOf('102', [api])).toBe('unmapped');
+  });
+});
+
 describe('사라진 폴더', () => {
   it('연결된 폴더 중 하나라도 없으면 그 저장소와 매핑을 폴더를 찾을 수 없음으로 보인다', async () => {
     const api = await folder('api');

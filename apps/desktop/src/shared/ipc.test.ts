@@ -148,6 +148,23 @@ describe('렌더러가 보낸 명령 검사', () => {
     }
   });
 
+  it('묶음 저장소 연결과 저장소 선택 창 열기 명령은 묶음 ID를, 후보 체크 명령은 경로와 참·거짓을 받고, 나머지 선택 창 명령은 값 없이 받는다', () => {
+    for (const type of ['link-bundle-repos', 'open-repo-picker'] as const) {
+      expect(parseAppCommand({ type, bundleId: 3 })).toEqual({ type, bundleId: 3 });
+      expect(parseAppCommand({ type, bundleId: 0 })).toBeNull();
+    }
+    expect(parseAppCommand({ type: 'set-repo-picker-checked', path: '/fake/work/api', checked: true })).toEqual({
+      type: 'set-repo-picker-checked',
+      path: '/fake/work/api',
+      checked: true,
+    });
+    expect(parseAppCommand({ type: 'set-repo-picker-checked', path: '', checked: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-repo-picker-checked', path: '/fake/work/api' })).toBeNull();
+    for (const type of ['pick-repo-picker-folders', 'link-repo-picker', 'generate-with-repo-picker', 'close-repo-picker'] as const) {
+      expect(parseAppCommand({ type, paths: ['/etc'] })).toEqual({ type });
+    }
+  });
+
   it('펼쳐 보기·접어 보기 명령은 보고 있던 묶음 ID나 null을 받는다', () => {
     expect(parseAppCommand({ type: 'expand-review', bundleId: 3 })).toEqual({ type: 'expand-review', bundleId: 3 });
     expect(parseAppCommand({ type: 'collapse-review', bundleId: null })).toEqual({ type: 'collapse-review', bundleId: null });

@@ -128,6 +128,10 @@ export const STATE_MIGRATIONS: readonly string[] = [
   UPDATE mention_bundle SET draft = json_set(draft, '$.autoSelection', json('null')) WHERE draft IS NOT NULL;
   UPDATE mention_bundle SET failure = json_set(failure, '$.runKind', json('null')) WHERE failure IS NOT NULL;
   `,
+  // 9: 저장소 선택 창. 사용자가 고른 구성(저장소 절대 경로 배열)을 JSON으로 둔다. 이미 있던 묶음은 고른 적이 없어 비워 둔다.
+  `
+  ALTER TABLE mention_bundle ADD COLUMN user_repos TEXT;
+  `,
 ];
 
 /** 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록이다. */
@@ -325,6 +329,7 @@ export class SqliteStateStore implements StateStore {
       processedAt: row.processed_at,
       context: readJson<BundleContext>(row.context),
       repoCheck: readJson<RepoCheck>(row.repo_check),
+      userRepos: readJson<string[]>(row.user_repos),
       draft: readJson<Draft>(row.draft),
       failure: readJson<DraftFailure>(row.failure),
       runs: readJson<RunRecord[]>(row.runs) ?? [],
@@ -362,6 +367,7 @@ export class SqliteStateStore implements StateStore {
       processedAt: bundle.processedAt,
       context: jsonOrNull(bundle.context),
       repoCheck: jsonOrNull(bundle.repoCheck),
+      userRepos: jsonOrNull(bundle.userRepos),
       draft: jsonOrNull(bundle.draft),
       failure: jsonOrNull(bundle.failure),
       runs: JSON.stringify(bundle.runs),
@@ -373,9 +379,9 @@ export class SqliteStateStore implements StateStore {
         this.db
           .prepare(
             `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
-               context, repo_check, draft, failure, runs)
+               context, repo_check, user_repos, draft, failure, runs)
              VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
-               @context, @repoCheck, @draft, @failure, @runs)`,
+               @context, @repoCheck, @userRepos, @draft, @failure, @runs)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -385,7 +391,7 @@ export class SqliteStateStore implements StateStore {
         .prepare(
           `UPDATE mention_bundle SET post_id = @postId, remark_id = @remarkId, project_id = @projectId, status = @status, post_title = @postTitle,
              connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt,
-             context = @context, repo_check = @repoCheck, draft = @draft, failure = @failure, runs = @runs
+             context = @context, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, failure = @failure, runs = @runs
            WHERE id = @id`,
         )
         .run({ ...values, id });
@@ -472,6 +478,8 @@ interface BundleRow {
   context: string | null;
   /** 저장소 확인 필요 사유의 JSON. 사유가 없으면 `null`. */
   repo_check: string | null;
+  /** 사용자가 저장소 선택 창에서 고른 구성의 JSON. 고른 적이 없으면 `null`. */
+  user_repos: string | null;
   /** 초안의 JSON. 아직 없으면 `null`. */
   draft: string | null;
   /** 생성이 실패한 까닭의 JSON. 실패가 아니면 `null`. */

@@ -2,6 +2,7 @@ import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleMeta, BundleSections, IgnoreToast, StatusTag } from './BundleDetail';
 import { SetupChecklist, WindowsTrayHint } from './Onboarding';
+import { RepoPickerSheet } from './RepoPickerSheet';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
 
@@ -62,8 +63,8 @@ interface CompactReviewProps {
  * 머리에 대기열 위치, ‹ › 이동, 상태 태그, "펼쳐 보기"가 있고, 무시하면 다음 묶음으로 넘어간다.
  */
 function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
-  /** 묶음 상태. */
-  const { bundles, sections } = snapshot.review;
+  /** 묶음 상태와 열린 저장소 선택 창. */
+  const { bundles, sections, repoPicker } = snapshot.review;
   /** 고른 묶음과 대기열. */
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음과 대기열. */
@@ -108,6 +109,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
         </>
       )}
       {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
+      {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
     </>
   );
 }

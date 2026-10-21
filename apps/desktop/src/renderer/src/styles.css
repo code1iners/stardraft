@@ -1278,6 +1278,111 @@ p.mention-text {
   margin-top: 8px;
 }
 
+/* 저장소 영역의 연결 버튼 아래 안내. */
+.repo-check-actions p {
+  margin: 4px 0 0;
+}
+
+/* 바닥 줄의 재생성 메뉴. 바닥 줄 위로 펼친다. */
+.menu {
+  position: relative;
+}
+
+.menu > summary {
+  display: inline-flex;
+  align-items: center;
+  list-style: none;
+}
+
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu-list {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 4;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: var(--surface-2);
+}
+
+/* 저장소 선택 창: 후보 목록은 창 높이 안에서 스크롤한다. */
+.sheet.repo-picker {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - 24px);
+}
+
+.repo-choices {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 10px 0;
+  overflow-y: auto;
+}
+
+.repo-choice-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.repo-choice-group + .repo-choice-group {
+  margin-top: 10px;
+}
+
+.repo-choice-group legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.repo-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.repo-choice input {
+  margin-top: 3px;
+}
+
+.repo-choice > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.repo-picker .sheet-actions {
+  flex-wrap: wrap;
+}
+
+.repo-picker-count {
+  margin-right: auto;
+  align-self: center;
+}
+
 /* 생성 중: 마지막 진행 단계 한 줄과 읽은 파일 수. */
 .progress-line {
   display: flex;

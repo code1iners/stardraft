@@ -1,6 +1,7 @@
 import type { Mention, MentionLocation } from '../detection/mention';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
+import type { MyAnswer } from '../flow/mention-judgement';
 
 /**
  * 멘션 묶음의 상태. 생성 중·준비됨·게시 중·실패 같은 상태는 초안을 만들고 게시하는 기능이 더한다.
@@ -14,10 +15,10 @@ export type BundleStatus =
   /** 이미 답함. Flow에 내 답이 있어 자동으로 옮겨졌다. */
   | 'already-answered';
 
-/** 펼친 창 목록의 묶음 하나. 검토 대기·생성 중·실패·처리됨이다. */
+/** 펼친 창의 목록 묶음 하나. 검토 대기·생성 중·실패·처리됨이다. */
 export type BundleListGroup = 'awaiting-review' | 'generating' | 'failed' | 'processed';
 
-/** 묶음 상태가 펼친 창 목록의 어느 묶음에 드는지 돌려준다. */
+/** 멘션 묶음이 상태에 따라 펼친 창의 어느 목록 묶음에 드는지 돌려준다. */
 export function listGroupOf(status: BundleStatus): BundleListGroup {
   switch (status) {
     case 'repo-check-needed':
@@ -52,14 +53,6 @@ export interface BundledMention extends Mention {
   answered: boolean;
 }
 
-/** 묶음 자리에서 찾은 내 답. 본문 묶음은 게시물에 쓴 내 댓글, 댓글 스레드 묶음은 그 스레드에 쓴 내 대댓글이다. */
-export interface MyAnswer {
-  /** 댓글이면 `commentId`, 대댓글이면 `replyId`. */
-  answerId: string;
-  /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. */
-  registeredDateTime: string;
-}
-
 /** 묶음에 기록한 내 답. "이미 답함" 판정을 뒷받침한 답이다. */
 export interface RecordedAnswer extends MyAnswer {
   /** 묶음을 되돌릴 때 기록해, 이후 "이미 답함" 판정에서 빼는 답인지 여부. 같은 답으로 다시 처리됨이 되지 않게 한다. */
@@ -68,14 +61,6 @@ export interface RecordedAnswer extends MyAnswer {
 
 /** 멘션 묶음 자리. 같은 댓글 스레드(`remarkId`가 댓글)나 같은 게시물 본문(`remarkId`가 `"-1"`)이다. */
 export type BundlePlace = Pick<MentionLocation, 'postId' | 'remarkId'>;
-
-/** 감지할 때 묶음 자리를 Flow에서 조회한 결과. 조회하지 못한 값은 `null`이고, 그때는 묶음에 이미 있는 값을 그대로 둔다. */
-export interface BundlePlaceLookup {
-  /** 게시물 제목과 "Flow에서 열기" 주소. */
-  post: { title: string; connectUrl: string | null } | null;
-  /** 묶음 자리의 내 답. 시스템 댓글은 들지 않는다. */
-  myAnswers: MyAnswer[] | null;
-}
 
 /**
  * 멘션 묶음. 같은 댓글 스레드나 같은 게시물 본문에서 온, 아직 처리하지 않은 멘션의 모음이다.

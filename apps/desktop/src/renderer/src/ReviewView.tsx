@@ -1,8 +1,8 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleSections, IgnoreToast, ignoredText, OpenInFlowButton, postLine, StatusTag } from './BundleDetail';
+import { BundleFooter, BundleSections, IgnoreToast, OpenInFlowButton, StatusTag } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
-import { BUNDLE_GROUP_LABELS, formatMentionTime, RETENTION_NOTE, senderLine } from './review-text';
-import { useBundleSelection, useIgnoreToast } from './useReview';
+import { BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatMentionTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
+import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
 
 /** 펼친 창에 넘기는 값. */
@@ -35,25 +35,15 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
   /** 묶음 상태. */
   const { bundles, sections } = snapshot.review;
   /** 고른 묶음. */
-  const { selected, select, leave } = useBundleSelection(bundles, initialBundleId);
-  /** 무시 토스트. */
-  const [toast, setToast] = useIgnoreToast();
+  const selection = useBundleSelection(bundles, initialBundleId);
+  /** 보이는 묶음. */
+  const { selected, select } = selection;
+  /** [무시]·[되돌리기]와 무시 토스트. */
+  const { toast, ignore, restore } = useBundleActions(selection);
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {
     void window.stardraft.send({ type: 'collapse-review', bundleId: selected?.id ?? null });
-  };
-  /** 묶음을 무시하고 다음 묶음으로 넘어간다. */
-  const handleIgnore = (bundle: BundleSnapshot) => {
-    leave(bundle.id);
-    setToast({ bundleId: bundle.id, text: ignoredText(bundle) });
-    void window.stardraft.send({ type: 'ignore-bundle', bundleId: bundle.id });
-  };
-  /** 묶음을 되돌리고 그 묶음을 보인다. */
-  const handleRestore = (bundleId: number) => {
-    setToast(null);
-    select(bundleId);
-    void window.stardraft.send({ type: 'restore-bundle', bundleId });
   };
 
   return (
@@ -66,12 +56,12 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
             <>
               <header className="detail-head">
                 <div className="detail-title">
-                  <h2>{selected.postTitle || '제목 없는 게시물'}</h2>
+                  <h2>{postTitleOf(selected)}</h2>
                   <div className="detail-meta">
                     <p className="review-meta">
                       {selected.projectTitle && <span>{selected.projectTitle}</span>}
                       <span>
-                        {senderLine(selected.senderNames)}님이 {selected.place === 'post' ? '본문' : '댓글'}에서 멘션
+                        {senderLine(selected.senderNames)}님이 {BUNDLE_PLACE_LABELS[selected.place]}에서 멘션
                       </span>
                       <span>{formatMentionTime(selected.lastMentionAt)}</span>
                     </p>
@@ -84,9 +74,9 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                 </button>
               </header>
               <main className="detail-body">
-                <BundleSections bundle={selected} kind="expanded" sections={sections} />
+                <BundleSections bundle={selected} windowKind="expanded" sections={sections} />
               </main>
-              <BundleFooter bundle={selected} onIgnore={() => handleIgnore(selected)} onRestore={() => handleRestore(selected.id)} />
+              <BundleFooter bundle={selected} onIgnore={() => ignore(selected)} onRestore={() => restore(selected.id)} />
             </>
           ) : (
             <>
@@ -101,7 +91,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
           )}
         </section>
       </div>
-      {toast && <IgnoreToast toast={toast} onRestore={() => handleRestore(toast.bundleId)} />}
+      {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
     </div>
   );
 }
@@ -116,12 +106,12 @@ interface BundleListProps {
   onSelect: (bundleId: number) => void;
 }
 
-/** 펼친 창 왼쪽 목록. 비어 있지 않은 묶음만 이름과 개수를 달아 보이고, 처리됨 아래에 보관 안내를 둔다. */
+/** 펼친 창 왼쪽 목록. 비어 있지 않은 목록 묶음만 이름과 개수를 달아 보이고, 처리됨 아래에 보관 안내를 둔다. */
 function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
   return (
     <aside className="review-list">
       {BUNDLE_GROUPS.map((group) => {
-        /** 이 묶음에 든 멘션 묶음. */
+        /** 이 목록 묶음에 든 멘션 묶음. */
         const items = bundles.filter((bundle) => bundle.group === group);
         if (items.length === 0) return null;
         return (

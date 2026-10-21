@@ -1,8 +1,8 @@
-import { bundlePlaceKey, type BundlePlaceLookup } from '../bundles/mention-bundle';
+import { bundlePlaceKey } from '../bundles/mention-bundle';
 import type { MentionBundles } from '../bundles/mention-bundles';
 import { compareAlarmIds, latestAlarmId } from '../flow/alarm-id';
 import { listMentionAlarmsAfter } from '../flow/mention-alarms';
-import { MentionJudge, type MentionJudgement } from '../flow/mention-judgement';
+import { MentionJudge, type MentionJudgement, type PlaceLookup } from '../flow/mention-judgement';
 import { isSameFlowUser } from '../flow/user-id';
 import { errorFields, type Logger } from '../logging/logger';
 import type { CancelScheduled, Clock } from '../ports/clock';
@@ -246,7 +246,7 @@ export class MentionDetection {
   }
 
   /** 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 묶음이 트레이 숫자를 바꾸고 OS 알림을 띄운다. */
-  private async save(mentions: Mention[], lookups: ReadonlyMap<string, BundlePlaceLookup>, baseline: string, userId: string): Promise<void> {
+  private async save(mentions: Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baseline: string, userId: string): Promise<void> {
     // 조회하는 사이에 다른 계정의 키로 바뀌어 기록을 비웠으면, 옛 계정의 결과를 남기지 않는다.
     /** 지금 계정. */
     const current = await this.options.stateStore.getAccount();
@@ -309,9 +309,9 @@ export class MentionDetection {
  * 멘션이 든 묶음 자리마다 게시물 제목·주소와 내 답을 조회한다. 판정이 받은 글을 다시 쓴다.
  * 조회하지 못한 자리는 내 답이 없는 것으로 넘기지 않고 모른다고(`null`) 넘긴다. 묶음은 그때 아는 답으로만 판정한다.
  */
-async function lookupPlaces(judge: MentionJudge, mentions: readonly Mention[], myIds: readonly string[]): Promise<Map<string, BundlePlaceLookup>> {
+async function lookupPlaces(judge: MentionJudge, mentions: readonly Mention[], myIds: readonly string[]): Promise<Map<string, PlaceLookup>> {
   /** 자리마다 조회한 결과. */
-  const lookups = new Map<string, BundlePlaceLookup>();
+  const lookups = new Map<string, PlaceLookup>();
   for (const mention of mentions) {
     /** 묶음 자리. */
     const place = bundlePlaceKey(mention);

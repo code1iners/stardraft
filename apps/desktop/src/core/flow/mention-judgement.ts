@@ -1,4 +1,4 @@
-import type { BundlePlace, BundlePlaceLookup, MyAnswer } from '../bundles/mention-bundle';
+import type { MentionLocation } from '../detection/mention';
 import type {
   FlowAlarm,
   FlowApi,
@@ -27,6 +27,25 @@ export type MentionDropReason =
   /** 글을 볼 권한이 없다(`403`). */
   | 'forbidden';
 
+/** 멘션 묶음 자리. 같은 댓글 스레드(`remarkId`가 댓글)나 같은 게시물 본문(`remarkId`가 `"-1"`)이다. */
+type RemarkPlace = Pick<MentionLocation, 'postId' | 'remarkId'>;
+
+/** 묶음 자리에서 찾은 내 답. 본문 묶음은 게시물에 쓴 내 댓글, 댓글 스레드 묶음은 그 스레드에 쓴 내 대댓글이다. */
+export interface MyAnswer {
+  /** 댓글이면 `commentId`, 대댓글이면 `replyId`. */
+  answerId: string;
+  /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. */
+  registeredDateTime: string;
+}
+
+/** 감지할 때 묶음 자리를 Flow에서 조회한 결과. 조회하지 못한 값은 `null`이다. */
+export interface PlaceLookup {
+  /** 게시물 제목과 "Flow에서 열기" 주소. */
+  post: { title: string; connectUrl: string | null } | null;
+  /** 묶음 자리의 내 답. 시스템 댓글은 들지 않는다. */
+  myAnswers: MyAnswer[] | null;
+}
+
 /** 알림 하나를 판정한 결과. */
 export type MentionJudgement =
   /** 나를 직접 지목한 멘션이다. `text`는 멘션이 일어난 글의 내용(Flow 원문)이다. */
@@ -40,7 +59,7 @@ export type MentionJudgement =
 type Fetched<T> = { kind: 'found'; value: T } | Exclude<MentionJudgement, { kind: 'mention' }>;
 
 /**
- * 멘션 알림이 나를 직접 지목했는지 멘션된 글을 직접 조회해 판정한다.
+ * 멘션 판정. 멘션 알림이 나를 직접 지목했는지 멘션된 글을 직접 조회해 판정하고, 묶음 자리에 이미 내 답이 있는지 조회한다.
  * 알림의 `content`에는 멘션 표기가 대부분 빠져 있고, `mentionYn`에는 `@전체`도 섞여 오기 때문이다.
  * 한 번의 조회 동안 같은 게시물의 댓글은 한 번만 받도록, 조회 하나마다 새로 만들어 쓴다.
  */
@@ -72,34 +91,33 @@ export class MentionJudge {
 
   /**
    * 묶음 자리의 게시물 제목·"Flow에서 열기" 주소와 내 답을 조회한다. 같은 조회 안에서 판정이 받은 글을 다시 쓴다.
-   * 내 답은 본문 묶음이면 게시물에 쓴 내 댓글(대댓글 제외), 댓글 스레드 묶음이면 그 스레드의 내 대댓글이고, 시스템 댓글은 넣지 않는다.
    * `myIds`는 내 사용자 ID들(키 확인 때 얻은 ID와 알림의 `receiverId`)이다. 조회하지 못한 값은 `null`이다.
    */
-  async lookupPlace(place: BundlePlace, myIds: readonly string[]): Promise<BundlePlaceLookup> {
-    /** 묶음 자리. */
-    const { postId, remarkId } = place;
+  async lookupPlace(place: RemarkPlace, myIds: readonly string[]): Promise<PlaceLookup> {
     /** 게시물. */
-    const post = await this.post(postId);
-    // 시스템 댓글은 행동한 사람 명의로 오므로, 내 명의라도 내 답으로 보지 않는다.
-    /** 내가 쓴 사람의 글(시스템 댓글 제외)인지 본다. */
-    const mine =(remark: FlowRemarkAuthorship) => remark.systemCode === '' && myIds.some((id) => isSameFlowUser(remark.registerId, id));
-    /** 내 답. */
-    let myAnswers: MyAnswer[] | null = null;
-    if (isPostBody(place)) {
-      /** 게시물의 댓글. */
-      const comments = await this.comments(postId);
-      if (comments.kind === 'found') {
-        myAnswers = [...comments.value.values()].filter(mine).map((comment) => answerOf(comment.commentId, comment));
-      }
-    } else {
-      /** 댓글 스레드의 대댓글 전부. */
-      const replies = await this.threadReplies(postId, remarkId);
-      if (replies.kind === 'found') myAnswers = replies.value.filter(mine).map((reply) => answerOf(reply.replyId, reply));
-    }
+    const post = await this.post(place.postId);
     return {
       post: post.kind === 'found' ? { title: post.value.title, connectUrl: post.value.connectUrl } : null,
-      myAnswers,
+      myAnswers: await this.myAnswers(place, myIds),
     };
+  }
+
+  /**
+   * 묶음 자리의 내 답을 조회한다. 본문 묶음이면 게시물에 쓴 내 댓글(대댓글 제외), 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다.
+   * `myIds`는 내 사용자 ID들이다. 조회하지 못하면(머리 댓글이 지워진 경우 포함) `null`이다.
+   */
+  async myAnswers(place: RemarkPlace, myIds: readonly string[]): Promise<MyAnswer[] | null> {
+    // 시스템 댓글은 행동한 사람 명의로 오므로, 내 명의라도 내 답으로 보지 않는다.
+    /** 내가 쓴 사람의 글(시스템 댓글 제외)인지 본다. */
+    const mine = (remark: FlowRemarkAuthorship) => remark.systemCode === '' && myIds.some((id) => isSameFlowUser(remark.registerId, id));
+    if (isPostBody(place)) {
+      /** 게시물의 댓글. */
+      const comments = await this.comments(place.postId);
+      return comments.kind === 'found' ? [...comments.value.values()].filter(mine).map((comment) => answerOf(comment.commentId, comment)) : null;
+    }
+    /** 댓글 스레드의 대댓글 전부. */
+    const replies = await this.threadReplies(place.postId, place.remarkId);
+    return replies.kind === 'found' ? replies.value.filter(mine).map((reply) => answerOf(reply.replyId, reply)) : null;
   }
 
   /** 멘션 위치의 글을 조회해, 그 내용과 누구를 지목했는지 보는 함수를 돌려준다. */

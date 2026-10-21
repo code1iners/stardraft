@@ -1,8 +1,8 @@
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleMeta, BundleSections, IgnoreToast, ignoredText, StatusTag } from './BundleDetail';
+import { BundleFooter, BundleMeta, BundleSections, IgnoreToast, StatusTag } from './BundleDetail';
 import { SetupChecklist, WindowsTrayHint } from './Onboarding';
-import { useBundleSelection, useIgnoreToast } from './useReview';
+import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
 
 /** 작은 창에 넘기는 값. */
@@ -65,25 +65,15 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   /** 묶음 상태. */
   const { bundles, sections } = snapshot.review;
   /** 고른 묶음과 대기열. */
-  const { queue, selected, select, leave } = useBundleSelection(bundles, initialBundleId);
-  /** 무시 토스트. */
-  const [toast, setToast] = useIgnoreToast();
+  const selection = useBundleSelection(bundles, initialBundleId);
+  /** 보이는 묶음과 대기열. */
+  const { queue, selected, select } = selection;
+  /** [무시]·[되돌리기]와 무시 토스트. */
+  const { toast, ignore, restore } = useBundleActions(selection);
 
   /** 펼친 창을 연다. 작은 창은 main이 닫는다. */
   const handleExpand = () => {
     void window.stardraft.send({ type: 'expand-review', bundleId: selected?.id ?? null });
-  };
-  /** 묶음을 무시하고 다음 묶음으로 넘어간다. */
-  const handleIgnore = (bundle: BundleSnapshot) => {
-    leave(bundle.id);
-    setToast({ bundleId: bundle.id, text: ignoredText(bundle) });
-    void window.stardraft.send({ type: 'ignore-bundle', bundleId: bundle.id });
-  };
-  /** 묶음을 되돌리고 그 묶음을 보인다. */
-  const handleRestore = (bundleId: number) => {
-    setToast(null);
-    select(bundleId);
-    void window.stardraft.send({ type: 'restore-bundle', bundleId });
   };
 
   return (
@@ -93,9 +83,9 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
           <QueueHead queue={queue} selected={selected} onSelect={select} onExpand={handleExpand} />
           <main className="popover-body review-body">
             <BundleMeta bundle={selected} />
-            <BundleSections bundle={selected} kind="compact" sections={sections} />
+            <BundleSections bundle={selected} windowKind="compact" sections={sections} />
           </main>
-          <BundleFooter bundle={selected} onIgnore={() => handleIgnore(selected)} onRestore={() => handleRestore(selected.id)} />
+          <BundleFooter bundle={selected} onIgnore={() => ignore(selected)} onRestore={() => restore(selected.id)} />
         </>
       ) : (
         <>
@@ -111,7 +101,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
           <EmptyDetection snapshot={snapshot} />
         </>
       )}
-      {toast && <IgnoreToast toast={toast} onRestore={() => handleRestore(toast.bundleId)} />}
+      {toast && <IgnoreToast toast={toast} onRestore={() => restore(toast.bundleId)} />}
     </>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { BundleSnapshot } from '../../shared/ipc';
+import { ignoredText } from './review-text';
 
 /** 무시 토스트를 보이는 시간(밀리초). */
 const TOAST_MS = 5_000;
@@ -65,8 +66,38 @@ export interface IgnoreToastState {
   text: string;
 }
 
+/** 묶음에 하는 행동과 무시 토스트. */
+export interface BundleActions {
+  /** 보이는 무시 토스트. 없으면 `null`. */
+  toast: IgnoreToastState | null;
+  /** 묶음을 무시하고 다음 묶음으로 넘어가며, 되돌릴 수 있는 토스트를 띄운다. */
+  ignore: (bundle: BundleSnapshot) => void;
+  /** 처리됨 묶음을 되돌리고 그 묶음을 보인다. */
+  restore: (bundleId: number) => void;
+}
+
+/** 작은 창과 펼친 창이 같이 쓰는 [무시]와 [되돌리기]. 묶음 상태는 main이 바꾸고, 창은 보이는 묶음과 토스트만 바꾼다. */
+export function useBundleActions({ select, leave }: Pick<BundleSelection, 'select' | 'leave'>): BundleActions {
+  /** 무시 토스트. */
+  const [toast, setToast] = useIgnoreToast();
+
+  return {
+    toast,
+    ignore: (bundle) => {
+      leave(bundle.id);
+      setToast({ bundleId: bundle.id, text: ignoredText(bundle) });
+      void window.stardraft.send({ type: 'ignore-bundle', bundleId: bundle.id });
+    },
+    restore: (bundleId) => {
+      setToast(null);
+      select(bundleId);
+      void window.stardraft.send({ type: 'restore-bundle', bundleId });
+    },
+  };
+}
+
 /** 무시 토스트. 띄운 뒤 5초가 지나면 저절로 사라진다. */
-export function useIgnoreToast(): [IgnoreToastState | null, (toast: IgnoreToastState | null) => void] {
+function useIgnoreToast(): [IgnoreToastState | null, (toast: IgnoreToastState | null) => void] {
   /** 보이는 토스트. */
   const [toast, setToast] = useState<IgnoreToastState | null>(null);
 

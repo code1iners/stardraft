@@ -156,6 +156,8 @@ export class AppWindows {
   /** "접어 보기". 펼친 창을 닫고, Dock 아이콘까지 숨긴 뒤에 그 묶음을 연 작은 창을 띄운다. */
   async collapseReview(bundleId: number | null): Promise<void> {
     await closeAndWait(this.review);
+    // Dock 아이콘을 숨기며 앱이 뒤로 가면 작은 창이 포커스를 받자마자 잃고 닫히므로, 사용자가 누른 이 경우에는 앱을 앞으로 가져온다.
+    if (process.platform === 'darwin') app.focus({ steal: true });
     this.openPopover(bundleId);
   }
 

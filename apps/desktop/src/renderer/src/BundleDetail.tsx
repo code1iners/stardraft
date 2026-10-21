@@ -1,6 +1,14 @@
 import type { ReactNode } from 'react';
 import type { BundleSnapshot, BundleStatusSnapshot, ReviewSection, ReviewSnapshot, ReviewWindow } from '../../shared/ipc';
-import { BUNDLE_STATUS_TAGS, formatMentionTime, MENTION_PLACE_LABELS, PROCESSED_NOTES, senderLine } from './review-text';
+import {
+  BUNDLE_PLACE_LABELS,
+  BUNDLE_STATUS_TAGS,
+  formatMentionTime,
+  MENTION_PLACE_LABELS,
+  postLine,
+  PROCESSED_NOTES,
+  senderLine,
+} from './review-text';
 import type { IgnoreToastState } from './useReview';
 
 /** 저장소 확인 필요 묶음의 저장소 영역 안내. 저장소를 고르는 창이 생기면 사유·후보·[저장소를 골라 만들기]가 들어간다. */
@@ -40,20 +48,13 @@ export function OpenInFlowButton({ bundle }: BundleProps) {
   );
 }
 
-/** 게시물을 가리키는 한 줄. "가짜 프로젝트 › 게시물 제목"이다. */
-export function postLine(bundle: BundleSnapshot): string {
-  /** 게시물 제목. */
-  const title = bundle.postTitle || '제목 없는 게시물';
-  return bundle.projectTitle ? `${bundle.projectTitle} › ${title}` : title;
-}
-
 /** 작은 창 상세 머리. 첫 줄은 송신자·멘션 자리·시각, 둘째 줄은 게시물과 "Flow에서 열기"다. */
 export function BundleMeta({ bundle }: BundleProps) {
   return (
     <div className="bundle-meta">
       <p className="review-meta">
         <strong>{senderLine(bundle.senderNames)}</strong>
-        <span>{bundle.place === 'post' ? '본문' : '댓글'}</span>
+        <span>{BUNDLE_PLACE_LABELS[bundle.place]}</span>
         <span>{formatMentionTime(bundle.lastMentionAt)}</span>
       </p>
       <p className="post-line">
@@ -67,7 +68,7 @@ export function BundleMeta({ bundle }: BundleProps) {
 /** 접고 펴는 영역에 넘기는 값. */
 interface ReviewSectionBlockProps {
   /** 영역이 있는 창. 펼침 상태는 창마다 따로 기억한다. */
-  kind: ReviewWindow;
+  windowKind: ReviewWindow;
   /** 영역. */
   section: ReviewSection;
   /** 펼쳐져 있는지 여부. */
@@ -81,10 +82,10 @@ interface ReviewSectionBlockProps {
 }
 
 /** 머리를 눌러 접고 펴는 상세 영역. 펼침 상태는 main이 창마다 기억한다. */
-function ReviewSectionBlock({ kind, section, open, title, detail, children }: ReviewSectionBlockProps) {
+function ReviewSectionBlock({ windowKind, section, open, title, detail, children }: ReviewSectionBlockProps) {
   /** 영역을 접거나 편다. */
   const handleToggle = () => {
-    void window.stardraft.send({ type: 'set-review-section', window: kind, section, open: !open });
+    void window.stardraft.send({ type: 'set-review-section', window: windowKind, section, open: !open });
   };
 
   return (
@@ -128,24 +129,24 @@ function MentionList({ bundle }: BundleProps) {
 /** 상세 영역에 넘기는 값. */
 interface BundleSectionsProps extends BundleProps {
   /** 영역이 있는 창. */
-  kind: ReviewWindow;
+  windowKind: ReviewWindow;
   /** 창마다 영역의 펼침 상태. */
   sections: ReviewSnapshot['sections'];
 }
 
 /** 묶음 상세의 알림 줄과 영역. 원문 → 저장소 순서이고, 저장소 영역은 저장소 확인 필요 묶음에만 있다. */
-export function BundleSections({ bundle, kind, sections }: BundleSectionsProps) {
+export function BundleSections({ bundle, windowKind, sections }: BundleSectionsProps) {
   /** 이 창의 영역 펼침 상태. */
-  const open = sections[kind];
+  const open = sections[windowKind];
 
   return (
     <>
       {bundle.newMentionCount > 0 && <p className="notice-line">새 멘션 {bundle.newMentionCount}건</p>}
-      <ReviewSectionBlock kind={kind} section="original" open={open.original} title="원문" detail={`멘션 ${bundle.mentions.length}건`}>
+      <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={`멘션 ${bundle.mentions.length}건`}>
         <MentionList bundle={bundle} />
       </ReviewSectionBlock>
       {bundle.status === 'repo-check-needed' && (
-        <ReviewSectionBlock kind={kind} section="repository" open={open.repository} title="저장소">
+        <ReviewSectionBlock windowKind={windowKind} section="repository" open={open.repository} title="저장소">
           <p className="small muted">{NO_REPOSITORY_NOTE}</p>
         </ReviewSectionBlock>
       )}
@@ -204,9 +205,4 @@ export function IgnoreToast({ toast, onRestore }: IgnoreToastProps) {
       </button>
     </div>
   );
-}
-
-/** 무시 토스트 문구. */
-export function ignoredText(bundle: BundleSnapshot): string {
-  return `무시했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
 }

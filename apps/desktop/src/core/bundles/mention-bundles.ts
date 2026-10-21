@@ -1,4 +1,5 @@
 import { mentionLocationKey, type Mention } from '../detection/mention';
+import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
@@ -13,9 +14,8 @@ import {
   isProcessed,
   isRestorable,
   judgeAnswered,
-  type BundlePlaceLookup,
+  type BundlePlace,
   type MentionBundle,
-  type MyAnswer,
   type RecordedAnswer,
   type UnsavedBundle,
 } from './mention-bundle';
@@ -30,6 +30,8 @@ export interface MentionBundlesOptions {
   clock: Clock;
   /** 진단 로그. ID와 개수만 남긴다. */
   logger: Logger;
+  /** 지금 키로 묶음 자리의 내 답을 Flow에서 조회한다. 쓸 키가 없거나 조회하지 못하면 `null`. 이미 답함에서 되돌릴 때 쓴다. */
+  findMyAnswers: (place: BundlePlace) => Promise<MyAnswer[] | null>;
 }
 
 /**
@@ -60,6 +62,13 @@ export class MentionBundles {
     return [...this.bundles].sort(compareBundles).map((bundle) => structuredClone(bundle));
   }
 
+  /** 묶음 하나. 없으면 `null`. */
+  get(bundleId: number): MentionBundle | null {
+    /** 찾은 묶음. */
+    const bundle = this.bundles.find((item) => item.id === bundleId);
+    return bundle ? structuredClone(bundle) : null;
+  }
+
   /** 트레이 숫자. 검토 대기 가운데 준비됨과 저장소 확인 필요 묶음 수다. */
   reviewCount(): number {
     return this.bundles.filter((bundle) => countsForReview(bundle.status)).length;
@@ -79,7 +88,7 @@ export class MentionBundles {
    * 자리마다 `lookups`의 내 답으로 "이미 답함"을 판정하고, 모든 멘션이 빠진 묶음은 초안 없이 이미 답함으로 둔다.
    * 새로 저장소 확인 필요가 된 묶음이 있으면 OS 알림을 하나 띄운다.
    */
-  addDetected(mentions: readonly Mention[], lookups: ReadonlyMap<string, BundlePlaceLookup>, baselineAlarmId: string): Promise<void> {
+  addDetected(mentions: readonly Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baselineAlarmId: string): Promise<void> {
     return this.lane.run(async () => {
       /** 지금 시각. */
       const now = this.options.clock.now();
@@ -143,20 +152,29 @@ export class MentionBundles {
 
   /**
    * 무시함이나 이미 답함에서 되돌린다. 초안이 없으므로 저장소 확인 필요로 돌아간다.
-   * 그때 기록해 둔 내 답은 이후 "이미 답함" 판정에서 빼서, 같은 답으로 다시 처리됨이 되지 않게 한다. 그 답으로 빠졌던 멘션도 다시 든다.
+   * 이미 답함에서 되돌리면 그때 Flow에 있는 내 답을 새로 조회해 이후 "이미 답함" 판정에서 빼기로 기록한다.
+   * 같은 답으로 다시 처리됨이 되지 않게 하려는 것이고, 그 답으로 빠졌던 멘션도 다시 든다. 조회하지 못하면 판정 때 기록한 답만 뺀다.
+   * 무시함에서 되돌리면 답을 빼지 않아, 이미 답한 앞선 멘션은 빠진 채로 둔다.
    */
-  restore(bundleId: number): Promise<void> {
-    return this.change(bundleId, 'bundle.restored', (bundle) => {
-      if (!isRestorable(bundle.status)) return null;
-      /** 모두 빼기로 기록한 내 답. */
-      const answers = bundle.answers.map((answer) => ({ ...answer, excluded: true }));
+  async restore(bundleId: number): Promise<void> {
+    /** 되돌릴 묶음. */
+    const bundle = this.bundles.find((item) => item.id === bundleId);
+    if (!bundle || !isRestorable(bundle.status)) return;
+    /** 지금 Flow에 있는 내 답. 이미 답함이 아니거나 조회하지 못하면 `null`. */
+    const current = bundle.status === 'already-answered' ? await this.options.findMyAnswers(bundle).catch(() => null) : null;
+
+    // 조회하는 사이에 상태가 바뀌었을 수 있으므로 줄에 들어가 지금 값으로 다시 본다.
+    await this.change(bundleId, 'bundle.restored', (latest) => {
+      if (!isRestorable(latest.status)) return null;
+      /** 되돌린 뒤의 내 답 기록. */
+      const answers = latest.status === 'already-answered' ? excludeAnswers(latest.answers, current ?? []) : latest.answers;
       return {
-        ...bundle,
+        ...latest,
         status: 'repo-check-needed',
         processedAt: null,
         newMentionCount: 0,
         answers,
-        mentions: judgeAnswered(bundle.mentions, answers),
+        mentions: judgeAnswered(latest.mentions, answers),
       };
     });
   }
@@ -212,7 +230,7 @@ function newBundle(mention: Mention, now: number): UnsavedBundle {
  * 멘션을 넣은 묶음에 자리를 조회한 결과를 반영한다. 게시물 제목·주소와 내 답을 바꾸고 "이미 답함"을 다시 판정한다.
  * 기존 묶음에 합친 멘션 가운데 묶음에 남은 수만큼 "새 멘션"을 늘리고, 모든 멘션이 빠지면 이미 답함으로 옮긴다.
  */
-function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, lookup: BundlePlaceLookup | undefined, now: number): UnsavedBundle {
+function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, lookup: PlaceLookup | undefined, now: number): UnsavedBundle {
   /** 반영한 묶음. */
   const next: UnsavedBundle = { ...bundle };
   if (lookup?.post) {
@@ -240,6 +258,16 @@ function mergeAnswers(recorded: readonly RecordedAnswer[], fetched: readonly MyA
   /** 빼기로 기록한 답의 ID. */
   const excludedIds = new Set(excluded.map((answer) => answer.answerId));
   return [...excluded, ...fetched.filter((answer) => !excludedIds.has(answer.answerId)).map((answer) => ({ ...answer, excluded: false }))];
+}
+
+/** 기록한 답과 지금 Flow에 있는 답을 모두 빼기로 기록한다. */
+function excludeAnswers(recorded: readonly RecordedAnswer[], current: readonly MyAnswer[]): RecordedAnswer[] {
+  /** 이미 기록한 답의 ID. */
+  const recordedIds = new Set(recorded.map((answer) => answer.answerId));
+  return [
+    ...recorded.map((answer) => ({ ...answer, excluded: true })),
+    ...current.filter((answer) => !recordedIds.has(answer.answerId)).map((answer) => ({ ...answer, excluded: true })),
+  ];
 }
 
 /** 새로 저장소 확인 필요가 된 묶음의 OS 알림. 송신자 이름만 넣고 Flow 글 본문은 넣지 않는다. 누르면 첫 묶음을 연다. */

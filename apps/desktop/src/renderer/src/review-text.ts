@@ -1,4 +1,4 @@
-import type { BundleGroup, BundleStatusSnapshot, MentionPlaceSnapshot } from '../../shared/ipc';
+import type { BundleGroup, BundleSnapshot, BundleStatusSnapshot, MentionPlaceSnapshot } from '../../shared/ipc';
 
 /** 상태 태그의 이름과 색. */
 export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; className: string }> = {
@@ -7,12 +7,18 @@ export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; c
   'already-answered': { label: '이미 답함', className: 'done' },
 };
 
-/** 펼친 창 목록의 묶음 이름. */
+/** 펼친 창의 목록 묶음 이름. */
 export const BUNDLE_GROUP_LABELS: Record<BundleGroup, string> = {
   'awaiting-review': '검토 대기',
   generating: '생성 중',
   failed: '실패',
   processed: '처리됨',
+};
+
+/** 멘션 묶음 자리의 이름. 본문 묶음과 댓글 스레드 묶음이다. */
+export const BUNDLE_PLACE_LABELS: Record<BundleSnapshot['place'], string> = {
+  post: '본문',
+  thread: '댓글',
 };
 
 /** 멘션이 일어난 글의 이름. */
@@ -49,4 +55,19 @@ export function formatMentionTime(at: number, now = Date.now()): string {
 /** 송신자 이름들을 한 줄로 보인다. 이름을 모르면 "이름 없음"이다. */
 export function senderLine(senderNames: readonly string[]): string {
   return senderNames.length > 0 ? senderNames.join(', ') : '이름 없음';
+}
+
+/** 게시물 제목. 모르면 "제목 없는 게시물"이다. */
+export function postTitleOf(bundle: BundleSnapshot): string {
+  return bundle.postTitle || '제목 없는 게시물';
+}
+
+/** 게시물을 가리키는 한 줄. "Flow 프로젝트 › 게시물 제목"이고, 프로젝트를 모르면 제목만이다. */
+export function postLine(bundle: BundleSnapshot): string {
+  return bundle.projectTitle ? `${bundle.projectTitle} › ${postTitleOf(bundle)}` : postTitleOf(bundle);
+}
+
+/** 무시 토스트 문구. */
+export function ignoredText(bundle: BundleSnapshot): string {
+  return `무시했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
 }

@@ -8,6 +8,7 @@ import { FlowAccount } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { MentionDetection } from '../core/detection/mention-detection';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
+import { MentionJudge } from '../core/flow/mention-judgement';
 import { errorFields } from '../core/logging/logger';
 import { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import { Onboarding } from '../core/onboarding/onboarding';
@@ -141,7 +142,21 @@ function start(): void {
     const repoMappings = new RepoMappings({ settingsStore: appData.settingsStore, logger, connectFlow: connectCurrentFlow });
     await repoMappings.load();
     /** 감지한 멘션 묶음. 작은 창 대기열, 펼친 창 목록, 트레이 숫자, 저장소 확인 필요 OS 알림이 따른다. */
-    const mentionBundles = new MentionBundles({ stateStore: appData.stateStore, notifier, clock: systemClock, logger });
+    const mentionBundles = new MentionBundles({
+      stateStore: appData.stateStore,
+      notifier,
+      clock: systemClock,
+      logger,
+      // 이미 답함에서 되돌릴 때 그때 Flow에 있는 내 답을 지금 키로 조회한다.
+      findMyAnswers: async (place) => {
+        /** 지금 키로 만든 Flow 연결. */
+        const flow = connectCurrentFlow();
+        /** 키 확인에 성공한 계정. */
+        const account = flowAccount.state().account;
+        if (!flow || !account) return null;
+        return new MentionJudge(flow.api, account.userId).myAnswers(place, [account.userId]);
+      },
+    });
     await mentionBundles.load();
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
     // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.

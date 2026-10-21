@@ -240,7 +240,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
 /** 묶음의 게시물을 기본 브라우저로 Flow에서 연다. 열 주소가 없거나 열지 못하면 로그만 남긴다. 주소는 로그에 남기지 않는다. */
 async function openBundleInFlow({ bundles, repoMappings, logger }: IpcServices, bundleId: number): Promise<void> {
   /** 열 묶음. */
-  const bundle = bundles.state().find((item) => item.id === bundleId);
+  const bundle = bundles.get(bundleId);
   /** 열 주소. */
   const url = bundle && flowUrlOf(bundle, projectLookup(repoMappings));
   if (!url) {

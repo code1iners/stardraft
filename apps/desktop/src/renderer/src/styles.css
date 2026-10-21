@@ -1064,10 +1064,18 @@ p.run-line {
   color: var(--muted);
 }
 
-/* 상세 머리의 게시 실패 사유 한 줄. 실행 줄과 같은 크기로 빨갛게 둔다. */
-p.post-failure-line {
+/* 상세 머리의 게시 상태 한 줄. 실행 줄과 같은 크기로, 결과 확인 중은 흐리게, 앱이 꺼져 게시하지 않은 것은 노랑, 게시 실패 사유는 빨강이다. */
+p.post-status-line {
   margin: 0;
   font-size: 12px;
+  color: var(--muted);
+}
+
+p.post-status-line.warning {
+  color: var(--warn);
+}
+
+p.post-status-line.failure {
   color: var(--danger);
 }
 

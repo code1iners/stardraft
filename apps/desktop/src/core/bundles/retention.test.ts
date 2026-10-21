@@ -141,6 +141,8 @@ function postedBundle(processedAt: number): UnsavedBundle {
       failure: null,
       answeredMentions: [{ postId: POST_ID, remarkId: '700', replyId: '-1' }],
     },
+    quitDuringCountdown: false,
+    trial: false,
   };
 }
 

@@ -2,7 +2,7 @@ import { isSourceGone, markContextMentions, type BundleContext, type BundleConte
 import { mentionLocationKey, mentionLocationOf, type Mention, type MentionLocation } from '../detection/mention';
 import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
-import type { Logger } from '../logging/logger';
+import { errorFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
@@ -21,6 +21,7 @@ import {
   compareBundles,
   compareMentions,
   countsForReview,
+  isBeforePostRequest,
   isProcessed,
   isAutoProcessed,
   isDraftTouched,
@@ -145,6 +146,46 @@ export class MentionBundles {
       this.minimalRecords = await this.options.stateStore.listMinimalRecords();
       this.emit();
     });
+  }
+
+  /**
+   * 앱을 다시 켤 때 앱이 꺼지며 끊긴 묶음을 정리한다. 앱을 시작할 때 저장한 묶음을 읽은 뒤 한 번 부른다.
+   * 카운트다운 중이던 게시 중 묶음(보내기 전 기록이 없음)은 게시하지 않고 준비됨으로 돌리고 "앱이 꺼져서 게시하지 않았습니다"를 띄운다.
+   * 게시를 누를 때 조회한 내용은 메모리에만 있어 이미 버려졌다. 진행 중이던 시험 묶음은 기록째 지우고 처리됨에도 남기지 않는다.
+   */
+  recoverAfterRestart(): Promise<void> {
+    return this.lane.run(async () => {
+      // 시험 묶음을 지우다 실패해도 카운트다운 중이던 묶음이 게시 중에 갇히지 않게 이것을 먼저 한다.
+      /** 카운트다운 중이었다가 게시하지 않고 준비됨으로 돌린 묶음. 시험 묶음도 지우기 전까지는 같게 돌린다. */
+      const returnedToReady = this.bundles
+        .filter(isBeforePostRequest)
+        .map((bundle): MentionBundle => ({ ...bundle, status: 'ready', quitDuringCountdown: true }));
+      for (const bundle of returnedToReady) {
+        await this.options.stateStore.saveBundle(bundle);
+        this.bundles = this.bundles.map((item) => (item.id === bundle.id ? bundle : item));
+        this.options.logger.info('bundle.posting-stopped-by-quit', { bundleId: bundle.id });
+      }
+
+      /** 지울 시험 묶음의 ID. */
+      const trialIds = this.bundles.filter((bundle) => bundle.trial).map((bundle) => bundle.id);
+      try {
+        if (trialIds.length > 0) await this.options.stateStore.deleteBundles(trialIds);
+        this.bundles = this.bundles.filter((bundle) => !bundle.trial);
+        if (trialIds.length > 0) this.options.logger.info('bundle.trials-deleted', { count: trialIds.length });
+      } catch (error) {
+        // 지우지 못한 시험 묶음은 그대로 보이고 다음에 켤 때 다시 지운다.
+        this.options.logger.error('bundle.trials-delete-failed', { count: trialIds.length, ...errorFields(error) });
+      }
+      if (trialIds.length > 0 || returnedToReady.length > 0) this.emit();
+    });
+  }
+
+  /**
+   * 지금까지 맡은 묶음 바꾸기(편집기 내용 저장, 게시 결과 기록 등)가 모두 끝나기를 기다린다.
+   * 앱을 끝낼 때 `state.db`를 닫기 전에 불러, 마지막으로 친 편집기 내용을 잃지 않게 한다.
+   */
+  whenIdle(): Promise<void> {
+    return this.lane.run(async () => {});
   }
 
   /** 묶음 전부. 작은 창 대기열 순서(가장 오래된 미처리 멘션 순)이고, 처리됨 묶음은 그 뒤에 최근에 처리한 것부터 온다. */
@@ -664,7 +705,7 @@ export class MentionBundles {
   async startPosting(bundleId: number): Promise<boolean> {
     /** 게시 중이 된 묶음. */
     const changed = await this.change(bundleId, 'bundle.posting-started', (bundle) =>
-      isPostable(bundle) ? { ...bundle, status: 'posting', posting: null } : null,
+      isPostable(bundle) ? { ...bundle, status: 'posting', posting: null, quitDuringCountdown: false } : null,
       // 게시 중이 되는 줄 안에서 확인을 함께 둬야, 바로 뒤에 들어온 멘션도 확인이 끝나기 전의 멘션으로 합쳐진다.
       () => this.postChecks.set(bundleId, { finished: false, answeredMentions: null }),
     );
@@ -861,8 +902,8 @@ export class MentionBundles {
       const answers = recording ? excludeAnswers(latest.answers, current ?? []) : latest.answers;
       /** 되돌린 뒤의 멘션. 사라진 멘션은 사라짐 판정에서 빼기로 기록하고 다시 든다. */
       const mentions = judgeAnswered(recording ? latest.mentions.map(excludeGone) : latest.mentions, answers, this.postedRanges());
-      /** 처리됨에서 벗어난 묶음. */
-      const reopened = { ...latest, processedAt: null, answers, mentions };
+      /** 처리됨에서 벗어난 묶음. 카운트다운 중에 앱이 꺼졌다는 표시는 처리한 때 이미 본 것이라 지운다. */
+      const reopened = { ...latest, processedAt: null, answers, mentions, quitDuringCountdown: false };
       // 초안이 있으면 그대로 준비됨이다. 합쳐진 뒤 다시 만들지 않은 새 멘션 표시도 그대로 둔다.
       if (latest.draft) return { ...reopened, status: 'ready' };
       return { ...reopened, ...statusWithoutDraft(resolution), failure: null, newMentionCount: 0 };
@@ -1007,6 +1048,8 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
     failure: null,
     runs: [],
     posting: null,
+    quitDuringCountdown: false,
+    trial: false,
   };
 }
 
@@ -1014,8 +1057,8 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
 const retried = { status: 'generating', failure: null, newMentionCount: 0 } as const satisfies Partial<MentionBundle>;
 
 /**
- * 다시 만들 때 바로 지우는 것. 직전 초안과 편집본, 비교 기준(초안을 만들 때 넘긴 맥락)과 그것과 견주던 감시 내용이다.
- * 생성 중으로 올라 초안 대기열에 들어간다.
+ * 다시 만들 때 바로 지우는 것. 직전 초안과 편집본, 비교 기준(초안을 만들 때 넘긴 맥락)과 그것과 견주던 감시 내용,
+ * 그 초안을 카운트다운 중에 앱이 꺼져 게시하지 않았다는 표시다. 생성 중으로 올라 초안 대기열에 들어간다.
  */
 const clearedForRegeneration = {
   status: 'generating',
@@ -1025,6 +1068,7 @@ const clearedForRegeneration = {
   watchedContext: null,
   failure: null,
   newMentionCount: 0,
+  quitDuringCountdown: false,
 } as const satisfies Partial<MentionBundle>;
 
 /**

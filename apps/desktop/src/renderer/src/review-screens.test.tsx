@@ -55,6 +55,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     repoCheck: null,
     posting: null,
     postFailure: null,
+    quitDuringCountdown: false,
     changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
     ...overrides,
   };
@@ -933,17 +934,33 @@ describe('게시', () => {
     expect(html).not.toContain('<textarea');
   });
 
-  it('게시 요청을 보낸 게시 중 묶음은 "게시 결과 확인 중"을 보이고 [게시]를 끈 채로 두며, 취소할 수 없고 토스트도 띄우지 않는다', () => {
+  it('게시 요청을 보낸 게시 중 묶음은 상세 머리에 "게시 결과 확인 중"을 보이고 [게시]를 끈 채로 두며, 취소할 수 없고 토스트도 띄우지 않는다. 펼친 창도 같다', () => {
     /** 게시 요청을 보낸 묶음. */
     const sending: BundleSnapshot = { ...countingDown(), posting: { phase: 'sending' } };
-    /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([sending])} />);
-    const text = textOf(<PopoverContent snapshot={snapshot([sending])} />);
 
-    expect(text).toContain('게시 결과 확인 중입니다.');
-    expect(postButton(html)).toContain('disabled');
-    expect(text).not.toContain('취소');
-    expect(html).not.toContain('class="toast"');
+    for (const view of [<PopoverContent snapshot={snapshot([sending])} />, <ReviewContent snapshot={snapshot([sending])} />]) {
+      /** 그린 HTML. */
+      const html = renderToStaticMarkup(view);
+      /** 상세 머리의 게시 상태 줄. */
+      const line = html.match(/<p class="post-status-line[^"]*">([^<]*)<\/p>/)?.[1];
+
+      expect(line).toBe('게시 결과 확인 중');
+      expect(textOf(view).match(/게시 결과 확인 중/g)).toHaveLength(1);
+      expect(postButton(html)).toContain('disabled');
+      expect(textOf(view)).not.toContain('취소');
+      expect(html).not.toContain('class="toast"');
+    }
+  });
+
+  it('카운트다운 중에 앱이 꺼져 준비됨으로 돌아온 묶음은 상세 머리에 "앱이 꺼져서 게시하지 않았습니다"를 보이고 다시 [게시]할 수 있다. 펼친 창도 같다', () => {
+    /** 다시 켤 때 준비됨으로 돌아온 묶음. */
+    const returned: BundleSnapshot = { ...READY, quitDuringCountdown: true };
+
+    for (const view of [<PopoverContent snapshot={snapshot([returned])} />, <ReviewContent snapshot={snapshot([returned])} />]) {
+      expect(textOf(view)).toContain('앱이 꺼져서 게시하지 않았습니다');
+      expect(postButton(renderToStaticMarkup(view))).not.toContain('disabled');
+    }
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('앱이 꺼져서');
   });
 
   it('게시 중 묶음이 있으면 다른 묶음을 보고 있어도 창 아래에 카운트다운 토스트와 [취소]를 보인다. 펼친 창도 같다', () => {
@@ -1007,6 +1024,7 @@ describe('게시 실패', () => {
       ['rejected', 'Flow가 글을 받지 않았습니다(길이 등)'],
       ['rate-limited', 'Flow 요청 한도를 넘었습니다'],
       ['no-response', 'Flow가 응답하지 않았습니다'],
+      ['app-quit', '앱이 꺼져서 게시하지 못했습니다'],
     ] as const) {
       expect(textOf(<ReviewContent snapshot={snapshot([{ ...POST_FAILED, postFailure }])} />)).toContain(line);
     }

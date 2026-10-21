@@ -287,19 +287,20 @@ async function setup(queueAgent?: Pick<DraftQueueOptions, 'agent' | 'onAgentChan
       flowKeyUsable: () => !problems.has('flow-key'),
       onFlowKeyChange: (listener) => problems.onChange(listener),
       settingsStore,
+      stateStore,
       myName: () => FAKE_ME.name,
       projectTitle: (projectId) => repoMappings.projectTitle(projectId),
       clock,
       logger,
     });
   const drafts = createQueue();
-  drafts.start();
+  await drafts.start();
   /** 앱을 끄고 다시 켠 것처럼 대기열을 멈추고 새 대기열을 시작한다. 새 대기열을 돌려준다. */
-  const restartApp = () => {
-    drafts.stop();
+  const restartApp = async () => {
+    await drafts.stop();
     /** 다시 켠 앱의 대기열. */
     const restarted = createQueue();
-    restarted.start();
+    await restarted.start();
     return restarted;
   };
   const detection = new MentionDetection({ stateStore, bundles, clock, logger, connectFlow });
@@ -1649,7 +1650,7 @@ describe('대기열: 자동 재시도', () => {
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     await poll(alarm('101'));
 
-    restartApp();
+    await restartApp();
     await settle();
 
     expect(executor.requests[0]?.signal.aborted).toBe(true);

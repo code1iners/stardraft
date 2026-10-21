@@ -43,6 +43,8 @@ let tray: AppTray | null = null;
 let windows: AppWindows | null = null;
 /** 형식 검사를 마친 설정과 상태 저장소. */
 let appData: AppData | null = null;
+/** 멘션 묶음. 끝낼 때 맡긴 저장(편집기 내용 등)이 끝나기를 기다린다. */
+let bundles: MentionBundles | null = null;
 /** 멘션 감지. 끝낼 때 폴링을 멈춘다. */
 let detection: MentionDetection | null = null;
 /** 초안 대기열. 끝낼 때 실행 중인 에이전트의 프로세스 트리를 끝낸다. */
@@ -71,15 +73,21 @@ function start(): void {
   app.on('second-instance', () => windows?.openPopover());
   // 트레이 앱이라 창이 모두 닫혀도 종료하지 않는다. 종료는 트레이 메뉴의 "종료"로만 한다.
   app.on('window-all-closed', () => {});
-  // 끝낼 때 state.db를 닫아 WAL 내용을 본 파일에 반영한다.
+  /** 끝내기 전 정리의 단계. 정리를 마치면 종료를 더 막지 않는다. */
+  let quitStage: 'running' | 'preparing' | 'prepared' = 'running';
+  // 확인 창 없이 끝내되, 끊을 일을 정리할 때까지 종료를 미룬다. 정리하는 사이에 다시 끝내려 해도 한 번만 정리하고, 마치면 다시 끝낸다.
+  app.on('before-quit', (event) => {
+    if (quitStage === 'prepared') return;
+    event.preventDefault();
+    if (quitStage === 'preparing') return;
+    quitStage = 'preparing';
+    void prepareQuit().finally(() => {
+      quitStage = 'prepared';
+      app.quit();
+    });
+  });
+  // 정리를 마친 뒤 state.db를 닫아 WAL 내용을 본 파일에 반영한다.
   app.on('will-quit', () => {
-    // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
-    detection?.stop();
-    // 에이전트 CLI는 새 프로세스 그룹으로 띄워 앱과 함께 끝나지 않으므로 실행을 끊어 프로세스 트리를 끝낸다. 묶음은 생성 중으로 남는다.
-    drafts?.stop();
-    // state.db를 닫은 뒤에 카운트다운이 끝나 게시 요청을 보내지 않게 멈춘다. 카운트다운 중이던 묶음은 게시 중으로 남는다.
-    posting?.stop();
-    retention?.stop();
     appData?.close();
     appData = null;
   });
@@ -190,6 +198,9 @@ function start(): void {
       resolveRepos: (projectId) => repoMappings.resolve(projectId),
     });
     await mentionBundles.load();
+    bundles = mentionBundles;
+    // 앱이 꺼지며 끊긴 묶음을 정리한다. 카운트다운 중이던 게시는 준비됨으로 돌리고, 진행 중이던 시험 묶음은 지운다.
+    await mentionBundles.recoverAfterRestart().catch((error: unknown) => logger.error('bundle.restart-recovery-failed', errorFields(error)));
     // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
     retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
     retention.start();
@@ -206,6 +217,8 @@ function start(): void {
       flowKeyUsable: () => flowAccount.apiKey() !== null && !globalProblems.has('flow-key'),
       onFlowKeyChange: (listener) => unsubscribeAll([globalProblems.onChange(listener), flowAccount.onChange(listener)]),
       settingsStore: appData.settingsStore,
+      // 대기열을 바뀔 때마다 남겨, 앱이 꺼진 뒤 다시 켤 때 그 순서와 자리로 돈다.
+      stateStore: appData.stateStore,
       myName: () => flowAccount.state().account?.name || null,
       projectTitle: (projectId) => repoMappings.projectTitle(projectId),
       clock: systemClock,
@@ -371,14 +384,37 @@ function start(): void {
     // 키를 읽으면 감지를 시작한 앱은 바로 알림을 조회한다.
     // 초안 대기열도 키를 읽은 뒤에 시작한다. 키를 읽었다는 알림은 따로 없고, 읽기 전에는 맥락을 조회할 수 없기 때문이다.
     // 키를 읽지 못했으면 "키 확인 필요"가 풀릴 때까지 대기열은 멈춰 있다.
+    // 응답을 받지 못하고 꺼진 게시도 키를 읽은 뒤에 그 자리를 조회해 올라갔는지 확인한다.
     flowAccount
       .checkStoredKey()
       .then(syncDetection)
       .catch((error: unknown) => logger.error('flow-account.stored-key-check-failed', errorFields(error)))
-      .finally(() => draftQueue.start());
+      .finally(() => {
+        void draftQueue.start();
+        bundlePosting.recoverAfterRestart();
+      });
     // 앱을 시작할 때 에이전트 연결을 확인한다(작동 확인 포함). 끊겨 있으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
     void agentConnection.check();
   });
+}
+
+/**
+ * 앱을 끝내기 전 정리. 확인 창은 띄우지 않는다.
+ * 폴링과 정리 예약을 멈추고, 에이전트 실행을 끊어 프로세스 트리를 끝내며(그 실행은 "앱 종료로 중단"으로 남고 대기열은 다시 켤 때 그 순서로 돈다),
+ * 게시 요청이 진행 중이면 응답을 최대 5초 기다린다. 마지막으로 편집기 내용 같은 묶음 저장이 끝나기를 기다려 state.db를 닫을 수 있게 한다.
+ */
+async function prepareQuit(): Promise<void> {
+  // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
+  detection?.stop();
+  retention?.stop();
+  try {
+    // 에이전트 CLI는 새 프로세스 그룹으로 띄워 앱과 함께 끝나지 않으므로 실행을 끊어 프로세스 트리를 끝낸다.
+    // 카운트다운 중이던 게시는 보내지 않고 게시 중으로 남아, 다시 켤 때 준비됨으로 돌아간다.
+    await Promise.all([drafts?.stop(), posting?.stop()]);
+    await bundles?.whenIdle();
+  } catch (error) {
+    logger.error('app.quit-cleanup-failed', errorFields(error));
+  }
 }
 
 /** 구독을 끊는 함수 여럿을 한 번에 부르는 함수 하나로 묶는다. */

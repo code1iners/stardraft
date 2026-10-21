@@ -120,6 +120,8 @@ export function bundleSnapshot(
     repoCheck: bundle.repoCheck && repoCheckSnapshot(bundle.repoCheck, bundle.userRepos !== null),
     posting: postingSnapshot(bundle, countdownOf),
     postFailure: bundle.status === 'post-failed' ? (bundle.posting?.failure ?? 'no-response') : null,
+    // 그 뒤 게시 중이 되었거나 처리한 묶음에는 보이지 않는다.
+    quitDuringCountdown: bundle.status === 'ready' && bundle.quitDuringCountdown,
     changes: { newWritingCount: changes.newWritings.length, edited: changes.editedWritings.length > 0, goneMentionCount: changes.goneMentions },
   };
 }

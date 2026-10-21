@@ -54,6 +54,8 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     failure: null,
     runs: [],
     posting: null,
+    quitDuringCountdown: false,
+    trial: false,
     ...overrides,
   };
 }
@@ -125,6 +127,7 @@ describe('묶음 스냅숏', () => {
       repoCheck: null,
       posting: null,
       postFailure: null,
+      quitDuringCountdown: false,
       changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
     });
     expect(snapshot.mentions[0]?.text).toEqual([
@@ -689,6 +692,26 @@ describe('게시', () => {
 
     expect(ignored.postFailure).toBeNull();
     expect(bundleSnapshot(bundle({ status: 'ready', draft, mentions }), () => null).draft?.canRegenerate).toBe(true);
+  });
+
+  it('카운트다운 중에 앱이 꺼져 준비됨으로 돌아온 묶음은 그렇다고 넘기고 게시할 수 있다. 준비됨이 아니게 되면 넘기지 않는다', () => {
+    /** 다시 켤 때 준비됨으로 돌아온 묶음의 스냅숏. */
+    const returned = bundleSnapshot(bundle({ status: 'ready', draft, mentions, quitDuringCountdown: true }), () => null);
+
+    expect(returned).toMatchObject({ status: 'ready', quitDuringCountdown: true, posting: null });
+    expect(returned.draft?.canPost).toBe(true);
+    expect(bundleSnapshot(bundle({ status: 'ignored', processedAt: 20_000, draft, mentions, quitDuringCountdown: true }), () => null).quitDuringCountdown).toBe(false);
+    expect(bundleSnapshot(bundle({ status: 'ready', draft, mentions }), () => null).quitDuringCountdown).toBe(false);
+  });
+
+  it('응답을 받기 전에 앱이 꺼져 게시하지 못한 게시 실패는 그 사유를 넘긴다', () => {
+    /** 다시 켠 뒤 올라간 글을 찾지 못한 묶음의 스냅숏. */
+    const snapshot = bundleSnapshot(
+      bundle({ status: 'post-failed', draft, mentions, posting: { body: '답입니다.', sentAt: 15_000, postedId: null, failure: 'app-quit', answeredMentions: [] } }),
+      () => null,
+    );
+
+    expect(snapshot.postFailure).toBe('app-quit');
   });
 
   it('렌더러가 쓰는 게시 본문 상한은 core의 상한과 같다', () => {

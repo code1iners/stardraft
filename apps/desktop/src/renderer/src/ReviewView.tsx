@@ -1,5 +1,5 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleSections, OpenInFlowButton, PostFailureLine, RunLine, StatusTag, ToastStack } from './BundleDetail';
+import { BundleFooter, BundleSections, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
@@ -70,7 +70,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                     <OpenInFlowButton bundle={selected} />
                   </div>
                   <RunLine bundle={selected} />
-                  <PostFailureLine bundle={selected} />
+                  <PostStatusLine bundle={selected} />
                 </div>
                 <StatusTag status={selected.status} />
                 <button type="button" className="btn sm" onClick={handleCollapse}>

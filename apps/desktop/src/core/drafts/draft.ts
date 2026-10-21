@@ -127,6 +127,31 @@ export type DraftFailureReason =
 /** 묶음 하나를 만들 때 돌리는 실행의 종류. 선택 실행과 초안 실행이다. */
 export type GenerationRunKind = Exclude<RunKind, 'check'>;
 
+/**
+ * 초안 대기열에서 묶음이 들어가는 자리. 앞 자리일수록 먼저 실행하고, 같은 자리끼리는 들어온 순서대로 실행한다.
+ * - `resume`: 바로 이어서 돌아야 하는 묶음. 끊긴 생성을 처음부터 다시 하는 묶음(실행 중에 새 멘션이 합쳐짐, 전역 실패나 Flow에 닿지 못해 멈춤,
+ *   앱이 꺼지며 끊음)이다. 맨 앞이다.
+ * - `user`: 사용자가 누른 행동(다시 시도, 되돌리기)으로 생성 중이 된 묶음. 감지한 묶음보다 앞이다.
+ * - `auto`: 감지했거나 앱을 켤 때 이미 생성 중이던 묶음. 끝에 들어간다.
+ */
+export const QUEUE_PRIORITIES = ['resume', 'user', 'auto'] as const;
+
+/** 초안 대기열에서 묶음이 들어가는 자리. */
+export type QueuePriority = (typeof QUEUE_PRIORITIES)[number];
+
+/** 대기열 자리인지 본다. 저장한 값을 읽을 때 쓴다. */
+export function isQueuePriority(value: string): value is QueuePriority {
+  return (QUEUE_PRIORITIES as readonly string[]).includes(value);
+}
+
+/** 초안 대기열에서 차례를 기다리는 묶음. 앱이 꺼진 뒤 다시 켤 때 같은 순서로 돌도록 이 모양으로 남긴다. */
+export interface QueuedDraft {
+  /** 묶음 ID. */
+  bundleId: number;
+  /** 들어간 자리. */
+  priority: QueuePriority;
+}
+
 /** 묶음이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
 export interface DraftFailure {
   /** 사유. */
@@ -143,10 +168,11 @@ export interface DraftFailure {
 export type RunFailureReason = Exclude<DraftFailureReason, ContextFailureReason>;
 
 /**
- * 실행 하나의 결과. 성공, 묶음이 바뀌어 멈춤, 또는 실패 사유다.
+ * 실행 하나의 결과. 성공, 묶음이 바뀌어 멈춤, 앱 종료로 중단, 또는 실패 사유다.
  * `bundle-changed`는 실행 중에 새 멘션이 합쳐졌거나 묶음이 처리됨이 되어 앱이 실행을 멈춘 것이다. 생성 중으로 남았으면 처음부터 다시 만든다.
+ * `app-quit`은 앱을 끄며 실행을 끊은 것이다. 자동 재시도 1회에 세지 않고, 다시 켜면 그 묶음을 대기열 맨 앞에서 처음부터 다시 만든다.
  */
-export type RunResult = 'succeeded' | 'bundle-changed' | RunFailureReason;
+export type RunResult = 'succeeded' | 'bundle-changed' | 'app-quit' | RunFailureReason;
 
 /**
  * 실행 기록. 에이전트를 한 번 실행할 때마다 남긴다. 화면에는 상세 머리의 실행 줄만 보이고 비용은 보이지 않는다.

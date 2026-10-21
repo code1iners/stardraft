@@ -587,13 +587,34 @@ describe('멘션 묶음: 초안 편집과 받는 사람', () => {
     expect(bundles.get(bundleId)?.draft).toEqual(DRAFT);
   });
 
-  it('받는 사람에서 뺀 사람을 묶음에 기록하고, 같은 사람을 거듭 빼도 한 번만 남는다', async () => {
+  it('화면에 보인 받는 사람 목록의 위치와 이름으로 한 사람을 빼고, 그 사람의 사용자 ID를 묶음에 기록한다', async () => {
     const { bundles, bundleId } = await readyBundle();
 
-    await bundles.removeRecipient(bundleId, OTHER_SENDER);
-    await bundles.removeRecipient(bundleId, OTHER_SENDER);
+    await bundles.removeRecipient(bundleId, 1, '다른 사람');
 
     expect(bundles.get(bundleId)?.removedRecipients).toEqual([OTHER_SENDER]);
+  });
+
+  it('그사이 목록이 바뀌어 그 위치의 이름이 다르거나 위치에 사람이 없으면 아무도 빼지 않는다', async () => {
+    const { bundles, bundleId } = await readyBundle();
+    await bundles.removeRecipient(bundleId, 0, '보낸 사람');
+
+    // 송신자를 빼서 다른 사람이 0번이 되었다. 옛 화면이 보낸 1번 "다른 사람"은 없는 자리다.
+    await bundles.removeRecipient(bundleId, 1, '다른 사람');
+    await bundles.removeRecipient(bundleId, 0, '보낸 사람');
+
+    expect(bundles.get(bundleId)?.removedRecipients).toEqual([SENDER]);
+  });
+
+  it('새 멘션이 합쳐지면 그 송신자는 전에 ×로 뺐더라도 받는 사람에 다시 더하고, 다른 사람을 뺀 것은 그대로 둔다', async () => {
+    const { flow, bundles, bundleId, poll } = await readyBundle();
+    await bundles.removeRecipient(bundleId, 0, '보낸 사람');
+    await bundles.removeRecipient(bundleId, 0, '다른 사람');
+    flow.addReply(POST_ID, '700', { replyId: '802', contents: `${MY_MARKUP} 하나 더`, registerId: OTHER_SENDER, registerName: '다른 사람' });
+
+    await poll(alarm('103', { remarkId: '700', replyId: '802', registerId: OTHER_SENDER, registerName: '다른 사람', registeredDateTime: '20261020085200' }));
+
+    expect(bundles.get(bundleId)).toMatchObject({ newMentionCount: 1, removedRecipients: [SENDER] });
   });
 
   it('준비됨이 아닌 묶음은 편집하거나 받는 사람을 빼지 않는다', async () => {
@@ -601,7 +622,7 @@ describe('멘션 묶음: 초안 편집과 받는 사람', () => {
     await bundles.ignore(bundleId);
 
     await bundles.editDraft(bundleId, '고친 초안');
-    await bundles.removeRecipient(bundleId, SENDER);
+    await bundles.removeRecipient(bundleId, 0, '보낸 사람');
 
     expect(bundles.get(bundleId)).toMatchObject({ editedText: null, removedRecipients: [] });
   });

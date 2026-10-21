@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent, type MouseEvent, type ReactNode } from 'react';
+import { useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import type {
   AutoSelectionSnapshot,
   BundleSnapshot,
@@ -266,7 +266,7 @@ interface DraftEditorProps extends DraftProps {
 
 /**
  * 초안 영역 내용. 머리 바로 아래에 받는 사람 줄, 그 아래 편집기, 편집기 아래에 글자 수를 둔다.
- * 고치지 않은 초안은 근거 번호가 붙은 글로 보이고, 누르면 같은 자리에 편집기가 열린다. 고치면 근거 번호가 사라지고 "원래 초안으로 되돌리기"가 생긴다.
+ * 고치지 않은 초안은 근거 번호가 붙은 글로 보이고, 누르거나 Enter를 치면 같은 자리에 편집기가 열린다. 고치면 근거 번호가 사라지고 "원래 초안으로 되돌리기"가 생긴다.
  * 고칠 수 없는 묶음(처리됨 등)은 글로만 보인다.
  */
 function DraftEditor({ bundleId, draft }: DraftEditorProps) {
@@ -282,6 +282,14 @@ function DraftEditor({ bundleId, draft }: DraftEditorProps) {
   /** 글자 수 줄. */
   const length = postBodyLengthText(postBodyLength(draft.postBodyPrefixLength, text));
 
+  /** 근거 번호가 붙은 글 자리에 편집기를 연다. 고치지 않고 벗어나면 다시 번호가 붙은 글이 된다. */
+  const handleOpen = () => setEditing(true);
+  /** Enter를 치면 편집기를 연다. */
+  const handleOpenKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    setEditing(true);
+  };
   /** 고친 텍스트를 편집본으로 저장한다. 원래 초안과 같아지면 main이 편집본을 지운다. */
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     setTyped(event.target.value);
@@ -308,7 +316,8 @@ function DraftEditor({ bundleId, draft }: DraftEditorProps) {
           onBlur={() => setEditing(false)}
         />
       ) : draft.canEdit ? (
-        <div className="draft-editor annotated" role="textbox" tabIndex={0} aria-label="초안" aria-multiline="true" onFocus={() => setEditing(true)}>
+        // 포커스만으로는 열지 않는다. 탭으로 지나가거나 근거 번호를 볼 때 번호가 사라지지 않게, 누르거나 Enter를 칠 때만 편집기를 연다.
+        <div className="draft-editor annotated" role="textbox" tabIndex={0} aria-label="초안" aria-multiline="true" onClick={handleOpen} onKeyDown={handleOpenKey}>
           <DraftBody draft={draft} />
         </div>
       ) : draft.edited ? (

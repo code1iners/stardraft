@@ -5,6 +5,7 @@ import {
   FLOW_API_KEY_MAX_LENGTH,
   FLOW_PROJECT_ID_MAX_LENGTH,
   parseAppCommand,
+  RECIPIENT_NAME_MAX_LENGTH,
   WORK_FOLDER_PATH_MAX_LENGTH,
 } from './ipc';
 
@@ -192,7 +193,7 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: -1, name: '이영희' })).toBeNull();
     expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1.5, name: '이영희' })).toBeNull();
     expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1 })).toBeNull();
-    expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1, name: '가'.repeat(DRAFT_TEXT_MAX_LENGTH + 1) })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-recipient', bundleId: 3, index: 1, name: '가'.repeat(RECIPIENT_NAME_MAX_LENGTH + 1) })).toBeNull();
   });
 
   it('펼쳐 보기·접어 보기 명령은 보고 있던 묶음 ID나 null을 받는다', () => {

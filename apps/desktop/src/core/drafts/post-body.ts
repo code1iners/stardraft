@@ -30,8 +30,8 @@ export function bundleRecipients(bundle: Pick<MentionBundle, 'mentions' | 'conte
   for (const mention of activeMentions(bundle).sort(compareMentions)) {
     /** 맥락에서 찾은 멘션 글. */
     const writing = bundle.context && mentionWritingOf(bundle.context, mention);
-    /** 맥락의 쓴 사람. ID가 없으면 쓰지 않는다. */
-    const author = writing?.authorId ? { id: writing.authorId, name: writing.authorName } : null;
+    /** 맥락의 쓴 사람. ID가 없으면 쓰지 않고, 이름이 비어 있으면 알림의 이름으로 채운다. */
+    const author = writing?.authorId ? { id: writing.authorId, name: writing.authorName || mention.senderName } : null;
     /** 이 멘션의 송신자. */
     const recipient = author ?? { id: mention.senderId, name: mention.senderName };
     if (recipients.some((item) => isSameFlowUser(item.id, recipient.id))) continue;
@@ -40,9 +40,6 @@ export function bundleRecipients(bundle: Pick<MentionBundle, 'mentions' | 'conte
   }
   return recipients;
 }
-
-/** 게시 본문 길이 상한. Flow 댓글 `contents`의 상한이고 `String.length`로 센다. 넘으면 게시할 수 없다. */
-export const POST_BODY_CHAR_LIMIT = 4_000;
 
 /**
  * 게시 본문. 받는 사람의 `@[이름](ID)` 표기를 공백으로 이어 맨 앞에 두고, 공백 하나 뒤에 편집기 텍스트(앞뒤 공백을 뗌)를 같은 줄에서 잇는다.

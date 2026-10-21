@@ -19,8 +19,8 @@ const OTHER_REPLY_LIMIT = 10;
 
 /** 맥락의 글 하나가 갖는 값. 게시물 본문, 댓글, 대댓글이 함께 갖는다. 쓴 사람의 사용자 ID는 받는 사람에만 쓰고 맥락 문서와 화면에는 넣지 않는다. */
 export interface ContextWriting {
-  /** 쓴 사람의 사용자 ID(`registerId`). 없으면 빈 문자열이고, 받는 사람이 생기기 전에 저장한 맥락에는 없다. */
-  authorId: string;
+  /** 쓴 사람의 사용자 ID(`registerId`). Flow가 주지 않았으면 빈 문자열이다. 받는 사람이 생기기 전에 저장한 맥락에는 이 값이 없다. */
+  authorId?: string;
   /** 쓴 사람 이름. 비어 있을 수 있다. */
   authorName: string;
   /** 쓴 시각. Flow 형식(`yyyyMMddHHmmss`) 그대로다. 없으면 빈 문자열. */

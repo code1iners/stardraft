@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BundledMention } from '../bundles/mention-bundle';
 import type { BundleContext, ContextRemark } from '../flow/bundle-context';
-import { bundleRecipients, draftEditorText, postBody, POST_BODY_CHAR_LIMIT } from './post-body';
+import { bundleRecipients, draftEditorText, postBody } from './post-body';
 
 /** 송신자. 실제 사람이 아니다. */
 const SENDER = 'sender@example.test';
@@ -84,6 +84,13 @@ describe('받는 사람 기본값', () => {
     expect(bundleRecipients({ mentions, context: context(), removedRecipients: [SENDER, OTHER_SENDER] })).toEqual([]);
   });
 
+  it('맥락의 글에 이름이 비어 있으면 알림의 송신자 이름을 쓴다', () => {
+    /** 머리 댓글 작성자 이름이 비어 있는 맥락. */
+    const nameless = { ...context(), targetThread: { ...context().targetThread!, authorName: '' } };
+
+    expect(bundleRecipients({ mentions: [mention('101')], context: nameless, removedRecipients: [] })).toEqual([{ id: SENDER, name: '알림 속 이름' }]);
+  });
+
   it('맥락에서 멘션 글을 찾지 못하면 알림의 송신자 ID와 이름을 쓴다', () => {
     /** 맥락에 없는 대댓글 809의 멘션. */
     const mentions = [mention('101', { replyId: '809', senderId: THIRD_SENDER, senderName: '알림 속 이름' })];
@@ -110,11 +117,10 @@ describe('게시 본문과 글자 수', () => {
     expect(postBody([], '  재시도는 5번입니다. ')).toBe('재시도는 5번입니다.');
   });
 
-  it('글자 수는 받는 사람 표기를 포함한 게시 본문 전체를 String.length로 센다. 상한은 4,000이다', () => {
+  it('글자 수는 받는 사람 표기를 포함한 게시 본문 전체를 String.length로 센다', () => {
     /** 표기 `@[김철수](kim@example.test)` 24자, 공백 1자, 이모지 하나(2)와 글 3,997자. */
     const body = postBody([{ id: 'kim@example.test', name: '김철수' }], `😀${'가'.repeat(3_997)}`);
 
     expect(body.length).toBe(24 + 1 + 2 + 3_997);
-    expect(POST_BODY_CHAR_LIMIT).toBe(4_000);
   });
 });

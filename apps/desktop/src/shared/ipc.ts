@@ -44,11 +44,11 @@ export const WORK_FOLDER_PATH_MAX_LENGTH = 4096;
 /** 저장소 매핑 명령이 받는 Flow 프로젝트 ID의 최대 길이. */
 export const FLOW_PROJECT_ID_MAX_LENGTH = 64;
 
-/**
- * 초안 편집 명령이 받는 편집기 텍스트의 최대 길이. 게시 본문 상한(4,000)을 넘긴 텍스트도 저장해 안내를 보여야 하므로 그보다 넉넉하다.
- * 받는 사람 빼기 명령의 이름도 이 길이까지 받는다.
- */
+/** 초안 편집 명령이 받는 편집기 텍스트의 최대 길이. 게시 본문 상한(4,000)을 넘긴 텍스트도 저장해 안내를 보여야 하므로 그보다 넉넉하다. */
 export const DRAFT_TEXT_MAX_LENGTH = 100_000;
+
+/** 받는 사람 빼기 명령이 받는 이름의 최대 길이. */
+export const RECIPIENT_NAME_MAX_LENGTH = 200;
 
 /** "Flow 계정" 칸의 계정 카드에 보일 계정. */
 export interface FlowAccountProfile {
@@ -452,7 +452,7 @@ export interface RecipientSnapshot {
   name: string;
 }
 
-/** 게시 본문 길이 상한(`String.length`). Flow 댓글의 상한이고, 넘으면 편집기 아래에 안내를 보인다. */
+/** 게시 본문 길이 상한(`String.length`). Flow 댓글 `contents`의 상한이고, 넘으면 편집기 아래에 안내를 보인다. */
 export const POST_BODY_CHAR_LIMIT = 4_000;
 
 /**
@@ -799,9 +799,14 @@ function isBundleIdInput(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
-/** 초안 편집·받는 사람 빼기 명령에 실을 수 있는 글인지 확인한다. 빈 글도 받는다. */
+/** 초안 편집 명령에 실을 수 있는 편집기 텍스트인지 확인한다. 빈 텍스트도 받는다. */
 function isDraftTextInput(value: unknown): value is string {
   return typeof value === 'string' && value.length <= DRAFT_TEXT_MAX_LENGTH;
+}
+
+/** 받는 사람 빼기 명령에 실을 수 있는 이름인지 확인한다. 이름이 비어 있는 받는 사람도 있으므로 빈 이름도 받는다. */
+function isRecipientNameInput(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= RECIPIENT_NAME_MAX_LENGTH;
 }
 
 /** 묶음을 보는 창 이름인지 확인한다. */
@@ -862,7 +867,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'edit-draft':
       return isBundleIdInput(candidate.bundleId) && isDraftTextInput(candidate.text) ? { type: 'edit-draft', bundleId: candidate.bundleId, text: candidate.text } : null;
     case 'remove-recipient':
-      return isBundleIdInput(candidate.bundleId) && Number.isSafeInteger(candidate.index) && (candidate.index as number) >= 0 && isDraftTextInput(candidate.name)
+      return isBundleIdInput(candidate.bundleId) && Number.isSafeInteger(candidate.index) && (candidate.index as number) >= 0 && isRecipientNameInput(candidate.name)
         ? { type: 'remove-recipient', bundleId: candidate.bundleId, index: candidate.index as number, name: candidate.name }
         : null;
     case 'ignore-bundle':

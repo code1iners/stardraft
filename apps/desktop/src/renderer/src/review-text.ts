@@ -1,18 +1,18 @@
-import type {
-  BundleGroup,
-  BundleSnapshot,
-  BundleStatusSnapshot,
-  DraftFailureReasonSnapshot,
-  EvidenceSnapshot,
-  FailureSnapshot,
-  GenerationSnapshot,
-  MappingMatchSnapshot,
-  MentionPlaceSnapshot,
-  RepoCheckSnapshot,
-  RepoChoiceGroupSnapshot,
-  RunLineSnapshot,
+import {
+  POST_BODY_CHAR_LIMIT,
+  type BundleGroup,
+  type BundleSnapshot,
+  type BundleStatusSnapshot,
+  type DraftFailureReasonSnapshot,
+  type EvidenceSnapshot,
+  type FailureSnapshot,
+  type GenerationSnapshot,
+  type MappingMatchSnapshot,
+  type MentionPlaceSnapshot,
+  type RepoCheckSnapshot,
+  type RepoChoiceGroupSnapshot,
+  type RunLineSnapshot,
 } from '../../shared/ipc';
-import { POST_BODY_CHAR_LIMIT } from '../../shared/ipc';
 import { AGENT_NAMES } from './AgentSection';
 
 /** 상태 태그의 이름과 색. 준비됨은 파랑, 생성 중은 회색, 실패는 빨강, 확인이 필요한 상태는 노랑, 처리됨은 옅은 회색이다. */
@@ -209,4 +209,3 @@ export function postBodyLengthText(length: number): { text: string; over: boolea
     ? { text: `Flow 댓글 길이 제한을 넘었습니다 (${count})`, over: true }
     : { text: `글자 수 ${count}`, over: false };
 }
-

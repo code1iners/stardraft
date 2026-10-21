@@ -6,7 +6,7 @@ import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { StateStore } from '../ports/state-store';
-import { draftEditorText } from '../drafts/post-body';
+import { bundleRecipients, draftEditorText } from '../drafts/post-body';
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
@@ -450,11 +450,17 @@ export class MentionBundles {
     );
   }
 
-  /** 준비됨 묶음의 받는 사람에서 한 사람을 뺀다. 이미 뺀 사람이면 아무것도 하지 않는다. 더하는 기능은 없다. */
-  async removeRecipient(bundleId: number, recipientId: string): Promise<void> {
+  /**
+   * 준비됨 묶음의 받는 사람에서 한 사람을 뺀다. 더하는 기능은 없다. `index`는 화면에 보인 받는 사람 목록의 위치, `name`은 그 사람의 이름이다.
+   * 화면은 사용자 ID를 모르므로 지금 목록에서 찾고, 그사이 목록이 바뀌어 그 자리의 이름이 다르면 다른 사람을 빼지 않게 아무것도 하지 않는다.
+   */
+  async removeRecipient(bundleId: number, index: number, name: string): Promise<void> {
     await this.change(bundleId, 'bundle.recipient-removed', (bundle) => {
-      if (!canEditDraft(bundle.status) || bundle.removedRecipients.some((id) => isSameFlowUser(id, recipientId))) return null;
-      return { ...bundle, removedRecipients: [...bundle.removedRecipients, recipientId] };
+      if (!canEditDraft(bundle.status)) return null;
+      /** 뺄 사람. */
+      const recipient = bundleRecipients(bundle)[index];
+      if (!recipient || recipient.name !== name) return null;
+      return { ...bundle, removedRecipients: [...bundle.removedRecipients, recipient.id] };
     });
   }
 
@@ -600,7 +606,7 @@ function showsContextWithoutDraft(bundle: MentionBundle): boolean {
 
 /**
  * 멘션을 넣은 묶음에 자리를 조회한 결과를 반영한다. 게시물 제목·주소와 내 답을 바꾸고 "이미 답함"을 다시 판정한다.
- * 기존 묶음에 합친 멘션 가운데 묶음에 남은 수만큼 "새 멘션"을 늘리고, 모든 멘션이 빠지면 이미 답함으로 옮긴다.
+ * 기존 묶음에 합친 멘션 가운데 묶음에 남은 수만큼 "새 멘션"을 늘리고 그 송신자를 받는 사람에 다시 더하며, 모든 멘션이 빠지면 이미 답함으로 옮긴다.
  * 생성 중 묶음에 합친 멘션은 처음부터 다시 만드는 초안에 들어가므로 "새 멘션"으로 세지 않는다.
  */
 function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, lookup: PlaceLookup | undefined, now: number): UnsavedBundle {
@@ -614,9 +620,11 @@ function applyDetection(bundle: UnsavedBundle, added: ReadonlySet<string>, looku
   if (lookup?.myAnswers) next.answers = mergeAnswers(next.answers, lookup.myAnswers);
   next.mentions = judgeAnswered(next.mentions, next.answers);
 
-  /** 이번에 넣은 멘션 가운데 묶음에 남은 수. */
-  const addedActive = next.mentions.filter((mention) => !mention.answered && added.has(mentionLocationKey(mention))).length;
-  if (bundle.id !== null && bundle.status !== 'generating') next.newMentionCount += addedActive;
+  /** 이번에 넣은 멘션 가운데 묶음에 남은 것. */
+  const addedActive = next.mentions.filter((mention) => !mention.answered && added.has(mentionLocationKey(mention)));
+  if (bundle.id !== null && bundle.status !== 'generating') next.newMentionCount += addedActive.length;
+  // 뺄 때는 이 새 요청이 없었으므로, 새 멘션의 송신자는 전에 받는 사람에서 뺐더라도 다시 더한다.
+  next.removedRecipients = next.removedRecipients.filter((id) => !addedActive.some((mention) => isSameFlowUser(mention.senderId, id)));
   if (activeMentions(next).length === 0) {
     next.status = 'already-answered';
     next.processedAt = now;

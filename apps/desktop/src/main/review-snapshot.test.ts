@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BundledMention, MentionBundle } from '../core/bundles/mention-bundle';
 import type { RunRecord } from '../core/drafts/draft';
-import { POST_BODY_CHAR_LIMIT } from '../core/drafts/post-body';
-import { POST_BODY_CHAR_LIMIT as SHOWN_POST_BODY_CHAR_LIMIT } from '../shared/ipc';
 import type { BundleContext } from '../core/flow/bundle-context';
 import { bundleSnapshot, flowUrlOf, reviewSnapshot } from './review-snapshot';
 
@@ -505,10 +503,6 @@ describe('초안 편집기와 받는 사람', () => {
     expect(
       bundleSnapshot(bundle({ status: 'ready', draft, mentions, removedRecipients: ['sender@example.test', 'other@example.test'] }), () => null).draft,
     ).toMatchObject({ recipients: [], postBodyPrefixLength: 0 });
-  });
-
-  it('렌더러가 글자 수 안내에 쓰는 상한은 core의 게시 본문 상한과 같다', () => {
-    expect(SHOWN_POST_BODY_CHAR_LIMIT).toBe(POST_BODY_CHAR_LIMIT);
   });
 
   it('준비됨이 아닌 묶음의 초안은 고칠 수 없다고 넘긴다', () => {

@@ -2455,6 +2455,45 @@ async function recentMentionsOf(flow: FakeFlowApi) {
 }
 
 describe('최근 멘션으로 시험', () => {
+  it('저장소 매핑이 없는 프로젝트의 멘션을 선택 실행이 코드와 무관하다고 판정하면 시험 묶음도 저장소 확인 필요로 끝나고 "[시험] …" 알림을 올린다', async () => {
+    const { flow, executor, bundles, notifier, settingsStore } = await setup();
+    /** 저장소가 둘인 작업 폴더. 후보가 둘이어야 선택 실행이 돈다. */
+    const work = makeWorkFolder('work', ['api', 'web']);
+    settingsStore.settings.workFolders = [work.folder];
+    flow.addAlarm(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
+    executor.script({ outcome: { type: 'completed', output: { verdict: 'unrelated', repositories: [], reason: '회의 일정을 묻는 멘션입니다.' } } });
+    /** 시험할 멘션. */
+    const [recent] = await recentMentionsOf(flow);
+
+    /** 시험 묶음 ID. */
+    const trialId = await bundles.startTrial(recent!);
+    await settle();
+
+    expect(executor.requests.map((request) => request.kind)).toEqual(['selection']);
+    expect(bundles.get(trialId!)).toMatchObject({ trial: true, status: 'repo-check-needed', draft: null, repoCheck: { kind: 'unrelated' } });
+    expect(notifier.sent).toContainEqual({ title: '[시험] 저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: trialId });
+  });
+
+  it('생성 중에 시험을 끝내면 돌던 실행을 멈추고 묶음을 지운다', async () => {
+    const { flow, executor, bundles, stateStore } = await setup();
+    flow.addAlarm(alarm('101'));
+    executor.script({ outcome: 'wait-for-abort' });
+    /** 시험할 멘션. */
+    const [recent] = await recentMentionsOf(flow);
+    /** 시험 묶음 ID. */
+    const trialId = await bundles.startTrial(recent!);
+    await settle();
+    expect(bundles.get(trialId!)?.status).toBe('generating');
+    expect(executor.requests).toHaveLength(1);
+
+    expect(await bundles.endTrial(trialId!)).toBe(true);
+    await settle();
+
+    expect(executor.requests[0]?.signal.aborted).toBe(true);
+    expect(bundles.state()).toEqual([]);
+    expect(await stateStore.listBundles()).toEqual([]);
+  });
+
   it('고른 멘션으로 시험 묶음을 만들어 감지해서 기다리는 묶음보다 앞에서 실제처럼 실행하고, 트레이 숫자와 "[시험] …" 알림을 올린다. 기준점은 옮기지 않는다', async () => {
     const { flow, executor, bundles, notifier, stateStore, repos, poll } = await setup();
     /** 끝나지 않고 기다리는 실행. */

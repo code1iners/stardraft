@@ -1254,7 +1254,7 @@ describe('최근 멘션으로 시험', () => {
     expect(text).toContain('보낸 사람');
     expect(text).toContain('가짜 프로젝트');
     expect(text).toContain('@테스트 사용자 배포 언제 되나요?');
-    expect(text).toContain('프로젝트 이름 모름');
+    expect(text).toContain('Flow 프로젝트 이름 모름');
     expect(text.match(/답함/g)).toHaveLength(1);
     // 고르기 전에는 자동으로 고르지 않고, 이미 답한 멘션도 누를 수 있다.
     expect(html.match(/class="trial-choice"/g)).toHaveLength(2);

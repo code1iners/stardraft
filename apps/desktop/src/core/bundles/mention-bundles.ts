@@ -505,7 +505,7 @@ export class MentionBundles {
       const latest = this.bundles.find((item) => item.id === bundleId);
       if (!latest || latest.status !== 'generating') return { kind: 'skipped' };
       // 시험 묶음은 이미 답한 멘션으로도 시험할 수 있게 "이미 답함"을 판정하지 않는다.
-      /** 새로 찾은 내 답을 더한 기록. 이 PC가 게시한 글은 판정할 때 그 글이 답한 범위로만 센다. */
+      /** 새로 찾은 내 답을 더한 기록. 시험 묶음은 더하지 않는다. 이 PC가 게시한 글은 판정할 때 그 글이 답한 범위로만 센다. */
       const answers = latest.trial ? latest.answers : mergeAnswers(latest.answers, result.myAnswers);
       /** 다시 판정한 멘션. */
       const mentions = latest.trial ? latest.mentions : judgeAnswered(latest.mentions, answers, this.postedRanges());

@@ -113,7 +113,7 @@ function TrialChoice({ candidate }: TrialChoiceProps) {
           <span className="spacer" />
           <span className="small muted">{formatMentionTime(candidate.at)}</span>
         </span>
-        <span className="small muted">{candidate.projectTitle ?? '프로젝트 이름 모름'}</span>
+        <span className="small muted">{candidate.projectTitle ?? 'Flow 프로젝트 이름 모름'}</span>
         <span className="list-row-sub">{candidate.firstLine}</span>
       </button>
     </li>

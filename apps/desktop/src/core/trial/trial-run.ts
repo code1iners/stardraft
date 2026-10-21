@@ -1,7 +1,7 @@
 import type { MentionBundles } from '../bundles/mention-bundles';
 import { errorFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
-import type { FlowConnection } from '../ports/flow-api';
+import type { FlowApiFailure, FlowConnection } from '../ports/flow-api';
 import { listRecentMentions, type RecentMention } from './recent-mentions';
 
 /** 멘션 고르기 목록을 연 창. 작은 창의 빈 화면이나 설정 "초안" 칸이다. */
@@ -130,7 +130,7 @@ export class TrialRun {
         if (result.failure.kind === 'unauthorized') flow.reportKeyRejected();
         return { window, status: 'failed', reason: loadFailureOf(result.failure.kind) };
       }
-      /** 프로젝트 이름을 붙인 멘션. 같은 프로젝트는 한 번만 찾는다. */
+      /** Flow 프로젝트마다 찾은 이름. 같은 프로젝트는 한 번만 찾는다. */
       const titles = new Map<string, Promise<string | null>>();
       /** 목록에 보일 멘션. */
       const candidates = await Promise.all(
@@ -157,6 +157,6 @@ export class TrialRun {
 }
 
 /** Flow 실패의 종류를 불러오지 못한 까닭으로 바꾼다. */
-function loadFailureOf(kind: string): TrialLoadFailure {
+function loadFailureOf(kind: FlowApiFailure['kind']): TrialLoadFailure {
   return kind === 'unauthorized' || kind === 'network' || kind === 'rate-limited' ? kind : 'unexpected';
 }

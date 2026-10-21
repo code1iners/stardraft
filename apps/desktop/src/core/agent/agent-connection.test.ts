@@ -1,8 +1,9 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claudeNotLoggedInStream, claudeStream, claudeSuccessStream, fakeClaudeAuthStatus, fakeClaudeEvent } from '../fakes/fake-claude-stream';
+import { codexModelsOutput, codexNotLoggedInStream, codexSuccessStream, fakeCodexLoginStatus } from '../fakes/fake-codex-events';
 import { FakeClock } from '../fakes/fake-clock';
 import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
 import { MemorySettingsStore } from '../fakes/memory-settings-store';
@@ -43,13 +44,13 @@ const NOT_LOGGED_IN = fakeClaudeAuthStatus.notLoggedIn;
 /** `apiKeyHelper`만 설정했을 때 `claude auth status`의 실제 출력 모양(2.1.303, 종료 코드 0). */
 const API_KEY_HELPER = fakeClaudeAuthStatus.apiKeyHelper;
 
-/** 홈 폴더 아래 `relativeDir`에 실행 파일 `claude`를 만들고 경로를 돌려준다. */
-function installCli(relativeDir: string): string {
+/** 홈 폴더 아래 `relativeDir`에 실행 파일 `name`(기본 `claude`)을 만들고 경로를 돌려준다. */
+function installCli(relativeDir: string, name = 'claude'): string {
   /** CLI를 둘 폴더. */
   const dir = join(home, relativeDir);
   mkdirSync(dir, { recursive: true });
   /** 만든 CLI 경로. */
-  const cliPath = join(dir, 'claude');
+  const cliPath = join(dir, name);
   writeFileSync(cliPath, '#!/bin/sh\n');
   chmodSync(cliPath, 0o755);
   return cliPath;
@@ -89,6 +90,7 @@ function setup(overrides: Partial<AgentConnectionOptions> = {}, settings: Partia
     notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }),
   });
   const connection = new AgentConnection({
+    agent: 'claude-code',
     platform: 'darwin',
     env: { PATH: '/usr/bin:/bin', HOME: home, ANTHROPIC_API_KEY: 'sk-fake-key', CODEX_API_KEY: 'fake-codex-key', LANG: 'ko_KR.UTF-8' },
     homeDir: home,
@@ -467,6 +469,19 @@ describe('에이전트 연결 확인: 작동 확인', () => {
     expect(request?.stdin).not.toBe('');
   });
 
+  it('연결되면 Claude Code 모델 목록은 앱에 넣어 둔 계열 별칭(Fable, Opus, Sonnet)이다', async () => {
+    const { runner, connection, cliPath } = setupLoggedIn();
+    answerCheckRun(runner, cliPath, exited(0, claudeSuccessStream({ ok: true })));
+
+    await connection.check();
+
+    expect(connection.models()).toEqual([
+      { id: 'fable', label: 'Fable' },
+      { id: 'opus', label: 'Opus' },
+      { id: 'sonnet', label: 'Sonnet' },
+    ]);
+  });
+
   it('작동 확인은 앱이 구성한 환경(API 키 변수 제외, 로그인 셸 PATH)으로 돈다', async () => {
     const { runner, connection, cliPath } = setupLoggedIn();
     answerCheckRun(runner, cliPath, exited(0, claudeSuccessStream({ ok: true })));
@@ -542,7 +557,7 @@ describe('에이전트 전역 문제', () => {
 
     await connection.check();
 
-    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'cli-missing' });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'cli-missing' });
     expect(notifier.sent).toHaveLength(1);
 
     const cliPath = installCli('.local/bin');
@@ -566,7 +581,7 @@ describe('에이전트 전역 문제', () => {
 
     await connection.check();
 
-    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason });
   });
 
   it('필수 플래그를 지원하지 않는 버전이면 CLI 업데이트 필요 전역 문제다', async () => {
@@ -577,7 +592,7 @@ describe('에이전트 전역 문제', () => {
 
     await connection.check();
 
-    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'update-required' });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'update-required' });
   });
 
   it('작동 확인이 실패하면 점검 실행 실패 전역 문제다', async () => {
@@ -586,7 +601,7 @@ describe('에이전트 전역 문제', () => {
 
     await connection.check();
 
-    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'check-failed' });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'check-failed' });
   });
 
   it('감지를 시작하기 전에는 실패해도 전역 문제를 띄우지 않는다(필수 설정 전 화면이 보여 준다)', async () => {
@@ -650,7 +665,7 @@ describe('실행 직전 확인', () => {
     await expect(connection.confirmForRun()).resolves.toBe(false);
 
     expect(connection.isConnected()).toBe(false);
-    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'check-failed' });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'check-failed' });
     expect(notifier.sent).toHaveLength(1);
   });
 
@@ -661,7 +676,7 @@ describe('실행 직전 확인', () => {
     await expect(connection.confirmForRun()).resolves.toBe(false);
 
     expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'version', reason: 'update-required' } });
-    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'update-required' });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'update-required' });
   });
 
   it('CLI가 지워져 버전을 읽지 못하면 연결 확인을 처음부터 다시 돌려 CLI 없음 전역 문제로 알리고, 실행하면 안 된다고 답한다', async () => {
@@ -672,7 +687,7 @@ describe('실행 직전 확인', () => {
     await expect(connection.confirmForRun()).resolves.toBe(false);
 
     expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'find', reason: 'not-found' } });
-    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'cli-missing' });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'cli-missing' });
   });
 
   it('연결 확인이 돌고 있으면 끝나기를 기다렸다가 그 결과로 답한다', async () => {
@@ -774,7 +789,7 @@ describe('작동 확인을 다시 도는 때', () => {
 
     expect(loginChecks(runner)).toBe(2);
     expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'login', reason: 'not-logged-in' } });
-    expect(problems.current()?.problem).toEqual({ cause: 'agent', reason: 'not-logged-in' });
+    expect(problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'not-logged-in' });
   });
 
   it('실행이 결과 메시지 없이 끝나면(지원하지 않는 플래그 등) 연결 확인을 다시 돌린다', async () => {
@@ -820,5 +835,186 @@ describe('작동 확인을 다시 도는 때', () => {
     await connection.executor.run(draftRun());
 
     expect(loginChecks(runner)).toBe(1);
+  });
+});
+
+describe('에이전트 연결 확인: Codex', () => {
+  /** Homebrew처럼 버전 폴더의 실제 파일과 그것을 가리키는 링크를 만든다. 링크 경로를 돌려준다. */
+  function installLinkedCodex(version = '0.163.0'): { linkPath: string; realPath: string } {
+    /** 버전 폴더의 실제 파일. */
+    const realPath = installCli(`homebrew/Caskroom/codex/${version}/bin`, 'codex');
+    mkdirSync(join(home, 'homebrew/bin'), { recursive: true });
+    /** 로그인 셸이 알려 줄 링크 경로. */
+    const linkPath = join(home, 'homebrew/bin/codex');
+    symlinkSync(realPath, linkPath);
+    return { linkPath, realPath: realpathSync(realPath) };
+  }
+
+  /** `codex exec`로 띄운 실행(작동 확인, 선택·초안 실행) 요청인지 본다. 실행기는 링크를 푼 실제 경로로 띄운다. */
+  function isCodexRun(realPath: string) {
+    return (request: ProcessRequest) => request.command === realPath && request.args[0] === 'exec';
+  }
+
+  /** 로그인 셸이 링크 경로를 알려 주고, 버전·로그인·모델 목록·작동 확인이 통과하는 Codex 연결 확인. */
+  function setupCodex(settings: Partial<Settings> = {}) {
+    const { linkPath, realPath } = installLinkedCodex();
+    const context = setup({ agent: 'codex' }, settings);
+    context.runner.respondWhen(isShellRequest, exited(0, shellOutput([linkPath], SHELL_PATH)));
+    context.runner.respond(linkPath, ['--version'], exited(0, 'codex-cli 0.163.0\n'));
+    // 실제 CLI는 로그인 상태를 표준 오류로 낸다.
+    context.runner.respond(linkPath, ['login', 'status'], exited(0, '', fakeCodexLoginStatus.chatgpt));
+    context.runner.respond(
+      linkPath,
+      ['debug', 'models'],
+      exited(
+        0,
+        codexModelsOutput([
+          { slug: 'gpt-fake-mini', display_name: 'GPT-Fake-Mini', visibility: 'list', priority: 5 },
+          { slug: 'gpt-fake-hidden', display_name: 'GPT-Fake-Hidden', visibility: 'hide', priority: 2 },
+          { slug: 'gpt-fake-pro', display_name: 'GPT-Fake-Pro', visibility: 'list', priority: 1 },
+        ]),
+      ),
+    );
+    context.runner.respondWhen(isCodexRun(realPath), exited(0, codexSuccessStream({ ok: true })));
+    return { ...context, linkPath, realPath };
+  }
+
+  it('로그인 셸의 command -v로 codex를 찾고, 버전·로그인(codex login status)·작동 확인을 거쳐 연결됨이 된다. 찾은 링크 경로를 저장한다', async () => {
+    const { runner, settingsStore, connection, progress, linkPath } = setupCodex();
+
+    await connection.check();
+
+    expect(progress.map((p) => (p.status === 'checking' ? p.step : p.status))).toEqual(['find', 'version', 'login', 'run-check', 'connected']);
+    expect(connection.state()).toMatchObject({
+      agent: 'codex',
+      details: { cliPath: linkPath, cliCommand: 'codex', version: '0.163.0', requiredVersion: '0.162.1', authMethod: 'chatgpt' },
+    });
+    expect(settingsStore.settings.agentCliPaths).toEqual({ codex: linkPath });
+    expect(connection.isConnected()).toBe(true);
+    // 로그인 셸에서는 codex를 찾는다.
+    expect(runner.requests.find(isShellRequest)?.args[1]).toContain('command -v codex');
+    // 로그인 상태는 실제 실행과 같은 환경(API 키 변수 제외, 로그인 셸 PATH)으로 확인한다.
+    expect(runner.requests.find((request) => request.args.join(' ') === 'login status')?.env).toEqual({ PATH: SHELL_PATH, HOME: home, LANG: 'ko_KR.UTF-8' });
+  });
+
+  it('작동 확인은 Codex 권한 프로필 묶음으로, 링크를 푼 실제 경로를 띄워 앱 전용 빈 폴더에서 돈다(git 저장소가 아니라 --skip-git-repo-check)', async () => {
+    const { runner, connection, realPath } = setupCodex();
+
+    await connection.check();
+
+    /** 작동 확인 요청. */
+    const request = runner.requests.find(isCodexRun(realPath));
+    expect(request?.cwd).toBe(join(home, 'agent-check'));
+    expect(request?.args.slice(0, 10)).toEqual([
+      'exec',
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--ephemeral',
+      '--json',
+      '--output-schema',
+      expect.any(String),
+      '-C',
+      join(home, 'agent-check'),
+      '--skip-git-repo-check',
+    ]);
+    expect(request?.args).toContain(`permissions.stardraft.workspace_roots={}`);
+    expect(request?.args.find((arg) => arg.startsWith('permissions.stardraft.filesystem='))).toContain(`"${realPath}"="read"`);
+    expect(request?.env).toEqual({ PATH: SHELL_PATH, HOME: home, LANG: 'ko_KR.UTF-8' });
+  });
+
+  it('모델 목록은 연결 확인 때 codex debug models에서 visibility가 list인 모델을 우선순위대로 읽는다', async () => {
+    const { connection } = setupCodex();
+    expect(connection.models()).toEqual([]);
+
+    await connection.check();
+
+    expect(connection.models()).toEqual([
+      { id: 'gpt-fake-pro', label: 'GPT-Fake-Pro' },
+      { id: 'gpt-fake-mini', label: 'GPT-Fake-Mini' },
+    ]);
+  });
+
+  it.each([
+    ['명령이 실패함', exited(1, '', 'error: unrecognized subcommand')],
+    ['출력 형식이 바뀜', exited(0, '{"catalog":[]}\n')],
+    ['JSON이 아님', exited(0, 'not json\n')],
+  ])('모델 목록을 읽지 못하면(%s) 연결은 그대로 되고 목록은 비어 기본 모델만 고를 수 있다', async (_case, reply) => {
+    const { runner, connection, linkPath } = setupCodex();
+    runner.respond(linkPath, ['debug', 'models'], reply);
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'connected' });
+    expect(connection.models()).toEqual([]);
+  });
+
+  it('로그인되어 있지 않으면(실측: codex login status가 표준 오류로 "Not logged in", 종료 코드 1) 로그인 필요로 멈춘다', async () => {
+    const { runner, connection, linkPath, realPath } = setupCodex();
+    runner.respond(linkPath, ['login', 'status'], exited(1, '', fakeCodexLoginStatus.notLoggedIn));
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'login', reason: 'not-logged-in' } });
+    expect(runner.requests.some(isCodexRun(realPath))).toBe(false);
+  });
+
+  it('API 키로 로그인되어 있으면 연결하고 로그인 방식을 자세히에 남긴다', async () => {
+    const { runner, connection, linkPath } = setupCodex();
+    runner.respond(linkPath, ['login', 'status'], exited(0, '', fakeCodexLoginStatus.apiKey));
+
+    await connection.check();
+
+    expect(connection.state()).toMatchObject({ progress: { status: 'connected' }, details: { authMethod: 'api-key' } });
+  });
+
+  it('로그인 상태 출력을 읽지 못하면 오류 원문을 남기고 로그인에서 멈춘다', async () => {
+    const { runner, connection, linkPath } = setupCodex();
+    runner.respond(linkPath, ['login', 'status'], exited(1, '', 'Error checking login status: fake failure'));
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'login', reason: 'unreadable' } });
+    expect(connection.state().details.errorOutput).toBe('Error checking login status: fake failure');
+  });
+
+  it('작동 확인에서 로그인이 만료된 것이 드러나면(401) 로그인 필요로 멈춘다', async () => {
+    const { runner, connection, realPath } = setupCodex();
+    runner.respondWhen(isCodexRun(realPath), exited(1, codexNotLoggedInStream()));
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'login', reason: 'not-logged-in' } });
+  });
+
+  it('필수 플래그·설정 키를 지원하는지 실측하지 않은 낮은 버전이면 업데이트 필요로 멈추고, Homebrew cask 설치본은 brew 명령을 보인다', async () => {
+    const { runner, connection, linkPath } = setupCodex();
+    runner.respond(linkPath, ['--version'], exited(0, 'codex-cli 0.161.0\n'));
+
+    await connection.check();
+
+    expect(connection.state().progress).toEqual({ status: 'failed', failure: { step: 'version', reason: 'update-required' } });
+    expect(connection.state().details).toMatchObject({ version: '0.161.0', requiredVersion: '0.162.1', updateCommand: 'brew upgrade --cask codex' });
+  });
+
+  it('npm 설치본(JS 래퍼)은 npm 명령, 그 밖의 설치본은 codex update를 업데이트 명령으로 보인다', async () => {
+    // npm 전역 설치는 bin/codex가 @openai/codex/bin/codex.js를 가리키는 링크다.
+    const wrapper = installCli('npm-global/lib/node_modules/@openai/codex/bin', 'codex.js');
+    mkdirSync(join(home, 'npm-global/bin'), { recursive: true });
+    const npmLink = join(home, 'npm-global/bin/codex');
+    symlinkSync(wrapper, npmLink);
+    const standalone = installCli('.local/bin', 'codex');
+
+    for (const [cliPath, updateCommand] of [
+      [npmLink, 'npm install -g @openai/codex@latest'],
+      [standalone, 'codex update'],
+    ] as const) {
+      const { runner, connection } = setup({ agent: 'codex' }, { agentCliPaths: { codex: cliPath } });
+      runner.respondWhen(isShellRequest, exited(0, shellOutput([cliPath], SHELL_PATH)));
+      runner.respond(cliPath, ['--version'], exited(0, 'codex-cli 0.150.0\n'));
+
+      await connection.check();
+
+      expect(connection.state().details.updateCommand).toBe(updateCommand);
+    }
   });
 });

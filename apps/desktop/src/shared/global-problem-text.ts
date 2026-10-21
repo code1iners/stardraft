@@ -1,3 +1,4 @@
+import { AGENT_NAMES } from './agent-names';
 import type { AgentProblemReason, AppSnapshot, GlobalProblemSnapshot, SettingsSection } from './ipc';
 
 /** 전역 문제를 띠, 트레이 메뉴, OS 알림에 보일 문구. 세 곳이 같은 문구를 쓴다. */
@@ -15,7 +16,7 @@ export interface GlobalProblemText {
 /** 전역 문제의 문구. 저장된 키를 읽을 수 없는 이유는 키를 지키는 곳(macOS 키체인, Windows DPAPI)이 달라 OS마다 다르게 적는다. */
 export function globalProblemText(problem: GlobalProblemSnapshot, platform: AppSnapshot['platform']): GlobalProblemText {
   if (problem.cause === 'agent') {
-    return { title: '에이전트 확인 필요', message: AGENT_PROBLEM_MESSAGES[problem.reason], actionLabel: '에이전트 확인', actionSection: 'agent' };
+    return { title: '에이전트 확인 필요', message: agentProblemMessage(problem.reason, AGENT_NAMES[problem.agent]), actionLabel: '에이전트 확인', actionSection: 'agent' };
   }
   return {
     title: '키 확인 필요',
@@ -25,13 +26,22 @@ export function globalProblemText(problem: GlobalProblemSnapshot, platform: AppS
   };
 }
 
-/** 에이전트 전역 실패의 이유별 문구. 고치는 명령과 오류 원문은 [에이전트 확인]이 여는 에이전트 칸에 있다. */
-const AGENT_PROBLEM_MESSAGES: Record<AgentProblemReason, string> = {
-  'cli-missing': 'Claude Code를 찾을 수 없습니다. 지워졌거나 위치가 바뀌었을 수 있습니다.',
-  'not-logged-in': 'Claude Code에 로그인되어 있지 않습니다. 로그아웃했거나 로그인이 만료됐을 수 있습니다.',
-  'update-required': 'Claude Code를 업데이트해야 합니다. 지금 버전은 Stardraft에 필요한 기능을 지원하지 않습니다.',
-  'check-failed': 'Claude Code 작동 확인에 실패했습니다. 초안을 만들 수 없어 멈췄습니다.',
-};
+/**
+ * 에이전트 전역 실패의 이유별 문구. 고치는 명령과 오류 원문은 [에이전트 확인]이 여는 에이전트 칸에 있다.
+ * 에이전트 이름(Claude Code, Codex)은 모두 모음으로 끝나 조사 "를"을 쓴다.
+ */
+function agentProblemMessage(reason: AgentProblemReason, name: string): string {
+  switch (reason) {
+    case 'cli-missing':
+      return `${name}를 찾을 수 없습니다. 지워졌거나 위치가 바뀌었을 수 있습니다.`;
+    case 'not-logged-in':
+      return `${name}에 로그인되어 있지 않습니다. 로그아웃했거나 로그인이 만료됐을 수 있습니다.`;
+    case 'update-required':
+      return `${name}를 업데이트해야 합니다. 지금 버전은 Stardraft에 필요한 기능을 지원하지 않습니다.`;
+    case 'check-failed':
+      return `${name} 작동 확인에 실패했습니다. 초안을 만들 수 없어 멈췄습니다.`;
+  }
+}
 
 /** Flow가 키를 거부했을 때(`401`)의 문구. */
 const KEY_REJECTED_MESSAGE = 'Flow가 키를 거부했습니다. 키가 삭제됐거나 바뀌었을 수 있습니다.';

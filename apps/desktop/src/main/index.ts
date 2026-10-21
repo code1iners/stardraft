@@ -1,7 +1,7 @@
 import { app, dialog, Menu, net, powerMonitor, safeStorage } from 'electron';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
-import { AgentConnection } from '../core/agent/agent-connection';
+import { AgentConnections } from '../core/agent/agent-connections';
 import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
@@ -135,8 +135,11 @@ function start(): void {
       onSettingsClosed: () => flowAccount.cancelKeyCheck(),
     });
     windows = appWindows;
-    /** 에이전트 연결 확인. 앱을 시작할 때와 설정 "에이전트" 칸을 열 때 돈다. 실행기도 이 확인이 찾은 CLI와 환경을 쓴다. */
-    const agentConnection = new AgentConnection({
+    /**
+     * 에이전트 연결 확인. 이 OS의 후보 에이전트(macOS는 Claude Code와 Codex, Windows는 Claude Code)마다 하나씩 두고,
+     * 앱을 시작할 때와 설정 "에이전트" 칸을 열 때 돈다. 실행기도 각 확인이 찾은 CLI와 환경을 쓴다.
+     */
+    const agentConnections = new AgentConnections({
       platform: process.platform,
       env: process.env,
       homeDir: app.getPath('home'),
@@ -151,7 +154,8 @@ function start(): void {
     const agentPreferences = new AgentPreferences({
       settingsStore: appData.settingsStore,
       logger,
-      connectedAgents: () => (agentConnection.isConnected() ? [agentConnection.state().agent] : []),
+      connectedAgents: () => agentConnections.connectedAgents(),
+      listedModels: (agent) => agentConnections.models(agent),
     });
     await agentPreferences.load();
     /** 설정 "저장소" 칸의 작업 폴더와 "이 PC에서 찾은 폴더". */
@@ -212,9 +216,9 @@ function start(): void {
      */
     const draftQueue = new DraftQueue({
       bundles: mentionBundles,
-      // 지금은 Claude Code 연결만 있다. 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
-      agent: () => draftAgentFrom(agentPreferences.state(), [agentConnection]),
-      onAgentChange: (listener) => unsubscribeAll([agentConnection.onChange(listener), agentPreferences.onChange(listener)]),
+      // 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
+      agent: () => draftAgentFrom(agentPreferences.state(), agentConnections.all),
+      onAgentChange: (listener) => unsubscribeAll([agentConnections.onChange(listener), agentPreferences.onChange(listener)]),
       // "키 확인 필요"인 동안은 맥락을 조회할 수 없어 대기열을 멈춘다. 키를 다시 넣어 풀리면 다시 돈다.
       flowKeyUsable: () => flowAccount.apiKey() !== null && !globalProblems.has('flow-key'),
       onFlowKeyChange: (listener) => unsubscribeAll([globalProblems.onChange(listener), flowAccount.onChange(listener)]),
@@ -276,16 +280,12 @@ function start(): void {
         await appWindows.closeSettings();
         appWindows.openPopover();
       },
-      setupInputs: () => {
-        /** 에이전트 연결 확인의 진행 상태. */
-        const agentProgress = agentConnection.state().progress.status;
-        return {
-          keyVerified: flowAccount.state().account !== null && !globalProblems.has('flow-key'),
-          // 시작할 때 연결 확인이 돌기 전(idle)도 확인 중으로 본다.
-          agent: agentProgress === 'connected' ? 'connected' : agentProgress === 'failed' ? 'not-connected' : 'checking',
-          workFolderCount: workFolders.state().folders.length,
-        };
-      },
+      setupInputs: () => ({
+        keyVerified: flowAccount.state().account !== null && !globalProblems.has('flow-key'),
+        // 하나라도 연결되면 연결됨이다. 시작할 때 연결 확인이 돌기 전도 확인 중으로 본다.
+        agent: agentConnections.setupStatus(),
+        workFolderCount: workFolders.state().folders.length,
+      }),
     });
     await onboarding.load();
     // 필수 세 가지의 입력이 바뀔 때마다 온보딩 상태를 다시 본다.
@@ -293,7 +293,7 @@ function start(): void {
     const refreshOnboarding = () => onboarding.refresh();
     flowAccount.onChange(refreshOnboarding);
     globalProblems.onChange(refreshOnboarding);
-    agentConnection.onChange(refreshOnboarding);
+    agentConnections.onChange(refreshOnboarding);
     workFolders.onChange(refreshOnboarding);
     /** 최근 멘션으로 시험. 감지를 시작한 뒤 지금 키로 최근 멘션을 불러오고, 고른 멘션으로 시험 묶음을 만든다. */
     const trialRun = new TrialRun({
@@ -310,7 +310,7 @@ function start(): void {
       logger,
       flowAccount,
       globalProblems,
-      agentConnection,
+      agentConnections,
       agentPreferences,
       workFolders,
       repoMappings,
@@ -411,8 +411,8 @@ function start(): void {
         void draftQueue.start();
         bundlePosting.recoverAfterRestart();
       });
-    // 앱을 시작할 때 에이전트 연결을 확인한다(작동 확인 포함). 끊겨 있으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
-    void agentConnection.check();
+    // 앱을 시작할 때 후보 에이전트의 연결을 확인한다(작동 확인 포함). 쓸 에이전트가 없으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
+    void agentConnections.checkAll();
   });
 }
 

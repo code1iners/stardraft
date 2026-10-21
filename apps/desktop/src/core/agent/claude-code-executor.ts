@@ -10,39 +10,13 @@ import type {
   ExecutorReport,
   ExecutorRunRequest,
   ExecutorUsage,
-  RunKind,
 } from '../ports/executor';
+import type { AgentExecutorOptions } from './agent-launch';
 import { CLAUDE_MAX_TURNS } from './claude-cli';
 import { withoutAgentApiKeys } from './cli-discovery';
-import type { ProcessResult, ProcessRunner } from './process-runner';
+import type { ProcessResult } from './process-runner';
 import { readingFileStep, searchingStep } from './progress-steps';
 import { withDefaultSecretPatterns } from './secret-patterns';
-
-/** Claude Code CLI를 띄울 때 쓰는 것. 연결 확인이 정한다. */
-export interface ClaudeLaunch {
-  /** CLI 절대 경로. */
-  cliPath: string;
-  /** 앱이 구성한 자식 프로세스 환경. */
-  env: Record<string, string>;
-}
-
-/** 실행 하나가 끝났을 때 연결 확인에 알리는 보고. */
-export interface ClaudeRunReport extends ExecutorReport {
-  /** 실행의 종류. */
-  kind: RunKind;
-}
-
-/** Claude Code 실행기에 필요한 것. */
-export interface ClaudeCodeExecutorOptions {
-  /** CLI를 띄우는 프로세스 실행기. */
-  runner: ProcessRunner;
-  /** 지금 쓸 CLI와 자식 환경. 연결 확인이 아직 CLI를 찾지 못했으면 `null`. */
-  launch: () => ClaudeLaunch | null;
-  /** 실행마다 지침 파일을 둘 임시 폴더를 만들 곳. 없으면 OS 임시 폴더다. */
-  tempRoot?: string;
-  /** 실행이 끝날 때마다 부른다. 연결 확인이 CLI 버전 변화와 전역 실패를 알아채는 데 쓴다. */
-  onRunFinished?: (report: ClaudeRunReport) => void;
-}
 
 /** 오류 원문의 최대 길이. 넘으면 앞부분만 남긴다. */
 const DETAIL_MAX_LENGTH = 2_000;
@@ -55,7 +29,7 @@ export class ClaudeCodeExecutor implements Executor {
   /** 이 실행기가 부르는 에이전트. */
   readonly agent: AgentId = 'claude-code';
 
-  constructor(private readonly options: ClaudeCodeExecutorOptions) {}
+  constructor(private readonly options: AgentExecutorOptions) {}
 
   async run(request: ExecutorRunRequest): Promise<ExecutorReport> {
     /** 실행 결과와 실행에서 본 CLI 버전·모델·사용량. */

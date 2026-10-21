@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { agentFixCommand } from '../../shared/agent-fix-command';
+import { AGENT_NAMES } from '../../shared/agent-names';
 import type {
   AgentCheckDetails,
   AgentCheckFailure,
@@ -20,10 +21,16 @@ const STEPS: readonly { step: AgentCheckStep; label: string }[] = [
   { step: 'run-check', label: '작동 확인' },
 ];
 
-/** 에이전트 이름. */
-export const AGENT_NAMES: Record<AgentId, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex',
+/** 연결선 끝의 에이전트 아이콘에 쓰는 글자. */
+const AGENT_MARKS: Record<AgentId, string> = {
+  'claude-code': 'C',
+  codex: 'X',
+};
+
+/** 로그인 명령이 브라우저로 여는 계정의 이름. 실패 카드 셋째 장의 그림에 쓴다. */
+const LOGIN_SITES: Record<AgentId, string> = {
+  'claude-code': 'Claude',
+  codex: 'ChatGPT',
 };
 
 /** 모델 칸의 안내. Claude Code는 앱에 넣어 둔 계열 별칭, Codex는 연결 확인 때 읽은 목록이다. */
@@ -50,48 +57,62 @@ interface FailureText {
   third?: { label: string; picture: ThirdPicture };
 }
 
-/** 실패 이유별 문구. 경로·버전·로그인 방식·오류 원문은 넣지 않고 "자세히"에만 둔다. */
-const FAILURE_TEXT: Record<AgentCheckFailure['reason'], FailureText> = {
-  'not-found': {
-    cause: '설치 필요',
-    title: 'Claude Code를 찾지 못했습니다',
-    line: '설치한 뒤 다시 확인을 누르세요. 이미 설치했다면 위치를 직접 지정할 수 있습니다.',
-    third: { label: '설치가 끝났다는 줄이 나올 때까지 기다리기', picture: 'done' },
-  },
-  'picked-invalid': {
-    cause: '실행할 수 없음',
-    title: '고른 파일을 실행할 수 없습니다',
-    line: 'Claude Code CLI 실행 파일(claude)을 다시 지정하거나 다시 찾기를 눌러 주세요.',
-  },
-  'update-required': {
-    cause: '업데이트 필요',
-    title: 'Claude Code를 업데이트해야 합니다',
-    line: '업데이트한 뒤 다시 확인을 누르세요.',
-    third: { label: '업데이트가 끝났다는 줄이 나올 때까지 기다리기', picture: 'done' },
-  },
-  unreadable: {
-    cause: '확인 실패',
-    title: 'Claude Code에서 답을 읽지 못했습니다',
-    line: '다시 확인을 눌러 주세요. 계속 실패하면 자세히에서 오류 내용을 확인해 주세요.',
-  },
-  'not-logged-in': {
-    cause: '로그인 필요',
-    title: 'Claude Code에 로그인해야 합니다',
-    line: '로그인한 뒤 다시 확인을 누르세요.',
-    third: { label: '열린 브라우저에서 로그인', picture: 'browser' },
-  },
-  'api-key-helper': {
-    cause: '로그인 방식 바꾸기',
-    title: 'apiKeyHelper 로그인은 지원하지 않습니다. Claude 계정으로 로그인해 주세요',
-    line: 'Claude 계정으로 로그인한 뒤 다시 확인을 누르세요.',
-    third: { label: '열린 브라우저에서 Claude 계정으로 로그인', picture: 'browser' },
-  },
-  'run-failed': {
-    cause: '작동 확인 실패',
-    title: '작동 확인이 실패했습니다',
-    line: '다시 확인을 눌러 주세요. 계속 실패하면 자세히에서 Claude Code가 알려 준 내용을 확인해 주세요.',
-  },
-};
+/**
+ * 실패 이유별 문구. 경로·버전·로그인 방식·오류 원문은 넣지 않고 "자세히"에만 둔다.
+ * 에이전트 이름(Claude Code, Codex)은 모두 모음으로 끝나 조사 "를"·"가"를 쓴다.
+ */
+function failureText(reason: AgentCheckFailure['reason'], agent: AgentId): FailureText {
+  /** 에이전트 이름. */
+  const name = AGENT_NAMES[agent];
+  switch (reason) {
+    case 'not-found':
+      return {
+        cause: '설치 필요',
+        title: `${name}를 찾지 못했습니다`,
+        line: '설치한 뒤 다시 확인을 누르세요. 이미 설치했다면 위치를 직접 지정할 수 있습니다.',
+        third: { label: '설치가 끝났다는 줄이 나올 때까지 기다리기', picture: 'done' },
+      };
+    case 'picked-invalid':
+      return {
+        cause: '실행할 수 없음',
+        title: '고른 파일을 실행할 수 없습니다',
+        line: `${name} CLI 실행 파일(${agent === 'codex' ? 'codex' : 'claude'})을 다시 지정하거나 다시 찾기를 눌러 주세요.`,
+      };
+    case 'update-required':
+      return {
+        cause: '업데이트 필요',
+        title: `${name}를 업데이트해야 합니다`,
+        line: '업데이트한 뒤 다시 확인을 누르세요.',
+        third: { label: '업데이트가 끝났다는 줄이 나올 때까지 기다리기', picture: 'done' },
+      };
+    case 'unreadable':
+      return {
+        cause: '확인 실패',
+        title: `${name}에서 답을 읽지 못했습니다`,
+        line: '다시 확인을 눌러 주세요. 계속 실패하면 자세히에서 오류 내용을 확인해 주세요.',
+      };
+    case 'not-logged-in':
+      return {
+        cause: '로그인 필요',
+        title: `${name}에 로그인해야 합니다`,
+        line: '로그인한 뒤 다시 확인을 누르세요.',
+        third: { label: '열린 브라우저에서 로그인', picture: 'browser' },
+      };
+    case 'api-key-helper':
+      return {
+        cause: '로그인 방식 바꾸기',
+        title: 'apiKeyHelper 로그인은 지원하지 않습니다. Claude 계정으로 로그인해 주세요',
+        line: 'Claude 계정으로 로그인한 뒤 다시 확인을 누르세요.',
+        third: { label: '열린 브라우저에서 Claude 계정으로 로그인', picture: 'browser' },
+      };
+    case 'run-failed':
+      return {
+        cause: '작동 확인 실패',
+        title: '작동 확인이 실패했습니다',
+        line: `다시 확인을 눌러 주세요. 계속 실패하면 자세히에서 ${name}가 알려 준 내용을 확인해 주세요.`,
+      };
+  }
+}
 
 /** 마디 하나의 상태. `ok`는 끝남, `cur`는 진행 중, `bad`는 끊김, 빈 문자열은 남은 단계다. */
 type SegmentState = 'ok' | 'cur' | 'bad' | '';
@@ -121,8 +142,8 @@ function segmentState(progress: AgentCheckProgress, index: number): SegmentState
 
 /** "에이전트" 칸에 넘기는 값. */
 interface AgentSectionProps {
-  /** Claude Code 연결 확인 상태. */
-  agentConnection: AgentConnectionSnapshot;
+  /** 이 OS의 후보 에이전트마다의 연결 확인 상태. 후보 순서다. */
+  agentConnections: AgentConnectionSnapshot[];
   /** 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferencesSnapshot;
   /** 실행 중인 OS. 터미널 이름과 명령을 고른다. */
@@ -130,97 +151,29 @@ interface AgentSectionProps {
 }
 
 /**
- * 설정 "에이전트" 칸. 칸을 열면 Claude Code를 찾고 버전, 로그인, 작동 확인을 차례로 확인해, Stardraft와 Claude Code를 잇는 연결선으로 보인다.
+ * 카드를 보일 연결인지 본다. Claude Code는 늘 보인다. Codex는 설치를 찾았을 때만 후보라, 찾은 경로가 있을 때만 보인다.
+ * 직접 지정한 파일을 실행할 수 없을 때도 그 경로가 남아 보인다.
+ */
+function isVisible({ agent, details }: AgentConnectionSnapshot): boolean {
+  return agent === 'claude-code' || details.cliPath !== null;
+}
+
+/**
+ * 설정 "에이전트" 칸. 칸을 열면 후보 에이전트마다 CLI를 찾고 버전, 로그인, 작동 확인을 차례로 확인해, Stardraft와 에이전트를 잇는 연결선으로 보인다.
  * 실패하면 그 마디가 끊기고, 명령으로 고칠 수 있으면 그림 카드 네 장을 보인다. 연결되면 그 아래에서 기본 에이전트와 모델을 고른다.
  */
-export function AgentSection({ agentConnection, agentPreferences, platform }: AgentSectionProps) {
-  /** 진행 상태와 "자세히" 내용. */
-  const { progress, details } = agentConnection;
-  /** "자세히"를 펼쳤는지 여부. */
-  const [showDetails, setShowDetails] = useState(false);
-
-  useEffect(function checkAgentOnOpen() {
-    // 칸을 열 때마다 확인한다. 이미 확인 중이면 main이 그 확인을 이어 간다.
-    void window.stardraft.send({ type: 'check-agent' });
+export function AgentSection({ agentConnections, agentPreferences, platform }: AgentSectionProps) {
+  useEffect(function checkAgentsOnOpen() {
+    // 칸을 열 때마다 후보 에이전트를 모두 확인한다. 이미 확인 중이면 main이 그 확인을 이어 간다.
+    void window.stardraft.send({ type: 'check-agents' });
   }, []);
-
-  /** 확인 중인지 여부. 확인 중에는 다시 확인·다시 찾기·직접 지정을 막는다. */
-  const checking = progress.status === 'checking';
-  /** 멈춘 이유. 실패가 아니면 `null`. */
-  const failure = progress.status === 'failed' ? progress.failure : null;
-  /** 실패 카드의 명령. 명령으로 고칠 수 없으면 `null`. */
-  const fixCommand = failure && agentFixCommand(failure, details, platform);
-  /** 찾기에서 멈췄는지 여부. 이때 "직접 지정"을 보인다. */
-  const findFailed = failure?.step === 'find';
-
-  /** 저장한 경로로 다시 확인한다. */
-  const handleCheck = () => void window.stardraft.send({ type: 'check-agent' });
-  /** 저장한 경로를 무시하고 다시 찾는다. */
-  const handleRediscover = () => void window.stardraft.send({ type: 'rediscover-agent' });
-  /** 파일 선택 창으로 CLI를 직접 지정한다. */
-  const handlePick = () => void window.stardraft.send({ type: 'pick-agent-cli' });
 
   return (
     <>
       <p className="section-lead muted">초안을 만드는 데 쓰는 이 PC의 에이전트입니다.</p>
-      <div className="agent-card">
-        <div className="agent-link">
-          <AgentNode label="Stardraft" accent>
-            <svg width="20" height="20" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M2.5 2.75h11a.75.75 0 0 1 .75.75v7a.75.75 0 0 1-.75.75H8.2L4.75 14v-2.75H2.5a.75.75 0 0 1-.75-.75v-7a.75.75 0 0 1 .75-.75z"
-                fill="currentColor"
-              />
-            </svg>
-          </AgentNode>
-          <ol className="agent-segments" aria-label="연결 단계">
-            {STEPS.map(({ step, label }, index) => {
-              /** 이 마디의 상태. */
-              const state = segmentState(progress, index);
-              return (
-                <li key={step} className={`agent-segment ${state}`} aria-current={state === 'cur' ? 'step' : undefined}>
-                  <span className="agent-bar">{state === 'bad' && <span className="agent-break" aria-hidden="true">✕</span>}</span>
-                  {state === 'bad' && failure ? FAILURE_TEXT[failure.reason].cause : label}
-                </li>
-              );
-            })}
-          </ol>
-          <AgentNode label="Claude Code">
-            C
-          </AgentNode>
-        </div>
-
-        <StatusLine progress={progress} />
-
-        {failure &&
-          (fixCommand && FAILURE_TEXT[failure.reason].third ? (
-            <FixCards command={fixCommand} third={FAILURE_TEXT[failure.reason].third} platform={platform} onCheck={handleCheck} />
-          ) : (
-            <p className="agent-notice">{FAILURE_TEXT[failure.reason].line}</p>
-          ))}
-
-        <div className="agent-actions">
-          {!fixCommand && (
-            <button type="button" className="btn sm" onClick={handleCheck} disabled={checking}>
-              다시 확인
-            </button>
-          )}
-          <button type="button" className="btn sm" onClick={handleRediscover} disabled={checking}>
-            다시 찾기
-          </button>
-          {findFailed && (
-            <button type="button" className="btn sm" onClick={handlePick} disabled={checking}>
-              직접 지정…
-            </button>
-          )}
-          <span className="spacer" />
-          <button type="button" className="btn link small" aria-expanded={showDetails} onClick={() => setShowDetails((open) => !open)}>
-            {showDetails ? '자세히 닫기' : '자세히'}
-          </button>
-        </div>
-
-        {showDetails && <AgentDetails details={details} failure={failure} platform={platform} />}
-      </div>
+      {agentConnections.filter(isVisible).map((connection) => (
+        <AgentCard key={connection.agent} connection={connection} platform={platform} />
+      ))}
 
       {agentPreferences.connectedAgents.length > 1 && (
         <DefaultAgentField connectedAgents={agentPreferences.connectedAgents} defaultAgent={agentPreferences.defaultAgent} />
@@ -231,6 +184,99 @@ export function AgentSection({ agentConnection, agentPreferences, platform }: Ag
         return choice && <ModelField key={agent} agent={agent} choice={choice} />;
       })}
     </>
+  );
+}
+
+/** 연결 카드에 넘기는 값. */
+interface AgentCardProps {
+  /** 에이전트 하나의 연결 확인 상태. */
+  connection: AgentConnectionSnapshot;
+  /** 실행 중인 OS. */
+  platform: AppSnapshot['platform'];
+}
+
+/** 에이전트 하나의 연결 카드. 연결선, 상태 한 줄, 실패 카드, 행동 줄, "자세히"를 담는다. */
+function AgentCard({ connection, platform }: AgentCardProps) {
+  /** 확인하는 에이전트와 진행 상태, "자세히" 내용. */
+  const { agent, progress, details } = connection;
+  /** "자세히"를 펼쳤는지 여부. */
+  const [showDetails, setShowDetails] = useState(false);
+
+  /** 확인 중인지 여부. 확인 중에는 다시 확인·다시 찾기·직접 지정을 막는다. */
+  const checking = progress.status === 'checking';
+  /** 멈춘 이유. 실패가 아니면 `null`. */
+  const failure = progress.status === 'failed' ? progress.failure : null;
+  /** 실패 문구. */
+  const failed = failure && failureText(failure.reason, agent);
+  /** 실패 카드의 명령. 명령으로 고칠 수 없으면 `null`. */
+  const fixCommand = failure && agentFixCommand(agent, failure, details, platform);
+  /** 찾기에서 멈췄는지 여부. 이때 "직접 지정"을 보인다. */
+  const findFailed = failure?.step === 'find';
+
+  /** 저장한 경로로 다시 확인한다. */
+  const handleCheck = () => void window.stardraft.send({ type: 'check-agent', agent });
+  /** 저장한 경로를 무시하고 다시 찾는다. */
+  const handleRediscover = () => void window.stardraft.send({ type: 'rediscover-agent', agent });
+  /** 파일 선택 창으로 CLI를 직접 지정한다. */
+  const handlePick = () => void window.stardraft.send({ type: 'pick-agent-cli', agent });
+
+  return (
+    <div className="agent-card">
+      <div className="agent-link">
+        <AgentNode label="Stardraft" accent>
+          <svg width="20" height="20" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M2.5 2.75h11a.75.75 0 0 1 .75.75v7a.75.75 0 0 1-.75.75H8.2L4.75 14v-2.75H2.5a.75.75 0 0 1-.75-.75v-7a.75.75 0 0 1 .75-.75z"
+              fill="currentColor"
+            />
+          </svg>
+        </AgentNode>
+        <ol className="agent-segments" aria-label={`${AGENT_NAMES[agent]} 연결 단계`}>
+          {STEPS.map(({ step, label }, index) => {
+            /** 이 마디의 상태. */
+            const state = segmentState(progress, index);
+            return (
+              <li key={step} className={`agent-segment ${state}`} aria-current={state === 'cur' ? 'step' : undefined}>
+                <span className="agent-bar">{state === 'bad' && <span className="agent-break" aria-hidden="true">✕</span>}</span>
+                {state === 'bad' && failed ? failed.cause : label}
+              </li>
+            );
+          })}
+        </ol>
+        <AgentNode label={AGENT_NAMES[agent]}>{AGENT_MARKS[agent]}</AgentNode>
+      </div>
+
+      <StatusLine agent={agent} progress={progress} />
+
+      {failed &&
+        (fixCommand && failed.third ? (
+          <FixCards command={fixCommand} third={failed.third} agent={agent} platform={platform} onCheck={handleCheck} />
+        ) : (
+          <p className="agent-notice">{failed.line}</p>
+        ))}
+
+      <div className="agent-actions">
+        {!fixCommand && (
+          <button type="button" className="btn sm" onClick={handleCheck} disabled={checking}>
+            다시 확인
+          </button>
+        )}
+        <button type="button" className="btn sm" onClick={handleRediscover} disabled={checking}>
+          다시 찾기
+        </button>
+        {findFailed && (
+          <button type="button" className="btn sm" onClick={handlePick} disabled={checking}>
+            직접 지정…
+          </button>
+        )}
+        <span className="spacer" />
+        <button type="button" className="btn link small" aria-expanded={showDetails} onClick={() => setShowDetails((open) => !open)}>
+          {showDetails ? '자세히 닫기' : '자세히'}
+        </button>
+      </div>
+
+      {showDetails && <AgentDetails details={details} failure={failure} platform={platform} />}
+    </div>
   );
 }
 
@@ -322,7 +368,7 @@ function AgentNode({ label, accent = false, children }: AgentNodeProps) {
 }
 
 /** 연결선 아래 한 줄. 진행 중이면 단계, 실패하면 원인을 적는다. */
-function StatusLine({ progress }: { progress: AgentCheckProgress }) {
+function StatusLine({ agent, progress }: { agent: AgentId; progress: AgentCheckProgress }) {
   switch (progress.status) {
     case 'idle':
       return <p className="agent-status muted">확인 전</p>;
@@ -343,11 +389,11 @@ function StatusLine({ progress }: { progress: AgentCheckProgress }) {
     case 'failed':
       return (
         <p className="agent-status danger-text" role="alert">
-          {FAILURE_TEXT[progress.failure.reason].title}
+          {failureText(progress.failure.reason, agent).title}
         </p>
       );
     case 'connected':
-      return <p className="agent-status ok-text">✓ Claude Code 연결됨</p>;
+      return <p className="agent-status ok-text">✓ {AGENT_NAMES[agent]} 연결됨</p>;
   }
 }
 
@@ -357,6 +403,8 @@ interface FixCardsProps {
   command: string;
   /** 셋째 카드의 설명과 그림. */
   third: FailureText['third'];
+  /** 고칠 에이전트. 명령 복사와 로그인 그림에 쓴다. */
+  agent: AgentId;
   /** 실행 중인 OS. */
   platform: AppSnapshot['platform'];
   /** [다시 확인]을 눌렀을 때. */
@@ -367,7 +415,7 @@ interface FixCardsProps {
 const COPIED_NOTICE_MS = 2_000;
 
 /** 명령으로 고치는 실패의 그림 카드 네 장: 터미널 열기, 명령 붙여 넣기, 원인별 다음 행동, 다시 확인. */
-function FixCards({ command, third, platform, onCheck }: FixCardsProps) {
+function FixCards({ command, third, agent, platform, onCheck }: FixCardsProps) {
   /** 방금 명령을 복사했는지 여부. */
   const [copied, setCopied] = useState(false);
   /** "복사됨"을 지우는 타이머. */
@@ -383,7 +431,7 @@ function FixCards({ command, third, platform, onCheck }: FixCardsProps) {
 
   /** 명령을 클립보드에 넣는다. 명령은 main이 지금 상태에서 다시 정한다. */
   const handleCopy = () => {
-    void window.stardraft.send({ type: 'copy-agent-fix-command' }).then(() => {
+    void window.stardraft.send({ type: 'copy-agent-fix-command', agent }).then(() => {
       setCopied(true);
       if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
       copiedTimer.current = window.setTimeout(() => setCopied(false), COPIED_NOTICE_MS);
@@ -420,7 +468,7 @@ function FixCards({ command, third, platform, onCheck }: FixCardsProps) {
             <div className="mini-browser">
               <div className="mini-browser-bar" />
               <div className="mini-browser-body">
-                Claude에 로그인
+                {LOGIN_SITES[agent]}에 로그인
                 <br />
                 <span className="mini-browser-go">승인</span>
               </div>
@@ -461,6 +509,8 @@ const AUTH_METHOD_LABELS: Record<string, string> = {
   'claude.ai': 'Claude 계정(claude.ai)',
   api_key_helper: 'apiKeyHelper',
   none: '로그인 안 됨',
+  chatgpt: 'ChatGPT 계정',
+  'api-key': 'API 키',
 };
 
 /** 경로, 버전, 로그인 방식, PATH 출처, 찾아본 곳, CLI 오류 원문. */

@@ -1,13 +1,15 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentConnection } from '../agent/agent-connection';
+import { AgentConnections } from '../agent/agent-connections';
 import { AgentPreferences } from '../agent/agent-preferences';
 import { CHECK_RUN_INPUT } from '../agent/check-run';
 import { MentionBundles } from '../bundles/mention-bundles';
 import { MentionDetection } from '../detection/mention-detection';
 import { claudeNotLoggedInStream, claudeSuccessStream, fakeClaudeAuthStatus } from '../fakes/fake-claude-stream';
+import { codexModelsOutput, codexSuccessStream, fakeCodexLoginStatus } from '../fakes/fake-codex-events';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeExecutor } from '../fakes/fake-executor';
 import { FAKE_ME, FakeFlowApi } from '../fakes/fake-flow-api';
@@ -376,6 +378,7 @@ async function realAgent(tempRoot: string) {
   const problems = new GlobalProblems({ notifier, clock, logger, notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }) });
   const settingsStore = new MemorySettingsStore({ detectionStarted: true, agentCliPaths: { 'claude-code': FAKE_CLI } });
   const connection = new AgentConnection({
+    agent: 'claude-code',
     platform: 'darwin',
     env: { PATH: '/usr/bin:/bin', HOME: tempRoot },
     homeDir: tempRoot,
@@ -391,7 +394,8 @@ async function realAgent(tempRoot: string) {
   const preferences = new AgentPreferences({
     settingsStore,
     logger,
-    connectedAgents: () => (connection.isConnected() ? [connection.state().agent] : []),
+    connectedAgents: () => (connection.isConnected() ? [connection.agent] : []),
+    listedModels: () => connection.models(),
   });
   await preferences.load();
   /** 앱처럼 기본 에이전트의 연결로 실행하고, 연결이 바뀌면 대기열에 알리는 에이전트. */
@@ -1925,7 +1929,7 @@ describe('대기열과 에이전트 연결 확인', () => {
     const second = bundles.state()[1];
     expect(second).toMatchObject({ status: 'generating', failure: null, runs: [] });
     expect(real.draftRuns()).toBe(1);
-    expect(real.problems.current()?.problem).toEqual({ cause: 'agent', reason: 'check-failed' });
+    expect(real.problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'check-failed' });
     expect(real.notifier.sent).toHaveLength(1);
 
     // 사용자가 고친 뒤 설정의 에이전트 칸에서 다시 확인한다.
@@ -1953,7 +1957,7 @@ describe('대기열과 에이전트 연결 확인', () => {
     const [bundle] = bundles.state();
     expect(bundle).toMatchObject({ status: 'generating', failure: null });
     expect(bundle?.runs.map((run) => run.result)).toEqual(['not-logged-in']);
-    expect(real.problems.current()?.problem).toEqual({ cause: 'agent', reason: 'not-logged-in' });
+    expect(real.problems.current()?.problem).toEqual({ cause: 'agent', agent: 'claude-code', reason: 'not-logged-in' });
     expect(real.notifier.sent).toHaveLength(1);
 
     real.cli.loggedIn = true;
@@ -1963,6 +1967,121 @@ describe('대기열과 에이전트 연결 확인', () => {
     expect(bundles.get(bundle!.id)?.status).toBe('ready');
     expect(bundles.get(bundle!.id)?.runs.map((run) => run.result)).toEqual(['not-logged-in', 'succeeded']);
     expect(real.problems.current()).toBeNull();
+  });
+});
+
+/**
+ * 가짜 프로세스 실행기 위에 macOS의 실제 연결 확인 묶음(Claude Code와 Codex)과 기본 에이전트·모델 선택을 만든다.
+ * 기본 에이전트로 Codex와 그 모델을 골라 둔 설정이다. Codex는 Homebrew처럼 버전 폴더의 실제 파일을 링크로 가리킨다.
+ * Codex 선택 실행은 입력의 첫 후보 저장소를 고르고, 초안 실행은 첫 루트(-C)를 근거의 저장소로 드는 초안을 낸다.
+ */
+async function realCodexAgents(tempRoot: string) {
+  /** Codex 실제 파일. */
+  const codexReal = join(tempRoot, 'Caskroom', 'codex', '0.163.0', 'bin', 'codex');
+  mkdirSync(dirname(codexReal), { recursive: true });
+  writeFileSync(codexReal, '#!/bin/sh\n');
+  chmodSync(codexReal, 0o755);
+  /** 설정에 저장한 Codex 경로(링크). */
+  const codexLink = join(tempRoot, 'codex-link');
+  symlinkSync(codexReal, codexLink);
+  /** 실행기가 띄우는 Codex 실제 경로. macOS 임시 폴더는 링크 아래에 있어 실제 경로로 잡는다. */
+  const codexPath = realpathSync(codexReal);
+
+  const runner = new FakeProcessRunner();
+  runner.respond(FAKE_CLI, ['--version'], exited(0, '2.1.303 (Claude Code)\n'));
+  runner.respond(FAKE_CLI, ['--restricted', 'auth', 'status'], exited(0, fakeClaudeAuthStatus.loggedIn));
+  runner.respondWhen((request) => request.command === FAKE_CLI && request.args[0] === '-p', exited(0, claudeSuccessStream({ ok: true })));
+  runner.respond(codexLink, ['--version'], exited(0, 'codex-cli 0.163.0\n'));
+  runner.respond(codexLink, ['login', 'status'], exited(0, '', fakeCodexLoginStatus.chatgpt));
+  runner.respond(codexLink, ['debug', 'models'], exited(0, codexModelsOutput([{ slug: 'gpt-fake-pro', display_name: 'GPT-Fake-Pro', visibility: 'list' }])));
+  runner.respondWhen(
+    (request) => request.command === codexPath && request.args[0] === 'exec',
+    (request) => {
+      if (request.stdin === CHECK_RUN_INPUT) return exited(0, codexSuccessStream({ ok: true }));
+      /** 선택 실행 입력의 첫 후보 저장소. */
+      const candidate = /# 후보 저장소\n- (.+)\n/.exec(request.stdin ?? '')?.[1];
+      if (candidate) return exited(0, codexSuccessStream({ verdict: 'chosen', repositories: [candidate], reason: '가짜 이유' }));
+      return exited(0, codexSuccessStream(draftOutput(request.cwd)));
+    },
+  );
+  const clock = new FakeClock(NOW);
+  const logger = createLogger([{ write: () => {} }], clock);
+  const problems = new GlobalProblems({ notifier: new RecordingNotifier(), clock, logger, notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }) });
+  const settingsStore = new MemorySettingsStore({
+    detectionStarted: true,
+    agentCliPaths: { 'claude-code': FAKE_CLI, codex: codexLink },
+    defaultAgent: 'codex',
+    agentModels: { codex: 'gpt-fake-pro' },
+  });
+  const connections = new AgentConnections({
+    platform: 'darwin',
+    env: { PATH: '/usr/bin:/bin', HOME: tempRoot },
+    homeDir: tempRoot,
+    loginShell: '/bin/fake-login-shell',
+    runner,
+    settingsStore,
+    logger,
+    problems,
+    checkDir: join(tempRoot, 'agent-check'),
+    tempRoot,
+    isExecutableFile: async (filePath) => filePath === FAKE_CLI || filePath === codexLink,
+  });
+  const preferences = new AgentPreferences({
+    settingsStore,
+    logger,
+    connectedAgents: () => connections.connectedAgents(),
+    listedModels: (agent) => connections.models(agent),
+  });
+  await preferences.load();
+  /** 앱처럼 기본 에이전트의 연결로 실행하고, 연결이나 선택이 바뀌면 대기열에 알리는 에이전트. */
+  const queueAgent: Pick<DraftQueueOptions, 'agent' | 'onAgentChange'> = {
+    agent: () => draftAgentFrom(preferences.state(), connections.all),
+    onAgentChange: (listener) => {
+      /** 끊을 구독. */
+      const unsubscribes = [connections.onChange(listener), preferences.onChange(listener)];
+      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+    },
+  };
+  /** Codex로 띄운 선택·초안 실행 요청. 작동 확인은 뺀다. */
+  const codexRuns = () => runner.requests.filter((request) => request.command === codexPath && request.args[0] === 'exec' && request.stdin !== CHECK_RUN_INPUT);
+  /** Claude Code로 띄운 선택·초안 실행 요청. 작동 확인은 뺀다. */
+  const claudeRuns = () => runner.requests.filter((request) => request.command === FAKE_CLI && request.args[0] === '-p' && request.stdin !== CHECK_RUN_INPUT);
+  return { connections, preferences, queueAgent, codexPath, codexRuns, claudeRuns };
+}
+
+describe('대기열: Codex 실행기', () => {
+  it('기본 에이전트로 Codex를 고르면 선택 실행과 초안 실행이 Codex 권한 프로필 묶음과 고른 모델로 돌고, 실행 기록에 Codex와 확인한 CLI 버전을 남긴다', async () => {
+    const real = await realCodexAgents(workDir);
+    await real.connections.checkAll();
+    expect(real.preferences.state()).toMatchObject({ connectedAgents: ['claude-code', 'codex'], defaultAgent: 'codex' });
+    const { bundles, settingsStore, poll } = await setup(real.queueAgent);
+    /** 저장소가 둘인 작업 폴더. 첫 후보(api)를 고른다. */
+    const work = makeWorkFolder('work', ['api', 'web']);
+    const [api] = work.repos as [string];
+    mkdirSync(join(api, 'src/main/resources'), { recursive: true });
+    writeFileSync(join(api, 'src/main/resources/application-prod.yml'), 'retry: 5\n'.repeat(100));
+    settingsStore.settings.workFolders = [work.folder];
+
+    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
+
+    /** Codex 선택 실행과 초안 실행 요청. */
+    const [selection, draft] = real.codexRuns();
+    expect(real.codexRuns()).toHaveLength(2);
+    expect(real.claudeRuns()).toEqual([]);
+    // 선택 실행은 작업 폴더(git 저장소가 아님)에서 돌아 --skip-git-repo-check를 붙이고, 초안 실행은 고른 저장소에서 붙이지 않는다.
+    expect(selection?.args.slice(7, 10)).toEqual(['-C', work.folder, '--skip-git-repo-check']);
+    expect(draft?.args.slice(7, 9)).toEqual(['-C', api]);
+    expect(draft?.args).not.toContain('--skip-git-repo-check');
+    for (const request of [selection, draft]) {
+      expect(request?.args).toContain('default_permissions="stardraft"');
+      expect(request?.args.find((arg) => arg.startsWith('permissions.stardraft.filesystem='))).toContain(`"${real.codexPath}"="read"`);
+      expect(request?.args.slice(-3)).toEqual(['-m', 'gpt-fake-pro', '-']);
+    }
+    expect(bundles.state()[0]).toMatchObject({ status: 'ready', draft: { repositories: [api] } });
+    expect(bundles.state()[0]?.runs.map((run) => [run.kind, run.agent, run.cliVersion, run.model, run.result])).toEqual([
+      ['selection', 'codex', '0.163.0', 'gpt-fake-pro', 'succeeded'],
+      ['draft', 'codex', '0.163.0', 'gpt-fake-pro', 'succeeded'],
+    ]);
   });
 });
 

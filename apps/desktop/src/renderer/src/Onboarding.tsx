@@ -13,7 +13,7 @@ import {
   SETUP_REQUIREMENT_SECTIONS,
   windowsTrayHint,
 } from '../../shared/onboarding-text';
-import { AGENT_NAMES } from './AgentSection';
+import { AGENT_NAMES } from '../../shared/agent-names';
 
 /** 필수 설정 줄 오른쪽에 보일 상태 글자와 색. */
 const STATUS_TEXT: Record<SetupRequirementStatus, { label: string; className: string }> = {

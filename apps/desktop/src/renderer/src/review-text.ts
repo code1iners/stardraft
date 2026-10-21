@@ -16,7 +16,7 @@ import {
   type RunLineSnapshot,
   type WritingChangeSnapshot,
 } from '../../shared/ipc';
-import { AGENT_NAMES } from './AgentSection';
+import { AGENT_NAMES } from '../../shared/agent-names';
 
 /** 상태 태그의 이름과 색. 준비됨은 파랑, 생성 중·게시 중은 회색, 실패는 빨강, 확인이 필요한 상태는 노랑, 처리됨은 옅은 회색이다. */
 export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; className: string }> = {

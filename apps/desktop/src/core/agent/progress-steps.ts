@@ -22,6 +22,19 @@ export function searchingStep(query: string): string {
   return `검색 중: ${query.replace(/\s+/g, ' ').trim()}`;
 }
 
+/** 폴더의 파일 목록을 볼 때의 단계. Codex가 `ls`나 `rg --files`로 저장소를 둘러볼 때다. */
+export const LISTING_FILES_STEP = '파일 목록 보는 중';
+
+/** 읽기·검색·목록이 아닌 명령을 실행할 때의 단계. 너무 긴 명령은 앞부분만 쓴다. */
+export function runningCommandStep(command: string): string {
+  /** 한 줄로 줄인 명령. */
+  const line = command.replace(/\s+/g, ' ').trim();
+  return `명령 실행 중: ${line.length > COMMAND_STEP_MAX_LENGTH ? `${line.slice(0, COMMAND_STEP_MAX_LENGTH)}…` : line}`;
+}
+
+/** 명령 실행 단계에 쓰는 명령의 최대 길이. */
+const COMMAND_STEP_MAX_LENGTH = 80;
+
 /** 경로의 마지막 조각. macOS와 Windows 구분자를 모두 받는다. */
 function fileNameOf(filePath: string): string {
   return filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? filePath;

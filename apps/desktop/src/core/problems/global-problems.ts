@@ -1,5 +1,6 @@
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
+import type { AgentId } from '../ports/executor';
 import type { AppNotification, Notifier } from '../ports/notifier';
 
 /** "키 확인 필요"가 생긴 이유. 띠 문구가 이유마다 다르다. */
@@ -24,8 +25,8 @@ export type AgentProblemReason =
 export type GlobalProblem =
   /** 키 확인 필요. */
   | { cause: 'flow-key'; reason: FlowKeyProblemReason }
-  /** 에이전트 확인 필요. 대기열 전체를 멈추는 에이전트 전역 실패다. */
-  | { cause: 'agent'; reason: AgentProblemReason };
+  /** 에이전트 확인 필요. 대기열 전체를 멈추는 에이전트 전역 실패다. `agent`는 실패한 에이전트다. */
+  | { cause: 'agent'; agent: AgentId; reason: AgentProblemReason };
 
 /** 전역 문제의 원인. */
 export type GlobalProblemCause = GlobalProblem['cause'];

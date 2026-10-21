@@ -3,17 +3,10 @@ import { errorFields, type Logger } from '../logging/logger';
 import type { AgentId, Executor, ExecutorOutcome } from '../ports/executor';
 import type { SettingsStore } from '../ports/settings-store';
 import type { AgentProblemReason, GlobalProblems } from '../problems/global-problems';
+import { AGENT_CLIS, type AgentCli, type ListedModel } from './agent-cli';
+import type { AgentLaunch, AgentRunReport } from './agent-launch';
 import { CHECK_RUN_INPUT, CHECK_RUN_INSTRUCTIONS, CHECK_RUN_SCHEMA, CHECK_RUN_TIMEOUT_MS, isCheckRunPassed } from './check-run';
-import {
-  CLAUDE_COMMAND_NAME,
-  claudeUpdateCommand,
-  CLI_COMMAND_TIMEOUT_MS,
-  compareVersions,
-  MIN_CLAUDE_VERSION,
-  parseClaudeAuthStatus,
-  parseCliVersion,
-} from './claude-cli';
-import { ClaudeCodeExecutor, type ClaudeLaunch, type ClaudeRunReport } from './claude-code-executor';
+import { CLI_COMMAND_TIMEOUT_MS, compareVersions, parseCliVersion } from './claude-cli';
 import {
   agentProcessEnv,
   envValue,
@@ -46,7 +39,7 @@ export type AgentCheckFailure =
   | { step: 'version'; reason: 'unreadable' }
   /** 로그인되어 있지 않다. 로그인 명령으로 고친다. */
   | { step: 'login'; reason: 'not-logged-in' }
-  /** `apiKeyHelper`로만 인증한다. 실행 계약의 `--restricted`가 이 방식을 무시하므로 Claude 계정으로 로그인해야 한다. */
+  /** `apiKeyHelper`로만 인증한다(Claude Code). 실행 계약의 `--restricted`가 이 방식을 무시하므로 Claude 계정으로 로그인해야 한다. */
   | { step: 'login'; reason: 'api-key-helper' }
   /** 로그인 상태 명령이 실패했거나 출력을 읽지 못했다. */
   | { step: 'login'; reason: 'unreadable' }
@@ -79,7 +72,7 @@ export interface AgentCheckDetails {
   version: string | null;
   /** 필요한 가장 낮은 버전. */
   requiredVersion: string;
-  /** 로그인 방식(`claude.ai`, `api_key_helper` 등). */
+  /** 로그인 방식(Claude Code의 `claude.ai`·`api_key_helper`, Codex의 `chatgpt`·`api-key` 등). */
   authMethod: string | null;
   /** 자식 프로세스 PATH를 어디서 얻었는지. 아직 읽지 않았으면 `null`. */
   pathSource: PathSource | null;
@@ -101,6 +94,8 @@ export interface AgentConnectionState {
 
 /** 연결 확인에 필요한 OS 사실과 포트. */
 export interface AgentConnectionOptions {
+  /** 확인할 에이전트. */
+  agent: AgentId;
   /** 실행 중인 OS. */
   platform: NodeJS.Platform;
   /** 앱이 받은 환경 변수. */
@@ -115,7 +110,7 @@ export interface AgentConnectionOptions {
   settingsStore: SettingsStore;
   /** 진단 로그. CLI 출력 원문은 남기지 않는다. */
   logger: Logger;
-  /** 감지를 시작한 뒤 연결이 끊기면 알릴 전역 문제. */
+  /** 감지를 시작한 뒤 연결이 끊기면 알릴 전역 문제. 에이전트가 여럿이면 어느 문제를 보일지 가리는 쪽에 넘긴다. */
   problems: Pick<GlobalProblems, 'raise' | 'resolve'>;
   /** 점검 실행의 작업 폴더. 앱 전용 빈 폴더라 에이전트가 읽을 것이 없다. 없으면 만든다. */
   checkDir: string;
@@ -152,18 +147,17 @@ type FindResult =
   | { ok: true; cliPath: string; childPath: ChildPath; changed: boolean }
   | { ok: false; failure: AgentCheckFailure };
 
-/** 연결 확인하는 에이전트. Codex는 뒤 티켓이 더한다. */
-const AGENT: AgentId = 'claude-code';
-
 /**
- * 에이전트 연결 확인. Claude Code CLI를 찾고, 버전, 로그인, 작동 확인(점검 실행)을 차례로 확인한다.
+ * 에이전트 하나의 연결 확인. CLI를 찾고, 버전, 로그인, 작동 확인(점검 실행)을 차례로 확인한다. 에이전트마다 다른 것은 `AgentCli`가 정한다.
  * 앱을 시작할 때와 설정 "에이전트" 칸을 열 때 돌고, 실행이 전역 실패를 의심하게 끝나거나 CLI 버전이 바뀐 것을 알아채면 다시 돈다.
  * 찾은 절대 경로는 `settings.json`에 두고, 그 경로가 사라졌거나 다시 찾을 때만 다시 찾는다.
  * 로그인 셸에서 읽은 PATH는 자식 프로세스 환경에 쓰려고 들고 있는다.
  */
 export class AgentConnection {
-  /** Claude Code 실행기. 점검 실행과 선택·초안 실행이 이 연결 확인이 찾은 CLI와 환경으로 돈다. */
+  /** 이 에이전트의 실행기. 점검 실행과 선택·초안 실행이 이 연결 확인이 찾은 CLI와 환경으로 돈다. */
   readonly executor: Executor;
+  /** 에이전트마다 다른 CLI 정보. */
+  private readonly cli: AgentCli;
   /** 지금 상태. */
   private current: AgentConnectionState;
   /** 상태가 바뀔 때 부를 함수. */
@@ -174,6 +168,10 @@ export class AgentConnection {
   private cliPath: string | null = null;
   /** 작동 확인을 통과한 CLI 버전. 연결되지 않았으면 `null`. 실행에서 다른 버전을 보면 다시 확인한다. */
   private confirmedVersion: string | null = null;
+  /** 마지막으로 읽은 CLI 버전. 실행 이벤트가 버전을 알려 주지 않는 에이전트(Codex)의 실행 기록에 쓴다. */
+  private lastVersion: string | null = null;
+  /** 마지막으로 연결을 마친 확인이 읽은 모델 목록. */
+  private listedModels: ListedModel[] = [];
   /** 진행 중인 확인의 점검 실행을 끊는 장치. 새 확인이 시작되면 앞 확인의 점검 실행을 끊는다. */
   private runAbort: AbortController | null = null;
   /** 진행 중인 확인. 칸을 다시 열어도 같은 확인을 기다린다. */
@@ -184,14 +182,15 @@ export class AgentConnection {
   private readonly search: CliSearchContext;
 
   constructor(private readonly options: AgentConnectionOptions) {
+    this.cli = AGENT_CLIS[options.agent];
     this.search = {
       platform: options.platform,
       env: options.env,
       homeDir: options.homeDir,
       isExecutableFile: options.isExecutableFile ?? isExecutableFileOnDisk,
     };
-    this.current = { agent: AGENT, progress: { status: 'idle' }, details: this.emptyDetails() };
-    this.executor = new ClaudeCodeExecutor({
+    this.current = { agent: this.cli.agent, progress: { status: 'idle' }, details: this.emptyDetails() };
+    this.executor = this.cli.createExecutor({
       runner: options.runner,
       launch: () => this.launch(),
       ...(options.tempRoot === undefined ? {} : { tempRoot: options.tempRoot }),
@@ -199,9 +198,19 @@ export class AgentConnection {
     });
   }
 
+  /** 확인하는 에이전트. */
+  get agent(): AgentId {
+    return this.cli.agent;
+  }
+
   /** 지금 연결 상태. */
   state(): AgentConnectionState {
     return this.current;
+  }
+
+  /** 모델 선택 상자에 넣을 모델. 연결을 마친 확인이 읽은 것이고, 아직 연결된 적이 없으면 비어 있다. */
+  models(): readonly ListedModel[] {
+    return this.listedModels;
   }
 
   /** 상태가 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
@@ -253,11 +262,14 @@ export class AgentConnection {
     const result = await this.runCli(cliPath, ['--version']);
     /** 지금 CLI 버전. 읽지 못하면 `null`. */
     const version = result.kind === 'exited' && result.exitCode === 0 ? parseCliVersion(result.stdout) : null;
-    if (version === confirmed) return true;
+    if (version === confirmed) {
+      this.lastVersion = version;
+      return true;
+    }
 
     // 버전이 바뀌었거나 읽지 못했으면 연결 확인을 처음부터 돌린다.
-    if (version === null) this.options.logger.warn('agent.cli-version-unreadable', { agent: AGENT, result: result.kind });
-    else this.options.logger.info('agent.cli-version-changed', { agent: AGENT, from: confirmed, to: version });
+    if (version === null) this.options.logger.warn('agent.cli-version-unreadable', { agent: this.agent, result: result.kind });
+    else this.options.logger.info('agent.cli-version-changed', { agent: this.agent, from: confirmed, to: version });
     await this.check();
     // 그 확인이 도는 사이에 사용자가 [다시 찾기] 등으로 새 확인을 시작했으면 마지막 확인의 결과를 따른다.
     await this.settled();
@@ -270,22 +282,22 @@ export class AgentConnection {
   }
 
   /** 실행기가 띄울 CLI와 자식 환경. 아직 CLI를 찾지 못했으면 `null`. */
-  private launch(): ClaudeLaunch | null {
+  private launch(): AgentLaunch | null {
     /** 자식 환경. */
     const env = this.processEnv();
-    return this.cliPath !== null && env ? { cliPath: this.cliPath, env } : null;
+    return this.cliPath !== null && env ? { cliPath: this.cliPath, env, version: this.lastVersion } : null;
   }
 
   /** 선택·초안 실행이 끝나면 결과를 보고, 전역 실패가 의심되거나 CLI 버전이 바뀌었으면 연결 확인을 다시 돌린다. */
-  private recheckAfterRun({ kind, cliVersion, outcome }: ClaudeRunReport): void {
+  private recheckAfterRun({ kind, cliVersion, outcome }: AgentRunReport): void {
     if (kind === 'check') return;
     if (outcome.type === 'failed' && suspectsGlobalFailure(outcome.reason)) {
-      this.options.logger.warn('agent.global-failure-suspected', { agent: AGENT, reason: outcome.reason });
+      this.options.logger.warn('agent.global-failure-suspected', { agent: this.agent, reason: outcome.reason });
       void this.check();
       return;
     }
     if (cliVersion !== null && this.confirmedVersion !== null && cliVersion !== this.confirmedVersion) {
-      this.options.logger.info('agent.cli-version-changed', { agent: AGENT, from: this.confirmedVersion, to: cliVersion });
+      this.options.logger.info('agent.cli-version-changed', { agent: this.agent, from: this.confirmedVersion, to: cliVersion });
       void this.check();
     }
   }
@@ -306,7 +318,7 @@ export class AgentConnection {
     this.runAbort = abort;
     /** 이번 확인. */
     const run = this.runCheck(how, generation, abort.signal)
-      .catch((error: unknown) => this.options.logger.error('agent.check-crashed', { agent: AGENT, ...errorFields(error) }))
+      .catch((error: unknown) => this.options.logger.error('agent.check-crashed', { agent: this.agent, ...errorFields(error) }))
       .finally(() => {
         if (this.running === run) this.running = null;
       });
@@ -322,7 +334,7 @@ export class AgentConnection {
     const details = this.emptyDetails();
     /** 상태를 바꾼다. 앞 확인이면 바꾸지 않는다. */
     const publish = (progress: AgentCheckProgress) => {
-      if (isCurrent()) this.setState({ agent: AGENT, progress, details: { ...details } });
+      if (isCurrent()) this.setState({ agent: this.agent, progress, details: { ...details } });
     };
 
     // 1. 찾기
@@ -358,8 +370,13 @@ export class AgentConnection {
     if (!isCurrent()) return;
     if (!working.ok) return this.fail(publish, working.failure, isCurrent);
 
+    // 모델 목록은 연결을 마칠 때 읽는다. 읽지 못하면 비어 있고 화면에는 "기본 모델"만 남는다.
+    /** 읽은 모델 목록. */
+    const models = await this.cli.readModels((args, onStdoutLine) => this.runCli(found.cliPath, args, onStdoutLine));
+    if (!isCurrent()) return;
+    this.listedModels = models;
     this.confirmedVersion = details.version;
-    this.options.logger.info('agent.connected', { agent: AGENT, version: details.version, authMethod: details.authMethod });
+    this.options.logger.info('agent.connected', { agent: this.agent, version: details.version, authMethod: details.authMethod, models: models.length });
     publish({ status: 'connected' });
     this.options.problems.resolve('agent');
   }
@@ -371,14 +388,14 @@ export class AgentConnection {
     isCurrent: () => boolean,
   ): Promise<void> {
     this.confirmedVersion = null;
-    this.options.logger.warn('agent.check-failed', { agent: AGENT, step: failure.step, reason: failure.reason });
+    this.options.logger.warn('agent.check-failed', { agent: this.agent, step: failure.step, reason: failure.reason });
     publish({ status: 'failed', failure });
 
     // 감지를 시작하기 전에는 필수 설정 전 화면이 에이전트 상태를 보여 주므로 전역 문제로 띄우지 않는다.
     /** 감지를 시작했는지 여부. */
     const { detectionStarted } = await this.options.settingsStore.load();
     if (!isCurrent()) return;
-    if (detectionStarted) this.options.problems.raise({ cause: 'agent', reason: agentProblemReason(failure) });
+    if (detectionStarted) this.options.problems.raise({ cause: 'agent', agent: this.agent, reason: agentProblemReason(failure) });
     else this.options.problems.resolve('agent');
   }
 
@@ -387,7 +404,7 @@ export class AgentConnection {
     /** 저장된 설정. */
     const settings = await this.options.settingsStore.load();
     /** 저장된 CLI 경로. */
-    const saved = settings.agentCliPaths[AGENT] ?? null;
+    const saved = settings.agentCliPaths[this.agent] ?? null;
 
     /** 정한 CLI 경로. */
     let cliPath: string | null = null;
@@ -417,7 +434,7 @@ export class AgentConnection {
         : childPath;
     details.cliPath = cliPath;
     details.cliCommand = await this.terminalCommandFor(cliPath, childPath);
-    details.updateCommand = claudeUpdateCommand(await realpath(cliPath).catch(() => cliPath), details.cliCommand);
+    details.updateCommand = this.cli.updateCommand(await realpath(cliPath).catch(() => cliPath), details.cliCommand);
     return { ok: true, cliPath, childPath: usedPath, changed: cliPath !== saved };
   }
 
@@ -433,13 +450,13 @@ export class AgentConnection {
     }
 
     /** PATH에서 찾은 파일. */
-    const onPath = await findOnPath(CLAUDE_COMMAND_NAME, childPath.path, this.search, { skipExcluded: true });
+    const onPath = await findOnPath(this.cli.commandName, childPath.path, this.search, { skipExcluded: true });
     if (onPath !== null) return onPath;
 
     /** 알려진 설치 위치. */
     const dirs = knownInstallDirs(this.search);
     details.searchedDirs = dirs;
-    return findInDirs(CLAUDE_COMMAND_NAME, dirs, this.search);
+    return findInDirs(this.cli.commandName, dirs, this.search);
   }
 
   /** 자식 프로세스 PATH를 읽는다. macOS는 로그인 셸을 한 번 띄우고, Windows와 셸 읽기 실패는 앱이 받은 PATH를 쓴다. */
@@ -454,7 +471,7 @@ export class AgentConnection {
       shell: this.options.loginShell,
       env: definedEnv(this.options.env),
       cwd: this.options.homeDir,
-      commandName: CLAUDE_COMMAND_NAME,
+      commandName: this.cli.commandName,
     });
     if (read.kind === 'read') return { path: read.path, source: 'login-shell', commandPath: read.commandPath };
 
@@ -472,8 +489,8 @@ export class AgentConnection {
     const resolved =
       childPath.source === 'login-shell' && childPath.commandPath !== null
         ? childPath.commandPath
-        : await findOnPath(CLAUDE_COMMAND_NAME, childPath.path, this.search, { skipExcluded: false });
-    return terminalCommand(cliPath, CLAUDE_COMMAND_NAME, resolved === cliPath, this.options.platform);
+        : await findOnPath(this.cli.commandName, childPath.path, this.search, { skipExcluded: false });
+    return terminalCommand(cliPath, this.cli.commandName, resolved === cliPath, this.options.platform);
   }
 
   /** 찾은 CLI 경로를 설정에 저장한다. 저장하지 못해도 이번 확인은 이어 간다. */
@@ -481,13 +498,13 @@ export class AgentConnection {
     try {
       /** 저장 직전의 설정. 다른 칸의 변경을 덮지 않게 다시 읽는다. */
       const settings = await this.options.settingsStore.load();
-      await this.options.settingsStore.save({ ...settings, agentCliPaths: { ...settings.agentCliPaths, [AGENT]: cliPath } });
+      await this.options.settingsStore.save({ ...settings, agentCliPaths: { ...settings.agentCliPaths, [this.agent]: cliPath } });
     } catch (error) {
-      this.options.logger.error('agent.cli-path-save-failed', { agent: AGENT, ...errorFields(error) });
+      this.options.logger.error('agent.cli-path-save-failed', { agent: this.agent, ...errorFields(error) });
     }
   }
 
-  /** `claude --version`으로 필수 플래그를 지원하는 버전인지 본다. */
+  /** `--version`으로 필수 플래그를 지원하는 버전인지 본다. */
   private async checkVersion(cliPath: string, details: AgentCheckDetails): Promise<StepResult> {
     /** 버전 명령 결과. */
     const result = await this.runCli(cliPath, ['--version']);
@@ -499,35 +516,19 @@ export class AgentConnection {
     }
 
     details.version = version;
-    if (compareVersions(version, MIN_CLAUDE_VERSION) < 0) return { ok: false, failure: { step: 'version', reason: 'update-required' } };
+    this.lastVersion = version;
+    if (compareVersions(version, this.cli.minVersion) < 0) return { ok: false, failure: { step: 'version', reason: 'update-required' } };
     return { ok: true };
   }
 
-  /**
-   * 로그인을 확인한다. 실제 실행처럼 `--restricted`를 붙여, 앱 실행에서 무시되는 `apiKeyHelper`를 로그인으로 치지 않는다.
-   * 로그인이 안 되어 있으면 `--restricted` 없이 한 번 더 물어 `apiKeyHelper` 방식인지 가린다.
-   */
+  /** 앱이 실제로 쓰는 환경으로 로그인을 확인한다. 확인 방법은 에이전트마다 다르다. */
   private async checkLogin(cliPath: string, details: AgentCheckDetails): Promise<StepResult> {
-    /** 실제 실행과 같은 조건의 로그인 상태. */
-    const restricted = await this.runCli(cliPath, ['--restricted', 'auth', 'status']);
-    /** 읽은 로그인 상태. 로그인되지 않았으면 종료 코드 1로 끝나므로 종료 코드는 보지 않는다. */
-    const status = restricted.kind === 'exited' ? parseClaudeAuthStatus(restricted.stdout) : null;
-    if (status === null) {
-      details.errorOutput = errorOutputOf(restricted);
-      return { ok: false, failure: { step: 'login', reason: 'unreadable' } };
-    }
-    if (status.loggedIn) {
-      details.authMethod = status.authMethod;
-      return { ok: true };
-    }
-
-    /** 사용자 설정까지 본 로그인 상태. */
-    const unrestricted = await this.runCli(cliPath, ['auth', 'status']);
-    /** 사용자 설정의 로그인 방식. */
-    const userAuthMethod = unrestricted.kind === 'exited' ? parseClaudeAuthStatus(unrestricted.stdout)?.authMethod ?? null : null;
-    details.authMethod = userAuthMethod ?? status.authMethod;
-    if (userAuthMethod === 'api_key_helper') return { ok: false, failure: { step: 'login', reason: 'api-key-helper' } };
-    return { ok: false, failure: { step: 'login', reason: 'not-logged-in' } };
+    /** 로그인 확인 결과. */
+    const login = await this.cli.checkLogin((args, onStdoutLine) => this.runCli(cliPath, args, onStdoutLine));
+    details.authMethod = login.authMethod;
+    if (login.ok) return { ok: true };
+    if (login.reason === 'unreadable') details.errorOutput = errorOutputOf(login.failedResult);
+    return { ok: false, failure: { step: 'login', reason: login.reason } };
   }
 
   /**
@@ -559,14 +560,15 @@ export class AgentConnection {
     return { ok: false, failure: { step: 'run-check', reason: 'run-failed' } };
   }
 
-  /** 찾은 CLI를 앱이 실제로 쓰는 환경 변수로 실행한다. 찾기 단계를 통과한 뒤에만 부른다. */
-  private runCli(cliPath: string, args: string[]): Promise<ProcessResult> {
+  /** 찾은 CLI를 앱이 실제로 쓰는 환경 변수로 실행한다. 찾기 단계를 통과한 뒤에만 부른다. `onStdoutLine`을 주면 출력을 줄 단위로 받는다. */
+  private runCli(cliPath: string, args: string[], onStdoutLine?: (line: string) => void): Promise<ProcessResult> {
     return this.options.runner.run({
       command: cliPath,
       args,
       env: this.processEnv() ?? {},
       cwd: this.options.homeDir,
       timeoutMs: CLI_COMMAND_TIMEOUT_MS,
+      ...(onStdoutLine ? { onStdoutLine } : {}),
     });
   }
 
@@ -574,10 +576,10 @@ export class AgentConnection {
   private emptyDetails(): AgentCheckDetails {
     return {
       cliPath: null,
-      cliCommand: CLAUDE_COMMAND_NAME,
-      updateCommand: `${CLAUDE_COMMAND_NAME} update`,
+      cliCommand: this.cli.commandName,
+      updateCommand: `${this.cli.commandName} update`,
       version: null,
-      requiredVersion: MIN_CLAUDE_VERSION,
+      requiredVersion: this.cli.minVersion,
       authMethod: null,
       pathSource: null,
       searchedDirs: [],

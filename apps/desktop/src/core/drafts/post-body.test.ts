@@ -24,6 +24,8 @@ function mention(alarmId: string, overrides: Partial<BundledMention> = {}): Bund
     detectedAt: 1_000,
     text: '@[테스트 사용자](me@example.test) 질문',
     answered: false,
+    gone: false,
+    goneExcluded: false,
     ...overrides,
   };
 }

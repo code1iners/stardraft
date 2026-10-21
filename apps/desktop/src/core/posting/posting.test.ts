@@ -218,7 +218,10 @@ describe('게시: 카운트다운과 취소', () => {
 });
 
 describe('게시: 보내기 전 기록과 성공 기록', () => {
-  it('게시 요청이 Flow에 닿을 때 state.db에는 이미 "게시 요청 보냄"과 게시 본문이 적혀 있고, 성공하면 올라간 글의 ID와 게시됨이 저장된다', async () => {
+  /** 댓글 700의 댓글 멘션 위치. 게시한 글이 답한 범위로 기록된다. */
+  const THREAD_MENTION = { postId: POST_ID, remarkId: '700', replyId: '-1' };
+
+  it('게시 요청이 Flow에 닿을 때 state.db에는 이미 "게시 요청 보냄"과 게시 본문, 그 글이 답한 멘션 위치가 적혀 있고, 성공하면 올라간 글의 ID와 게시됨이 저장된다', async () => {
     const { clock, flow, stateStore, posting, bundleId } = await setup('thread');
     /** 게시 요청이 닿은 순간 저장소에 있던 묶음. */
     let atRequest: Promise<unknown> | null = null;
@@ -234,14 +237,18 @@ describe('게시: 보내기 전 기록과 성공 기록', () => {
     await settle();
 
     expect(await atRequest).toEqual([
-      expect.objectContaining({ id: bundleId, status: 'posting', posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, sentAt, postedId: null, failure: null } }),
+      expect.objectContaining({
+        id: bundleId,
+        status: 'posting',
+        posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, sentAt, postedId: null, failure: null, answeredMentions: [THREAD_MENTION] },
+      }),
     ]);
     expect(await stateStore.listBundles()).toEqual([
       expect.objectContaining({
         id: bundleId,
         status: 'posted',
         processedAt: sentAt,
-        posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, sentAt, postedId: '950000001', failure: null },
+        posting: { body: `@[김철수](${SENDER}) ${DRAFT_TEXT}`, sentAt, postedId: '950000001', failure: null, answeredMentions: [THREAD_MENTION] },
       }),
     ]);
   });
@@ -574,6 +581,20 @@ describe('게시 실패: 올라갔는지 알 수 없을 때의 확인', () => {
     const { clock, flow, bundles, posting, bundleId } = await setup('thread');
     flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'network' }, 1);
     flow.whenRequested(`POST /user/comments/${POST_ID}/replies/700`, () => flow.removeComment(POST_ID, '700'));
+
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+
+    expect(bundles.get(bundleId)).toMatchObject({ status: 'post-failed', posting: { failure: 'gone' } });
+  });
+
+  it('다시 조회할 때 대댓글 목록이 412(댓글이 존재하지 않음)를 주면 머리 댓글이 지워진 것으로 보고 게시 실패(지워짐)가 된다', async () => {
+    const { clock, flow, bundles, posting, bundleId } = await setup('thread');
+    // 대댓글이 10개를 넘어야 대댓글 목록 API를 부른다.
+    for (let index = 0; index < 11; index += 1) flow.addReply(POST_ID, '700', { replyId: String(901 + index), contents: `대댓글 ${index}` });
+    flow.failOn(`POST /user/comments/${POST_ID}/replies/700`, { kind: 'network' }, 1);
+    flow.failOn(`GET /user/comments/${POST_ID}/replies/700`, { kind: 'http', status: 412 });
 
     await posting.post(bundleId);
     clock.advance(COUNTDOWN_MS);

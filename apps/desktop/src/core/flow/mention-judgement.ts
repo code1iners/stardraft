@@ -1,6 +1,6 @@
 import type { MentionLocation } from '../detection/mention';
 import type { FlowAlarm, FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowPost, FlowReply } from '../ports/flow-api';
-import { hasMentionMarkupFor } from './mention-markup';
+import { hasMentionMarkupFor, postBodyMentions } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
 import { isSameFlowUser } from './user-id';
@@ -13,7 +13,7 @@ export type MentionDropReason =
   | 'unknown-location'
   /** 글에 나를 지목한 표기가 없다(`@전체`, 담당자 지정, 수정되어 표기가 사라짐). */
   | 'not-mentioned'
-  /** 글이 지워졌다(`404`, 목록에 없는 댓글·대댓글). */
+  /** 글이 지워졌다(`404`, 목록에 없는 댓글·대댓글, 지운 댓글의 대댓글 목록이 주는 `412`). */
   | 'gone'
   /** 글을 볼 권한이 없다(`403`). */
   | 'forbidden';
@@ -145,19 +145,12 @@ export class MentionJudge {
     const { postId, remarkId, replyId } = alarm;
     switch (mentionPlaceOf(alarm)) {
       case 'post': {
-        // 본문은 TEXT 컴포넌트의 MENTIONS와 CONTENTS 표기를 둘 다 본다. @전체는 MENTIONS에 "ALL"로 오므로 걸리지 않는다.
         /** 게시물. */
         const post = await this.post(postId);
         if (post.kind !== 'found') return post;
         /** 본문의 글 조각. */
         const components = post.value.textComponents;
-        return found({
-          text: components.map(({ contents }) => contents).join('\n'),
-          mentions: (userId) =>
-            components.some(
-              ({ contents, mentions }) => mentions.some((id) => isSameFlowUser(id, userId)) || hasMentionMarkupFor(contents, userId),
-            ),
-        });
+        return found({ text: components.map(({ contents }) => contents).join('\n'), mentions: (userId) => postBodyMentions(components, userId) });
       }
       case 'comment': {
         /** 댓글. */
@@ -278,12 +271,12 @@ function fetched<T>(result: FlowApiResult<T>): Fetched<T> {
 }
 
 /**
- * 조회 실패를 판정으로 바꾼다. 지워졌거나(`404`) 권한이 없으면(`403`) 버린다.
+ * 조회 실패를 판정으로 바꾼다. 지워졌거나(`404`, 지운 댓글의 대댓글 목록이 주는 `412`) 권한이 없으면(`403`) 버린다.
  * 그 밖의 실패(키 거부, 연결 실패, 요청 한도, 서버 오류, 모르는 응답)는 다음 조회에서 다시 판정한다.
  */
 function judgementOfFailure(failure: FlowApiFailure): Exclude<MentionJudgement, { kind: 'mention' }> {
   if (failure.kind === 'http' && failure.status === 403) return dropped('forbidden');
-  if (failure.kind === 'http' && failure.status === 404) return dropped('gone');
+  if (failure.kind === 'http' && (failure.status === 404 || failure.status === 412)) return dropped('gone');
   return { kind: 'undecided', failure };
 }
 

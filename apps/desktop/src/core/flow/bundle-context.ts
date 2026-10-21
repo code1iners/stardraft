@@ -1,10 +1,10 @@
 import { activeMentions, type MentionBundle } from '../bundles/mention-bundle';
-import type { MentionLocation } from '../detection/mention';
+import { mentionLocationOf, type MentionLocation } from '../detection/mention';
 import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowRemarkAuthorship, FlowReply } from '../ports/flow-api';
 import { compareAlarmIds } from './alarm-id';
 import { readableFlowTime } from './flow-time';
 import { myAnswersAmong, type MyAnswer } from './mention-judgement';
-import { namedMentionText } from './mention-markup';
+import { hasMentionMarkupFor, namedMentionText, postBodyMentions } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
 
@@ -69,9 +69,12 @@ export interface BundleContext {
 /** 맥락을 모으지 못한 이유. Flow API 실패이거나, 대상 댓글 스레드의 머리 댓글이 목록에 없다. */
 export type BundleContextFailure = FlowApiFailure | { kind: 'thread-gone' };
 
-/** 맥락을 모으지 못한 이유가 원문이 사라진 것인지 본다. 글이 지워졌거나(`404`), 볼 권한이 없거나(`403`), 머리 댓글이 지워졌으면 참이다. */
+/**
+ * 맥락을 모으지 못한 이유가 원문이 사라진 것인지 본다. 글이 지워졌거나(`404`), 볼 권한이 없거나(`403`),
+ * 머리 댓글이 지워졌으면(목록에 없음, 대댓글 목록의 `412` `NOT_EXISTS_ERROR`) 참이다.
+ */
 export function isSourceGone(failure: BundleContextFailure): boolean {
-  return failure.kind === 'thread-gone' || (failure.kind === 'http' && (failure.status === 403 || failure.status === 404));
+  return failure.kind === 'thread-gone' || (failure.kind === 'http' && (failure.status === 403 || failure.status === 404 || failure.status === 412));
 }
 
 /**
@@ -92,10 +95,13 @@ export function mentionWritingOf(context: BundleContext, mention: MentionLocatio
 }
 
 /**
- * 맥락을 모은 결과. 같은 조회에서 찾은 묶음 자리의 내 답도 함께 돌려준다. 초안을 만들기 직전의 "이미 답함" 판정에 쓴다.
+ * 맥락을 모은 결과. 같은 조회에서 찾은 묶음 자리의 내 답도 함께 돌려준다. 초안을 만들기 직전과 준비된 뒤의 "이미 답함" 판정에 쓴다.
  * 내 답은 본문 묶음이면 게시물에 쓴 내 댓글, 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다. 시스템 댓글은 들지 않는다.
+ * `goneMentions`는 묶음의 멘션 가운데 지금 Flow에서 사라진 것(글이 지워짐, 수정되어 나를 지목하지 않음)이다. 준비된 뒤의 변화 감시가 쓴다.
  */
-export type BundleContextResult = { ok: true; context: BundleContext; myAnswers: MyAnswer[] } | { ok: false; failure: BundleContextFailure };
+export type BundleContextResult =
+  | { ok: true; context: BundleContext; myAnswers: MyAnswer[]; goneMentions: MentionLocation[] }
+  | { ok: false; failure: BundleContextFailure };
 
 /** 맥락을 모을 묶음. 자리와 멘션만 본다. */
 export type ContextTarget = Pick<MentionBundle, 'postId' | 'remarkId' | 'mentions'>;
@@ -131,6 +137,9 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   let targetThread: ContextComment | null = null;
   /** 묶음 자리의 내 답. 본문 묶음이면 게시물에 쓴 내 댓글이다. */
   let myAnswers = myAnswersAmong(comments, myIds);
+  /** 멘션이 일어난 글이 지금도 나를 지목하는지 보는 함수. 본문 묶음이면 게시물 본문이다. */
+  let stillMentions = (mention: MentionLocation): boolean =>
+    mentionPlaceOf(mention) === 'post' && myIds.some((id) => postBodyMentions(post.value.textComponents, id));
   if (!postBody) {
     /** 대상 댓글 스레드의 머리 댓글. */
     const head = comments.find((comment) => comment.commentId === bundle.remarkId);
@@ -142,6 +151,19 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     const humanReplies = replies.value.filter(isHumanRemark).sort(compareRemarks((reply) => reply.replyId));
     targetThread = { ...remarkOf(head.commentId, head), replies: humanReplies.map((reply) => remarkOf(reply.replyId, reply)) };
     myAnswers = myAnswersAmong(humanReplies, myIds);
+    stillMentions = (mention) => {
+      switch (mentionPlaceOf(mention)) {
+        case 'comment':
+          return mention.remarkId === head.commentId && mentionsAnyOf(head.contents, myIds);
+        case 'reply': {
+          /** 멘션이 일어난 대댓글. 지워졌으면 없다. */
+          const reply = humanReplies.find((item) => item.replyId === mention.replyId);
+          return reply !== undefined && mentionsAnyOf(reply.contents, myIds);
+        }
+        default:
+          return false;
+      }
+    };
   }
 
   /** 멘션 표시를 하기 전의 맥락. */
@@ -168,7 +190,17 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
           .map((reply) => remarkOf(reply.replyId, reply)),
       })),
   };
-  return { ok: true, context: markContextMentions(context, bundle), myAnswers };
+  return {
+    ok: true,
+    context: markContextMentions(context, bundle),
+    myAnswers,
+    goneMentions: bundle.mentions.filter((mention) => !stillMentions(mention)).map(mentionLocationOf),
+  };
+}
+
+/** 댓글이나 대댓글에 사용자 ID들 가운데 하나를 가리키는 멘션 표기가 있는지 본다. */
+function mentionsAnyOf(contents: string, userIds: readonly string[]): boolean {
+  return userIds.some((id) => hasMentionMarkupFor(contents, id));
 }
 
 /**
@@ -226,8 +258,8 @@ function remarkOf(id: string, remark: FlowRemarkAuthorship & { contents: string;
   };
 }
 
-/** 글을 쓴 시각, 같으면 ID 크기로 비교하는 함수. 시각이 없는 글은 ID로만 비교한다. */
-function compareRemarks<T extends FlowRemarkAuthorship>(idOf: (remark: T) => string): (a: T, b: T) => number {
+/** 글을 쓴 시각, 같으면 ID 크기로 비교하는 함수. 시각이 없는 글은 ID로만 비교한다. 맥락의 댓글과 대댓글이 이 순서다. */
+export function compareRemarks<T extends Pick<FlowRemarkAuthorship, 'registeredDateTime'>>(idOf: (remark: T) => string): (a: T, b: T) => number {
   return (a, b) => {
     if (a.registeredDateTime && b.registeredDateTime && a.registeredDateTime !== b.registeredDateTime) {
       return a.registeredDateTime < b.registeredDateTime ? -1 : 1;

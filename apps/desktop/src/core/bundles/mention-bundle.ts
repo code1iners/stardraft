@@ -6,7 +6,7 @@ import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { MyAnswer } from '../flow/mention-judgement';
 import type { RepoCandidate } from '../repos/repo-candidates';
 
-/** 멘션 묶음의 상태. 원문 사라짐은 변화 감시 기능이 더한다. */
+/** 멘션 묶음의 상태. */
 export type BundleStatus =
   /** 생성 중. 선택 실행이나 초안 실행이 대기열에 있거나 돌고 있다. */
   | 'generating'
@@ -24,8 +24,10 @@ export type BundleStatus =
   | 'posted'
   /** 무시함. 사용자가 무시했다. */
   | 'ignored'
-  /** 이미 답함. Flow에 내 답이 있어 자동으로 옮겨졌다. */
-  | 'already-answered';
+  /** 이미 답함. Flow에 내 답이 있어 자동으로 옮겨졌다. 초안이 있으면 편집본까지 그대로 둔다. */
+  | 'already-answered'
+  /** 원문 사라짐. 멘션이 모두 사라졌다(삭제, 내 표기 제거, 접근 불가, 머리 댓글 삭제). 초안이 있으면 그대로 둔다. */
+  | 'source-gone';
 
 /** 펼친 창의 목록 묶음 하나. 검토 대기·생성 중·실패·처리됨이다. */
 export type BundleListGroup = 'awaiting-review' | 'generating' | 'failed' | 'processed';
@@ -45,6 +47,7 @@ export function listGroupOf(status: BundleStatus): BundleListGroup {
     case 'posted':
     case 'ignored':
     case 'already-answered':
+    case 'source-gone':
       return 'processed';
   }
 }
@@ -54,9 +57,22 @@ export function isProcessed(status: BundleStatus): boolean {
   return listGroupOf(status) === 'processed';
 }
 
+/** Flow에 내 답이 생겼거나 멘션이 사라져 자동으로 처리됨이 된 상태(이미 답함, 원문 사라짐)인지 본다. 되돌릴 때 그 까닭을 기록해 이후 판정에서 뺀다. */
+export function isAutoProcessed(status: BundleStatus): boolean {
+  return status === 'already-answered' || status === 'source-gone';
+}
+
 /** 처리됨에서 되돌릴 수 있는 상태인지 본다. 게시됨은 되돌릴 수 없다. */
 export function isRestorable(status: BundleStatus): boolean {
-  return status === 'ignored' || status === 'already-answered';
+  return status === 'ignored' || status === 'already-answered' || status === 'source-gone';
+}
+
+/**
+ * 준비된 뒤의 변화 감시 대상인지 본다. 사용자 행동을 기다리는 준비됨·실패·게시 실패·저장소 확인 필요다.
+ * 생성 중 묶음은 생성이 끝난 뒤 첫 주기부터 보고, 게시 중 묶음은 게시가 다룬다.
+ */
+export function isWatched(status: BundleStatus): boolean {
+  return status === 'ready' || status === 'failed' || status === 'post-failed' || status === 'repo-check-needed';
 }
 
 /** 저장소 선택 창으로 고른 구성으로 만들 수 있는 상태인지 본다. 준비됨(다른 저장소로 다시 만들기)과 저장소 확인 필요(저장소를 골라 만들기)다. */
@@ -122,6 +138,13 @@ export interface BundledMention extends Mention {
    * 빠진 멘션도 기록에는 남지만 묶음의 대기열 순서와 받는 사람에는 들지 않는다.
    */
   answered: boolean;
+  /**
+   * Flow에서 사라져(지워짐, 수정되어 내 표기가 빠짐, 볼 수 없음) 묶음에서 빠졌는지 여부. 준비된 뒤의 변화 감시가 정한다.
+   * 빠진 멘션도 기록에는 남지만 묶음의 대기열 순서와 받는 사람에는 들지 않는다.
+   */
+  gone: boolean;
+  /** 원문 사라짐에서 되돌릴 때 사라진 것으로 기록해, 이후 사라짐 판정에서 빼는 멘션인지 여부. 참이면 `gone`은 늘 거짓이다. */
+  goneExcluded: boolean;
 }
 
 /** 묶음에 기록한 내 답. "이미 답함" 판정을 뒷받침한 답이다. */
@@ -156,7 +179,15 @@ export interface PostingRecord {
   postedId: string | null;
   /** 게시 실패의 사유. 게시 실패가 아니면 `null`. */
   failure: PostFailureReason | null;
+  /**
+   * 이 글이 답한 멘션 위치. 게시를 누를 때 조회한 내용에 있던 멘션이고, 지금은 게시 요청을 보낼 때 묶음에 남은 멘션이다.
+   * 이 PC가 게시한 글은 이 멘션에만 답한 것으로 보고 "이미 답함"을 판정한다.
+   */
+  answeredMentions: MentionLocation[];
 }
+
+/** 이 PC가 게시한 글마다 그 글이 답한 멘션 위치(`mentionLocationKey`). 글의 ID(`commentId`·`replyId`)로 찾는다. */
+export type PostedAnswerRanges = ReadonlyMap<string, ReadonlySet<string>>;
 
 /** 멘션 묶음 자리. 같은 댓글 스레드(`remarkId`가 댓글)나 같은 게시물 본문(`remarkId`가 `"-1"`)이다. */
 export type BundlePlace = Pick<MentionLocation, 'postId' | 'remarkId'>;
@@ -194,6 +225,11 @@ export interface MentionBundle extends BundlePlace {
    * 원문 영역의 "스레드 보기"도 이것을 보인다. 아직 조회하지 못했으면 `null`.
    */
   context: BundleContext | null;
+  /**
+   * 준비된 뒤의 변화 감시가 마지막으로 조회한 맥락. 초안이 있는 묶음만 두고, 비교 기준(`context`)과 견주어 초안을 만든 뒤의 새 글과 수정된 원문을 가린다.
+   * 원문 영역은 이것을 지금 내용으로 보인다. 아직 감시하지 않았거나 비교 기준이 바뀌었으면 `null`.
+   */
+  watchedContext: BundleContext | null;
   /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
   repoCheck: RepoCheck | null;
   /**
@@ -246,30 +282,41 @@ export function compareMentions(a: Mention, b: Mention): number {
   return compareAlarmIds(a.alarmId, b.alarmId);
 }
 
-/** 묶음에 남은 멘션. "이미 답함"으로 빠진 멘션을 뺀 것이다. */
+/** 묶음에 남은 멘션. "이미 답함"으로 빠진 멘션과 사라진 멘션을 뺀 것이다. */
 export function activeMentions(bundle: Pick<MentionBundle, 'mentions'>): BundledMention[] {
-  return bundle.mentions.filter((mention) => !mention.answered);
+  return bundle.mentions.filter((mention) => !mention.answered && !mention.gone);
 }
 
 /**
- * 묶음의 멘션마다 "이미 답함"을 다시 판정한다. 그 멘션보다 나중에 쓴 내 답이 있으면 답한 멘션이다.
- * 되돌릴 때 기록한 답은 세지 않는다. 시각은 Flow 시각끼리 비교하고(PC 시계는 쓰지 않음), 읽을 수 없거나 같은 초면 답하지 않은 것으로 본다.
+ * 묶음의 멘션마다 "이미 답함"을 다시 판정한다. 되돌릴 때 기록한 답은 세지 않는다.
+ * 이 PC가 게시한 글(`postedRanges`에 있는 답)은 그 글이 답한 범위의 멘션에만 답한 것으로 보고 시각은 보지 않는다.
+ * 그 밖의 답은 그 멘션보다 나중에 썼으면 답한 것이다. 시각은 Flow 시각끼리 비교하고(PC 시계는 쓰지 않음), 읽을 수 없거나 같은 초면 답하지 않은 것으로 본다.
  * 잘못 건너뛰면 멘션을 놓치지만, 잘못 만든 묶음은 한 번 무시하면 끝나기 때문이다.
  */
-export function judgeAnswered(mentions: readonly Mention[], answers: readonly RecordedAnswer[]): BundledMention[] {
-  /** 세는 답 가운데 가장 나중에 쓴 시각. */
+export function judgeAnswered(
+  mentions: readonly BundledMention[],
+  answers: readonly RecordedAnswer[],
+  postedRanges: PostedAnswerRanges,
+): BundledMention[] {
+  /** 세는 답. */
+  const counted = answers.filter((answer) => !answer.excluded);
+  /** 시각으로 판정하는 답 가운데 가장 나중에 쓴 시각. */
   let latestAnswerAt: number | null = null;
-  for (const answer of answers) {
-    if (answer.excluded) continue;
+  for (const answer of counted) {
+    if (postedRanges.has(answer.answerId)) continue;
     /** 답을 쓴 시각. */
     const at = flowTimeToEpochMs(answer.registeredDateTime);
     if (at !== null && (latestAnswerAt === null || at > latestAnswerAt)) latestAnswerAt = at;
   }
 
   return [...mentions].sort(compareMentions).map((mention) => {
+    /** 멘션 위치. */
+    const location = mentionLocationKey(mention);
     /** 멘션 시각. */
     const at = flowTimeToEpochMs(mention.registeredDateTime);
-    return { ...mention, answered: latestAnswerAt !== null && at !== null && latestAnswerAt > at };
+    /** 이 PC가 게시한 글이 답한 범위에 드는지 여부. */
+    const inPostedRange = counted.some((answer) => postedRanges.get(answer.answerId)?.has(location) === true);
+    return { ...mention, answered: inPostedRange || (latestAnswerAt !== null && at !== null && latestAnswerAt > at) };
   });
 }
 

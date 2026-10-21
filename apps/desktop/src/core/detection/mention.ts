@@ -33,3 +33,8 @@ export interface Mention extends MentionLocation {
 export function mentionLocationKey({ postId, remarkId, replyId }: MentionLocation): string {
   return JSON.stringify([postId, remarkId, replyId]);
 }
+
+/** 멘션이나 알림에서 멘션 위치만 떼어 낸다. 저장할 때 다른 값이 섞이지 않게 한다. */
+export function mentionLocationOf({ postId, remarkId, replyId }: MentionLocation): MentionLocation {
+  return { postId, remarkId, replyId };
+}

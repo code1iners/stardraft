@@ -171,7 +171,7 @@ function start(): void {
         if (!flow || !account) return null;
         return new MentionJudge(flow.api, account.userId).myAnswers(place, [account.userId]);
       },
-      // 초안을 만들 묶음의 맥락과 묶음 자리의 내 답을 지금 키로 새로 조회한다.
+      // 초안을 만들거나 변화를 감시할 묶음의 맥락과 묶음 자리의 내 답을 지금 키로 새로 조회한다.
       collectContext: async (bundle) => {
         /** 지금 키로 만든 Flow 연결. */
         const flow = connectCurrentFlow();
@@ -288,7 +288,10 @@ function start(): void {
       reviewSections: new ReviewSections(),
       editorOpener,
     });
-    /** 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣는다. */
+    /**
+     * 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣고,
+     * 폴링마다 사용자 행동을 기다리는 묶음의 Flow 내용을 다시 조회한다(준비된 뒤의 변화 감시).
+     */
     const mentionDetection = new MentionDetection({
       stateStore: appData.stateStore,
       bundles: mentionBundles,

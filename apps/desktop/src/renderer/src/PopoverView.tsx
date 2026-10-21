@@ -69,7 +69,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   /** 고른 묶음과 대기열. */
   const selection = useBundleSelection(bundles, initialBundleId);
   /** 보이는 묶음과 대기열. */
-  const { queue, selected, select } = selection;
+  const { queue, selected, select, movedWhileViewing } = selection;
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패 토스트. */
   const { toast, failedToasts, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
@@ -85,7 +85,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
           <QueueHead queue={queue} selected={selected} onSelect={select} onExpand={handleExpand} />
           <main className="popover-body review-body">
             <BundleMeta bundle={selected} />
-            <BundleSections bundle={selected} windowKind="compact" sections={sections} />
+            <BundleSections bundle={selected} windowKind="compact" sections={sections} movedWhileViewing={movedWhileViewing} />
           </main>
           <BundleFooter
             bundle={selected}

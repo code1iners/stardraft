@@ -51,6 +51,7 @@ const NEXT_INTERVAL: NextPoll = { kind: 'interval' };
 /**
  * 멘션 감지: Flow 알림 목록을 60초마다 조회해 나를 직접 지목한 업무 멘션만 골라 멘션 묶음에 넣는다.
  * 묶음 자리마다 Flow에 이미 내 답이 있는지도 조회해 함께 넘긴다. Flow의 읽음 상태는 바꾸지 않는다(조회만 한다).
+ * 조회를 마칠 때마다 사용자 행동을 기다리는 묶음의 변화를 감시한다.
  */
 export class MentionDetection {
   /** 감지 상태. `key-rejected`는 Flow가 키를 거부해 폴링을 멈춘 상태다. */
@@ -228,7 +229,21 @@ export class MentionDetection {
       mentionCount: mentions.length,
       stopped: stoppedBy?.kind ?? null,
     });
-    return stoppedBy ? this.nextAfterFailure(flow, stoppedBy) : NEXT_INTERVAL;
+    if (stoppedBy) return this.nextAfterFailure(flow, stoppedBy);
+    await this.watchBundles();
+    return NEXT_INTERVAL;
+  }
+
+  /**
+   * 준비된 뒤의 변화 감시를 한다. 알림 조회를 마친 뒤 사용자 행동을 기다리는 묶음의 Flow 내용을 다시 조회한다.
+   * 알림을 끝까지 판정하지 못한 조회(키 거부, 연결 실패, 요청 한도)에서는 부르지 않는다. 감시가 실패해도 폴링은 이어 간다.
+   */
+  private async watchBundles(): Promise<void> {
+    try {
+      await this.options.bundles.watchWaiting();
+    } catch (error) {
+      this.options.logger.error('detection.watch-failed', errorFields(error));
+    }
   }
 
   /**

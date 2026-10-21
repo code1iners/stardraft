@@ -62,6 +62,7 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     createdAt: 1_000,
     processedAt: null,
     context: null,
+    watchedContext: null,
     repoCheck: null,
     userRepos: null,
     draft: null,

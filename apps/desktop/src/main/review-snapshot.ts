@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { bundleChanges, type BundleChanges } from '../core/bundles/bundle-changes';
 import { activeMentions, canEditDraft, canRegenerate, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
@@ -6,7 +7,8 @@ import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
 import { flowTimeToEpochMs } from '../core/flow/flow-time';
 import { splitMentionMarkup } from '../core/flow/mention-markup';
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
-import type { BundleContext, ContextWriting } from '../core/flow/bundle-context';
+import { mentionWritingOf, type BundleContext, type ContextWriting } from '../core/flow/bundle-context';
+import { commentKey, mentionWritingKey, POST_WRITING_KEY, replyKey } from '../core/flow/context-changes';
 import type { RepoCandidate } from '../core/repos/repo-candidates';
 import type { MappingMatch } from '../core/repos/repo-mappings';
 import type { RepoPickerState } from '../core/repos/repo-picker';
@@ -23,6 +25,7 @@ import type {
   ReviewSnapshot,
   RunLineSnapshot,
   ThreadEntrySnapshot,
+  WritingChangeSnapshot,
 } from '../shared/ipc';
 
 /** 참여 목록에서 찾은 Flow 프로젝트. */
@@ -82,12 +85,17 @@ export function bundleSnapshot(
 ): BundleSnapshot {
   /** 묶음에 남은 멘션. */
   const active = activeMentions(bundle);
-  /** 원문 영역에 보일 멘션. */
+  /** 준비된 뒤의 변화 감시가 찾은 변화. */
+  const changes = bundleChanges(bundle);
+  /** 수정된 글의 키. */
+  const edited = new Set(changes.editedWritings);
+  /** 원문 영역에 보일 멘션. 감시가 조회했으면 멘션 글의 지금 내용을 보인다. */
   const shown: BundleMentionSnapshot[] = (active.length > 0 ? active : bundle.mentions).map((mention) => ({
     senderName: mention.senderName,
     place: mentionPlaceOf(mention) ?? 'post',
     at: flowTimeToEpochMs(mention.registeredDateTime) ?? mention.detectedAt,
-    text: splitMentionMarkup(mention.text),
+    text: splitMentionMarkup((bundle.watchedContext && mentionWritingOf(bundle.watchedContext, mention)?.contents) ?? mention.text),
+    edited: edited.has(mentionWritingKey(mention) ?? ''),
   }));
   return {
     id: bundle.id,
@@ -104,7 +112,7 @@ export function bundleSnapshot(
     processedAt: bundle.processedAt,
     canRestore: isRestorable(bundle.status),
     canOpenInFlow: flowUrlOf(bundle, projectOf) !== null,
-    thread: bundle.context ? threadEntries(bundle.context) : [],
+    thread: threadEntries(bundle.watchedContext ?? bundle.context, changes),
     draft: bundle.draft && draftSnapshot(bundle, bundle.draft, mappingOf(bundle.projectId, bundle.draft.repositories)),
     run: runLine(bundle),
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
@@ -112,6 +120,7 @@ export function bundleSnapshot(
     repoCheck: bundle.repoCheck && repoCheckSnapshot(bundle.repoCheck, bundle.userRepos !== null),
     posting: postingSnapshot(bundle, countdownOf),
     postFailure: bundle.status === 'post-failed' ? (bundle.posting?.failure ?? 'no-response') : null,
+    changes: { newWritingCount: changes.newWritings.length, edited: changes.editedWritings.length > 0, goneMentionCount: changes.goneMentions },
   };
 }
 
@@ -209,20 +218,28 @@ function decidedBySelection(bundle: MentionBundle): boolean {
 /**
  * "스레드 보기"로 펼칠 글. 맥락의 게시물 본문 뒤에, 댓글 스레드 묶음이면 대상 댓글 스레드를, 본문 묶음이면 다른 댓글을 잇는다.
  * 댓글 스레드 묶음에서 다른 댓글 스레드는 넣지 않는다. 멘션 표기는 이름만 넘기고 사용자 ID는 넘기지 않는다.
+ * 초안을 만든 뒤 새로 달렸거나 수정된 글에는 그 변화를 붙인다. 맥락이 없으면 비어 있다.
  */
-function threadEntries(context: BundleContext): ThreadEntrySnapshot[] {
+function threadEntries(context: BundleContext | null, changes: BundleChanges): ThreadEntrySnapshot[] {
+  if (!context) return [];
   /** 게시물, 대상 댓글 스레드, 다른 댓글. */
   const { post, targetThread, otherComments } = context;
   /** 이어 붙일 댓글. */
   const comments = targetThread ? [targetThread] : otherComments;
+  /** 글 키로 그 글의 변화를 찾는다. */
+  const changeOf = (key: string): WritingChangeSnapshot | null =>
+    changes.newWritings.includes(key) ? 'new' : changes.editedWritings.includes(key) ? 'edited' : null;
   return [
-    entryOf(post, 'post'),
-    ...comments.flatMap((comment) => [entryOf(comment, 'comment'), ...comment.replies.map((reply) => entryOf(reply, 'reply'))]),
+    entryOf(post, 'post', changeOf(POST_WRITING_KEY)),
+    ...comments.flatMap((comment) => [
+      entryOf(comment, 'comment', changeOf(commentKey(comment.id))),
+      ...comment.replies.map((reply) => entryOf(reply, 'reply', changeOf(replyKey(reply.id)))),
+    ]),
   ];
 }
 
 /** 맥락의 글 하나를 "스레드 보기"의 글로 바꾼다. */
-function entryOf(writing: ContextWriting, place: MentionPlaceSnapshot): ThreadEntrySnapshot {
+function entryOf(writing: ContextWriting, place: MentionPlaceSnapshot, change: WritingChangeSnapshot | null): ThreadEntrySnapshot {
   return {
     authorName: writing.authorName,
     place,
@@ -230,6 +247,7 @@ function entryOf(writing: ContextWriting, place: MentionPlaceSnapshot): ThreadEn
     text: splitMentionMarkup(writing.contents),
     attachments: [...writing.attachments],
     mention: writing.mention,
+    change,
   };
 }
 

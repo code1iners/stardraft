@@ -12,8 +12,10 @@ import type {
   ReviewWindow,
   TextPartSnapshot,
   ThreadEntrySnapshot,
+  WritingChangeSnapshot,
 } from '../../shared/ipc';
 import {
+  ANSWERED_NOTICE,
   BUNDLE_PLACE_LABELS,
   BUNDLE_STATUS_TAGS,
   circledNumber,
@@ -25,6 +27,7 @@ import {
   LINKED_NOTE,
   linkButtonText,
   MENTION_PLACE_LABELS,
+  noticeText,
   postBodyLength,
   postBodyLengthText,
   POST_FAILURE_TEXT,
@@ -36,6 +39,7 @@ import {
   repoCheckText,
   runLineText,
   senderLine,
+  WRITING_CHANGE_LABELS,
 } from './review-text';
 import { useSecondsLeft, type FailedToastState, type IgnoreToastState } from './useReview';
 
@@ -171,8 +175,25 @@ function PartsText({ parts }: PartsTextProps) {
   );
 }
 
-/** 원문 영역 내용. 묶인 멘션 전부를 시간순으로 보인다. */
+/** 초안을 만든 뒤 바뀐 글에 붙이는 태그에 넘기는 값. */
+interface ChangeTagProps {
+  /** 바뀐 것. 바뀌지 않았으면 `null`이고 태그를 그리지 않는다. */
+  change: WritingChangeSnapshot | null;
+}
+
+/** 초안을 만든 뒤 새로 달린 글의 "새 글", 수정된 글의 "수정됨" 태그. */
+function ChangeTag({ change }: ChangeTagProps) {
+  if (!change) return null;
+  return <span className="tag warn">{WRITING_CHANGE_LABELS[change]}</span>;
+}
+
+/**
+ * 원문 영역 내용. 묶인 멘션 전부를 시간순으로 보이고, 수정된 멘션에는 "수정됨"을 붙인다.
+ * 초안을 만든 뒤 새로 달린 글은 멘션 뒤에 "새 글"로 보인다.
+ */
 function MentionList({ bundle }: BundleProps) {
+  /** 초안을 만든 뒤 새로 달린 글. */
+  const newEntries = bundle.thread.filter((entry) => entry.change === 'new');
   return (
     <ol className="mention-list">
       {bundle.mentions.map((mention, index) => (
@@ -181,9 +202,13 @@ function MentionList({ bundle }: BundleProps) {
             <strong>{mention.senderName || '이름 없음'}</strong>
             <span>{MENTION_PLACE_LABELS[mention.place]}</span>
             <span>{formatMentionTime(mention.at)}</span>
+            <ChangeTag change={mention.edited ? 'edited' : null} />
           </div>
           <PartsText parts={mention.text} />
         </li>
+      ))}
+      {newEntries.map((entry, index) => (
+        <ThreadEntryItem key={`new-${index}`} entry={entry} />
       ))}
     </ol>
   );
@@ -195,23 +220,37 @@ interface ThreadListProps {
   entries: ThreadEntrySnapshot[];
 }
 
-/** "스레드 보기"로 펼친 글. 앞선 글과 묶음의 멘션을 시간순으로 보이고, 멘션에는 태그를 붙인다. 대댓글은 들여 쓴다. */
+/** "스레드 보기"로 펼친 글. 앞선 글과 묶음의 멘션을 시간순으로 보이고, 멘션과 초안을 만든 뒤 바뀐 글에는 태그를 붙인다. 대댓글은 들여 쓴다. */
 export function ThreadList({ entries }: ThreadListProps) {
   return (
     <ol className="mention-list">
       {entries.map((entry, index) => (
-        <li key={index} className={`mention-item thread-item${entry.place === 'reply' ? ' is-reply' : ''}${entry.mention ? ' is-mention' : ''}`}>
-          <div className="mention-meta">
-            <strong>{entry.authorName || '이름 없음'}</strong>
-            <span>{MENTION_PLACE_LABELS[entry.place]}</span>
-            {entry.at !== null && <span>{formatMentionTime(entry.at)}</span>}
-            {entry.mention && <span className="tag warn">멘션</span>}
-          </div>
-          <PartsText parts={entry.text} />
-          {entry.attachments.length > 0 && <p className="small muted">첨부 있음({entry.attachments.join(', ')})</p>}
-        </li>
+        <ThreadEntryItem key={index} entry={entry} />
       ))}
     </ol>
+  );
+}
+
+/** "스레드 보기"의 글 하나에 넘기는 값. */
+interface ThreadEntryItemProps {
+  /** 보일 글. */
+  entry: ThreadEntrySnapshot;
+}
+
+/** "스레드 보기"의 글 하나. 쓴 사람·종류·시각과 멘션·변화 태그, 글, 첨부 파일 이름이다. */
+function ThreadEntryItem({ entry }: ThreadEntryItemProps) {
+  return (
+    <li className={`mention-item thread-item${entry.place === 'reply' ? ' is-reply' : ''}${entry.mention ? ' is-mention' : ''}`}>
+      <div className="mention-meta">
+        <strong>{entry.authorName || '이름 없음'}</strong>
+        <span>{MENTION_PLACE_LABELS[entry.place]}</span>
+        {entry.at !== null && <span>{formatMentionTime(entry.at)}</span>}
+        {entry.mention && <span className="tag warn">멘션</span>}
+        <ChangeTag change={entry.change} />
+      </div>
+      <PartsText parts={entry.text} />
+      {entry.attachments.length > 0 && <p className="small muted">첨부 있음({entry.attachments.join(', ')})</p>}
+    </li>
   );
 }
 
@@ -704,6 +743,8 @@ interface BundleSectionsProps extends BundleProps {
   windowKind: ReviewWindow;
   /** 창마다 영역의 펼침 상태. */
   sections: ReviewSnapshot['sections'];
+  /** 이 묶음을 보는 사이 변화 감시가 이미 답함·원문 사라짐으로 옮겼는지 여부. */
+  movedWhileViewing: boolean;
 }
 
 /**
@@ -711,7 +752,7 @@ interface BundleSectionsProps extends BundleProps {
  * 초안이 있으면 작은 창은 요구 → 초안 → 근거 → 저장소, 펼친 창은 요구 → 저장소 → 초안 → 근거 순이다.
  * 생성 중이면 진행, 실패면 오류, 저장소 확인 필요면 저장소 영역에 사유를 둔다.
  */
-export function BundleSections({ bundle, windowKind, sections }: BundleSectionsProps) {
+export function BundleSections({ bundle, windowKind, sections, movedWhileViewing }: BundleSectionsProps) {
   /** 이 창의 영역 펼침 상태. */
   const open = sections[windowKind];
   // "스레드 보기"는 보고 있는 묶음에만 펼친다. 다른 묶음으로 넘어가면 다시 멘션만 보인다.
@@ -748,7 +789,7 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
 
   return (
     <>
-      {bundle.newMentionCount > 0 && <NewMentionNotice bundle={bundle} />}
+      <BundleNotice bundle={bundle} movedWhileViewing={movedWhileViewing} />
       <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={`멘션 ${bundle.mentions.length}건`}>
         <OriginalBody bundle={bundle} threadOpen={threadBundleId === bundle.id} onToggleThread={handleToggleThread} />
       </ReviewSectionBlock>
@@ -1153,21 +1194,47 @@ export function RequirementEditor({ bundleId, requirement, directiveCount, edite
   );
 }
 
+/** 초안 위 알림 줄에 넘기는 값. */
+interface BundleNoticeProps extends BundleProps {
+  /** 이 묶음을 보는 사이 변화 감시가 이미 답함·원문 사라짐으로 옮겼는지 여부. */
+  movedWhileViewing: boolean;
+}
+
 /**
- * 합쳐진 새 멘션의 알림 줄. 준비됨 묶음이면 [다시 만들기]를 두어 새 멘션까지 넣어 다시 만든다.
- * 편집한 초안이 있으면 같은 줄에서 먼저 버릴지 묻는다. 저장소 확인 필요처럼 초안이 없는 묶음은 수만 보인다.
+ * 초안 위 알림 줄. 보는 사이 변화 감시가 묶음을 이미 답함으로 옮겼으면 "Flow에 이미 내 답이 있습니다"와 [되돌리기]를 띄운다.
+ * 그 밖에는 합쳐진 새 멘션과 초안을 만든 뒤의 변화(새 글, 원문 수정, 사라진 멘션)를 한 줄로 알린다. 알릴 것이 없으면 그리지 않는다.
+ * 준비됨 묶음이면 [다시 만들기]를 두어 지금 내용으로 다시 만든다. 편집한 초안이 있으면 같은 줄에서 먼저 버릴지 묻는다.
  */
-function NewMentionNotice({ bundle }: BundleProps) {
+function BundleNotice({ bundle, movedWhileViewing }: BundleNoticeProps) {
   /** 편집본을 버릴지 묻고 있는 묶음 ID. 묻지 않으면 `null`. */
   const [confirmingBundleId, setConfirmingBundleId] = useState<number | null>(null);
-  /** 새 멘션까지 넣어 다시 만들 수 있는지 여부. */
+  /** 알림 줄 문구. */
+  const text = noticeText(bundle);
+  /** 지금 내용으로 다시 만들 수 있는지 여부. */
   const canRegenerate = bundle.status === 'ready' && bundle.draft !== null;
   /** [다시 만들기]를 눌렀다. 편집한 초안이 있으면 먼저 묻는다. */
   const handleRegenerate = () => {
     if (bundle.draft?.edited) setConfirmingBundleId(bundle.id);
     else sendRegeneration(bundle.id, 'again');
   };
+  /** [되돌리기]를 눌렀다. 묶음은 초안을 가진 채 준비됨으로 돌아오고, 보고 있던 화면은 그대로다. */
+  const handleRestore = () => {
+    void window.stardraft.send({ type: 'restore-bundle', bundleId: bundle.id });
+  };
 
+  if (movedWhileViewing && bundle.status === 'already-answered' && bundle.draft) {
+    return (
+      <div className="notice-line">
+        <span>{ANSWERED_NOTICE}</span>
+        {bundle.canRestore && (
+          <button type="button" className="btn sm" onClick={handleRestore}>
+            되돌리기
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (text === null) return null;
   if (canRegenerate && confirmingBundleId === bundle.id) {
     /** 편집본을 버리고 다시 만든다. */
     const handleConfirm = () => {
@@ -1182,7 +1249,7 @@ function NewMentionNotice({ bundle }: BundleProps) {
   }
   return (
     <div className="notice-line">
-      <span>새 멘션 {bundle.newMentionCount}건</span>
+      <span>{text}</span>
       {canRegenerate && (
         <button type="button" className="btn sm" onClick={handleRegenerate}>
           다시 만들기

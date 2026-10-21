@@ -76,10 +76,10 @@ export type PreviousResult = Pick<Draft, 'requirement' | 'paragraphs' | 'evidenc
 /**
  * 재생성의 경로. 저장소 선택 창으로 다시 만들기는 고른 구성(`userRepos`)으로 처음 입력을 넘기므로 여기에 들지 않는다.
  * - `again`: 다시 만들기. 처음과 같은 구성의 입력이다. 준비됨 묶음에 새 멘션이 합쳐져 자동으로 다시 만들 때도 이것이다.
- * - `instructions`: 지시를 덧붙여 다시 만들기. 처음 입력에 직전 결과와 지금까지 덧붙인 지시 전부를 더한다.
+ * - `directive`: 지시를 덧붙여 다시 만들기. 처음 입력에 직전 결과와 지금까지 덧붙인 지시 전부를 더한다.
  * - `requirement`: 요구 고치기. 처음 입력에 고친 요구를 더하고, 직전 결과는 넘기지 않는다.
  */
-export type RegenerationPath = 'again' | 'instructions' | 'requirement';
+export type RegenerationPath = 'again' | 'directive' | 'requirement';
 
 /**
  * 생성 중 묶음을 다시 만드는 재생성. 직전 초안은 재생성을 시작할 때 바로 지우므로, 다음 초안 실행에 넘길 것을 여기에 둔다.

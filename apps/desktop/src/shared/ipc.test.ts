@@ -200,19 +200,19 @@ describe('렌더러가 보낸 명령 검사', () => {
   it('다시 만들기 명령은 묶음 ID를, 지시를 덧붙여 다시 만들기와 요구 고치기 명령은 묶음 ID와 비어 있지 않은 글을 받는다', () => {
     expect(parseAppCommand({ type: 'regenerate-bundle', bundleId: 3 })).toEqual({ type: 'regenerate-bundle', bundleId: 3 });
     expect(parseAppCommand({ type: 'regenerate-bundle', bundleId: 0 })).toBeNull();
-    expect(parseAppCommand({ type: 'regenerate-with-instruction', bundleId: 3, instruction: '더 짧게' })).toEqual({
-      type: 'regenerate-with-instruction',
+    expect(parseAppCommand({ type: 'regenerate-with-directive', bundleId: 3, directive: '더 짧게' })).toEqual({
+      type: 'regenerate-with-directive',
       bundleId: 3,
-      instruction: '더 짧게',
+      directive: '더 짧게',
     });
     expect(parseAppCommand({ type: 'fix-requirement', bundleId: 3, requirement: '횟수만 알고 싶다.' })).toEqual({
       type: 'fix-requirement',
       bundleId: 3,
       requirement: '횟수만 알고 싶다.',
     });
-    expect(parseAppCommand({ type: 'regenerate-with-instruction', bundleId: 3, instruction: '가'.repeat(REGENERATION_TEXT_MAX_LENGTH) })).not.toBeNull();
+    expect(parseAppCommand({ type: 'regenerate-with-directive', bundleId: 3, directive: '가'.repeat(REGENERATION_TEXT_MAX_LENGTH) })).not.toBeNull();
     for (const [field, type] of [
-      ['instruction', 'regenerate-with-instruction'],
+      ['directive', 'regenerate-with-directive'],
       ['requirement', 'fix-requirement'],
     ] as const) {
       expect(parseAppCommand({ type, bundleId: 3, [field]: '   ' })).toBeNull();

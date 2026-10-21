@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, ReviewSnapshot } from '../../shared/ipc';
-import { DiscardEditConfirm, InstructionForm, RequirementEditor, ThreadList } from './BundleDetail';
+import { DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList } from './BundleDetail';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
 
@@ -39,7 +39,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     ],
     senderNames: ['보낸 사람', '다른 사람'],
     newMentionCount: 0,
-    instructions: [],
+    directives: [],
     lastMentionAt: Date.UTC(2026, 9, 19, 23, 51),
     processedAt: null,
     canRestore: false,
@@ -747,9 +747,9 @@ describe('재생성', () => {
 
   it('지시를 덧붙이는 칸은 앞서 덧붙인 지시를 함께 넘긴다고 보이고, 편집한 초안이 있으면 버린다고 알린다. 빈 지시로는 다시 만들 수 없다', () => {
     /** 처음 지시를 덧붙이는 칸. */
-    const first = renderToStaticMarkup(<InstructionForm bundleId={4} instructions={[]} edited={false} onClose={() => {}} />);
+    const first = renderToStaticMarkup(<DirectiveForm bundleId={4} directives={[]} edited={false} onClose={() => {}} />);
     /** 지시를 덧붙인 적이 있고 초안을 편집한 묶음의 칸. */
-    const again = renderToStaticMarkup(<InstructionForm bundleId={4} instructions={['더 짧게', '존댓말로']} edited onClose={() => {}} />);
+    const again = renderToStaticMarkup(<DirectiveForm bundleId={4} directives={['더 짧게', '존댓말로']} edited onClose={() => {}} />);
 
     expect(textIn(first)).toContain('덧붙일 지시');
     expect(first).toMatch(/<button[^>]*disabled[^>]*>지시를 덧붙여 다시 만들기<\/button>/);
@@ -763,14 +763,15 @@ describe('재생성', () => {
 
   it('요구를 고치는 칸은 지금 요구를 채워 두고 "이 요구로 재생성"을 두며, 덧붙인 지시가 지워진다고 알린다', () => {
     /** 지시를 덧붙인 적이 있는 묶음의 요구 칸. */
-    const html = renderToStaticMarkup(<RequirementEditor bundleId={4} requirement="재시도 횟수를 알고 싶다." instructionCount={2} edited={false} onClose={() => {}} />);
+    const html = renderToStaticMarkup(<RequirementEditor bundleId={4} requirement="재시도 횟수를 알고 싶다." directiveCount={2} edited={false} onClose={() => {}} />);
     /** 초안을 편집한 묶음의 요구 칸. */
-    const edited = renderToStaticMarkup(<RequirementEditor bundleId={4} requirement="재시도 횟수를 알고 싶다." instructionCount={0} edited onClose={() => {}} />);
+    const edited = renderToStaticMarkup(<RequirementEditor bundleId={4} requirement="재시도 횟수를 알고 싶다." directiveCount={0} edited onClose={() => {}} />);
 
     expect(html).toMatch(/<textarea[^>]*>재시도 횟수를 알고 싶다.<\/textarea>/);
     expect(textIn(html)).toContain('이 요구로 재생성');
     expect(textIn(html)).toContain('덧붙인 지시 2개는 지워집니다.');
     expect(textIn(edited)).toContain('편집한 초안은 버리고 다시 만듭니다.');
+    expect(textIn(edited)).toContain('편집본을 버리고 이 요구로 재생성');
     expect(textIn(edited)).not.toContain('덧붙인 지시');
   });
 });

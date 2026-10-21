@@ -141,7 +141,7 @@ export const STATE_MIGRATIONS: readonly string[] = [
   // 11: 재생성. 덧붙인 지시(문자열 배열 JSON), 고친 요구, 다시 만드는 중인 재생성(경로·직전 결과·자동 선택으로 정한 저장소의 JSON)을 둔다.
   // 이미 있던 묶음은 지시를 덧붙이거나 요구를 고친 적이 없고 처음 만든 초안이다.
   `
-  ALTER TABLE mention_bundle ADD COLUMN instructions TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE mention_bundle ADD COLUMN directives TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE mention_bundle ADD COLUMN fixed_requirement TEXT;
   ALTER TABLE mention_bundle ADD COLUMN regeneration TEXT;
   `,
@@ -346,7 +346,7 @@ export class SqliteStateStore implements StateStore {
       draft: readJson<Draft>(row.draft),
       editedText: row.edited_text,
       removedRecipients: readJson<string[]>(row.removed_recipients) ?? [],
-      instructions: readJson<string[]>(row.instructions) ?? [],
+      directives: readJson<string[]>(row.directives) ?? [],
       fixedRequirement: row.fixed_requirement,
       regeneration: readJson<Regeneration>(row.regeneration),
       failure: readJson<DraftFailure>(row.failure),
@@ -389,7 +389,7 @@ export class SqliteStateStore implements StateStore {
       draft: jsonOrNull(bundle.draft),
       editedText: bundle.editedText,
       removedRecipients: JSON.stringify(bundle.removedRecipients),
-      instructions: JSON.stringify(bundle.instructions),
+      directives: JSON.stringify(bundle.directives),
       fixedRequirement: bundle.fixedRequirement,
       regeneration: jsonOrNull(bundle.regeneration),
       failure: jsonOrNull(bundle.failure),
@@ -402,9 +402,9 @@ export class SqliteStateStore implements StateStore {
         this.db
           .prepare(
             `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
-               context, repo_check, user_repos, draft, edited_text, removed_recipients, instructions, fixed_requirement, regeneration, failure, runs)
+               context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs)
              VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
-               @context, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @instructions, @fixedRequirement, @regeneration, @failure, @runs)`,
+               @context, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -415,7 +415,7 @@ export class SqliteStateStore implements StateStore {
           `UPDATE mention_bundle SET post_id = @postId, remark_id = @remarkId, project_id = @projectId, status = @status, post_title = @postTitle,
              connect_url = @connectUrl, new_mention_count = @newMentionCount, created_at = @createdAt, processed_at = @processedAt,
              context = @context, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, edited_text = @editedText,
-             removed_recipients = @removedRecipients, instructions = @instructions, fixed_requirement = @fixedRequirement,
+             removed_recipients = @removedRecipients, directives = @directives, fixed_requirement = @fixedRequirement,
              regeneration = @regeneration, failure = @failure, runs = @runs
            WHERE id = @id`,
         )
@@ -512,7 +512,7 @@ interface BundleRow {
   /** 받는 사람에서 뺀 사람의 사용자 ID 배열의 JSON. */
   removed_recipients: string;
   /** 덧붙인 지시 배열의 JSON. */
-  instructions: string;
+  directives: string;
   /** 고친 요구. 고친 적이 없으면 `null`. */
   fixed_requirement: string | null;
   /** 다시 만드는 중인 재생성의 JSON. 없으면 `null`. */

@@ -92,7 +92,7 @@ export function bundleSnapshot(
     mentions: shown,
     senderNames: [...new Set(shown.map((mention) => mention.senderName).filter(Boolean))],
     newMentionCount: bundle.newMentionCount,
-    instructions: [...bundle.instructions],
+    directives: [...bundle.directives],
     lastMentionAt: shown.length > 0 ? Math.max(...shown.map((mention) => mention.at)) : bundle.createdAt,
     processedAt: bundle.processedAt,
     canRestore: isRestorable(bundle.status),

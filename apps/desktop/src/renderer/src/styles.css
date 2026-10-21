@@ -1571,7 +1571,7 @@ textarea.regen-input {
   user-select: text;
 }
 
-.instruction-list {
+.directive-list {
   margin: 0;
   padding-left: 18px;
   color: var(--muted);

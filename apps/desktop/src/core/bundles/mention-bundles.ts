@@ -63,7 +63,7 @@ export type RunRepos =
 export type RegenerationRequest =
   | { path: 'again' }
   /** 덧붙일 지시. 앞뒤 공백을 떼고 비어 있으면 받지 않는다. */
-  | { path: 'instructions'; instruction: string }
+  | { path: 'directive'; directive: string }
   /** 고친 요구. 앞뒤 공백을 떼고 비어 있으면 받지 않는다. */
   | { path: 'requirement'; requirement: string };
 
@@ -432,7 +432,7 @@ export class MentionBundles {
   /** 실패 묶음을 [다시 시도]한다. 생성 중으로 돌아가 초안 대기열에 들어가고, 합쳐진 새 멘션도 이번 초안에 들어간다. */
   async retry(bundleId: number): Promise<void> {
     await this.change(bundleId, 'bundle.retried', (bundle) =>
-      bundle.status === 'failed' ? { ...bundle, status: 'generating', failure: null, newMentionCount: 0 } : null,
+      bundle.status === 'failed' ? { ...bundle, ...retried } : null,
     );
   }
 
@@ -451,7 +451,7 @@ export class MentionBundles {
             ...clearedForRegeneration,
             userRepos: [...repos],
             repoCheck: null,
-            instructions: [],
+            directives: [],
             fixedRequirement: null,
             regeneration: null,
           }
@@ -466,18 +466,12 @@ export class MentionBundles {
    * 고친 요구는 한 문장이라 줄바꿈을 공백으로 잇는다. 준비됨이 아니거나 덧붙일 지시나 고친 요구가 비어 있으면 아무것도 하지 않는다.
    */
   async regenerate(bundleId: number, request: RegenerationRequest): Promise<void> {
-    /** 덧붙일 지시나 고친 요구. 다시 만들기면 `null`. */
-    const text =
-      request.path === 'instructions' ? request.instruction.trim() : request.path === 'requirement' ? request.requirement.trim().replace(/\s*\n\s*/g, ' ') : null;
-    if (text === '') return;
+    /** 경로에 따라 바꿀 지시와 고친 요구. 덧붙일 지시나 고친 요구가 비었으면 `null`. */
+    const inputs = regenerationInputsOf(request);
+    if (!inputs) return;
     await this.change(bundleId, `bundle.regenerated-${request.path}`, (bundle) => {
       if (!bundle.draft || !canEditDraft(bundle.status)) return null;
-      return {
-        ...bundle,
-        ...regenerationOf(bundle, request.path),
-        instructions: request.path === 'instructions' ? [...bundle.instructions, text!] : request.path === 'requirement' ? [] : bundle.instructions,
-        fixedRequirement: request.path === 'requirement' ? text : null,
-      };
+      return { ...bundle, ...regenerationOf(bundle, request.path), ...inputs(bundle.directives) };
     });
   }
 
@@ -621,13 +615,16 @@ function newBundle(mention: Mention, now: number, resolution: RepoResolution | u
     draft: null,
     editedText: null,
     removedRecipients: [],
-    instructions: [],
+    directives: [],
     fixedRequirement: null,
     regeneration: null,
     failure: null,
     runs: [],
   };
 }
+
+/** 실패 묶음을 다시 시도할 때 바꿀 것. 생성 중으로 올라 초안 대기열에 들어가고, 합쳐진 새 멘션도 이번 초안에 들어간다. */
+const retried = { status: 'generating', failure: null, newMentionCount: 0 } as const satisfies Partial<MentionBundle>;
 
 /** 다시 만들 때 바로 지우는 것. 직전 초안과 편집본, 비교 기준(초안을 만들 때 넘긴 맥락)이다. 생성 중으로 올라 초안 대기열에 들어간다. */
 const clearedForRegeneration = {
@@ -649,10 +646,34 @@ function regenerationOf(bundle: Pick<MentionBundle, 'draft'>, path: Regeneration
   /** 재생성. */
   const regeneration: Regeneration = {
     path,
-    previous: path === 'instructions' ? structuredClone({ requirement: draft.requirement, paragraphs: draft.paragraphs, evidence: draft.evidence }) : null,
+    previous: path === 'directive' ? structuredClone({ requirement: draft.requirement, paragraphs: draft.paragraphs, evidence: draft.evidence }) : null,
     autoSelected: draft.autoSelection ? { repositories: [...draft.repositories], autoSelection: structuredClone(draft.autoSelection) } : null,
   };
   return { ...clearedForRegeneration, regeneration };
+}
+
+/**
+ * 재생성 경로에 따라 묶음의 지시와 고친 요구를 어떻게 바꿀지 정한다. 지금까지의 지시를 받아 바꿀 값을 돌려주는 함수다.
+ * 다시 만들기는 지시를 두고 고친 요구를 지운다. 지시를 덧붙이면 끝에 더하고, 요구를 고치면 지시를 비운다.
+ * 고친 요구는 한 문장이라 줄바꿈을 공백으로 잇는다. 앞뒤 공백을 뗀 지시나 고친 요구가 비었으면 `null`.
+ */
+function regenerationInputsOf(
+  request: RegenerationRequest,
+): ((directives: readonly string[]) => Pick<MentionBundle, 'directives' | 'fixedRequirement'>) | null {
+  switch (request.path) {
+    case 'again':
+      return (directives) => ({ directives: [...directives], fixedRequirement: null });
+    case 'directive': {
+      /** 덧붙일 지시. */
+      const directive = request.directive.trim();
+      return directive === '' ? null : (directives) => ({ directives: [...directives, directive], fixedRequirement: null });
+    }
+    case 'requirement': {
+      /** 고친 요구. */
+      const requirement = request.requirement.trim().replace(/\s*\n\s*/g, ' ');
+      return requirement === '' ? null : () => ({ directives: [], fixedRequirement: requirement });
+    }
+  }
 }
 
 /** 사용자가 고른 구성의 폴더가 지금 모두 있는지 본다. 매핑과 같은 모양으로 돌려준다. */
@@ -728,7 +749,7 @@ function mergedNewMentions(bundle: UnsavedBundle, count: number): Partial<Mentio
       if (bundle.draft && !isDraftTouched(bundle)) return regenerationOf(bundle, 'again');
       break;
     case 'failed':
-      return { status: 'generating', failure: null, newMentionCount: 0 };
+      return retried;
     default:
       break;
   }

@@ -572,7 +572,7 @@ export interface BundleSnapshot {
   /** 합쳐진 새 멘션 수. 0보다 크면 "새 멘션 N건"을 보인다. */
   newMentionCount: number;
   /** 이 묶음에 지금까지 덧붙인 지시. 덧붙인 순서다. 지시를 덧붙여 다시 만들면 이것도 함께 넘긴다. */
-  instructions: string[];
+  directives: string[];
   /** 목록 행에 보일 시각. 가장 최근 멘션의 시각(Unix epoch 밀리초)이다. */
   lastMentionAt: number;
   /** 처리한 시각(Unix epoch 밀리초). 처리됨이 아니면 `null`. */
@@ -745,7 +745,7 @@ export type AppCommand =
   /** 준비됨 묶음을 처음과 같은 구성의 입력으로 다시 만든다. 준비됨이 아니면 main이 무시한다. */
   | { type: 'regenerate-bundle'; bundleId: number }
   /** 준비됨 묶음에 지시를 덧붙여 다시 만든다. 직전 결과와 지금까지 덧붙인 지시 전부를 넘긴다. */
-  | { type: 'regenerate-with-instruction'; bundleId: number; instruction: string }
+  | { type: 'regenerate-with-directive'; bundleId: number; directive: string }
   /** 준비됨 묶음의 요구를 고쳐 "이 요구로 재생성"한다. 그때까지의 지시는 지운다. */
   | { type: 'fix-requirement'; bundleId: number; requirement: string }
   /** 저장소 선택 창의 후보 하나를 체크하거나 뺀다. 후보에 없는 경로는 main이 받지 않는다. */
@@ -886,9 +886,9 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isBundleIdInput(candidate.bundleId) && Number.isSafeInteger(candidate.index) && (candidate.index as number) >= 0 && isRecipientNameInput(candidate.name)
         ? { type: 'remove-recipient', bundleId: candidate.bundleId, index: candidate.index as number, name: candidate.name }
         : null;
-    case 'regenerate-with-instruction':
-      return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.instruction)
-        ? { type: 'regenerate-with-instruction', bundleId: candidate.bundleId, instruction: candidate.instruction }
+    case 'regenerate-with-directive':
+      return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.directive)
+        ? { type: 'regenerate-with-directive', bundleId: candidate.bundleId, directive: candidate.directive }
         : null;
     case 'fix-requirement':
       return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.requirement)

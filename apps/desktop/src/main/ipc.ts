@@ -273,8 +273,8 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'regenerate-bundle':
       await drafts.regenerate(command.bundleId, { path: 'again' });
       return;
-    case 'regenerate-with-instruction':
-      await drafts.regenerate(command.bundleId, { path: 'instructions', instruction: command.instruction });
+    case 'regenerate-with-directive':
+      await drafts.regenerate(command.bundleId, { path: 'directive', directive: command.directive });
       return;
     case 'fix-requirement':
       await drafts.regenerate(command.bundleId, { path: 'requirement', requirement: command.requirement });

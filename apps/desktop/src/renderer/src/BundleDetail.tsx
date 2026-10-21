@@ -675,7 +675,7 @@ export function BundleSections({ bundle, windowKind, sections }: BundleSectionsP
             <RequirementEditor
               bundleId={bundle.id}
               requirement={draft.requirement.text}
-              instructionCount={bundle.instructions.length}
+              directiveCount={bundle.directives.length}
               edited={draft.edited}
               onClose={() => setRequirementBundleId(null)}
             />
@@ -719,23 +719,23 @@ interface BundleFooterProps extends BundleProps {
  */
 export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }: BundleFooterProps) {
   // 바닥 줄의 칸은 보고 있는 묶음에만 연다. 다른 묶음으로 넘어가거나 준비됨이 아니게 되면 닫힌다.
-  /** 바닥 줄에 연 칸과 그 묶음 ID. 열지 않았으면 `null`. */
-  const [pane, setPane] = useState<{ bundleId: number; kind: FooterPane } | null>(null);
+  /** 바닥 줄에 연 칸과 그 묶음 ID. 지시를 쓰는 칸이거나, 그 경로로 다시 만들기 전에 편집본을 버릴지 묻는 칸이다. 열지 않았으면 `null`. */
+  const [pane, setPane] = useState<{ bundleId: number; kind: RegenerateChoice } | null>(null);
   /** 지금 묶음에 연 칸. */
   const openPane = bundle.status === 'ready' && bundle.draft && pane?.bundleId === bundle.id ? pane.kind : null;
   /** 칸을 닫는다. */
   const closePane = () => setPane(null);
   /** 재생성 메뉴에서 고른 경로를 한다. 편집한 초안이 있으면 먼저 버릴지 묻고, 지시를 덧붙이면 지시를 쓰는 칸을 연다. */
   const handlePick = (choice: RegenerateChoice) => {
-    if (choice === 'instructions') setPane({ bundleId: bundle.id, kind: 'instructions' });
+    if (choice === 'directive') setPane({ bundleId: bundle.id, kind: 'directive' });
     else if (bundle.draft?.edited) setPane({ bundleId: bundle.id, kind: choice });
     else sendRegeneration(bundle.id, choice);
   };
 
-  if (openPane === 'instructions') {
+  if (openPane === 'directive') {
     return (
       <footer className="review-foot stacked">
-        <InstructionForm bundleId={bundle.id} instructions={bundle.instructions} edited={bundle.draft?.edited === true} onClose={closePane} />
+        <DirectiveForm bundleId={bundle.id} directives={bundle.directives} edited={bundle.draft?.edited === true} onClose={closePane} />
       </footer>
     );
   }
@@ -792,20 +792,17 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry }:
 }
 
 /** 재생성 메뉴의 항목. 다시 만들기, 지시를 덧붙여 다시 만들기, 다른 저장소로 다시 만들기다. */
-type RegenerateChoice = 'again' | 'instructions' | 'other-repos';
-
-/** 바닥 줄에 여는 칸. 지시를 쓰는 칸이거나, 그 경로로 다시 만들기 전에 편집본을 버릴지 묻는 칸이다. */
-type FooterPane = RegenerateChoice;
+type RegenerateChoice = 'again' | 'directive' | 'other-repos';
 
 /** 재생성 메뉴 항목의 이름. 메뉴에 이 순서로 보인다. */
 const REGENERATE_CHOICES: readonly { choice: RegenerateChoice; label: string }[] = [
   { choice: 'again', label: '다시 만들기' },
-  { choice: 'instructions', label: '지시를 덧붙여 다시 만들기' },
+  { choice: 'directive', label: '지시를 덧붙여 다시 만들기' },
   { choice: 'other-repos', label: '다른 저장소로 다시 만들기' },
 ];
 
 /** 묻지 않고 바로 하는 재생성을 main에 보낸다. 다시 만들기는 바로 다시 만들고, 다른 저장소로 다시 만들기는 저장소 선택 창을 연다. */
-function sendRegeneration(bundleId: number, choice: Exclude<RegenerateChoice, 'instructions'>) {
+function sendRegeneration(bundleId: number, choice: Exclude<RegenerateChoice, 'directive'>) {
   void window.stardraft.send(choice === 'again' ? { type: 'regenerate-bundle', bundleId } : { type: 'open-repo-picker', bundleId });
 }
 
@@ -868,11 +865,11 @@ export function DiscardEditConfirm({ onConfirm, onCancel }: DiscardEditConfirmPr
 const DISCARD_EDIT_NOTE = '편집한 초안은 버리고 다시 만듭니다.';
 
 /** 지시를 쓰는 칸에 넘기는 값. */
-interface InstructionFormProps {
+interface DirectiveFormProps {
   /** 다시 만들 묶음 ID. */
   bundleId: number;
   /** 앞서 덧붙인 지시. 덧붙인 순서다. */
-  instructions: string[];
+  directives: string[];
   /** 초안을 편집했는지 여부. 참이면 편집본을 버린다고 알린다. */
   edited: boolean;
   /** 칸을 닫는다. 보내거나 [취소]를 누르면 부른다. */
@@ -883,34 +880,34 @@ interface InstructionFormProps {
  * 지시를 덧붙여 다시 만드는 칸. 바닥 줄 자리에 열린다. 앞서 덧붙인 지시가 있으면 함께 넘긴다고 보이고,
  * 편집한 초안이 있으면 버린다고 알리며 버튼 이름에도 적는다. 빈 지시로는 보낼 수 없다.
  */
-export function InstructionForm({ bundleId, instructions, edited, onClose }: InstructionFormProps) {
+export function DirectiveForm({ bundleId, directives, edited, onClose }: DirectiveFormProps) {
   /** 쓰고 있는 지시. */
   const [text, setText] = useState('');
   /** 지시를 덧붙여 다시 만든다. */
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (text.trim() === '') return;
-    void window.stardraft.send({ type: 'regenerate-with-instruction', bundleId, instruction: text });
+    void window.stardraft.send({ type: 'regenerate-with-directive', bundleId, directive: text });
     onClose();
   };
 
   return (
     <form className="regen-form" onSubmit={handleSubmit}>
-      <label className="field-label" htmlFor={`instruction-${bundleId}`}>
+      <label className="field-label" htmlFor={`directive-${bundleId}`}>
         덧붙일 지시
       </label>
-      {instructions.length > 0 && (
+      {directives.length > 0 && (
         <>
           <p className="small muted">앞서 덧붙인 지시도 함께 넘깁니다.</p>
-          <ol className="instruction-list small">
-            {instructions.map((instruction, index) => (
-              <li key={index}>{instruction}</li>
+          <ol className="directive-list small">
+            {directives.map((directive, index) => (
+              <li key={index}>{directive}</li>
             ))}
           </ol>
         </>
       )}
       <textarea
-        id={`instruction-${bundleId}`}
+        id={`directive-${bundleId}`}
         className="text-input regen-input"
         value={text}
         placeholder="예: 더 짧게 써 주세요."
@@ -956,7 +953,7 @@ interface RequirementEditorProps {
   /** 지금 요구. 칸에 채워 둔다. */
   requirement: string;
   /** 앞서 덧붙인 지시 수. 요구를 고치면 지워진다고 알린다. */
-  instructionCount: number;
+  directiveCount: number;
   /** 초안을 편집했는지 여부. 참이면 편집본을 버린다고 알린다. */
   edited: boolean;
   /** 칸을 닫는다. 보내거나 [취소]를 누르면 부른다. */
@@ -965,9 +962,9 @@ interface RequirementEditorProps {
 
 /**
  * 요구를 고쳐 "이 요구로 재생성"하는 칸. 요구 영역 안에 열리고 지금 요구를 채워 둔다.
- * 덧붙인 지시가 지워지는 것과 편집한 초안을 버리는 것을 먼저 알린다. 빈 요구로는 보낼 수 없다.
+ * 덧붙인 지시가 지워지는 것과 편집한 초안을 버리는 것을 먼저 알리고, 편집한 초안이 있으면 버튼 이름에도 적는다. 빈 요구로는 보낼 수 없다.
  */
-export function RequirementEditor({ bundleId, requirement, instructionCount, edited, onClose }: RequirementEditorProps) {
+export function RequirementEditor({ bundleId, requirement, directiveCount, edited, onClose }: RequirementEditorProps) {
   /** 고치고 있는 요구. */
   const [text, setText] = useState(requirement);
   /** 고친 요구로 다시 만든다. */
@@ -987,7 +984,7 @@ export function RequirementEditor({ bundleId, requirement, instructionCount, edi
         autoFocus
         onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value)}
       />
-      {instructionCount > 0 && <p className="small muted">덧붙인 지시 {instructionCount}개는 지워집니다.</p>}
+      {directiveCount > 0 && <p className="small muted">덧붙인 지시 {directiveCount}개는 지워집니다.</p>}
       {edited && <p className="small warning-text">{DISCARD_EDIT_NOTE}</p>}
       <div className="regen-actions">
         <button type="button" className="btn" onClick={onClose}>
@@ -995,7 +992,7 @@ export function RequirementEditor({ bundleId, requirement, instructionCount, edi
         </button>
         <span className="spacer" />
         <button type="submit" className="btn primary" disabled={text.trim() === ''}>
-          이 요구로 재생성
+          {edited ? '편집본을 버리고 이 요구로 재생성' : '이 요구로 재생성'}
         </button>
       </div>
     </form>

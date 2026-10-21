@@ -67,7 +67,7 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     draft: null,
     editedText: null,
     removedRecipients: [],
-    instructions: [],
+    directives: [],
     fixedRequirement: null,
     regeneration: null,
     failure: null,

@@ -115,7 +115,7 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     draft: null,
     editedText: null,
     removedRecipients: [],
-    instructions: [],
+    directives: [],
     fixedRequirement: null,
     regeneration: null,
     failure: null,
@@ -552,7 +552,7 @@ describe('멘션 묶음', () => {
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
     /** 지시를 덧붙여 다시 만드는 중인 재생성. 직전 결과와 자동 선택으로 정한 저장소를 든다. */
     const regeneration = {
-      path: 'instructions' as const,
+      path: 'directive' as const,
       previous: {
         requirement: { text: '재시도 횟수를 알고 싶다.', summary: '재시도 횟수' },
         paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }] }],
@@ -562,7 +562,7 @@ describe('멘션 묶음', () => {
     };
     await store.saveDetectedBundles(
       [
-        bundle([mention('101')], { status: 'generating', instructions: ['더 짧게', '존댓말로'], regeneration }),
+        bundle([mention('101')], { status: 'generating', directives: ['더 짧게', '존댓말로'], regeneration }),
         bundle([mention('102', { postId: '90000012' })], { status: 'ready', fixedRequirement: '운영 환경의 횟수만 알고 싶다.' }),
       ],
       '102',
@@ -571,9 +571,9 @@ describe('멘션 묶음', () => {
     /** 다시 연 저장소에서 읽은 묶음. */
     const reopened = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
 
-    expect(reopened.map(({ instructions, fixedRequirement, regeneration }) => ({ instructions, fixedRequirement, regeneration }))).toEqual([
-      { instructions: ['더 짧게', '존댓말로'], fixedRequirement: null, regeneration },
-      { instructions: [], fixedRequirement: '운영 환경의 횟수만 알고 싶다.', regeneration: null },
+    expect(reopened.map(({ directives, fixedRequirement, regeneration }) => ({ directives, fixedRequirement, regeneration }))).toEqual([
+      { directives: ['더 짧게', '존댓말로'], fixedRequirement: null, regeneration },
+      { directives: [], fixedRequirement: '운영 환경의 횟수만 알고 싶다.', regeneration: null },
     ]);
   });
 
@@ -593,8 +593,8 @@ describe('멘션 묶음', () => {
     /** 마지막 형식으로 올린 저장소. */
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
-    expect((await store.listBundles()).map(({ instructions, fixedRequirement, regeneration }) => ({ instructions, fixedRequirement, regeneration }))).toEqual([
-      { instructions: [], fixedRequirement: null, regeneration: null },
+    expect((await store.listBundles()).map(({ directives, fixedRequirement, regeneration }) => ({ directives, fixedRequirement, regeneration }))).toEqual([
+      { directives: [], fixedRequirement: null, regeneration: null },
     ]);
   });
 });

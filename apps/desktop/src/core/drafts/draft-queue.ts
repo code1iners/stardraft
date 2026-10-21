@@ -936,8 +936,8 @@ async function checkVerdict(
 function regenerationInputOf(bundle: MentionBundle): RegenerationInput | null {
   /** 묶음의 재생성. */
   const regeneration = bundle.regeneration;
-  if (regeneration?.path === 'instructions' && regeneration.previous) {
-    return { path: 'instructions', previous: regeneration.previous, instructions: bundle.instructions };
+  if (regeneration?.path === 'directive' && regeneration.previous) {
+    return { path: 'directive', previous: regeneration.previous, directives: bundle.directives };
   }
   if (regeneration?.path === 'requirement' && bundle.fixedRequirement !== null) return { path: 'requirement', requirement: bundle.fixedRequirement };
   return null;

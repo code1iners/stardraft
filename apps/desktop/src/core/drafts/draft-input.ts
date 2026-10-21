@@ -73,7 +73,7 @@ export interface RunDataSource {
  */
 export type RegenerationInput =
   /** 지시를 덧붙여 다시 만들기. 직전 결과와 지금까지 덧붙인 지시 전부다. */
-  | { path: 'instructions'; previous: PreviousResult; instructions: readonly string[] }
+  | { path: 'directive'; previous: PreviousResult; directives: readonly string[] }
   /** 요구 고치기. 고친 요구다. 직전 결과는 넘기지 않는다. */
   | { path: 'requirement'; requirement: string };
 
@@ -136,7 +136,7 @@ function regenerationLines(regeneration: RegenerationInput): string[] {
         )),
     '',
     '# 덧붙인 지시',
-    ...regeneration.instructions.flatMap((instruction, index) => numberedLines(index + 1, instruction)),
+    ...regeneration.directives.flatMap((directive, index) => numberedLines(index + 1, directive)),
   ];
 }
 

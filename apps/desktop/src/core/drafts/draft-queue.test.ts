@@ -1511,6 +1511,36 @@ describe('대기열: 순서와 우선순위', () => {
     expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready', 'ready']);
   });
 
+  it('준비됨 묶음을 다시 만들면 감지해서 기다리는 묶음보다 앞에 들어가, 실행 중인 실행이 끝나면 바로 돈다', async () => {
+    const { flow, executor, drafts, bundles, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = bundles.state();
+    expect(ready?.status).toBe('ready');
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(
+      addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'),
+      addThreadMention(flow, '103', '702', '세 번째 질문', '20261020085700'),
+    );
+
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    expect(executor.requests.map(targetMentionOf)).toEqual([
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 두 번째 질문',
+      '@테스트 사용자 재시도는 몇 번 하나요?',
+      '@테스트 사용자 세 번째 질문',
+    ]);
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready', 'ready']);
+  });
+
   it('사용자 행동끼리는 누른 순서대로 돌고, 실행 중에 새 멘션이 합쳐져 처음부터 다시 만드는 묶음은 그보다도 앞에서 바로 다시 돈다', async () => {
     const { flow, executor, drafts, bundles, repos, poll } = await setup();
     executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: '첫 실패' } });
@@ -2114,9 +2144,9 @@ describe('재생성: 입력', () => {
     executor.script({ outcome: { type: 'completed', output: shorter } });
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
 
-    await drafts.regenerate(ready!.id, { path: 'instructions', instruction: '  더 짧게 써 주세요.  ' });
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '  더 짧게 써 주세요.  ' });
     await settle();
-    await drafts.regenerate(ready!.id, { path: 'instructions', instruction: '시험 환경 이야기는 빼 주세요.' });
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '시험 환경 이야기는 빼 주세요.' });
     await settle();
 
     /** 처음 실행, 첫 지시를 덧붙인 실행, 둘째 지시를 덧붙인 실행. */
@@ -2152,7 +2182,7 @@ describe('재생성: 입력', () => {
       expect(request?.input.slice(request.input.indexOf('\n# 데이터\n'))).toBe(first?.input.slice(first.input.indexOf('\n# 데이터\n')));
     }
     expect(first?.input).not.toContain('# 직전 결과');
-    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', editedText: null, instructions: ['더 짧게 써 주세요.', '시험 환경 이야기는 빼 주세요.'] });
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', editedText: null, directives: ['더 짧게 써 주세요.', '시험 환경 이야기는 빼 주세요.'] });
   });
 
   it('다른 저장소로 다시 만들면 그때까지의 지시와 고친 요구를 지우고, 처음 입력에 읽을 저장소만 바꿔 넘긴다', async () => {
@@ -2163,7 +2193,7 @@ describe('재생성: 입력', () => {
     await poll(alarm('101'));
     /** 준비됨 묶음. */
     const [ready] = bundles.state();
-    await drafts.regenerate(ready!.id, { path: 'instructions', instruction: '더 짧게 써 주세요.' });
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
     await settle();
 
     await drafts.regenerateWithRepos(ready!.id, [repos.b]);
@@ -2171,7 +2201,7 @@ describe('재생성: 입력', () => {
 
     expect(executor.requests.at(-1)?.input).not.toContain('# 덧붙인 지시');
     expect(executor.requests.at(-1)?.input).not.toContain('# 직전 결과');
-    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', instructions: [], fixedRequirement: null, regeneration: null });
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', directives: [], fixedRequirement: null, regeneration: null });
   });
 
   it('빈 지시나 빈 요구는 받지 않고, 준비됨이 아닌 묶음은 다시 만들지 않는다', async () => {
@@ -2188,11 +2218,11 @@ describe('재생성: 입력', () => {
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     await bundles.retry(failed!.id);
     await settle();
-    await drafts.regenerate(failed!.id, { path: 'instructions', instruction: '   ' });
+    await drafts.regenerate(failed!.id, { path: 'directive', directive: '   ' });
     await drafts.regenerate(failed!.id, { path: 'requirement', requirement: '' });
     await settle();
 
-    expect(bundles.get(failed!.id)).toMatchObject({ status: 'ready', instructions: [], fixedRequirement: null });
+    expect(bundles.get(failed!.id)).toMatchObject({ status: 'ready', directives: [], fixedRequirement: null });
     expect(executor.requests).toHaveLength(2);
   });
   it('요구를 고치면 처음 입력에 고친 요구만 더해 넘기고 직전 결과는 넘기지 않는다. 에이전트가 다른 요구를 내도 고친 요구로 덮어쓰고 요약은 새로 받은 것을 쓰며, 그때까지의 지시는 지운다', async () => {
@@ -2202,7 +2232,7 @@ describe('재생성: 입력', () => {
     await poll(alarm('101'));
     /** 준비됨 묶음. */
     const [ready] = bundles.state();
-    await drafts.regenerate(ready!.id, { path: 'instructions', instruction: '더 짧게 써 주세요.' });
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
     await settle();
     /** 고친 요구를 다시 해석해 바꿔 낸 출력. */
     const reinterpreted = { ...draftOutput(repos.a), requirement: { text: '재시도 정책 전체를 알고 싶다.', summary: '운영 재시도 횟수' } };
@@ -2224,7 +2254,7 @@ describe('재생성: 입력', () => {
     const regenerated = bundles.get(ready!.id);
     expect(regenerated).toMatchObject({
       status: 'ready',
-      instructions: [],
+      directives: [],
       fixedRequirement: '운영 환경에서 재시도 횟수만 알고 싶다.',
       regeneration: null,
       draft: { requirement: { text: '운영 환경에서 재시도 횟수만 알고 싶다.', summary: '운영 재시도 횟수' } },
@@ -2248,7 +2278,7 @@ describe('재생성: 입력', () => {
 
     await drafts.regenerate(ready!.id, { path: 'again' });
     await settle();
-    await drafts.regenerate(ready!.id, { path: 'instructions', instruction: '더 짧게 써 주세요.' });
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
     await settle();
     await drafts.regenerate(ready!.id, { path: 'requirement', requirement: '화면의 재시도 횟수만 알고 싶다.' });
     await settle();
@@ -2339,7 +2369,7 @@ describe('재생성: 준비됨·실패 묶음에 새 멘션이 올 때', () => {
 
   it.each([
     ['초안을 편집했으면', 'edited'],
-    ['지시를 덧붙였으면', 'instructions'],
+    ['지시를 덧붙였으면', 'directive'],
     ['요구를 고쳤으면', 'requirement'],
   ] as const)('%s 합치기만 하고 "새 멘션 1건"을 세며 초안을 그대로 둔다. [다시 만들기]를 누르면 새 멘션까지 넣어 다시 만든다', async (_, touch) => {
     const { executor, drafts, bundles, bundleId, repos, sendNewMention } = await readyWithNewMention();
@@ -2347,7 +2377,7 @@ describe('재생성: 준비됨·실패 묶음에 새 멘션이 올 때', () => {
       await bundles.editDraft(bundleId, '사용자가 고쳐 쓴 초안입니다.');
     } else {
       executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-      await drafts.regenerate(bundleId, touch === 'instructions' ? { path: 'instructions', instruction: '더 짧게' } : { path: 'requirement', requirement: '횟수만 알고 싶다.' });
+      await drafts.regenerate(bundleId, touch === 'directive' ? { path: 'directive', directive: '더 짧게' } : { path: 'requirement', requirement: '횟수만 알고 싶다.' });
       await settle();
     }
     /** 손댄 뒤의 묶음. */
@@ -2396,7 +2426,7 @@ describe('재생성: 준비됨·실패 묶음에 새 멘션이 올 때', () => {
     await poll(alarm('101'));
     /** 준비됨 묶음. */
     const [ready] = bundles.state();
-    await drafts.regenerate(ready!.id, { path: 'instructions', instruction: '더 짧게' });
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게' });
     await settle();
     expect(bundles.get(ready!.id)?.status).toBe('failed');
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
@@ -2410,6 +2440,6 @@ describe('재생성: 준비됨·실패 묶음에 새 멘션이 올 때', () => {
     expect(input).toContain('# 직전 결과');
     expect(input).toContain('# 덧붙인 지시\n1. 더 짧게\n');
     expect(input).toContain('## 멘션 2건 (시간순, 마지막이 답할 대상)');
-    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', regeneration: null, instructions: ['더 짧게'] });
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', regeneration: null, directives: ['더 짧게'] });
   });
 });

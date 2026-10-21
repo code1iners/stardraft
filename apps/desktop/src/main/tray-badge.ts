@@ -4,6 +4,8 @@ const BADGE_RED = [0x18, 0x23, 0xb4, 0xff] as const;
 const SETUP_YELLOW = [0x00, 0x8a, 0xd0, 0xff] as const;
 /** 숫자 배지의 파랑(BGRA). 화면의 강조 색과 같다. */
 const BADGE_BLUE = [0xc4, 0x60, 0x21, 0xff] as const;
+/** 생성 중 배지의 짙은 회색(BGRA). 화면의 생성 중 태그 글자색과 같다. */
+const GENERATING_DARK = [0x55, 0x4f, 0x4a, 0xff] as const;
 /** "!"와 숫자의 흰색(BGRA). */
 const MARK_WHITE = [0xff, 0xff, 0xff, 0xff] as const;
 /** 투명. */
@@ -23,6 +25,10 @@ const MARK_X = [10, 12] as const;
 const BAR_Y = [8, 12] as const;
 /** "!" 점의 위와 아래 끝. */
 const DOT_Y = [13, 15] as const;
+/** 생성 중 배지의 점 세 개가 시작하는 열. 점마다 2px이고 사이를 1px 띄운다. */
+const GENERATING_DOT_X = [7, 10, 13] as const;
+/** 생성 중 배지의 점 세 개의 위와 아래 끝. */
+const GENERATING_DOT_Y = [10, 12] as const;
 
 // 숫자 배지는 3픽셀 폭 글자가 픽셀 칸에 맞아 가운데 오도록 "!" 배지보다 원을 반 픽셀 옮기고 줄였다(지름 9px).
 /** 숫자 배지 원의 중심(x, y 같음). */
@@ -59,6 +65,16 @@ export function drawAlertBadge(bitmap: Uint8Array, size: number): Uint8Array {
 /** 정사각형 트레이 아이콘 비트맵에 감지 시작 전("설정 필요") 노란 점을 그린 사본을 돌려준다. "!" 배지와 같은 자리, 같은 크기다. */
 export function drawSetupDot(bitmap: Uint8Array, size: number): Uint8Array {
   return drawBadge(bitmap, size, SETUP_YELLOW, false);
+}
+
+/** 정사각형 트레이 아이콘 비트맵에 실패 있음 빨간 점을 그린 사본을 돌려준다. "!" 배지와 같은 자리, 같은 크기이고 "!"가 없다. */
+export function drawFailureDot(bitmap: Uint8Array, size: number): Uint8Array {
+  return drawBadge(bitmap, size, BADGE_RED, false);
+}
+
+/** 정사각형 트레이 아이콘 비트맵에 생성 중 표시를 그린 사본을 돌려준다. 오른쪽 아래 짙은 회색 원 안에 흰 점 세 개다. */
+export function drawGeneratingDots(bitmap: Uint8Array, size: number): Uint8Array {
+  return paintBadge(bitmap, size, CENTER, RADIUS, (px, py) => (isGeneratingDot(px, py) ? MARK_WHITE : GENERATING_DARK));
 }
 
 /** 트레이 숫자 배지에 그릴 글자. 10건 이상은 "9+"다. */
@@ -128,6 +144,12 @@ function isGlyph(label: string, left: number, px: number, py: number): boolean {
   /** 몇 번째 글자인지와 그 글자 안의 열. 글자 사이 1px은 칠하지 않는다. */
   const [index, column] = [Math.floor(offset / (GLYPH_WIDTH + 1)), offset % (GLYPH_WIDTH + 1)];
   return GLYPHS[label[index] ?? '']?.[row]?.[column] === '1';
+}
+
+/** 16px 기준 좌표가 생성 중 배지의 점 세 개 안인지 본다. */
+function isGeneratingDot(px: number, py: number): boolean {
+  if (py < GENERATING_DOT_Y[0] || py >= GENERATING_DOT_Y[1]) return false;
+  return GENERATING_DOT_X.some((left) => px >= left && px < left + 2);
 }
 
 /** 16px 기준 좌표가 "!" 안인지 본다. */

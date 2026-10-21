@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BundledMention, UnsavedBundle } from '../bundles/mention-bundle';
+import type { Draft, RunRecord } from '../drafts/draft';
 import type { BundleContext } from '../flow/bundle-context';
 import type { FlowEmployee } from '../ports/flow-api';
 import { openStateDatabase, SqliteStateStore, STATE_MIGRATIONS } from './state-database';
@@ -109,6 +110,10 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     createdAt: 1_000,
     processedAt: null,
     context: null,
+    repoCheck: null,
+    draft: null,
+    failure: null,
+    runs: [],
     ...overrides,
   };
 }
@@ -294,5 +299,86 @@ describe('멘션 묶음', () => {
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
     expect((await store.listBundles()).map((item) => [item.postTitle, item.context])).toEqual([['가짜 게시물', null]]);
+  });
+
+  it('초안 실행의 결과(초안, 실패 사유, 저장소 확인 필요 사유, 실행 기록)를 다시 열어도 그대로 읽는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    /** 저장할 초안. */
+    const draft: Draft = {
+      requirement: { text: '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.', summary: '재시도 횟수' },
+      paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }] }],
+      evidence: [{ id: 1, explanation: '운영 설정에서 횟수를 5로 정합니다.', repository: '/fake/repo-a', path: 'config.yml', startLine: 88, endLine: 88 }],
+      repositories: ['/fake/repo-a', '/fake/repo-b'],
+      createdAt: 2_000,
+    };
+    /** 저장할 실행 기록. */
+    const run: RunRecord = {
+      kind: 'draft',
+      agent: 'claude-code',
+      cliVersion: '2.1.305',
+      model: 'sonnet',
+      startedAt: 1_500,
+      finishedAt: 2_000,
+      result: 'succeeded',
+      detail: null,
+      lastStep: '파일 읽는 중: config.yml',
+      fixes: [],
+      omittedContextItems: 2,
+      costUsd: 0.01,
+      inputTokens: 100,
+      outputTokens: 20,
+    };
+    /** 저장한 묶음. */
+    const [ready, failed] = await store.saveDetectedBundles(
+      [
+        bundle([mention('101', { remarkId: '700' })], { status: 'ready', draft, runs: [run] }),
+        bundle([mention('102')], {
+          status: 'failed',
+          failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
+          runs: [{ ...run, result: 'timed-out', costUsd: null, inputTokens: null, outputTokens: null }],
+        }),
+        bundle([mention('103', { postId: '90000012' })], { repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }),
+      ],
+      '103',
+    );
+
+    /** 다시 연 저장소에서 읽은 묶음. */
+    const reopened = await new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0')).listBundles();
+
+    expect(reopened.map(({ status, draft: saved, failure, repoCheck, runs }) => ({ status, draft: saved, failure, repoCheck, runs }))).toEqual([
+      { status: 'ready', draft, failure: null, repoCheck: null, runs: [run] },
+      {
+        status: 'failed',
+        draft: null,
+        failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry' },
+        repoCheck: null,
+        runs: [{ ...run, result: 'timed-out', costUsd: null, inputTokens: null, outputTokens: null }],
+      },
+      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] }, runs: [] },
+    ]);
+    expect([ready?.id, failed?.id]).toEqual([1, 2]);
+  });
+
+  it('형식 5에서 올리면 이미 있던 묶음은 초안·실패 사유·실행 기록 없이 그대로 남는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 5로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 5), '0.0.9');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at, context)
+         VALUES ('90000011', '-1', '900001', 'repo-check-needed', '가짜 게시물', NULL, 0, 1000, NULL, NULL)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map(({ status, draft, failure, repoCheck, runs }) => ({ status, draft, failure, repoCheck, runs }))).toEqual([
+      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: null, runs: [] },
+    ]);
   });
 });

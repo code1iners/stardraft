@@ -74,9 +74,16 @@ export interface BundleActions {
   ignore: (bundle: BundleSnapshot) => void;
   /** 처리됨 묶음을 되돌리고 그 묶음을 보인다. */
   restore: (bundleId: number) => void;
+  /** 생성 중 묶음의 초안 실행을 취소한다. 묶음은 "취소함" 실패가 되어 그대로 보인다. */
+  cancel: (bundleId: number) => void;
+  /** 실패 묶음을 다시 시도한다. 묶음은 생성 중이 되어 그대로 보인다. */
+  retry: (bundleId: number) => void;
 }
 
-/** 작은 창과 펼친 창이 같이 쓰는 [무시]와 [되돌리기]. 묶음 상태는 main이 바꾸고, 창은 보이는 묶음과 토스트만 바꾼다. */
+/**
+ * 작은 창과 펼친 창이 같이 쓰는 [무시]·[되돌리기]·[취소]·[다시 시도]. 묶음 상태는 main이 바꾸고, 창은 보이는 묶음과 토스트만 바꾼다.
+ * 취소와 다시 시도는 묶음이 대기열에 남으므로 보고 있는 묶음을 바꾸지 않는다.
+ */
 export function useBundleActions({ select, leave }: Pick<BundleSelection, 'select' | 'leave'>): BundleActions {
   /** 무시 토스트. */
   const [toast, setToast] = useIgnoreToast();
@@ -92,6 +99,12 @@ export function useBundleActions({ select, leave }: Pick<BundleSelection, 'selec
       setToast(null);
       select(bundleId);
       void window.stardraft.send({ type: 'restore-bundle', bundleId });
+    },
+    cancel: (bundleId) => {
+      void window.stardraft.send({ type: 'cancel-generation', bundleId });
+    },
+    retry: (bundleId) => {
+      void window.stardraft.send({ type: 'retry-bundle', bundleId });
     },
   };
 }

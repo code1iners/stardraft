@@ -3,16 +3,24 @@
  * 한 줄에 이벤트 하나이고, 마지막 줄이 `result` 메시지다.
  */
 export const fakeClaudeEvent = {
-  /** 첫 이벤트. CLI 버전을 알려 준다. */
-  init(version = '2.1.303'): string {
-    return JSON.stringify({ type: 'system', subtype: 'init', claude_code_version: version, tools: ['Glob', 'Grep', 'Read', 'StructuredOutput'] });
+  /** 첫 이벤트. CLI 버전과 이 실행의 모델을 알려 준다. */
+  init(version = '2.1.303', model = 'claude-fake-model'): string {
+    return JSON.stringify({ type: 'system', subtype: 'init', claude_code_version: version, model, tools: ['Glob', 'Grep', 'Read', 'StructuredOutput'] });
   },
 
   /** 파일을 읽으려고 도구를 부른 assistant 이벤트. */
   toolUse(filePath = '/fake/work/repo-a/RetryConfig.kt'): string {
+    return fakeClaudeEvent.tools({ name: 'Read', input: { file_path: filePath } });
+  },
+
+  /** 도구를 부른 assistant 이벤트. 한 메시지에 도구 여럿을 함께 부를 수 있다. */
+  tools(...uses: { name: string; input: Record<string, unknown> }[]): string {
     return JSON.stringify({
       type: 'assistant',
-      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_fake', name: 'Read', input: { file_path: filePath } }] },
+      message: {
+        role: 'assistant',
+        content: uses.map(({ name, input }, index) => ({ type: 'tool_use', id: `toolu_fake_${index}`, name, input })),
+      },
     });
   },
 

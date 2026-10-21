@@ -65,7 +65,15 @@ async function setup({ baseline = '100' as string | null } = {}) {
   /** 남긴 진단 로그 줄. */
   const logLines: string[] = [];
   const logger = createLogger([{ write: (line) => logLines.push(line) }], clock);
-  const bundles = new MentionBundles({ stateStore, notifier, clock, logger, findMyAnswers: async () => null, collectContext: async () => null });
+  const bundles = new MentionBundles({
+    stateStore,
+    notifier,
+    clock,
+    logger,
+    findMyAnswers: async () => null,
+    collectContext: async () => null,
+    resolveRepos: async () => ({ kind: 'unmapped' }),
+  });
   await bundles.load();
   const detection = new MentionDetection({
     stateStore,
@@ -712,7 +720,15 @@ describe('멘션 감지: 오류', () => {
     const logger = createLogger([], clock);
     const detection = new MentionDetection({
       stateStore,
-      bundles: new MentionBundles({ stateStore, notifier: new RecordingNotifier(), clock, logger, findMyAnswers: async () => null, collectContext: async () => null }),
+      bundles: new MentionBundles({
+        stateStore,
+        notifier: new RecordingNotifier(),
+        clock,
+        logger,
+        findMyAnswers: async () => null,
+        collectContext: async () => null,
+        resolveRepos: async () => ({ kind: 'unmapped' }),
+      }),
       clock,
       logger,
       connectFlow: () => (hasKey ? { api: flow, reportKeyRejected: () => {} } : null),

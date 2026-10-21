@@ -76,7 +76,9 @@ async function setup() {
     clock,
     logger,
     findMyAnswers: async (place) => (answersLookup.fails ? null : new MentionJudge(flow, ME).myAnswers(place, [ME])),
-    collectContext: (bundle) => collectBundleContext(flow, bundle, clock.now()),
+    collectContext: (bundle) => collectBundleContext(flow, bundle, clock.now(), [ME]),
+    // 저장소 매핑이 없는 Flow 프로젝트다. 초안 실행과 매핑이 있는 묶음은 초안 대기열 테스트가 다룬다.
+    resolveRepos: async () => ({ kind: 'unmapped' }),
   });
   await bundles.load();
   const detection = new MentionDetection({
@@ -463,6 +465,7 @@ describe('멘션 묶음: 무시와 되돌리기', () => {
       logger: createLogger([], clock),
       findMyAnswers: async () => null,
       collectContext: async () => null,
+      resolveRepos: async () => ({ kind: 'unmapped' }),
     });
     await reloaded.load();
 

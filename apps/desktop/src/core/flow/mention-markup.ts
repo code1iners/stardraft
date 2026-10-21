@@ -38,3 +38,10 @@ export function splitMentionMarkup(text: string): MarkupPart[] {
   if (rest < text.length) parts.push({ text: text.slice(rest), mention: false });
   return parts;
 }
+
+/** 멘션 표기 `@[이름](ID)`를 `@이름`으로 바꾼 글. 에이전트에게 Flow 사용자 ID를 넘기지 않을 때 쓴다. */
+export function namedMentionText(text: string): string {
+  return splitMentionMarkup(text)
+    .map((part) => part.text)
+    .join('');
+}

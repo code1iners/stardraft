@@ -107,9 +107,8 @@ export class MentionJudge {
    * `myIds`는 내 사용자 ID들이다. 조회하지 못하면(머리 댓글이 지워진 경우 포함) `null`이다.
    */
   async myAnswers(place: RemarkPlace, myIds: readonly string[]): Promise<MyAnswer[] | null> {
-    // 시스템 댓글은 행동한 사람 명의로 오므로, 내 명의라도 내 답으로 보지 않는다.
     /** 내가 쓴 사람의 글(시스템 댓글 제외)인지 본다. */
-    const mine = (remark: FlowRemarkAuthorship) => remark.systemCode === '' && myIds.some((id) => isSameFlowUser(remark.registerId, id));
+    const mine = (remark: FlowRemarkAuthorship) => isMyRemark(remark, myIds);
     if (isPostBody(place)) {
       /** 게시물의 댓글. */
       const comments = await this.comments(place.postId);
@@ -223,8 +222,16 @@ function markupText(contents: string): { text: string; mentions: (userId: string
   return { text: contents, mentions: (userId) => hasMentionMarkupFor(contents, userId) };
 }
 
+/**
+ * 내가 쓴 사람의 글인지 본다. `myIds`는 내 사용자 ID들이다.
+ * 시스템 댓글은 행동한 사람 명의로 오므로, 내 명의라도 내 답으로 보지 않는다.
+ */
+export function isMyRemark(remark: FlowRemarkAuthorship, myIds: readonly string[]): boolean {
+  return remark.systemCode === '' && myIds.some((id) => isSameFlowUser(remark.registerId, id));
+}
+
 /** 내가 쓴 댓글이나 대댓글을 내 답으로 바꾼다. */
-function answerOf(answerId: string, { registeredDateTime }: FlowRemarkAuthorship): MyAnswer {
+export function answerOf(answerId: string, { registeredDateTime }: FlowRemarkAuthorship): MyAnswer {
   return { answerId, registeredDateTime };
 }
 

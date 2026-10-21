@@ -1,10 +1,21 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentId, Executor, ExecutorFailureReason, ExecutorOutcome, ExecutorRunRequest, RunKind } from '../ports/executor';
+import type {
+  AgentId,
+  Executor,
+  ExecutorFailureReason,
+  ExecutorOutcome,
+  ExecutorProgress,
+  ExecutorReport,
+  ExecutorRunRequest,
+  ExecutorUsage,
+  RunKind,
+} from '../ports/executor';
 import { CLAUDE_MAX_TURNS } from './claude-cli';
 import { withoutAgentApiKeys } from './cli-discovery';
 import type { ProcessResult, ProcessRunner } from './process-runner';
+import { readingFileStep, searchingStep } from './progress-steps';
 import { withDefaultSecretPatterns } from './secret-patterns';
 
 /** Claude Code CLI를 띄울 때 쓰는 것. 연결 확인이 정한다. */
@@ -15,14 +26,10 @@ export interface ClaudeLaunch {
   env: Record<string, string>;
 }
 
-/** 실행 하나가 끝났을 때의 보고. */
-export interface ClaudeRunReport {
+/** 실행 하나가 끝났을 때 연결 확인에 알리는 보고. */
+export interface ClaudeRunReport extends ExecutorReport {
   /** 실행의 종류. */
   kind: RunKind;
-  /** stream-json 첫 이벤트가 알려 준 CLI 버전. 받기 전에 끝났으면 `null`. */
-  cliVersion: string | null;
-  /** 실행 결과. */
-  outcome: ExecutorOutcome;
 }
 
 /** Claude Code 실행기에 필요한 것. */
@@ -50,18 +57,18 @@ export class ClaudeCodeExecutor implements Executor {
 
   constructor(private readonly options: ClaudeCodeExecutorOptions) {}
 
-  async run(request: ExecutorRunRequest): Promise<ExecutorOutcome> {
-    /** 실행 결과와 실행에서 본 CLI 버전. */
-    const { outcome, cliVersion } = await this.execute(request);
-    this.options.onRunFinished?.({ kind: request.kind, cliVersion, outcome });
-    return outcome;
+  async run(request: ExecutorRunRequest): Promise<ExecutorReport> {
+    /** 실행 결과와 실행에서 본 CLI 버전·모델·사용량. */
+    const report = await this.execute(request);
+    this.options.onRunFinished?.({ kind: request.kind, ...report });
+    return report;
   }
 
   /** 지침 파일을 쓰고 CLI를 띄운 뒤 결과를 분류한다. 지침 파일은 끝나면 지운다. */
-  private async execute(request: ExecutorRunRequest): Promise<{ outcome: ExecutorOutcome; cliVersion: string | null }> {
+  private async execute(request: ExecutorRunRequest): Promise<ExecutorReport> {
     /** 띄울 CLI와 환경. */
     const launch = this.options.launch();
-    if (!launch) return { outcome: failed('cli-missing', 'Claude Code CLI를 아직 찾지 못했습니다.'), cliVersion: null };
+    if (!launch) return { outcome: failed('cli-missing', 'Claude Code CLI를 아직 찾지 못했습니다.'), cliVersion: null, model: null, usage: null };
     /** 작업 폴더가 될 첫 저장소와 `--add-dir`로 붙일 나머지. */
     const [cwd, ...extraRoots] = request.readRoots;
     if (cwd === undefined) throw new Error('읽을 디렉터리가 없습니다.');
@@ -74,7 +81,7 @@ export class ClaudeCodeExecutor implements Executor {
       await writeFile(instructionsFile, request.instructions, 'utf8');
 
       /** stream-json을 읽는 쪽. */
-      const reader = new ClaudeStreamReader();
+      const reader = new ClaudeStreamReader(request.onProgress);
       /** 프로세스 결과. */
       const result = await this.options.runner.run({
         command: launch.cliPath,
@@ -86,7 +93,7 @@ export class ClaudeCodeExecutor implements Executor {
         onStdoutLine: (line) => reader.push(line),
         signal: request.signal,
       });
-      return { outcome: classifyClaudeRun(result, reader), cliVersion: reader.cliVersion };
+      return { outcome: classifyClaudeRun(result, reader), cliVersion: reader.cliVersion, model: reader.model, usage: reader.usage() };
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -131,27 +138,78 @@ function claudeRunArgs(request: ExecutorRunRequest, instructionsFile: string, ex
   ];
 }
 
-/** stream-json 줄을 받아 앱이 쓰는 값만 모은다. JSON이 아닌 줄은 건너뛴다. */
+/** stream-json 줄을 받아 앱이 쓰는 값만 모으고, 도구 사용 이벤트를 진행 단계로 알린다. JSON이 아닌 줄은 건너뛴다. */
 class ClaudeStreamReader {
   /** 첫 `system/init` 이벤트가 알려 준 CLI 버전. */
   cliVersion: string | null = null;
+  /** 첫 `system/init` 이벤트가 알려 준 모델. */
+  model: string | null = null;
   /** 마지막 모델 API 오류 종류(`authentication_failed`, `overloaded`, `server_error` 등). */
   apiError: string | null = null;
   /** 마지막 `result` 메시지. */
   result: Record<string, unknown> | null = null;
+  /** Read 도구로 읽은 파일 경로. 같은 파일은 한 번만 센다. */
+  private readonly filesRead = new Set<string>();
+
+  /** `onProgress`는 도구를 부를 때마다 진행 단계로 부른다. */
+  constructor(private readonly onProgress: (progress: ExecutorProgress) => void) {}
 
   /** 표준 출력 한 줄을 읽는다. */
   push(line: string): void {
     /** JSON으로 푼 이벤트. */
     const event = parseObject(line);
     if (!event) return;
-    if (event.type === 'system' && event.subtype === 'init' && typeof event.claude_code_version === 'string') {
-      this.cliVersion = event.claude_code_version;
-    } else if (event.type === 'assistant' && typeof event.error === 'string') {
-      this.apiError = event.error;
+    if (event.type === 'system' && event.subtype === 'init') {
+      if (typeof event.claude_code_version === 'string') this.cliVersion = event.claude_code_version;
+      if (typeof event.model === 'string') this.model = event.model;
+    } else if (event.type === 'assistant') {
+      if (typeof event.error === 'string') this.apiError = event.error;
+      this.readToolUses(event.message);
     } else if (event.type === 'result') {
       this.result = event;
     }
+  }
+
+  /** 마지막 `result` 메시지가 알려 준 비용과 토큰 수. `result` 메시지가 없으면 `null`. */
+  usage(): ExecutorUsage | null {
+    if (!this.result) return null;
+    /** 토큰 수. */
+    const tokens = typeof this.result.usage === 'object' && this.result.usage !== null ? (this.result.usage as Record<string, unknown>) : {};
+    /** 캐시를 거치지 않은 입력 토큰 수. 없으면 입력 토큰 수를 모른다. */
+    const input = numberOrNull(tokens.input_tokens);
+    return {
+      costUsd: numberOrNull(this.result.total_cost_usd),
+      inputTokens:
+        input === null ? null : input + (numberOrNull(tokens.cache_creation_input_tokens) ?? 0) + (numberOrNull(tokens.cache_read_input_tokens) ?? 0),
+      outputTokens: numberOrNull(tokens.output_tokens),
+    };
+  }
+
+  /** assistant 메시지가 부른 도구를 차례로 진행 단계로 바꾼다. 한 메시지에 도구 여럿이 함께 올 수 있다. */
+  private readToolUses(message: unknown): void {
+    /** 메시지 내용 조각. */
+    const content = typeof message === 'object' && message !== null ? (message as Record<string, unknown>).content : null;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      /** 도구 호출 조각. */
+      const use = typeof block === 'object' && block !== null ? (block as Record<string, unknown>) : null;
+      if (use?.type !== 'tool_use') continue;
+      /** 도구 입력. */
+      const input = typeof use.input === 'object' && use.input !== null ? (use.input as Record<string, unknown>) : {};
+      /** 이 도구 호출의 진행 단계. 화면에 보일 일이 아니면(구조화 출력 등) `null`. */
+      const step = this.stepOf(use.name, input);
+      if (step !== null) this.onProgress({ step, filesRead: this.filesRead.size });
+    }
+  }
+
+  /** 도구 이름과 입력으로 진행 단계를 정한다. 읽은 파일도 여기서 센다. */
+  private stepOf(name: unknown, input: Record<string, unknown>): string | null {
+    if (name === 'Read' && typeof input.file_path === 'string') {
+      this.filesRead.add(input.file_path);
+      return readingFileStep(input.file_path);
+    }
+    if ((name === 'Grep' || name === 'Glob') && typeof input.pattern === 'string') return searchingStep(input.pattern);
+    return null;
   }
 }
 
@@ -207,6 +265,11 @@ function apiFailureReason(apiError: string | null, status: unknown): ExecutorFai
 /** 실패 결과를 만든다. 오류 원문은 길이 상한까지만 남긴다. */
 function failed(reason: ExecutorFailureReason, detail: string): ExecutorOutcome {
   return { type: 'failed', reason, detail: detail.slice(0, DETAIL_MAX_LENGTH) };
+}
+
+/** 유한한 숫자면 그 값, 아니면 `null`. */
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /** JSON 객체 한 줄을 푼다. 객체가 아니면 `null`. */

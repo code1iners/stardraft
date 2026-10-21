@@ -235,6 +235,31 @@ describe('사라진 폴더', () => {
   });
 });
 
+describe('초안 실행에 쓸 저장소', () => {
+  it('저장소 매핑의 폴더가 모두 있으면 연결한 순서대로 돌려주고, 하나라도 없으면 없는 폴더를, 매핑이 없으면 매핑 없음을 돌려준다', async () => {
+    const api = await folder('api');
+    const web = await folder('web');
+    const gone = join(home, 'gone');
+    const { mappings } = await setup({ repoMappings: { '101': [web, api], '102': [api, gone] } }, null);
+
+    await expect(mappings.resolve('101')).resolves.toEqual({ kind: 'mapped', repos: [web, api] });
+    await expect(mappings.resolve('102')).resolves.toEqual({ kind: 'missing', paths: [gone] });
+    await expect(mappings.resolve('103')).resolves.toEqual({ kind: 'unmapped' });
+  });
+
+  it('Flow 프로젝트 이름은 참여 목록에서 찾고, 목록을 아직 받지 않았으면 받아서 찾는다. 받지 못하면 모른다', async () => {
+    const { mappings, flow } = await setup();
+
+    await expect(mappings.projectTitle('102')).resolves.toBe('가짜 프로젝트 B');
+    await expect(mappings.projectTitle('101')).resolves.toBe('가짜 프로젝트 A');
+    expect(flow?.requests).toEqual(['GET /user/projects/participants']);
+    await expect(mappings.projectTitle('999')).resolves.toBeNull();
+
+    const { mappings: withoutKey } = await setup({}, null);
+    await expect(withoutKey.projectTitle('101')).resolves.toBeNull();
+  });
+});
+
 describe('저장된 매핑 읽기', () => {
   it('형식이 맞지 않는 값은 건너뛴다', async () => {
     const api = await folder('api');

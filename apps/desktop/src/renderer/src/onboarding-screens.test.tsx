@@ -49,7 +49,10 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
     launchAtLogin: false,
     review: {
       bundles: [],
-      sections: { compact: { original: true, repository: false }, expanded: { original: true, repository: true } },
+      sections: {
+        compact: { original: true, requirement: true, draft: true, evidence: false, repository: false, progress: true },
+        expanded: { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true },
+      },
     },
     ...overrides,
   };

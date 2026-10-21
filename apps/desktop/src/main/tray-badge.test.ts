@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countBadgeLabel, drawAlertBadge, drawCountBadge, drawSetupDot } from './tray-badge';
+import { countBadgeLabel, drawAlertBadge, drawCountBadge, drawFailureDot, drawGeneratingDots, drawSetupDot } from './tray-badge';
 
 /** 칠한 아이콘의 회색(BGRA). */
 const GRAY = [0x80, 0x80, 0x80, 0xff];
@@ -11,6 +11,8 @@ const WHITE = [0xff, 0xff, 0xff, 0xff];
 const YELLOW = [0x00, 0x8a, 0xd0, 0xff];
 /** 숫자 배지의 파랑(BGRA). */
 const BLUE = [0xc4, 0x60, 0x21, 0xff];
+/** 생성 중 배지의 짙은 회색(BGRA). */
+const DARK = [0x55, 0x4f, 0x4a, 0xff];
 /** 투명. */
 const CLEAR = [0, 0, 0, 0];
 
@@ -106,5 +108,43 @@ describe('Windows 트레이 숫자 배지(검토 대기)', () => {
     expect(pixelAt(badged, 32, 23, 19)).toEqual(WHITE);
     expect(pixelAt(badged, 32, 20, 18)).toEqual(BLUE);
     expect(pixelAt(badged, 32, 0, 0)).toEqual(GRAY);
+  });
+});
+
+describe('Windows 트레이 빨간 점(실패 있음)', () => {
+  it('16px 아이콘의 오른쪽 아래에 "!" 없는 빨간 점을 그리고, 둘레를 비워 아이콘과 떼어 놓는다', () => {
+    const dotted = drawFailureDot(grayIcon(16), 16);
+
+    expect(pixelAt(dotted, 16, 11, 11)).toEqual(RED);
+    expect(pixelAt(dotted, 16, 10, 9)).toEqual(RED);
+    expect(pixelAt(dotted, 16, 14, 11)).toEqual(RED);
+    expect(pixelAt(dotted, 16, 5, 11)).toEqual(CLEAR);
+    expect(pixelAt(dotted, 16, 0, 0)).toEqual(GRAY);
+  });
+});
+
+describe('Windows 트레이 점 세 개(생성 중)', () => {
+  it('16px 아이콘의 오른쪽 아래 짙은 회색 원에 흰 점 세 개(2×2 픽셀)를 가로로 그리고, 둘레를 비운다', () => {
+    const dotted = drawGeneratingDots(grayIcon(16), 16);
+
+    for (const x of [7, 8, 10, 11, 13, 14]) {
+      expect(pixelAt(dotted, 16, x, 10)).toEqual(WHITE);
+      expect(pixelAt(dotted, 16, x, 11)).toEqual(WHITE);
+    }
+    expect(pixelAt(dotted, 16, 9, 10)).toEqual(DARK);
+    expect(pixelAt(dotted, 16, 12, 11)).toEqual(DARK);
+    expect(pixelAt(dotted, 16, 11, 8)).toEqual(DARK);
+    expect(pixelAt(dotted, 16, 11, 13)).toEqual(DARK);
+    expect(pixelAt(dotted, 16, 5, 11)).toEqual(CLEAR);
+    expect(pixelAt(dotted, 16, 0, 0)).toEqual(GRAY);
+  });
+
+  it('32px 아이콘에는 같은 자리에 두 배 크기로 그린다', () => {
+    const dotted = drawGeneratingDots(grayIcon(32), 32);
+
+    expect(pixelAt(dotted, 32, 14, 20)).toEqual(WHITE);
+    expect(pixelAt(dotted, 32, 17, 23)).toEqual(WHITE);
+    expect(pixelAt(dotted, 32, 18, 20)).toEqual(DARK);
+    expect(pixelAt(dotted, 32, 0, 0)).toEqual(GRAY);
   });
 });

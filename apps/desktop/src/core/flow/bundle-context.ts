@@ -2,7 +2,8 @@ import { activeMentions, type MentionBundle } from '../bundles/mention-bundle';
 import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowRemarkAuthorship, FlowReply } from '../ports/flow-api';
 import { compareAlarmIds } from './alarm-id';
 import { readableFlowTime } from './flow-time';
-import { splitMentionMarkup } from './mention-markup';
+import { answerOf, isMyRemark, type MyAnswer } from './mention-judgement';
+import { namedMentionText } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
 
@@ -65,8 +66,11 @@ export interface BundleContext {
 /** 맥락을 모으지 못한 이유. Flow API 실패이거나, 대상 댓글 스레드의 머리 댓글이 목록에 없다. */
 export type BundleContextFailure = FlowApiFailure | { kind: 'thread-gone' };
 
-/** 맥락을 모은 결과. */
-export type BundleContextResult = { ok: true; context: BundleContext } | { ok: false; failure: BundleContextFailure };
+/**
+ * 맥락을 모은 결과. 같은 조회에서 찾은 묶음 자리의 내 답도 함께 돌려준다. 초안을 만들기 직전의 "이미 답함" 판정에 쓴다.
+ * 내 답은 본문 묶음이면 게시물에 쓴 내 댓글, 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다. 시스템 댓글은 들지 않는다.
+ */
+export type BundleContextResult = { ok: true; context: BundleContext; myAnswers: MyAnswer[] } | { ok: false; failure: BundleContextFailure };
 
 /** 맥락을 모을 묶음. 자리와 멘션만 본다. */
 export type ContextTarget = Pick<MentionBundle, 'postId' | 'remarkId' | 'mentions'>;
@@ -75,12 +79,9 @@ export type ContextTarget = Pick<MentionBundle, 'postId' | 'remarkId' | 'mention
  * 묶음의 맥락을 Flow에서 새로 조회해 모은다. 게시물, 댓글 전부, 대상 댓글 스레드의 대댓글 전부를 받는다.
  * 시스템 댓글(`systemCode`가 있는 글)은 맥락에 넣지 않고 다른 댓글 20개를 셀 때도 세지 않는다.
  * 대상 댓글 스레드는 댓글과 함께 받은 처음 10개 뒤에 대댓글이 더 있으면 대댓글 목록 API로 끝까지 넘긴다.
+ * `myIds`(내 사용자 ID들)로 같은 조회에서 묶음 자리의 내 답도 찾는다.
  */
-export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, now: number): Promise<BundleContextResult> {
-  /** 묶음에 남은 멘션. */
-  const active = activeMentions(bundle);
-  /** 묶음의 대댓글 멘션 ID. */
-  const mentionedReplies = new Set(active.filter((mention) => mentionPlaceOf(mention) === 'reply').map((mention) => mention.replyId));
+export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, now: number, myIds: readonly string[]): Promise<BundleContextResult> {
   /** 본문 묶음인지 여부. */
   const postBody = isPostBody(bundle);
 
@@ -103,6 +104,8 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
 
   /** 대상 댓글 스레드. */
   let targetThread: ContextComment | null = null;
+  /** 묶음 자리의 내 답. 본문 묶음이면 게시물에 쓴 내 댓글이다. */
+  let myAnswers = comments.filter((comment) => isMyRemark(comment, myIds)).map((comment) => answerOf(comment.commentId, comment));
   if (!postBody) {
     /** 대상 댓글 스레드의 머리 댓글. */
     const head = comments.find((comment) => comment.commentId === bundle.remarkId);
@@ -110,38 +113,56 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     /** 머리 댓글의 대댓글 전부. */
     const replies = head.replyHasNext ? await allReplies(api, bundle.postId, head.commentId) : { ok: true as const, value: head.replies };
     if (!replies.ok) return replies;
-    targetThread = {
-      ...remarkOf(head.commentId, head, active.some((mention) => mentionPlaceOf(mention) === 'comment')),
-      replies: replies.value
-        .filter(isHumanRemark)
-        .sort(compareRemarks((reply) => reply.replyId))
-        .map((reply) => remarkOf(reply.replyId, reply, mentionedReplies.has(reply.replyId))),
-    };
+    /** 사람이 쓴 대댓글. 오래된 것부터다. */
+    const humanReplies = replies.value.filter(isHumanRemark).sort(compareRemarks((reply) => reply.replyId));
+    targetThread = { ...remarkOf(head.commentId, head), replies: humanReplies.map((reply) => remarkOf(reply.replyId, reply)) };
+    myAnswers = humanReplies.filter((reply) => isMyRemark(reply, myIds)).map((reply) => answerOf(reply.replyId, reply));
   }
 
+  /** 멘션 표시를 하기 전의 맥락. */
+  const context: BundleContext = {
+    fetchedAt: now,
+    post: {
+      title: post.value.title,
+      authorName: post.value.registerName,
+      registeredDateTime: post.value.registeredDateTime,
+      contents: post.value.textComponents.map(({ contents }) => contents).join('\n'),
+      attachments: [...post.value.attachments],
+      mention: false,
+    },
+    targetThread,
+    otherComments: comments
+      .filter((comment) => postBody || comment.commentId !== bundle.remarkId)
+      .slice(-OTHER_COMMENT_LIMIT)
+      .map((comment) => ({
+        ...remarkOf(comment.commentId, comment),
+        replies: comment.replies
+          .slice(0, OTHER_REPLY_LIMIT)
+          .filter(isHumanRemark)
+          .map((reply) => remarkOf(reply.replyId, reply)),
+      })),
+  };
+  return { ok: true, context: markContextMentions(context, bundle), myAnswers };
+}
+
+/**
+ * 맥락의 글마다 묶음에 남은 멘션인지 다시 표시한 사본. 본문 묶음이면 게시물 본문, 댓글 스레드 묶음이면 대상 댓글 스레드의 멘션 글이다.
+ * 초안을 만들기 직전에 "이미 답함"으로 빠진 멘션은 표시하지 않으려고 판정 뒤에 다시 부른다. 다른 댓글은 멘션이 아니다.
+ */
+export function markContextMentions(context: BundleContext, bundle: ContextTarget): BundleContext {
+  /** 묶음에 남은 멘션. */
+  const active = activeMentions(bundle);
+  /** 묶음의 대댓글 멘션 ID. */
+  const mentionedReplies = new Set(active.filter((mention) => mentionPlaceOf(mention) === 'reply').map((mention) => mention.replyId));
+  /** 대상 댓글 스레드. */
+  const thread = context.targetThread;
   return {
-    ok: true,
-    context: {
-      fetchedAt: now,
-      post: {
-        title: post.value.title,
-        authorName: post.value.registerName,
-        registeredDateTime: post.value.registeredDateTime,
-        contents: post.value.textComponents.map(({ contents }) => contents).join('\n'),
-        attachments: [...post.value.attachments],
-        mention: postBody,
-      },
-      targetThread,
-      otherComments: comments
-        .filter((comment) => postBody || comment.commentId !== bundle.remarkId)
-        .slice(-OTHER_COMMENT_LIMIT)
-        .map((comment) => ({
-          ...remarkOf(comment.commentId, comment, false),
-          replies: comment.replies
-            .slice(0, OTHER_REPLY_LIMIT)
-            .filter(isHumanRemark)
-            .map((reply) => remarkOf(reply.replyId, reply, false)),
-        })),
+    ...context,
+    post: { ...context.post, mention: isPostBody(bundle) },
+    targetThread: thread && {
+      ...thread,
+      mention: active.some((mention) => mentionPlaceOf(mention) === 'comment'),
+      replies: thread.replies.map((reply) => ({ ...reply, mention: mentionedReplies.has(reply.id) })),
     },
   };
 }
@@ -166,15 +187,15 @@ function isHumanRemark(remark: FlowRemarkAuthorship): boolean {
   return remark.systemCode === '';
 }
 
-/** 댓글이나 대댓글을 맥락의 글로 바꾼다. 쓴 사람의 사용자 ID는 담지 않는다. */
-function remarkOf(id: string, remark: FlowRemarkAuthorship & { contents: string; attachments: string[] }, mention: boolean): ContextRemark {
+/** 댓글이나 대댓글을 맥락의 글로 바꾼다. 쓴 사람의 사용자 ID는 담지 않는다. 멘션 표시는 `markContextMentions`가 한다. */
+function remarkOf(id: string, remark: FlowRemarkAuthorship & { contents: string; attachments: string[] }): ContextRemark {
   return {
     id,
     authorName: remark.registerName,
     registeredDateTime: remark.registeredDateTime,
     contents: remark.contents,
     attachments: [...remark.attachments],
-    mention,
+    mention: false,
   };
 }
 
@@ -232,7 +253,7 @@ export function contextDocument(context: BundleContext): ContextDocument {
     ...context.otherComments.map((_, index) => () => {
       cut.otherComments = index + 1;
     }),
-    ...(!context.post.mention && charCount(namedText(context.post.contents)) > TRUNCATED_BODY_CHARS ? [() => (cut.postBodyTruncated = true)] : []),
+    ...(!context.post.mention && charCount(namedMentionText(context.post.contents)) > TRUNCATED_BODY_CHARS ? [() => (cut.postBodyTruncated = true)] : []),
     ...(context.targetThread?.replies ?? []).flatMap((reply, index) => (reply.mention ? [] : [() => cut.threadReplies.add(index)])),
   ];
   for (const step of steps) {
@@ -269,7 +290,7 @@ function writeDocument(context: BundleContext, cut: Cut): string {
   const { post, targetThread, otherComments } = context;
   // 표기를 바꾼 뒤에 자른다. 원문을 자르면 자른 자리에 걸린 표기가 바뀌지 않아 사용자 ID 일부가 남는다.
   /** 이름 표기로 바꾼 게시물 본문. 잘랐으면 앞 10,000자와 생략 표시다. */
-  const named = namedText(post.contents);
+  const named = namedMentionText(post.contents);
   /** 문서에 쓸 본문. */
   const body = cut.postBodyTruncated ? `${[...named].slice(0, TRUNCATED_BODY_CHARS).join('')}\n[본문 뒷부분 생략]` : named;
   /** 문서의 줄. */
@@ -322,7 +343,7 @@ function commentLines(comment: ContextComment, dropped: ReadonlySet<number>): st
 function remarkLines(remark: ContextRemark, indent: string): string[] {
   return [
     `${indent}- ${byline(remark)}`,
-    ...namedText(remark.contents)
+    ...namedMentionText(remark.contents)
       .split('\n')
       .map((line) => `${indent}  ${line}`),
     ...attachmentLines(remark.attachments, `${indent}  `),
@@ -339,13 +360,6 @@ function byline({ authorName, registeredDateTime, mention }: ContextWriting): st
 /** 첨부 줄. 파일 이름만 쓴다. 첨부가 없으면 줄이 없다. */
 function attachmentLines(attachments: readonly string[], indent: string): string[] {
   return attachments.length > 0 ? [`${indent}첨부 있음(${attachments.join(', ')})`] : [];
-}
-
-/** 멘션 표기 `@[이름](ID)`를 `@이름`으로 바꾼다. Flow 사용자 ID를 에이전트에게 넘기지 않는다. */
-function namedText(text: string): string {
-  return splitMentionMarkup(text)
-    .map((part) => part.text)
-    .join('');
 }
 
 /** 글자 수. 이모지처럼 두 단위로 된 글자도 한 글자로 센다. */

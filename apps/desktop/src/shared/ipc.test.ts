@@ -138,8 +138,8 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'set-launch-at-login' })).toBeNull();
   });
 
-  it('묶음 무시·되돌리기·Flow에서 열기 명령은 묶음 ID(양의 정수)를 받는다', () => {
-    for (const type of ['ignore-bundle', 'restore-bundle', 'open-bundle-in-flow'] as const) {
+  it('묶음 무시·되돌리기·생성 취소·다시 시도·Flow에서 열기 명령은 묶음 ID(양의 정수)를 받는다', () => {
+    for (const type of ['ignore-bundle', 'restore-bundle', 'cancel-generation', 'retry-bundle', 'open-bundle-in-flow'] as const) {
       expect(parseAppCommand({ type, bundleId: 3 })).toEqual({ type, bundleId: 3 });
       expect(parseAppCommand({ type, bundleId: 0 })).toBeNull();
       expect(parseAppCommand({ type, bundleId: 1.5 })).toBeNull();
@@ -163,7 +163,15 @@ describe('렌더러가 보낸 명령 검사', () => {
       open: true,
     });
     expect(parseAppCommand({ type: 'set-review-section', window: 'settings', section: 'repository', open: true })).toBeNull();
-    expect(parseAppCommand({ type: 'set-review-section', window: 'expanded', section: 'draft', open: true })).toBeNull();
+    for (const section of ['requirement', 'draft', 'evidence', 'progress'] as const) {
+      expect(parseAppCommand({ type: 'set-review-section', window: 'expanded', section, open: false })).toEqual({
+        type: 'set-review-section',
+        window: 'expanded',
+        section,
+        open: false,
+      });
+    }
+    expect(parseAppCommand({ type: 'set-review-section', window: 'expanded', section: 'code', open: true })).toBeNull();
     expect(parseAppCommand({ type: 'set-review-section', window: 'expanded', section: 'original', open: 'yes' })).toBeNull();
   });
 

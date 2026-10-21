@@ -1,8 +1,21 @@
-import type { BundleGroup, BundleSnapshot, BundleStatusSnapshot, MentionPlaceSnapshot } from '../../shared/ipc';
+import type {
+  BundleGroup,
+  BundleSnapshot,
+  BundleStatusSnapshot,
+  DraftFailureReasonSnapshot,
+  EvidenceSnapshot,
+  GenerationSnapshot,
+  MentionPlaceSnapshot,
+  RunLineSnapshot,
+} from '../../shared/ipc';
+import { AGENT_NAMES } from './AgentSection';
 
-/** 상태 태그의 이름과 색. */
+/** 상태 태그의 이름과 색. 준비됨은 파랑, 생성 중은 회색, 실패는 빨강, 확인이 필요한 상태는 노랑, 처리됨은 옅은 회색이다. */
 export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; className: string }> = {
+  generating: { label: '생성 중', className: 'generating' },
+  ready: { label: '준비됨', className: 'ready' },
   'repo-check-needed': { label: '저장소 확인 필요', className: 'warn' },
+  failed: { label: '실패', className: 'failed' },
   ignored: { label: '무시함', className: 'done' },
   'already-answered': { label: '이미 답함', className: 'done' },
 };
@@ -70,4 +83,59 @@ export function postLine(bundle: BundleSnapshot): string {
 /** 무시 토스트 문구. */
 export function ignoredText(bundle: BundleSnapshot): string {
   return `무시했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
+}
+
+/** 실패 사유마다 실패 화면에 보일 오류 문장. 개발자가 아닌 사람도 읽을 수 있게 쓴다. */
+export const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
+  cancelled: '취소함: 초안 만들기를 취소했습니다.',
+  'timed-out': '에이전트가 10분 안에 끝내지 못해 멈췄습니다.',
+  'invalid-output': '에이전트가 정해진 형식으로 답하지 않았습니다. 두 번 시도했습니다.',
+  'empty-draft': '빈 초안: 에이전트가 초안 문장을 하나도 쓰지 않았습니다.',
+  'flow-unavailable': 'Flow에서 멘션 내용을 가져오지 못했습니다.',
+  'source-gone': 'Flow에서 원문을 찾을 수 없습니다. 지워졌거나 볼 권한이 없습니다.',
+  'app-error': '앱 안에서 오류가 나서 초안을 만들지 못했습니다.',
+  'cli-missing': '에이전트 CLI를 실행하지 못했습니다.',
+  'cli-error': '에이전트 CLI가 오류로 끝났습니다.',
+  'not-logged-in': '에이전트에 로그인되어 있지 않습니다.',
+  overloaded: '모델이 바빠서 답하지 못했습니다.',
+  network: '모델 서버에 연결하지 못했습니다.',
+  'max-turns': '에이전트가 정해진 단계 수 안에 끝내지 못했습니다.',
+  'agent-error': '에이전트가 오류로 끝났습니다.',
+};
+
+/** 매핑된 폴더가 없어 저장소 확인 필요가 된 묶음의 사유. */
+export const MISSING_FOLDERS_TEXT = '연결된 저장소 폴더를 찾을 수 없음';
+
+/** 걸린 시간을 보인다. 1분이 넘으면 "2분 14초", 넘지 않으면 "45초"다. */
+export function formatDuration(durationMs: number): string {
+  /** 반올림한 초. */
+  const totalSeconds = Math.round(durationMs / 1000);
+  /** 분과 남은 초. */
+  const [minutes, seconds] = [Math.floor(totalSeconds / 60), totalSeconds % 60];
+  if (minutes === 0) return `${seconds}초`;
+  return seconds === 0 ? `${minutes}분` : `${minutes}분 ${seconds}초`;
+}
+
+/** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"이다. */
+export function runLineText(run: RunLineSnapshot): string {
+  return [AGENT_NAMES[run.agent], formatDuration(run.durationMs), ...(run.contextOmitted ? ['맥락 일부 생략'] : [])].join(' · ');
+}
+
+/** 근거 번호를 원문자(①②…)로 보인다. ⑳을 넘으면 괄호 숫자다. */
+export function circledNumber(id: number): string {
+  return id >= 1 && id <= 20 ? String.fromCharCode(0x2460 + id - 1) : `(${id})`;
+}
+
+/** 근거의 위치. "저장소 이름 · 파일 이름 · 88번째 줄"이고, 여러 줄이면 "10–14번째 줄"이다. */
+export function evidenceLocation({ repositoryName, path, startLine, endLine }: EvidenceSnapshot): string {
+  /** 경로의 마지막 조각(파일 이름). */
+  const fileName = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  /** 줄 범위. */
+  const lines = startLine === endLine ? `${startLine}번째 줄` : `${startLine}–${endLine}번째 줄`;
+  return `${repositoryName} · ${fileName} · ${lines}`;
+}
+
+/** 생성 중 묶음의 진행 한 줄. 실행 중이면 마지막 진행 단계, 기다리면 차례를 기다린다는 말이다. */
+export function generationStepText(generation: GenerationSnapshot): string {
+  return generation.status === 'running' ? generation.step : '차례를 기다리는 중';
 }

@@ -1,11 +1,16 @@
-import type { AgentId, Executor, ExecutorOutcome, ExecutorProgress, ExecutorRunRequest } from '../ports/executor';
+import type { AgentId, Executor, ExecutorOutcome, ExecutorProgress, ExecutorReport, ExecutorRunRequest } from '../ports/executor';
 
 /** 가짜 실행기가 실행 한 번에 따를 대본. */
 export interface ScriptedRun {
   /** 차례로 알릴 진행 단계. */
   progress?: ExecutorProgress[];
-  /** 돌려줄 결과. `wait-for-abort`면 중단 신호가 올 때까지 끝나지 않고, 신호가 오면 취소로 끝난다. */
-  outcome: ExecutorOutcome | 'wait-for-abort';
+  /**
+   * 돌려줄 결과. `wait-for-abort`면 중단 신호가 올 때까지 끝나지 않고, 신호가 오면 취소로 끝난다.
+   * 약속이면 그 약속이 풀릴 때 결과를 돌려준다. 그 사이에 중단 신호가 오면 취소로 끝난다.
+   */
+  outcome: ExecutorOutcome | 'wait-for-abort' | Promise<ExecutorOutcome>;
+  /** 실행 보고에 담을 CLI 버전·모델·사용량. 주지 않으면 모른다(`null`). */
+  report?: Partial<Omit<ExecutorReport, 'outcome'>>;
 }
 
 /** 대본대로 진행 단계와 결과를 돌려주는 실행기. 실제 CLI는 부르지 않는다. */
@@ -22,7 +27,7 @@ export class FakeExecutor implements Executor {
     this.scripts.push(run);
   }
 
-  async run(request: ExecutorRunRequest): Promise<ExecutorOutcome> {
+  async run(request: ExecutorRunRequest): Promise<ExecutorReport> {
     this.requests.push(request);
     /** 이번 실행에 쓸 대본. */
     const scripted = this.scripts.shift();
@@ -32,8 +37,12 @@ export class FakeExecutor implements Executor {
     // 진행 단계를 차례로 알린 뒤, 결과를 돌려주거나 중단 신호를 기다린다.
     for (const progress of scripted.progress ?? []) request.onProgress(progress);
 
-    if (scripted.outcome !== 'wait-for-abort') return scripted.outcome;
-    return waitForAbort(request.signal);
+    /** 실행 결과. */
+    const outcome =
+      scripted.outcome === 'wait-for-abort'
+        ? await waitForAbort(request.signal)
+        : await Promise.race([scripted.outcome, waitForAbort(request.signal)]);
+    return { outcome, cliVersion: null, model: null, usage: null, ...scripted.report };
   }
 }
 

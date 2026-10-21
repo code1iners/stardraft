@@ -8,6 +8,7 @@ import { FlowAccount } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { collectBundleContext } from '../core/flow/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
+import { DraftQueue } from '../core/drafts/draft-queue';
 import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { MentionJudge } from '../core/flow/mention-judgement';
 import { errorFields } from '../core/logging/logger';
@@ -18,7 +19,7 @@ import { RepoMappings } from '../core/repos/repo-mappings';
 import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { openAppData, type AppData } from '../core/storage/app-data';
-import { trayIndicator } from '../core/tray-indicator';
+import { trayIndicator, type TrayIndicatorInput } from '../core/tray-indicator';
 import { globalProblemText, type GlobalProblemText } from '../shared/global-problem-text';
 import { APP_ID, appPlatform, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
 import { createAppLogger } from './app-logger';
@@ -38,6 +39,8 @@ let windows: AppWindows | null = null;
 let appData: AppData | null = null;
 /** 멘션 감지. 끝낼 때 폴링을 멈춘다. */
 let detection: MentionDetection | null = null;
+/** 초안 대기열. 끝낼 때 실행 중인 에이전트의 프로세스 트리를 끝낸다. */
+let drafts: DraftQueue | null = null;
 
 applyAppIdentity();
 
@@ -62,6 +65,8 @@ function start(): void {
   app.on('will-quit', () => {
     // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
     detection?.stop();
+    // 에이전트 CLI는 새 프로세스 그룹으로 띄워 앱과 함께 끝나지 않으므로 실행을 끊어 프로세스 트리를 끝낸다. 묶음은 생성 중으로 남는다.
+    drafts?.stop();
     appData?.close();
     appData = null;
   });
@@ -142,7 +147,7 @@ function start(): void {
     };
     const repoMappings = new RepoMappings({ settingsStore: appData.settingsStore, logger, connectFlow: connectCurrentFlow });
     await repoMappings.load();
-    /** 감지한 멘션 묶음. 작은 창 대기열, 펼친 창 목록, 트레이 숫자, 저장소 확인 필요 OS 알림이 따른다. */
+    /** 감지한 멘션 묶음. 작은 창 대기열, 펼친 창 목록, 트레이 표시, 초안 준비됨·저장소 확인 필요 OS 알림이 따른다. */
     const mentionBundles = new MentionBundles({
       stateStore: appData.stateStore,
       notifier,
@@ -157,18 +162,47 @@ function start(): void {
         if (!flow || !account) return null;
         return new MentionJudge(flow.api, account.userId).myAnswers(place, [account.userId]);
       },
-      // 초안을 만들 묶음의 맥락을 지금 키로 새로 조회한다.
+      // 초안을 만들 묶음의 맥락과 묶음 자리의 내 답을 지금 키로 새로 조회한다.
       collectContext: async (bundle) => {
         /** 지금 키로 만든 Flow 연결. */
         const flow = connectCurrentFlow();
-        if (!flow) return null;
+        /** 키 확인에 성공한 계정. 내 답을 찾을 때 쓴다. */
+        const account = flowAccount.state().account;
+        if (!flow || !account) return null;
         /** 조회한 결과. */
-        const result = await collectBundleContext(flow.api, bundle, systemClock.now());
+        const result = await collectBundleContext(flow.api, bundle, systemClock.now(), [account.userId]);
         if (!result.ok && result.failure.kind === 'unauthorized') flow.reportKeyRejected();
         return result;
       },
+      resolveRepos: (projectId) => repoMappings.resolve(projectId),
     });
     await mentionBundles.load();
+    /** 초안 대기열. 생성 중 묶음을 기본 에이전트로 하나씩 실행하고, 에이전트 연결이 없으면 연결될 때까지 기다린다. */
+    const draftQueue = new DraftQueue({
+      bundles: mentionBundles,
+      agent: () => {
+        /** 기본 에이전트와 모델 선택. */
+        const preferences = agentPreferences.state();
+        // 지금은 Claude Code 실행기만 있다. 연결 확인을 통과했고 기본 에이전트일 때만 실행한다.
+        if (!agentConnection.isConnected() || preferences.defaultAgent !== agentConnection.executor.agent) return null;
+        return { executor: agentConnection.executor, model: preferences.models[agentConnection.executor.agent]?.selected ?? null };
+      },
+      onAgentChange: (listener) => {
+        /** 구독을 끊는 함수. */
+        const unsubscribes = [agentConnection.onChange(listener), agentPreferences.onChange(listener)];
+        return () => {
+          for (const unsubscribe of unsubscribes) unsubscribe();
+        };
+      },
+      resolveRepos: (projectId) => repoMappings.resolve(projectId),
+      settingsStore: appData.settingsStore,
+      myName: () => flowAccount.state().account?.name || null,
+      projectTitle: (projectId) => repoMappings.projectTitle(projectId),
+      clock: systemClock,
+      logger,
+    });
+    drafts = draftQueue;
+    draftQueue.start();
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
     // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.
     /** 목록을 받은 계정의 사용자 ID. */
@@ -226,6 +260,7 @@ function start(): void {
       onboarding,
       launchAtLogin,
       bundles: mentionBundles,
+      drafts: draftQueue,
       reviewSections: new ReviewSections(),
     });
     /** 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣는다. */
@@ -273,9 +308,16 @@ function start(): void {
       quit: () => app.quit(),
     });
     tray = appTray;
-    /** 전역 문제, 감지 시작 여부, 검토 대기 수에 맞춰 트레이 표시를 바꾼다. */
+    /** 전역 문제, 감지 시작 여부, 묶음 상태(검토 대기 수, 실패, 생성 중)에 맞춰 트레이 표시를 바꾼다. */
     const refreshTray = () =>
-      appTray.show(trayView(globalProblems.current(), !onboarding.state().detectionStarted, mentionBundles.reviewCount()));
+      appTray.show(
+        trayView(globalProblems.current(), {
+          setupNeeded: !onboarding.state().detectionStarted,
+          reviewCount: mentionBundles.reviewCount(),
+          hasFailure: mentionBundles.idsWithStatus('failed').length > 0,
+          generating: mentionBundles.idsWithStatus('generating').length > 0,
+        }),
+      );
     refreshTray();
     globalProblems.onChange(refreshTray);
     onboarding.onChange(refreshTray);
@@ -308,12 +350,12 @@ function loginShellPath(): string {
   }
 }
 
-/** 전역 문제, 감지 시작 여부, 검토 대기 수에 맞춘 트레이 표시. */
-function trayView(current: ActiveGlobalProblem | null, setupNeeded: boolean, reviewCount: number): TrayView {
+/** 전역 문제와 앱 상태(감지 시작 여부, 묶음 상태)에 맞춘 트레이 표시. */
+function trayView(current: ActiveGlobalProblem | null, state: Omit<TrayIndicatorInput, 'hasGlobalProblem'>): TrayView {
   return {
-    indicator: trayIndicator({ hasGlobalProblem: current !== null, reviewCount, setupNeeded }),
+    indicator: trayIndicator({ hasGlobalProblem: current !== null, ...state }),
     problem: current && problemText(current.problem),
-    canCheckNow: !setupNeeded,
+    canCheckNow: !state.setupNeeded,
   };
 }
 

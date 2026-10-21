@@ -392,6 +392,8 @@ export interface EvidenceSnapshot {
   startLine: number;
   /** 끝 줄. 이 줄까지 포함한다. */
   endLine: number;
+  /** 근거 위치를 찾았는지 여부. 거짓이면 위치 대신 "위치를 찾을 수 없음"을 보이고 "에디터에서 열기"를 끈다. */
+  located: boolean;
 }
 
 /** 초안을 만들 때 읽기 범위로 넘긴 저장소 하나. */
@@ -437,6 +439,7 @@ export type DraftFailureReasonSnapshot =
   | 'timed-out'
   | 'invalid-output'
   | 'empty-draft'
+  | 'secret-evidence'
   | 'flow-unavailable'
   | 'source-gone'
   | 'app-error'

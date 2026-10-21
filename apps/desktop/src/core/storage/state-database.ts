@@ -113,6 +113,14 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ALTER TABLE mention_bundle ADD COLUMN failure TEXT;
   ALTER TABLE mention_bundle ADD COLUMN runs TEXT NOT NULL DEFAULT '[]';
   `,
+  // 7: 근거마다 위치를 찾았는지(`located`). 근거 위치 검증 전에 만든 초안의 근거는 보이던 대로 위치를 찾은 근거로 둔다.
+  `
+  UPDATE mention_bundle
+     SET draft = json_set(draft, '$.evidence', (
+           SELECT json_group_array(json_set(value, '$.located', json('true')) ORDER BY key)
+             FROM json_each(draft, '$.evidence')))
+   WHERE draft IS NOT NULL;
+  `,
 ];
 
 /** 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록이다. */

@@ -309,7 +309,7 @@ describe('멘션 묶음', () => {
     const draft: Draft = {
       requirement: { text: '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.', summary: '재시도 횟수' },
       paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }] }],
-      evidence: [{ id: 1, explanation: '운영 설정에서 횟수를 5로 정합니다.', repository: '/fake/repo-a', path: 'config.yml', startLine: 88, endLine: 88 }],
+      evidence: [{ id: 1, explanation: '운영 설정에서 횟수를 5로 정합니다.', repository: '/fake/repo-a', path: 'config.yml', startLine: 88, endLine: 88, located: false }],
       repositories: ['/fake/repo-a', '/fake/repo-b'],
       createdAt: 2_000,
     };
@@ -377,6 +377,40 @@ describe('멘션 묶음', () => {
 
     expect((await store.listBundles()).map(({ status, draft, failure, repoCheck, runs }) => ({ status, draft, failure, repoCheck, runs }))).toEqual([
       { status: 'repo-check-needed', draft: null, failure: null, repoCheck: null, runs: [] },
+    ]);
+  });
+
+  it('형식 6에서 올리면 이미 있던 초안의 근거는 순서 그대로 위치를 찾은 근거로 남는다(근거 위치 검증 전에 만든 초안)', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 6으로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 6), '0.0.9');
+    /** 근거 위치 검증 전의 초안. 근거에 `located`가 없다. */
+    const draft = {
+      requirement: { text: '요구', summary: '요약' },
+      paragraphs: [{ sentences: [{ text: '문장', evidence: [1, 2] }] }],
+      evidence: [
+        { id: 1, explanation: '첫 근거', repository: '/fake/repo-a', path: 'a.yml', startLine: 1, endLine: 1 },
+        { id: 2, explanation: '둘째 근거', repository: '/fake/repo-a', path: 'b.yml', startLine: 2, endLine: 3 },
+      ],
+      repositories: ['/fake/repo-a'],
+      createdAt: 2_000,
+    };
+    /** 묶음 하나를 넣는다. */
+    const insert = old.prepare(
+      `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at, context, draft)
+       VALUES (?, '-1', '900001', ?, '가짜 게시물', NULL, 0, 1000, NULL, NULL, ?)`,
+    );
+    insert.run('90000011', 'ready', JSON.stringify(draft));
+    insert.run('90000012', 'repo-check-needed', null);
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    expect((await store.listBundles()).map((bundle) => bundle.draft)).toEqual([
+      { ...draft, evidence: draft.evidence.map((item) => ({ ...item, located: true })) },
+      null,
     ]);
   });
 });

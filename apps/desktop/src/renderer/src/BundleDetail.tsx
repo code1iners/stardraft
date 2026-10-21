@@ -252,7 +252,10 @@ function DraftBody({ draft }: DraftProps) {
   );
 }
 
-/** 근거 영역 내용. 근거마다 자연어 설명과, 그 아래 작게 저장소·파일·줄 위치를 보인다. 전체 경로는 위치에 마우스를 올리면 보인다. */
+/**
+ * 근거 영역 내용. 근거마다 자연어 설명과, 그 아래 작게 저장소·파일·줄 위치를 보인다. 전체 경로는 위치에 마우스를 올리면 보인다.
+ * 위치를 찾지 못한 근거는 위치 대신 "위치를 찾을 수 없음"을 보이고, 에이전트가 적은 경로는 마우스를 올리면 보인다.
+ */
 function EvidenceList({ draft }: DraftProps) {
   if (draft.evidence.length === 0) return <p className="small muted">근거가 없습니다. 초안이 저장소 코드를 근거로 하지 않았습니다.</p>;
   return (
@@ -262,9 +265,15 @@ function EvidenceList({ draft }: DraftProps) {
           <p>
             <span className="evidence-number">{circledNumber(evidence.id)}</span> {evidence.explanation}
           </p>
-          <p className="evidence-location" title={evidence.path}>
-            {evidenceLocation(evidence)}
-          </p>
+          {evidence.located ? (
+            <p className="evidence-location" title={evidence.path}>
+              {evidenceLocation(evidence)}
+            </p>
+          ) : (
+            <p className="evidence-location not-found" title={evidence.path}>
+              위치를 찾을 수 없음
+            </p>
+          )}
         </li>
       ))}
     </ol>

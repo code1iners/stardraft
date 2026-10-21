@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -63,9 +63,15 @@ function alarm(alarmId: string, overrides: Partial<FlowAlarm> = {}): FlowAlarm {
   };
 }
 
-/** 가짜 시계가 부른 일과 가짜 포트의 응답이 모두 끝나도록 대기 중인 비동기 일을 여러 번 돌린다. 가짜 포트는 모두 바로 답한다. */
+/**
+ * 가짜 시계가 부른 일과 가짜 포트의 응답이 모두 끝나도록 대기 중인 비동기 일을 여러 번 돌린다. 가짜 포트는 모두 바로 답한다.
+ * 저장소 폴더 확인과 근거 위치 검증은 임시 폴더의 실제 파일을 읽으므로, 파일 읽기가 끝날 틈을 실제 시간으로도 준다.
+ */
 async function settle(): Promise<void> {
-  for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+  for (let round = 0; round < 3; round += 1) {
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 /** 근거 하나가 든 가짜 초안 실행 출력. `repository`는 넘긴 저장소 가운데 하나다. */
@@ -135,6 +141,9 @@ async function setup() {
   const repos = { a: join(workDir, 'repo-a'), b: join(workDir, 'repo-b') };
   mkdirSync(repos.a);
   mkdirSync(repos.b);
+  // 가짜 초안 출력의 근거가 가리키는 파일. 근거 위치 검증을 통과하도록 100줄로 둔다.
+  mkdirSync(join(repos.a, 'src/main/resources'), { recursive: true });
+  writeFileSync(join(repos.a, 'src/main/resources/application-prod.yml'), 'retry: 5\n'.repeat(100));
 
   const clock = new FakeClock(NOW);
   const flow = new FakeFlowApi();
@@ -252,6 +261,7 @@ describe('초안 실행: 생성 중에서 준비됨으로', () => {
           path: 'src/main/resources/application-prod.yml',
           startLine: 88,
           endLine: 88,
+          located: true,
         },
       ],
       repositories: [repos.a, repos.b],
@@ -373,6 +383,77 @@ describe('초안 실행: 형식 위반과 실패', () => {
 
     expect(bundles.state()[0]).toMatchObject({ status: 'failed', failure: { reason: 'empty-draft' }, draft: null });
     expect(executor.requests).toHaveLength(1);
+  });
+
+  it('스키마에는 맞지만 내용이 어긋난 출력은 실패로 돌리지 않고 근거가 줄어드는 쪽으로 고쳐 준비됨이 되며, 고친 내용은 실행 기록에만 남는다', async () => {
+    const { executor, bundles, stateStore, repos, poll } = await setup();
+    /** 없는 번호, 참조 없는 근거, 넘기지 않은 저장소, 파일 길이를 넘는 줄 범위가 섞인 출력. */
+    const output = draftOutput(repos.a);
+    output.paragraphs[0]!.sentences = [
+      { text: '실제 서비스에서는 다섯 번까지 다시 시도합니다.', evidence: [4, 9] },
+      { text: '시험 환경은 세 번으로 보입니다.', evidence: [1] },
+    ];
+    output.evidence = [
+      { ...output.evidence[0]!, id: 1, repository: join(workDir, 'repo-c') },
+      { ...output.evidence[0]!, id: 4, start_line: 99, end_line: 101 },
+      { ...output.evidence[0]!, id: 6, explanation: '참조 없는 근거' },
+    ];
+    executor.script({ outcome: { type: 'completed', output } });
+
+    await poll(alarm('101'));
+
+    /** 준비된 묶음. */
+    const [ready] = bundles.state();
+    expect(ready?.status).toBe('ready');
+    expect(ready?.draft?.paragraphs[0]?.sentences.map((sentence) => sentence.evidence)).toEqual([[1], [2]]);
+    expect(ready?.draft?.evidence.map(({ id, located, explanation }) => ({ id, located, explanation }))).toEqual([
+      { id: 1, located: false, explanation: '운영 설정에서 다시 시도하는 횟수를 5로 정해 둡니다.' },
+      { id: 2, located: false, explanation: '운영 설정에서 다시 시도하는 횟수를 5로 정해 둡니다.' },
+      { id: 3, located: true, explanation: '참조 없는 근거' },
+    ]);
+    /** 남긴 실행 기록. */
+    const [run] = ready?.runs ?? [];
+    expect(run?.result).toBe('succeeded');
+    expect(run?.fixes).toEqual([
+      '없는 근거 번호를 지움: 9번(1문단 1번째 문장)',
+      '어느 문장도 참조하지 않는 근거를 목록 끝에 둠: 원래 6번',
+      '근거 번호를 나온 순서대로 다시 매김: 4→1, 1→2',
+      '위치를 찾을 수 없는 근거: 1번(줄 범위가 파일 길이(100줄)를 넘음)',
+      '위치를 찾을 수 없는 근거: 2번(넘기지 않은 저장소)',
+    ]);
+    expect((await stateStore.listBundles())[0]?.draft?.evidence.map((item) => item.located)).toEqual([false, false, true]);
+  });
+
+  it('근거가 비밀 파일이면 다시 실행하지 않고 결과 전체를 버려 "비밀 파일을 근거로 듦" 실패가 되며, 대기열은 멈추지 않고 다음 묶음을 실행한다', async () => {
+    const { flow, executor, bundles, notifier, repos, poll } = await setup();
+    /** 둘째 근거가 비밀 파일인 출력. */
+    const output = draftOutput(repos.a);
+    output.evidence.push({ ...output.evidence[0]!, id: 2, path: 'config/.env.production' });
+    executor.script({ outcome: { type: 'completed', output } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    flow.addComment(POST_ID, { commentId: '701', contents: `${MY_MARKUP} 다른 질문`, registerId: SENDER, registeredDateTime: '20261020085600' });
+
+    await poll(alarm('101'), alarm('102', { remarkId: '701', registeredDateTime: '20261020085600' }));
+
+    /** 비밀 파일을 근거로 든 묶음과 다음 묶음. */
+    const [first, second] = bundles.state();
+    expect(first).toMatchObject({ status: 'failed', failure: { reason: 'secret-evidence', detail: null, lastStep: '초안 쓰는 중' }, draft: null });
+    expect(first?.runs.map(({ result, fixes }) => ({ result, fixes }))).toEqual([
+      { result: 'secret-evidence', fixes: ['비밀 파일 패턴에 맞는 근거: 2번(config/.env.production)'] },
+    ]);
+    expect(second?.status).toBe('ready');
+    expect(executor.requests).toHaveLength(2);
+    expect(notifier.sent.map((sent) => sent.bundleId)).toEqual([second?.id]);
+  });
+
+  it('사용자가 추가한 비밀 파일 패턴에 맞는 근거도 결과 전체를 버린다', async () => {
+    const { executor, bundles, settingsStore, repos, poll } = await setup();
+    settingsStore.settings.extraSecretPatterns = ['application-prod.yml'];
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+
+    await poll(alarm('101'));
+
+    expect(bundles.state()[0]).toMatchObject({ status: 'failed', failure: { reason: 'secret-evidence' }, draft: null });
   });
 
   it('10분 제한 시간을 넘기면 다시 실행하지 않고 마지막 단계와 함께 "시간 초과" 실패가 된다', async () => {

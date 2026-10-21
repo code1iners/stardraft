@@ -91,6 +91,7 @@ export const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
   'timed-out': '에이전트가 10분 안에 끝내지 못해 멈췄습니다.',
   'invalid-output': '에이전트가 정해진 형식으로 답하지 않았습니다. 두 번 시도했습니다.',
   'empty-draft': '빈 초안: 에이전트가 초안 문장을 하나도 쓰지 않았습니다.',
+  'secret-evidence': '비밀 파일을 근거로 듦: 에이전트가 비밀 파일을 근거로 들어 결과를 버렸습니다.',
   'flow-unavailable': 'Flow에서 멘션 내용을 가져오지 못했습니다.',
   'source-gone': 'Flow에서 원문을 찾을 수 없습니다. 지워졌거나 볼 권한이 없습니다.',
   'app-error': '앱 안에서 오류가 나서 초안을 만들지 못했습니다.',

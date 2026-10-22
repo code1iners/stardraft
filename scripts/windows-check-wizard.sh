@@ -223,8 +223,8 @@ USAGE
 parse_args() {
   while (($#)); do
     case "$1" in
-      --from) FROM_STAGE="${2:-}"; shift 2 || true ;;
-      --only) FROM_STAGE="${2:-}"; TO_STAGE="${2:-}"; shift 2 || true ;;
+      --from) (($# >= 2)) || { usage; exit 1; }; FROM_STAGE="$2"; shift 2 ;;
+      --only) (($# >= 2)) || { usage; exit 1; }; FROM_STAGE="$2"; TO_STAGE="$2"; shift 2 ;;
       -h | --help) usage; exit 0 ;;
       *) usage; exit 1 ;;
     esac
@@ -253,6 +253,12 @@ run() {
   "$@"
 }
 
+# ok "문장"은 확인을 통과한 것을 알린다.
+ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
+
+# saved KEY는 .env에 기억한 값. 없으면 빈 값.
+saved() { _existing "$1" || true; }
+
 # substage "제목"은 한 스테이지 안의 다음 화면으로 넘어간다. 화면을 비우고 스테이지 번호를 다시 보인다.
 substage() {
   _clear
@@ -260,7 +266,7 @@ substage() {
 }
 
 # 결과 파일이 없으면 머리말과 표 머리를 만든다.
-_ensure_results() {
+ensure_results() {
   [[ -f "$RESULTS_FILE" ]] && return 0
   mkdir -p "$(dirname "$RESULTS_FILE")"
   {
@@ -270,15 +276,16 @@ _ensure_results() {
   } >"$RESULTS_FILE"
 }
 
-# record_result "항목" "결과" "메모"는 결과 한 줄을 결과 파일에 더한다. 표가 깨지지 않게 |를 /로 바꾼다.
-record_result() {
-  _ensure_results
+# record "항목" "결과" "메모"는 결과 한 줄을 결과 파일에 더한다. 표가 깨지지 않게 |를 /로 바꾼다.
+record() {
+  ensure_results
   printf '| %s | %s | %s | %s | %s |\n' "$(date '+%Y-%m-%d %H:%M')" "$_STAGE_INDEX" "${1//|//}" "$2" "${3//|//}" >>"$RESULTS_FILE"
   printf '  %s✓ 기록%s %s: %s\n' "$GREEN" "$RESET" "$1" "$2"
 }
 
-# record "항목"은 사람이 본 결과(통과·실패·건너뜀)와 메모를 받아 기록한다.
-record() {
+# ask_result "항목"은 사람이 본 결과(통과·실패·건너뜀)와 메모를 받아 기록한다.
+ask_result() {
+  # 항목 이름, 사람이 고른 글자, 메모, 기록할 결과.
   local item="$1" reply="" memo="" result
   while :; do
     printf '  %s? %s%s — 결과 [p 통과 / f 실패 / s 건너뜀] ' "$YELLOW" "$item" "$RESET"
@@ -292,7 +299,7 @@ record() {
   done
   printf '  %s메모(본 문구·이유, 회사 이름·사람 이름 없이. 없으면 Enter):%s ' "$DIM" "$RESET"
   read -r memo || true
-  record_result "$item" "$result" "$memo"
+  record "$item" "$result" "$memo"
 }
 
 # unix_path WINDOWS_PATH는 Git Bash에서 쓸 수 있는 경로.
@@ -321,6 +328,7 @@ find_downloaded_installer() {
 
 # kill_installer_after SECONDS는 업데이트 설치 파일 프로세스가 나타나면 SECONDS초 뒤 강제로 끝낸다. 2분 안에 안 나타나면 그만둔다.
 kill_installer_after() {
+  # 끝내기 전 기다릴 초, 기다린 횟수(0.2초 단위).
   local delay="$1" waited=0
   until tasklist.exe //FO CSV //NH | tr -d '\r' | grep -qi '^"Stardraft-Setup'; do
     sleep 0.2
@@ -331,22 +339,39 @@ kill_installer_after() {
   run taskkill.exe //F //T //IM 'Stardraft-Setup-*' || true
 }
 
-# 9단계에서 로그아웃하기 전에 남긴, 다시 로그인한 뒤 물을 항목. 있으면 먼저 묻고 지운다.
+# logout_check "항목" NEXT는 로그아웃해야 볼 수 있는 항목을 .env에 남기고 로그아웃하게 한다. Git Bash 창이 닫히므로
+# 다시 로그인한 뒤 --from NEXT로 이어서 하면 ask_pending이 그 결과를 먼저 묻는다. 아니오면 건너뜀으로 기록한다.
+logout_check() {
+  # 기록할 항목, 다시 로그인한 뒤 이어서 할 스테이지.
+  local item="$1" next="$2"
+  warn "로그아웃하면 이 Git Bash 창도 닫힙니다."
+  if confirm "지금 로그아웃해서 확인할까요? (아니오면 이 항목을 건너뜁니다)"; then
+    write_env WINDOWS_WIZARD_PENDING "$_STAGE_INDEX|$item"
+    step "시작 > 계정 > 로그아웃 → 다시 로그인합니다. 트레이에 Stardraft 아이콘이 저절로 뜨는지 봅니다."
+    step "그다음 Git Bash에서: scripts/windows-check-wizard.sh --from $next (먼저 결과를 묻습니다)"
+    exit 0
+  fi
+  record "$item" "건너뜀" ""
+}
+
+# 로그아웃하기 전에 남긴 항목("스테이지|항목")이 있으면 먼저 묻고 지운다.
 ask_pending() {
+  # 남긴 항목.
   local pending
-  pending=$(_existing WINDOWS_WIZARD_PENDING || true)
+  pending=$(saved WINDOWS_WIZARD_PENDING)
   [[ -n "$pending" ]] || return 0
   _clear
   printf '\n%s%s▸ 로그아웃 전에 남긴 확인%s\n' "$BOLD" "$BLUE" "$RESET"
   say "다시 로그인했을 때 트레이(숨김 영역 ^ 포함)에 Stardraft 아이콘이 저절로 나타났나요?"
-  _STAGE_INDEX=9
-  record "$pending"
+  _STAGE_INDEX="${pending%%|*}"
+  ask_result "${pending#*|}"
   write_env WINDOWS_WIZARD_PENDING ""
 }
 
 stage_1() {
   stage "준비"
   [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]] || stop_here "Windows의 Git Bash에서 실행하세요."
+  # 확인할 명령.
   local tool
   for tool in cygpath powershell.exe tasklist.exe taskkill.exe where.exe curl; do
     command -v "$tool" >/dev/null 2>&1 || stop_here "$tool을 찾지 못했습니다. Git for Windows의 Git Bash에서 실행하세요."
@@ -371,7 +396,7 @@ stage_2() {
   stage "스마트 앱 컨트롤 확인과 스크린숏"
   say "Windows 11만 해당합니다. Windows 10이면 건너뜁니다."
   if ! confirm "Windows 11인가요?"; then
-    record_result "스마트 앱 컨트롤 설정 화면" "건너뜀" "Windows 10"
+    record "스마트 앱 컨트롤 설정 화면" "건너뜀" "Windows 10"
     return 0
   fi
   step "시작 메뉴에서 ${BOLD}Windows 보안${RESET}을 엽니다. 왼쪽 메뉴에서 앱과 브라우저 컨트롤 항목을 찾습니다."
@@ -382,7 +407,7 @@ stage_2() {
   write_env WINDOWS_SAC_STATES "$WINDOWS_SAC_STATES"
   ask WINDOWS_SAC_CURRENT "지금 선택된 상태 이름:"
   write_env WINDOWS_SAC_CURRENT "$WINDOWS_SAC_CURRENT"
-  record_result "Windows 보안 메뉴 이름과 스마트 앱 컨트롤 상태 이름" "관찰" "메뉴 \"$WINDOWS_SECURITY_MENU\", 상태 \"$WINDOWS_SAC_STATES\", 지금 \"$WINDOWS_SAC_CURRENT\""
+  record "Windows 보안 메뉴 이름과 스마트 앱 컨트롤 상태 이름" "관찰" "메뉴 \"$WINDOWS_SECURITY_MENU\", 상태 \"$WINDOWS_SAC_STATES\", 지금 \"$WINDOWS_SAC_CURRENT\""
   note "스크린숏: Win+Shift+S → 창 모드로 화면을 고르고, 알림을 눌러 PNG로 저장합니다. 계정 이름·다른 앱이 보이지 않게 찍으세요."
   ask WIN_SAC_SHOT "스마트 앱 컨트롤 설정 화면 스크린숏(PNG) 경로(없으면 Enter):"
   write_env WIN_SAC_SHOT "$WIN_SAC_SHOT"
@@ -392,12 +417,14 @@ stage_2() {
 
 stage_3() {
   stage "SmartScreen을 거치는 설치 경로"
-  local url
-  url="https://github.com/$(_existing GITHUB_OWNER)/stardraft/releases/download/v$(_existing WINDOWS_OLD_VERSION)/Stardraft-Setup-$(_existing WINDOWS_OLD_VERSION).exe"
+  # 이전 버전, 그 설치 파일 주소.
+  local url old
+  old=$(saved WINDOWS_OLD_VERSION)
+  url="https://github.com/$(saved GITHUB_OWNER)/stardraft/releases/download/v$old/Stardraft-Setup-$old.exe"
   say "업데이트를 나중에 보려고 사이트의 최신 버튼 대신 이전 버전 설치 파일을 브라우저로 받습니다."
   open_url "$url"
-  ask WINDOWS_OLD_INSTALLER "받은 설치 파일 경로(Enter면 다운로드 폴더의 Stardraft-Setup-$(_existing WINDOWS_OLD_VERSION).exe):"
-  [[ -n "$WINDOWS_OLD_INSTALLER" ]] || WINDOWS_OLD_INSTALLER="$USERPROFILE\\Downloads\\Stardraft-Setup-$(_existing WINDOWS_OLD_VERSION).exe"
+  ask WINDOWS_OLD_INSTALLER "받은 설치 파일 경로(Enter면 다운로드 폴더의 Stardraft-Setup-$old.exe):"
+  [[ -n "$WINDOWS_OLD_INSTALLER" ]] || WINDOWS_OLD_INSTALLER="$USERPROFILE\\Downloads\\Stardraft-Setup-$old.exe"
   write_env WINDOWS_OLD_INSTALLER "$WINDOWS_OLD_INSTALLER"
   [[ -f "$(unix_path "$WINDOWS_OLD_INSTALLER")" ]] || stop_here "$WINDOWS_OLD_INSTALLER가 없습니다."
   say "브라우저로 받은 파일의 MOTW(Zone.Identifier):"
@@ -405,7 +432,7 @@ stage_3() {
   step "설치 파일을 엽니다. 파란 ${BOLD}Windows의 PC 보호${RESET} 창이 뜨면 ${BOLD}스크린숏${RESET}을 찍습니다(Win+Shift+S)."
   step "${BOLD}추가 정보${RESET} → 나타나는 ${BOLD}실행${RESET}을 누릅니다. 묻는 것 없이 내 계정에 설치되고 켜지는지 봅니다."
   note "창의 제목·문장·버튼 이름이 사이트 설치 안내와 다르면 메모로 남기세요. 15단계에서 사이트 문구를 맞춥니다."
-  record "SmartScreen을 거치는 설치 경로"
+  ask_result "SmartScreen을 거치는 설치 경로"
   ask WIN_SMARTSCREEN_SHOT "PC 보호 창 스크린숏(PNG) 경로(없으면 Enter):"
   write_env WIN_SMARTSCREEN_SHOT "$WIN_SMARTSCREEN_SHOT"
   pause "Enter를 누르면 다음 스테이지로"
@@ -414,9 +441,9 @@ stage_3() {
 stage_4() {
   stage "트레이 숨김 영역과 첫 실행 작은 창"
   step "첫 실행에 작은 창(필수 설정 전 화면)이 작업 표시줄의 트레이 근처에 뜨나요? 창 안에 숨김 영역(^) 안내가 있나요?"
-  record "첫 실행 작은 창이 트레이 근처에 뜸"
+  ask_result "첫 실행 작은 창이 트레이 근처에 뜸"
   step "작업 표시줄 오른쪽 ^를 누릅니다. 새 Stardraft 아이콘이 숨김 영역 안에 있나요?"
-  record "새 트레이 아이콘이 숨김 영역에 들어감"
+  ask_result "새 트레이 아이콘이 숨김 영역에 들어감"
   step "아이콘을 숨김 영역 밖 작업 표시줄로 끌어 꺼내 둡니다. 14단계에서 업데이트 뒤에도 그 자리인지 봅니다."
   pause "꺼내 뒀으면 Enter"
 }
@@ -427,11 +454,11 @@ stage_5() {
   step "에이전트: Claude Code 연결(네 마디). 6단계에서 .cmd 래퍼를 보니, \"자세히\"의 경로를 봐 둡니다."
   step "저장소: ${BOLD}폴더 추가…${RESET}로 작업 폴더를 고릅니다."
   step "띠의 ${BOLD}감지 시작${RESET}. \"멘션 감지를 시작했습니다\" 알림이 뜹니다."
-  record "온보딩(키 확인, 에이전트 연결, 작업 폴더, 감지 시작)"
+  ask_result "온보딩(키 확인, 에이전트 연결, 작업 폴더, 감지 시작)"
   step "그 알림 배너를 눌러 봅니다(이미 사라졌으면 설정 > 일반의 ${BOLD}알림 시험${RESET}). 배너가 보이고, 누르면 Stardraft 창이 앞으로 오나요?"
-  record "알림 표시와 클릭(배너)"
+  ask_result "알림 표시와 클릭(배너)"
   step "작업 표시줄 오른쪽 날짜·시각을 눌러 알림 센터를 열고 Stardraft 알림을 누릅니다."
-  record "알림 클릭(알림 센터)"
+  ask_result "알림 클릭(알림 센터)"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -457,8 +484,8 @@ stage_6() {
   say "취소 뒤 프로세스:"
   agent_processes | sed 's/^/    /'
   say "생성 중에 새로 생긴 claude·node·cmd가 취소 뒤 모두 사라졌으면 통과입니다."
-  record ".cmd 래퍼 claude 실행"
-  record "취소할 때 프로세스 트리 종료"
+  ask_result ".cmd 래퍼 claude 실행"
+  ask_result "취소할 때 프로세스 트리 종료"
   step "다시 ${BOLD}최근 멘션으로 시험${RESET}으로 초안을 끝까지 만들어 보고 ${BOLD}시험 끝내기${RESET}."
   pause "Enter를 누르면 다음 스테이지로"
 }
@@ -468,17 +495,17 @@ stage_7() {
   say "지금 사용자 폴더: $USERPROFILE"
   if printf '%s' "$USERPROFILE" | LC_ALL=C grep -q '[^ -~]'; then
     say "사용자 폴더에 한글(ASCII 밖 글자)이 있습니다. 6단계의 실행이 이 경로에서 돌았습니다."
-    record "한글 사용자 이름 경로에서 CLI 실행"
+    ask_result "한글 사용자 이름 경로에서 CLI 실행"
     return 0
   fi
   say "사용자 폴더가 영문입니다. 한글 이름의 Windows 계정이 따로 있어야 볼 수 있습니다."
   if ! confirm "한글 이름 계정으로 볼까요? (아니오면 건너뜁니다)"; then
-    record_result "한글 사용자 이름 경로에서 CLI 실행" "건너뜀" "한글 이름 계정 없음"
+    record "한글 사용자 이름 경로에서 CLI 실행" "건너뜀" "한글 이름 계정 없음"
     return 0
   fi
   step "설정의 계정 쪽에서 한글 이름의 로컬 계정을 하나 더합니다. 메뉴 이름은 Windows 버전마다 달라 화면에서 확인하세요."
   step "그 계정으로 로그인해 Stardraft를 설치하고, claude를 설치·로그인한 뒤 ${BOLD}최근 멘션으로 시험${RESET}으로 초안을 끝까지 만듭니다."
-  record "한글 사용자 이름 경로에서 CLI 실행"
+  ask_result "한글 사용자 이름 경로에서 CLI 실행"
   pause "원래 계정으로 돌아왔으면 Enter"
 }
 
@@ -486,7 +513,7 @@ stage_8() {
   stage "safeStorage 암호화와 better-sqlite3 로드"
   step "트레이 아이콘을 오른쪽 클릭해 ${BOLD}종료${RESET}합니다. 시작 메뉴에서 Stardraft를 다시 켭니다."
   step "키를 다시 묻지 않고 설정 > Flow 계정이 \"연결됨\"이고, 감지가 이어지나요? (저장한 키를 DPAPI로 풀었다는 뜻)"
-  record "safeStorage 암호화와 복호화"
+  ask_result "safeStorage 암호화와 복호화"
   say "데이터 폴더($(data_dir)):"
   if [[ -d "$(data_dir)" ]]; then
     find "$(data_dir)" -maxdepth 1 -mindepth 1 | sed 's/^/    /'
@@ -494,28 +521,22 @@ stage_8() {
     warn "데이터 폴더가 없습니다."
   fi
   step "state.db가 있고, 앱이 오류 띠 없이 켜져 처리됨·시험 기록 같은 이전 상태를 보이나요?"
-  record "better-sqlite3 win32-x64 로드"
+  ask_result "better-sqlite3 win32-x64 로드"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
 stage_9() {
   stage "로그인 시 자동 시작"
   step "설정 > 일반의 \"로그인할 때 Stardraft 자동으로 켜기\"가 켜져 있는지, 작업 관리자 > 시작 앱에 Stardraft가 있는지 봅니다."
-  warn "로그아웃하면 이 Git Bash 창도 닫힙니다."
-  if confirm "지금 로그아웃해서 확인할까요? (아니오면 건너뜁니다)"; then
-    write_env WINDOWS_WIZARD_PENDING "로그인 시 자동 시작"
-    step "시작 > 계정 > 로그아웃 → 다시 로그인합니다. 트레이에 Stardraft 아이콘이 저절로 뜨는지 봅니다."
-    step "그다음 Git Bash에서: scripts/windows-check-wizard.sh --from 10 (먼저 결과를 묻습니다)"
-    exit 0
-  fi
-  record_result "로그인 시 자동 시작" "건너뜀" ""
+  logout_check "로그인 시 자동 시작" 10
   pause "Enter를 누르면 다음 스테이지로"
 }
 
 stage_10() {
   stage "앱이 받은 설치 파일의 MOTW"
+  # 최신 버전, 받은 설치 파일(Git Bash 경로와 Windows 경로), 그 파일의 Zone.Identifier.
   local new installer windows_path motw
-  new=$(_existing WINDOWS_NEW_VERSION)
+  new=$(saved WINDOWS_NEW_VERSION)
   step "설정 > 일반의 업데이트 칸에서 ${BOLD}지금 확인${RESET}. $new을(를) 받고 \"새 버전 $new이(가) 준비됐습니다\"가 될 때까지 기다립니다."
   step "${BOLD}다시 시작${RESET}은 아직 누르지 않습니다."
   pause "준비됨이 보이면 Enter"
@@ -525,26 +546,28 @@ stage_10() {
   say "받은 설치 파일: $windows_path"
   motw=$(zone_identifier "$windows_path")
   if [[ -z "$motw" ]]; then
-    record_result "앱이 받은 설치 파일에 MOTW 없음" "통과" ""
+    record "앱이 받은 설치 파일에 MOTW 없음" "통과" ""
   else
     printf '%s\n' "$motw" | sed 's/^/    /'
-    record_result "앱이 받은 설치 파일에 MOTW 없음" "실패" "Zone.Identifier 있음"
+    record "앱이 받은 설치 파일에 MOTW 없음" "실패" "Zone.Identifier 있음"
   fi
   pause "Enter를 누르면 다음 스테이지로"
 }
 
 stage_11() {
   stage "버전이 그대로일 때 설치 실패 띠"
+  # 업데이트로 받을 최신 버전.
   local new
-  new=$(_existing WINDOWS_NEW_VERSION)
+  new=$(saved WINDOWS_NEW_VERSION)
   say "다시 시작하자마자 설치 파일을 강제로 끝내 버전이 그대로 남게 합니다."
   note "이 마법사가 설치 파일 프로세스를 지켜보다가 나타나는 즉시 taskkill로 끝냅니다."
-  pause "준비됐으면 Enter를 누르고, 바로 앱의 [다시 시작]을 누르세요"
+  require "업데이트 설치 파일을 강제로 끝낼까요? 앱이 이전 버전으로 남거나 지워질 수 있습니다(12단계에서 다시 설치)."
+  say "이제 바로 앱의 [다시 시작]을 누르세요. 설치 파일이 보이면 끝냅니다."
   kill_installer_after 0 || true
   step "앱이 다시 켜지지 않았으면 시작 메뉴에서 Stardraft를 켭니다."
   step "작은 창 띠와 설정 > 일반에 \"${new}(으)로 업데이트하지 못했습니다\"와 [다시 시도] [사이트에서 받기]가 보이나요?"
   note "앱이 아예 없어졌으면 그 사실을 메모하고, 3단계의 이전 버전 설치 파일로 다시 설치하세요(12단계 상황)."
-  record "버전이 그대로일 때 설치 실패 띠"
+  ask_result "버전이 그대로일 때 설치 실패 띠"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -554,54 +577,59 @@ stage_12() {
   ask WINDOWS_KILL_DELAY "설치 파일이 나타나고 몇 초 뒤 끝낼까요(Enter면 3):"
   [[ "$WINDOWS_KILL_DELAY" =~ ^[0-9]+$ ]] || WINDOWS_KILL_DELAY=3
   write_env WINDOWS_KILL_DELAY "$WINDOWS_KILL_DELAY"
-  pause "준비됐으면 Enter를 누르고, 바로 띠의 [다시 시도](또는 [다시 시작])를 누르세요"
+  require "설치 도중에 강제로 끝낼까요? 앱이 지워질 수 있습니다(아래에서 다시 설치)."
+  say "이제 바로 띠의 [다시 시도](또는 [다시 시작])를 누르세요. 설치 파일이 보이면 ${WINDOWS_KILL_DELAY}초 뒤 끝냅니다."
   kill_installer_after "$WINDOWS_KILL_DELAY" || true
   step "시작 메뉴에서 Stardraft를 켜 봅니다. 켜지는지, 없어졌는지, 어떤 버전인지(설정 > 일반) 메모합니다."
-  record "설치 도중 강제 종료 뒤의 상태"
-  step "3단계의 이전 버전 설치 파일($(_existing WINDOWS_OLD_INSTALLER))로 다시 설치합니다(PC 보호 창이 다시 뜨면 추가 정보 → 실행)."
+  ask_result "설치 도중 강제 종료 뒤의 상태"
+  step "3단계의 이전 버전 설치 파일($(saved WINDOWS_OLD_INSTALLER))로 다시 설치합니다(PC 보호 창이 다시 뜨면 추가 정보 → 실행)."
   step "다시 켰을 때 Flow 계정 연결, 작업 폴더, 처리됨 같은 데이터가 그대로인가요?"
-  record "재설치 뒤 데이터 유지"
+  ask_result "재설치 뒤 데이터 유지"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
 stage_13() {
   stage "창과 UAC 없는 업데이트 설치와 재실행"
+  # 업데이트로 받을 최신 버전.
   local new
-  new=$(_existing WINDOWS_NEW_VERSION)
+  new=$(saved WINDOWS_NEW_VERSION)
   step "설정 > 일반에서 ${BOLD}지금 확인${RESET}(또는 [다시 시도]) → 준비되면 ${BOLD}다시 시작${RESET}. 이번에는 끝내지 않습니다."
   step "설치 창, 사용자 계정 컨트롤(UAC) 창, PC 보호 창이 하나도 뜨지 않고 앱이 저절로 다시 켜지나요?"
-  record "quitAndInstall이 창과 UAC 없이 설치하고 다시 켬"
-  record "앱이 받은 설치 파일에 SmartScreen이 뜨지 않음"
+  ask_result "quitAndInstall이 창과 UAC 없이 설치하고 다시 켬"
+  ask_result "앱이 받은 설치 파일에 SmartScreen이 뜨지 않음"
   step "작은 창 띠에 \"${new}(으)로 업데이트했습니다\"가 보이고, 설정 > 일반의 버전이 $new인가요?"
-  record "업데이트 직후 띠와 버전"
+  ask_result "업데이트 직후 띠와 버전"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
 stage_14() {
   stage "업데이트 뒤 유지 항목"
   step "설정 > 일반의 ${BOLD}알림 시험${RESET}. 알림이 보이고 보낸 앱 이름이 Stardraft인가요?"
-  record "업데이트 뒤 알림"
+  ask_result "업데이트 뒤 알림"
   step "설정 > 일반의 자동 시작이 켜져 있고 작업 관리자 > 시작 앱에 Stardraft가 그대로 있나요?"
-  record "업데이트 뒤 자동 시작"
+  ask_result "업데이트 뒤 자동 시작 설정"
   say "시작 메뉴 바로가기의 AppUserModelID:"
+  # 시작 메뉴 바로가기의 AppUserModelID.
   local aumid
   aumid=$(ps_run "Get-StartApps | Where-Object Name -like 'Stardraft*' | ForEach-Object AppID")
   say "    ${aumid:-(찾지 못함)}"
   if [[ "$aumid" == "$APP_ID" ]]; then
-    record_result "업데이트 뒤 AppUserModelID" "통과" "$aumid"
+    record "업데이트 뒤 AppUserModelID" "통과" "$aumid"
   else
-    record_result "업데이트 뒤 AppUserModelID" "실패" "${aumid:-찾지 못함}"
+    record "업데이트 뒤 AppUserModelID" "실패" "${aumid:-찾지 못함}"
   fi
   step "4단계에서 꺼내 둔 트레이 아이콘이 숨김 영역 밖 그 자리에 있나요?"
-  record "업데이트 뒤 트레이 아이콘 위치"
+  ask_result "업데이트 뒤 트레이 아이콘 위치"
   step "키를 다시 묻지 않고 설정 > Flow 계정이 \"연결됨\"인가요?"
-  record "업데이트 뒤 DPAPI 복호화"
+  ask_result "업데이트 뒤 DPAPI 복호화"
+  logout_check "업데이트 뒤 로그아웃·로그인 자동 시작" 15
   pause "Enter를 누르면 마무리 스테이지로"
 }
 
 stage_15() {
   stage "스크린숏과 사이트 문구 반영"
   say "두 스크린숏을 사이트에 넣습니다. 파일 이름은 apps/site/README.md의 표를 따릅니다."
+  # .env 키, 스크린숏 원본 경로, 사이트에 둘 경로.
   local name source dest
   for name in WIN_SMARTSCREEN_SHOT WIN_SAC_SHOT; do
     case "$name" in
@@ -609,7 +637,7 @@ stage_15() {
       WIN_SAC_SHOT) dest="$SCREENSHOT_DIR/win-sac.png"; ask WIN_SAC_SHOT "스마트 앱 컨트롤 설정 스크린숏 경로(없으면 Enter):"; source="$WIN_SAC_SHOT" ;;
     esac
     if [[ -z "$source" ]]; then
-      record_result "스크린숏 $dest" "건너뜀" "찍지 못함"
+      record "스크린숏 $dest" "건너뜀" "찍지 못함"
       continue
     fi
     source=$(unix_path "$source")
@@ -618,16 +646,16 @@ stage_15() {
     write_env "$name" "$source"
     mkdir -p "$SCREENSHOT_DIR"
     run cp "$source" "$dest"
-    record_result "스크린숏 $dest" "통과" ""
+    record "스크린숏 $dest" "통과" ""
   done
   require "스크린숏에 계정 이름, 다른 앱, 회사 정보가 보이지 않나요?"
 
   substage "메뉴 이름·상태 이름과 예시 화면 문구"
-  say "점검에서 본 값: 메뉴 \"$(_existing WINDOWS_SECURITY_MENU || true)\", 상태 \"$(_existing WINDOWS_SAC_STATES || true)\""
+  say "점검에서 본 값: 메뉴 \"$(saved WINDOWS_SECURITY_MENU || true)\", 상태 \"$(saved WINDOWS_SAC_STATES || true)\""
   say "사이트가 지금 쓰는 Windows 단계 문구:"
-  awk '/^  windows: \[/,0' apps/site/src/components/install-steps.tsx | grep -E "seen:|title:|alt:|<b>|state:" | sed 's/^ */    /'
+  awk '/^  windows: \[/,0' apps/site/src/components/install-steps.tsx | { grep -E "seen:|title:|alt:|<b>|state:" || true; } | sed 's/^ */    /'
   note "예시 화면의 글은 apps/site/src/components/ExampleScene.tsx에 있습니다."
-  record "Windows 예시 화면 문구가 실제 화면과 같음"
+  ask_result "Windows 예시 화면 문구가 실제 화면과 같음"
   warn "다르면 install-steps.tsx와 ExampleScene.tsx를 고치고 pnpm --filter @stardraft/site test를 통과시키세요. 이 마법사는 코드를 고치지 않습니다."
   say "커밋할 것: ${RESULTS_FILE#"$REPO_ROOT"/}, $SCREENSHOT_DIR/win-*.png, 고친 사이트 문구."
   note "결과 파일에 회사 이름·사람 이름·실제 ID가 없는지 본 뒤 커밋하세요. 막히는 문제는 새 티켓으로 만드세요."
@@ -635,6 +663,11 @@ stage_15() {
 }
 
 parse_args "$@"
+# 1단계에서 정한 값(저장소 주인, 두 버전)이 없으면 이어서 할 수 없다.
+if ((FROM_STAGE > 1)) && [[ -z "$(saved GITHUB_OWNER)" || -z "$(saved WINDOWS_OLD_VERSION)" || -z "$(saved WINDOWS_NEW_VERSION)" ]]; then
+  printf '1단계의 값이 없습니다. 1단계부터 하세요: scripts/windows-check-wizard.sh\n'
+  exit 1
+fi
 banner "Stardraft 팀 배포 전 Windows 점검"
 ask_pending
 for ((n = FROM_STAGE; n <= TO_STAGE; n++)); do

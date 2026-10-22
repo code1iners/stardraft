@@ -207,6 +207,8 @@ SITE_URL="https://stardraft.squadify.app"
 PUBLIC_KEYS_FILE="apps/desktop/src/core/update/update-public-keys.mts"
 # 사이트가 실제 스크린숏을 찾는 폴더(apps/site/README.md).
 SCREENSHOT_DIR="apps/site/src/assets/screenshots"
+# 사이트 로컬 실행 값을 이번 실행에서 썼는지 여부. 마무리 요약에 따로 알린다.
+SITE_ENV_WRITTEN=0
 # 처음 돌릴 스테이지와 마지막 스테이지.
 FROM_STAGE=1
 TO_STAGE=$TOTAL_STAGES
@@ -226,8 +228,8 @@ USAGE
 parse_args() {
   while (($#)); do
     case "$1" in
-      --from) FROM_STAGE="${2:-}"; shift 2 || true ;;
-      --only) FROM_STAGE="${2:-}"; TO_STAGE="${2:-}"; shift 2 || true ;;
+      --from) (($# >= 2)) || { usage; exit 1; }; FROM_STAGE="$2"; shift 2 ;;
+      --only) (($# >= 2)) || { usage; exit 1; }; FROM_STAGE="$2"; TO_STAGE="$2"; shift 2 ;;
       -h | --help) usage; exit 0 ;;
       *) usage; exit 1 ;;
     esac
@@ -256,6 +258,12 @@ run() {
   "$@"
 }
 
+# ok "문장"은 확인을 통과한 것을 알린다.
+ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
+
+# saved KEY는 .env에 기억한 값. 없으면 빈 값.
+saved() { _existing "$1" || true; }
+
 # substage "제목"은 한 스테이지 안의 다음 화면으로 넘어간다. 화면을 비우고 스테이지 번호를 다시 보인다.
 substage() {
   _clear
@@ -263,7 +271,7 @@ substage() {
 }
 
 # 결과 파일이 없으면 머리말과 표 머리를 만든다.
-_ensure_results() {
+ensure_results() {
   [[ -f "$RESULTS_FILE" ]] && return 0
   mkdir -p "$(dirname "$RESULTS_FILE")"
   {
@@ -273,15 +281,16 @@ _ensure_results() {
   } >"$RESULTS_FILE"
 }
 
-# record_result "항목" "결과" "메모"는 결과 한 줄을 결과 파일에 더한다. 표가 깨지지 않게 |를 /로 바꾼다.
-record_result() {
-  _ensure_results
+# record "항목" "결과" "메모"는 결과 한 줄을 결과 파일에 더한다. 표가 깨지지 않게 |를 /로 바꾼다.
+record() {
+  ensure_results
   printf '| %s | %s | %s | %s | %s |\n' "$(date '+%Y-%m-%d %H:%M')" "$_STAGE_INDEX" "${1//|//}" "$2" "${3//|//}" >>"$RESULTS_FILE"
   printf '  %s✓ 기록%s %s: %s\n' "$GREEN" "$RESET" "$1" "$2"
 }
 
-# record "항목"은 사람이 본 결과(통과·실패·건너뜀)와 메모를 받아 기록한다.
-record() {
+# ask_result "항목"은 사람이 본 결과(통과·실패·건너뜀)와 메모를 받아 기록한다.
+ask_result() {
+  # 항목 이름, 사람이 고른 글자, 메모, 기록할 결과.
   local item="$1" reply="" memo="" result
   while :; do
     printf '  %s? %s%s — 결과 [p 통과 / f 실패 / s 건너뜀] ' "$YELLOW" "$item" "$RESET"
@@ -295,19 +304,11 @@ record() {
   done
   printf '  %s메모(본 문구·이유, 회사 이름·사람 이름 없이. 없으면 Enter):%s ' "$DIM" "$RESET"
   read -r memo || true
-  record_result "$item" "$result" "$memo"
+  record "$item" "$result" "$memo"
 }
 
-# 저장소 주인 계정. 1단계에서 정한다.
-owner() {
-  local value
-  value=$(_existing GITHUB_OWNER || true)
-  [[ -n "$value" ]] || stop_here "저장소 주인을 모릅니다. 1단계부터 다시 하세요: scripts/release-wizard.sh --from 1"
-  printf '%s' "$value"
-}
-
-# 앱 저장소의 owner/name.
-repo() { printf '%s/%s' "$(owner)" "$REPO_NAME"; }
+# 앱 저장소의 owner/name. 저장소 주인(OWNER)은 1단계에서 정하고, 이어서 할 때는 .env에서 읽는다.
+repo() { printf '%s/%s' "$OWNER" "$REPO_NAME"; }
 
 # 데스크톱 앱 패키지의 버전.
 app_version() { node -p "require('./apps/desktop/package.json').version"; }
@@ -319,6 +320,7 @@ release_assets() {
 
 # wait_for_run WORKFLOW BRANCH는 그 브랜치·태그에서 가장 최근 워크플로 실행이 끝날 때까지 지켜본다. 실패하면 거짓.
 wait_for_run() {
+  # 워크플로 파일 이름, 브랜치·태그, 찾은 실행 ID, 찾은 횟수.
   local workflow="$1" branch="$2" id="" tries=0
   # 푸시 직후에는 실행이 아직 목록에 없을 수 있다.
   while [[ -z "$id" && $tries -lt 30 ]]; do
@@ -330,11 +332,16 @@ wait_for_run() {
   gh run watch "$id" --repo "$(repo)" --exit-status --interval 10
 }
 
+# main 브랜치이고 커밋하지 않은 변경이 없는지 본다.
+require_clean_main() {
+  [[ "$(git rev-parse --abbrev-ref HEAD)" == "main" ]] || stop_here "main 브랜치에서 실행하세요(git switch main)."
+  [[ -z "$(git status --porcelain)" ]] || stop_here "커밋하지 않은 변경이 있습니다. 정리한 뒤 다시 하세요."
+}
+
 # 로컬 main이 origin/main과 같은지 본다. 태그는 푸시된 커밋에만 단다.
 require_synced_main() {
   run git fetch origin main --quiet
-  [[ "$(git rev-parse --abbrev-ref HEAD)" == "main" ]] || stop_here "main 브랜치에서 실행하세요(git switch main)."
-  [[ -z "$(git status --porcelain)" ]] || stop_here "커밋하지 않은 변경이 있습니다. 정리한 뒤 다시 하세요."
+  require_clean_main
   [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || stop_here "로컬 main과 origin/main이 다릅니다. 푸시하거나 당겨서 맞추세요."
 }
 
@@ -357,11 +364,12 @@ commit_and_push() {
 # enable_immutable_releases OWNER/NAME은 Release를 공개한 뒤 파일과 태그를 바꿀 수 없게 한다.
 # API로 켜 보고, 안 되면 저장소 설정 화면에서 켜게 한다.
 enable_immutable_releases() {
+  # owner/name, API가 알려 준 켜짐 여부.
   local target="$1" enabled
   gh api -X PUT "repos/$target/immutable-releases" >/dev/null 2>&1 || true
   enabled=$(gh api "repos/$target/immutable-releases" --jq '.enabled' 2>/dev/null || true)
   if [[ "$enabled" == "true" ]]; then
-    printf '  %s✓%s %s: immutable releases 켜짐\n' "$GREEN" "$RESET" "$target"
+    ok "$target: immutable releases 켜짐"
     return 0
   fi
   warn "API로 켜지 못했습니다. 설정 화면에서 켭니다."
@@ -392,6 +400,7 @@ publish_release() {
 
 # push_tag_and_check VERSION은 확인을 받아 태그를 푸시하고, 태그 워크플로가 다섯 파일을 담은 초안 Release를 만들었는지 본다.
 push_tag_and_check() {
+  # 버전, 초안 Release에 실제로 있는 파일 이름.
   local version="$1" actual
   require_synced_main
   [[ "$(app_version)" == "$version" ]] || stop_here "apps/desktop/package.json의 version이 $version이 아닙니다."
@@ -406,19 +415,35 @@ push_tag_and_check() {
   say "초안 Release v$version의 파일:"
   printf '%s\n' "$actual" | sed 's/^/    /'
   [[ "$actual" == "$(release_assets "$version")" ]] || stop_here "초안 Release의 파일이 다섯 파일(dmg, zip, latest-mac.yml, exe, latest.yml)과 다릅니다."
-  printf '  %s✓%s 다섯 파일이 모두 있고 다른 파일은 없습니다.\n' "$GREEN" "$RESET"
+  ok "다섯 파일이 모두 있고 다른 파일은 없습니다."
 }
 
-# 11단계에서 로그아웃하기 전에 남긴, 다시 로그인한 뒤 물을 항목. 있으면 먼저 묻고 지운다.
+# logout_check "항목" NEXT는 로그아웃해야 볼 수 있는 항목을 .env에 남기고 로그아웃하게 한다. 터미널이 닫히므로
+# 다시 로그인한 뒤 --from NEXT로 이어서 하면 ask_pending이 그 결과를 먼저 묻는다. 아니오면 건너뜀으로 기록한다.
+logout_check() {
+  # 기록할 항목, 다시 로그인한 뒤 이어서 할 스테이지.
+  local item="$1" next="$2"
+  warn "로그아웃하면 이 터미널도 닫힙니다."
+  if confirm "지금 로그아웃해서 확인할까요? (아니오면 이 항목을 건너뜁니다)"; then
+    write_env RELEASE_WIZARD_PENDING "$_STAGE_INDEX|$item"
+    step "Apple 메뉴 > 로그아웃 → 다시 로그인합니다. 메뉴 막대에 Stardraft 아이콘이 저절로 뜨는지 봅니다."
+    step "그다음 터미널에서: scripts/release-wizard.sh --from $next (먼저 결과를 묻습니다)"
+    exit 0
+  fi
+  record "$item" "건너뜀" ""
+}
+
+# 로그아웃하기 전에 남긴 항목("스테이지|항목")이 있으면 먼저 묻고 지운다.
 ask_pending() {
+  # 남긴 항목.
   local pending
-  pending=$(_existing RELEASE_WIZARD_PENDING || true)
+  pending=$(saved RELEASE_WIZARD_PENDING)
   [[ -n "$pending" ]] || return 0
   _clear
   printf '\n%s%s▸ 로그아웃 전에 남긴 확인%s\n' "$BOLD" "$BLUE" "$RESET"
   say "다시 로그인했을 때 메뉴 막대에 Stardraft 아이콘이 저절로 나타났나요?"
-  _STAGE_INDEX=11
-  record "$pending"
+  _STAGE_INDEX="${pending%%|*}"
+  ask_result "${pending#*|}"
   write_env RELEASE_WIZARD_PENDING ""
 }
 
@@ -443,18 +468,19 @@ stage_1() {
     step "워크플로 파일을 푸시할 수 있게 workflow 범위를 더합니다."
     run gh auth refresh --hostname github.com --scopes workflow
   fi
+  # gh에 로그인한 계정.
   local login
   login=$(gh api user --jq '.login')
   say "로그인한 계정: ${BOLD}$login${RESET}"
   require "이 개인 계정에 공개 저장소 $REPO_NAME을 만들고 출시합니까?"
   write_env GITHUB_OWNER "$login"
+  OWNER="$login"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
 stage_2() {
   stage "이력 검사, 공개 저장소 만들기, CI 확인"
-  [[ "$(git rev-parse --abbrev-ref HEAD)" == "main" ]] || stop_here "main 브랜치에서 실행하세요(git switch main)."
-  [[ -z "$(git status --porcelain)" ]] || stop_here "커밋하지 않은 변경이 있습니다. 정리한 뒤 다시 하세요."
+  require_clean_main
   say "공개하면 main의 이력 전체가 보입니다. 회사 정보(하위 도메인, 실제 Flow ID)가 남아 있지 않은지 봅니다."
 
   # Flow 회사 주소(<회사>.flow.team)가 이력 어딘가에 있나요? 공통 API 주소만 허용한다.
@@ -465,10 +491,11 @@ stage_2() {
     printf '%s\n' "$hosts" | sed 's/^/    /'
     stop_here "이력을 고쳐 쓴 뒤(예: git filter-repo) 다시 하세요. 이 마법사는 이력을 고치지 않습니다."
   fi
-  printf '  %s✓%s 이력에 api.flow.team 말고 다른 flow.team 주소가 없습니다.\n' "$GREEN" "$RESET"
+  ok "이력에 api.flow.team 말고 다른 flow.team 주소가 없습니다."
 
   say "찾을 값을 하나씩 넣으세요: 회사 하위 도메인, 실제 프로젝트·게시물·사용자 ID, 회사 이름 등."
   note "값은 화면에 보이지 않고 어디에도 저장하지 않습니다. 다 넣었으면 빈 칸으로 Enter."
+  # 찾을 값, 하나라도 찾았는지, 그 값이 나오는 커밋.
   local pattern found=0 commits
   while :; do
     pattern=""
@@ -481,7 +508,7 @@ stage_2() {
       warn "이 값이 나오는 커밋:"
       printf '%s\n' "$commits" | sed 's/^/    /'
     else
-      printf '  %s✓%s 이력에 없습니다.\n' "$GREEN" "$RESET"
+      ok "이력에 없습니다."
     fi
   done
   ((found == 0)) || stop_here "이력에 회사 정보가 남아 있습니다. 가짜 값으로 고쳐 쓴 뒤 다시 하세요."
@@ -492,6 +519,7 @@ stage_2() {
   require "이 이름과 메일 주소가 공개돼도 됩니까?"
 
   substage "공개 저장소 만들기"
+  # origin 원격 주소.
   local origin_url
   origin_url=$(git remote get-url origin 2>/dev/null || true)
   if gh repo view "$(repo)" >/dev/null 2>&1; then
@@ -503,7 +531,7 @@ stage_2() {
     run gh repo create "$(repo)" --public --description "$(node -p "require('./package.json').description")" --source . --remote origin
   fi
   origin_url=$(git remote get-url origin 2>/dev/null || true)
-  [[ "$origin_url" =~ github\.com[:/]$(owner)/$REPO_NAME(\.git)?/?$ ]] || stop_here "origin이 $(repo)를 가리키지 않습니다($origin_url). 앱의 업데이트 주소가 origin을 따르므로 맞춰야 합니다."
+  [[ "$origin_url" =~ github\.com[:/]$OWNER/$REPO_NAME(\.git)?/?$ ]] || stop_here "origin이 $(repo)를 가리키지 않습니다($origin_url). 앱의 업데이트 주소가 origin을 따르므로 맞춰야 합니다."
   if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main 2>/dev/null || true)" ]]; then
     require "main 이력을 푸시할까요?"
     run git push -u origin main
@@ -514,28 +542,27 @@ stage_2() {
 
   substage "PR CI 확인"
   say "빈 커밋 하나로 시험 PR을 열어 PR에서도 CI가 도는지 봅니다. 확인한 뒤 PR과 브랜치를 지웁니다."
-  if confirm "시험 PR을 열까요?"; then
-    # 시험 PR의 브랜치 이름. 겹치지 않게 시각을 붙인다.
-    local branch
-    branch="ci-check-$(date +%Y%m%d%H%M%S)"
-    run git switch -c "$branch"
-    run git commit --allow-empty -m "PR CI 확인"
-    run git push -u origin "$branch"
-    run gh pr create --repo "$(repo)" --base main --head "$branch" --title "PR CI 확인" --body "PR에서 CI가 도는지 확인하고 닫는 PR입니다."
-    # 검사가 목록에 오르기까지 잠깐 걸린다.
-    sleep 15
-    if run gh pr checks "$branch" --repo "$(repo)" --watch --interval 10; then
-      record_result "PR CI" "통과" "시험 PR $branch"
-    else
-      record_result "PR CI" "실패" "시험 PR $branch"
-    fi
-    run gh pr close "$branch" --repo "$(repo)" --delete-branch
-    run git switch main
-    # 빈 커밋 하나뿐인 시험 브랜치라 병합 여부와 상관없이 지운다.
-    git branch -D "$branch" >/dev/null 2>&1 || true
-  else
-    record_result "PR CI" "건너뜀" ""
-  fi
+  require "시험 PR을 열까요?"
+  # 시험 PR의 브랜치 이름(겹치지 않게 시각을 붙임), 목록에 오른 검사 수, 기다린 횟수, PR CI 결과.
+  local branch checks=0 tries=0 result="통과"
+  branch="ci-check-$(date +%Y%m%d%H%M%S)"
+  run git switch -c "$branch"
+  run git commit --allow-empty -m "PR CI 확인"
+  run git push -u origin "$branch"
+  run gh pr create --repo "$(repo)" --base main --head "$branch" --title "PR CI 확인" --body "PR에서 CI가 도는지 확인하고 닫는 PR입니다."
+  # 검사가 목록에 오르기까지 잠깐 걸린다. 오르기 전에 지켜보면 검사가 없다며 실패로 끝난다.
+  while ((checks == 0 && tries < 30)); do
+    sleep 4; tries=$((tries + 1))
+    checks=$(gh pr view "$branch" --repo "$(repo)" --json statusCheckRollup --jq '.statusCheckRollup | length' 2>/dev/null || echo 0)
+  done
+  ((checks > 0)) || result="실패"
+  if [[ "$result" == "통과" ]] && ! run gh pr checks "$branch" --repo "$(repo)" --watch --interval 10; then result="실패"; fi
+  record "PR CI" "$result" "시험 PR $branch, 검사 $checks개"
+  run gh pr close "$branch" --repo "$(repo)" --delete-branch
+  run git switch main
+  # 빈 커밋 하나뿐인 시험 브랜치라 병합 여부와 상관없이 지운다.
+  git branch -D "$branch" >/dev/null 2>&1 || true
+  [[ "$result" == "통과" ]] || stop_here "PR CI가 돌지 않았거나 실패했습니다: https://github.com/$(repo)/actions"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -549,7 +576,7 @@ stage_3() {
   gh api -X PUT "repos/$(repo)/actions/permissions/fork-pr-contributor-approval" -f approval_policy=all_external_contributors >/dev/null 2>&1 || true
   policy=$(gh api "repos/$(repo)/actions/permissions/fork-pr-contributor-approval" --jq '.approval_policy' 2>/dev/null || true)
   if [[ "$policy" == "all_external_contributors" ]]; then
-    printf '  %s✓%s 외부 기여자 PR의 워크플로는 승인 뒤에만 돕니다.\n' "$GREEN" "$RESET"
+    ok "외부 기여자 PR의 워크플로는 승인 뒤에만 돕니다."
   else
     warn "API로 설정하지 못했습니다. 설정 화면에서 합니다."
     open_url "https://github.com/$(repo)/settings/actions"
@@ -584,12 +611,14 @@ stage_4() {
   if gh secret list --repo "$(repo)" --env release 2>/dev/null | grep -qE '^UPDATE_SIGNING_KEY[[:space:]]'; then
     note "release 환경에 UPDATE_SIGNING_KEY가 이미 있습니다."
     confirm "키를 이미 만들었으면 키 만들기를 건너뛸까요?" && { commit_and_push "업데이트 서명 공개 키 추가" "$PUBLIC_KEYS_FILE"; return 0; }
+    warn "새 키로 덮어쓰면 그 전 키를 아는 앱은 업데이트를 받지 못합니다. 유출이 의심될 때는 pnpm release:keygen --rotate를 씁니다."
+    require "그래도 새 키를 만들까요?"
   fi
   [[ -d node_modules ]] || run pnpm install --frozen-lockfile
   pause "비밀번호 관리자를 열어 두고 Enter"
   run pnpm release:keygen || stop_here "pnpm release:keygen이 실패했습니다. 위 오류를 보세요."
   gh secret list --repo "$(repo)" --env release | grep -qE '^UPDATE_SIGNING_KEY[[:space:]]' || stop_here "release 환경에 UPDATE_SIGNING_KEY가 없습니다."
-  printf '  %s✓%s release 환경 비밀값 UPDATE_SIGNING_KEY가 있습니다.\n' "$GREEN" "$RESET"
+  ok "release 환경 비밀값 UPDATE_SIGNING_KEY가 있습니다."
   require "비밀번호 관리자에서 저장한 항목을 다시 열어 값이 들어 있는 것을 확인했나요?"
   say "공개 키 목록의 변경:"
   git --no-pager diff --stat -- "$PUBLIC_KEYS_FILE" | sed 's/^/    /'
@@ -609,13 +638,15 @@ stage_5() {
   local status
   status=$(printf 'Authorization: Bearer %s\n' "$GITHUB_RELEASE_TOKEN" | curl -sS -o /dev/null -w '%{http_code}' -H @- "https://api.github.com/repos/$(repo)/releases" || true)
   [[ "$status" == "200" ]] || stop_here "토큰으로 Release 목록을 읽지 못했습니다(HTTP $status)."
-  printf '  %s✓%s 토큰으로 Release 목록을 읽었습니다.\n' "$GREEN" "$RESET"
-  # 사이트를 로컬에서 띄울 때 쓰는 값이다. Vercel에는 아래에서 직접 넣는다.
+  ok "토큰으로 Release 목록을 읽었습니다."
+  # 사이트를 로컬에서 띄울 때 쓰는 값이다. Vercel에는 아래에서 직접 넣는다. write_env가 쓰는 파일을 잠깐 바꾼다.
   local saved_env="$ENV_FILE"
   ENV_FILE="$SITE_ENV_FILE"
-  write_env VERCEL_GIT_REPO_OWNER "$(owner)"
+  write_env VERCEL_GIT_REPO_OWNER "$OWNER"
   write_env GITHUB_RELEASE_TOKEN "$GITHUB_RELEASE_TOKEN"
   ENV_FILE="$saved_env"
+  WRITTEN_ENV=("${WRITTEN_ENV[@]:0:${#WRITTEN_ENV[@]}-2}")
+  SITE_ENV_WRITTEN=1
 
   substage "Vercel 프로젝트 만들기"
   open_url "https://vercel.com/new"
@@ -636,6 +667,7 @@ stage_5() {
   step "프로젝트 Settings의 Domains에서 stardraft.squadify.app을 더합니다."
   step "Vercel이 보여 주는 DNS 레코드(종류, 이름, 값)를 squadify.app의 DNS 관리 화면에 그대로 넣습니다. 값은 Vercel 화면에 나온 것을 씁니다."
   pause "DNS를 넣었으면 Enter(반영까지 몇 분 걸릴 수 있습니다)"
+  # 첫 화면과 /api/releases의 HTTP 상태.
   local page api
   while :; do
     page=$(curl -sS -o /dev/null -w '%{http_code}' "$SITE_URL/" || true)
@@ -644,7 +676,7 @@ stage_5() {
     [[ "$page" == "200" && "$api" == "200" ]] && break
     confirm "아직 아닙니다. 다시 확인할까요?" || stop_here "도메인이 아직 연결되지 않았습니다."
   done
-  printf '  %s✓%s 사이트가 열립니다. 아직 공개 Release가 없어 다운로드 버튼은 비어 있는 것이 정상입니다.\n' "$GREEN" "$RESET"
+  ok "사이트가 열립니다. 아직 공개 Release가 없어 다운로드 버튼은 비어 있는 것이 정상입니다."
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -657,7 +689,7 @@ stage_6() {
   write_env RELEASE_TEST_REPO "$RELEASE_TEST_REPO"
   # 시험 저장소의 owner/name.
   local test_repo latest
-  test_repo="$(owner)/$RELEASE_TEST_REPO"
+  test_repo="$OWNER/$RELEASE_TEST_REPO"
   if ! gh repo view "$test_repo" >/dev/null 2>&1; then
     require "공개 시험 저장소 $test_repo를 만들까요? 시험이 끝나면 지워도 됩니다."
     run gh repo create "$test_repo" --public --add-readme --description "Release 동작 시험용. 지워도 됩니다."
@@ -675,7 +707,7 @@ stage_6() {
   warn "공개한 v0.0.2를 사전 릴리스로 바꿉니다(시험 저장소)."
   require "바꿀까요?"
   if ! run gh release edit v0.0.2 --repo "$test_repo" --prerelease; then
-    record_result "immutable Release의 사전 릴리스 전환" "실패" "gh release edit --prerelease 거부"
+    record "immutable Release의 사전 릴리스 전환" "실패" "gh release edit --prerelease 거부"
     stop_here "immutable Release를 사전 릴리스로 바꾸지 못했습니다. 잘못 나간 버전을 멈추는 방법(스펙 15절)을 다시 정한 뒤 출시하세요."
   fi
   # 바뀐 결과가 API에 보이기까지 잠깐 걸릴 수 있다.
@@ -687,9 +719,9 @@ stage_6() {
   done
   say "전환 뒤 releases/latest: $latest"
   if [[ "$latest" == "v0.0.1" ]]; then
-    record_result "사전 릴리스 전환 뒤 releases/latest" "통과" "v0.0.2 사전 릴리스 → latest v0.0.1"
+    record "사전 릴리스 전환 뒤 releases/latest" "통과" "v0.0.2 사전 릴리스 → latest v0.0.1"
   else
-    record_result "사전 릴리스 전환 뒤 releases/latest" "실패" "전환 뒤 latest $latest"
+    record "사전 릴리스 전환 뒤 releases/latest" "실패" "전환 뒤 latest $latest"
     stop_here "releases/latest가 이전 버전으로 돌아가지 않았습니다. 스펙 15절의 멈추는 방법을 다시 정한 뒤 출시하세요."
   fi
   note "시험 저장소는 https://github.com/$test_repo/settings 맨 아래에서 지울 수 있습니다."
@@ -708,10 +740,11 @@ stage_7() {
 
 stage_8() {
   stage "초안 Release의 DMG를 브라우저로 받아 설치"
+  # 첫 버전, 받은 DMG 경로, Release의 sha256, 받은 파일의 sha256.
   local version dmg expected actual
   version=$(_existing RELEASE_FIRST_VERSION || app_version)
   say "OS 언어(사이트 스크린숏은 한국어 macOS에서 찍습니다):"
-  defaults read -g AppleLanguages 2>/dev/null | tr -d ' \n()"' | sed 's/^/    /'; printf '\n'
+  { defaults read -g AppleLanguages 2>/dev/null || true; } | tr -d ' \n()"' | sed 's/^/    /'; printf '\n'
   [[ -d /Applications/Stardraft.app ]] && warn "/Applications/Stardraft.app이 이미 있습니다. 처음 설치 경로를 보려면 휴지통으로 옮기고 비운 뒤 진행하세요."
   open_url "https://github.com/$(repo)/releases"
   step "v$version 초안의 Assets에서 Stardraft-$version-arm64.dmg를 눌러 브라우저로 받습니다(터미널로 받으면 실제 경로가 재현되지 않음)."
@@ -723,7 +756,7 @@ stage_8() {
   expected=$(gh release view "v$version" --repo "$(repo)" --json assets --jq ".assets[] | select(.name == \"Stardraft-$version-arm64.dmg\") | .digest" | sed 's/^sha256://')
   actual=$(shasum -a 256 "$dmg" | cut -d' ' -f1)
   [[ -n "$expected" && "$expected" == "$actual" ]] || stop_here "받은 DMG의 SHA256($actual)이 Release의 값($expected)과 다릅니다."
-  printf '  %s✓%s SHA256이 Release와 같습니다.\n' "$GREEN" "$RESET"
+  ok "SHA256이 Release와 같습니다."
   if xattr -p com.apple.quarantine "$dmg" >/dev/null 2>&1; then
     note "격리 속성(com.apple.quarantine)이 있습니다. 실제 설치 경로가 재현됩니다."
   else
@@ -739,7 +772,7 @@ stage_8() {
   step "다시 뜨는 창에서 ${BOLD}그래도 열기${RESET}, Mac 로그인 암호, ${BOLD}설정 수정${RESET} 순서로 누릅니다."
   step "메뉴 막대에 Stardraft 아이콘이 보이고 작은 창이 뜨면 끝입니다. Keychain 접근을 묻는 창이 뜨는지도 지켜보세요(11단계에서 묻습니다)."
   note "실제 화면의 문구·버튼 이름이 위와 다르면 메모로 남기세요. 12단계에서 사이트 문구를 맞춥니다."
-  record "브라우저로 받은 DMG의 설치 경로(열지 않음 → 그래도 열기)"
+  ask_result "브라우저로 받은 DMG의 설치 경로(열지 않음 → 그래도 열기)"
   ask MAC_BLOCKED_SHOT "열지 않음 창 스크린숏 경로(없으면 Enter):"
   write_env MAC_BLOCKED_SHOT "$MAC_BLOCKED_SHOT"
   ask MAC_SETTINGS_SHOT "그래도 열기 위치 스크린숏 경로(없으면 Enter):"
@@ -751,15 +784,15 @@ stage_9() {
   stage "온보딩 실제 실행"
   say "첫 실행에 뜬 작은 창(필수 설정 전 화면)에서 필수 설정 셋을 마칩니다. 설정 창 맨 위 띠에 \"필수 설정 n/3\"이 보입니다."
   step "Flow 개인 API 키: Flow 웹의 내 API 키에서 발급한 키를 붙여 넣고 ${BOLD}확인${RESET}. 계정 카드와 \"연결됨\"이 보이면 됩니다."
-  record "Flow 키 확인"
+  ask_result "Flow 키 확인"
   step "에이전트: Claude Code의 네 마디(찾기, 버전, 로그인, 작동 확인)가 끝나고 \"✓ Claude Code 연결됨\"이 보이면 됩니다. 실패하면 카드의 명령을 터미널에서 돌리고 다시 확인."
-  record "Claude Code 연결"
+  ask_result "Claude Code 연결"
   step "저장소: ${BOLD}폴더 추가…${RESET}로 작업 폴더를 고릅니다. \"저장소 n개\"가 보이면 됩니다."
-  record "작업 폴더"
+  ask_result "작업 폴더"
   step "띠의 ${BOLD}감지 시작${RESET}을 누릅니다. 설정 창이 닫히고 빈 작은 창과 \"멘션 감지를 시작했습니다\" 알림이 뜹니다."
-  record "감지 시작"
+  ask_result "감지 시작"
   step "macOS가 알림 허용을 묻는 배너를 띄우면 허용합니다. \"로그인 항목 추가됨\" 알림도 뜹니다."
-  record "알림 허용 배너"
+  ask_result "알림 허용 배너"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -768,31 +801,24 @@ stage_10() {
   step "작은 창의 빈 화면(또는 설정 > 초안)에서 ${BOLD}최근 멘션으로 시험${RESET}을 누릅니다."
   step "최근 멘션 목록에서 하나를 고릅니다. \"시험\" 표시와 \"Flow에는 아무것도 올라가지 않습니다\" 안내가 붙습니다."
   step "초안이 만들어지는 진행과 \"[시험] …\" 알림, 트레이 숫자를 봅니다. 끝나면 ${BOLD}시험 끝내기${RESET}."
-  record "최근 멘션으로 시험(초안 생성)"
+  ask_result "최근 멘션으로 시험(초안 생성)"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
 stage_11() {
   stage "미서명 macOS 점검"
   step "설정 > 일반에서 ${BOLD}알림 시험${RESET}을 누릅니다. 배너가 보이나요?"
-  record "알림 표시"
+  ask_result "알림 표시"
   step "다시 ${BOLD}알림 시험${RESET}을 누르고 배너를 누릅니다. Stardraft 창이 앞으로 오나요?"
-  record "알림 클릭(배너)"
+  ask_result "알림 클릭(배너)"
   step "메뉴 막대 오른쪽 시계를 눌러 알림 센터를 열고, 남은 Stardraft 알림을 누릅니다."
-  record "알림 클릭(알림 센터)"
+  ask_result "알림 클릭(알림 센터)"
   say "8단계에서 처음 켰을 때 'Stardraft Safe Storage' Keychain 접근을 묻는 창이 떴나요? 뜨지 않았으면 통과입니다."
-  record "첫 실행에 Keychain을 묻지 않음"
+  ask_result "첫 실행에 Keychain을 묻지 않음"
 
   substage "로그아웃 뒤 자동 시작"
   step "설정 > 일반의 \"로그인할 때 Stardraft 자동으로 켜기\"가 켜져 있고, 시스템 설정 > 일반 > 로그인 항목에 Stardraft가 있는지 봅니다."
-  warn "로그아웃하면 이 터미널도 닫힙니다."
-  if confirm "지금 로그아웃해서 확인할까요? (아니오면 이 항목을 건너뜁니다)"; then
-    write_env RELEASE_WIZARD_PENDING "로그아웃 뒤 자동 시작"
-    step "Apple 메뉴 > 로그아웃 → 다시 로그인합니다. 메뉴 막대에 Stardraft 아이콘이 저절로 뜨는지 봅니다."
-    step "그다음 터미널에서: scripts/release-wizard.sh --from 12 (먼저 결과를 묻습니다)"
-    exit 0
-  fi
-  record_result "로그아웃 뒤 자동 시작" "건너뜀" ""
+  logout_check "로그아웃 뒤 자동 시작" 12
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -800,6 +826,7 @@ stage_12() {
   stage "macOS 스크린숏과 예시 화면 문구"
   say "두 스크린숏을 사이트에 넣습니다. 파일 이름은 apps/site/README.md의 표를 따릅니다."
   note "8단계에서 못 찍었으면, 앱을 휴지통에 옮겨 비우고 DMG를 브라우저로 다시 받아 설치하면 창이 다시 뜨는지 보세요."
+  # .env 키, 스크린숏 원본 경로, 사이트에 둘 경로.
   local name source dest
   for name in MAC_BLOCKED_SHOT MAC_SETTINGS_SHOT; do
     case "$name" in
@@ -817,9 +844,9 @@ stage_12() {
 
   substage "예시 화면 문구 맞추기"
   say "사이트가 지금 쓰는 macOS 단계 문구입니다. 실제 화면의 제목·문장·버튼 이름과 한 글자씩 비교하세요."
-  awk '/^  mac: \[/,/^  windows: \[/' apps/site/src/components/install-steps.tsx | grep -E "seen:|title:|alt:|<b>" | sed 's/^ */    /'
+  awk '/^  mac: \[/,/^  windows: \[/' apps/site/src/components/install-steps.tsx | { grep -E "seen:|title:|alt:|<b>" || true; } | sed 's/^ */    /'
   note "예시 화면의 글은 apps/site/src/components/ExampleScene.tsx에 있습니다."
-  record "macOS 예시 화면 문구가 실제 화면과 같음"
+  ask_result "macOS 예시 화면 문구가 실제 화면과 같음"
   warn "다르면 install-steps.tsx와 ExampleScene.tsx를 고치고 pnpm --filter @stardraft/site test를 통과시킨 뒤 이어서 하세요. 이 마법사는 코드를 고치지 않습니다."
   if confirm "사이트를 로컬에서 띄워 스크린숏과 [예시] 전환을 볼까요? (Ctrl-C로 끄면 다음으로 넘어갑니다)"; then
     run pnpm --filter @stardraft/site dev || true
@@ -830,40 +857,52 @@ stage_12() {
 stage_13() {
   stage "(선택) 표준 계정과 ~/Applications에서 위치 확인"
   say "앱이 스스로 바꿀 수 없는 위치이면 업데이트를 받지 않고 사유와 [사이트에서 받기]만 보입니다."
-  note "이 판정은 지금보다 새 공개 버전이 있을 때만 보입니다. 15단계 뒤에 scripts/release-wizard.sh --only 13으로 해도 됩니다."
-  if ! confirm "이 선택 스테이지를 지금 할까요?"; then
-    record_result "표준 계정·~/Applications 위치 확인" "건너뜀" "선택 스테이지"
+  say "이 판정은 설치한 버전보다 새 공개 버전이 있을 때만 보입니다. 아직 공개 Release가 없으면"
+  say "15단계에서 두 번째 버전을 공개한 직후, 앱을 업데이트하기 전에 다시 묻습니다."
+  if confirm "설치한 버전보다 새 공개 버전이 지금 있나요?"; then
+    location_check
+  else
+    note "15단계에서 묻습니다."
+    pause "Enter를 누르면 다음 스테이지로"
+  fi
+}
+
+# 표준 계정과 ~/Applications에서 위치 확인 판정을 본다(선택). 설치한 버전보다 새 공개 버전이 있어야 한다.
+location_check() {
+  if ! confirm "표준 계정으로 위치 확인을 볼까요? (선택, 아니오면 건너뜁니다)"; then
+    record "표준 계정·~/Applications 위치 확인" "건너뜀" "선택"
     return 0
   fi
   step "시스템 설정 > 사용자 및 그룹에서 표준 계정을 하나 만들고 그 계정으로 로그인합니다."
   step "관리자 계정이 설치한 /Applications/Stardraft.app을 켜고 설정 > 일반의 업데이트 칸을 봅니다. 기대: \"이 계정은 Stardraft를 바꿀 권한이 없습니다\"와 [사이트에서 받기]."
-  record "표준 계정 + /Applications: 위치 확인 판정"
+  ask_result "표준 계정 + /Applications: 위치 확인 판정"
   step "같은 표준 계정에서 앱을 홈 폴더의 응용 프로그램(~/Applications)에 두고 켭니다. 업데이트 칸의 판정을 그대로 메모하세요."
-  record "표준 계정 + ~/Applications: 위치 확인 판정"
+  ask_result "표준 계정 + ~/Applications: 위치 확인 판정"
   pause "관리자 계정으로 돌아왔으면 Enter"
 }
 
 stage_14() {
   stage "Release 공개와 사이트 확인"
+  # 공개할 버전, /download/<os>의 상태와 리디렉트 주소.
   local version location
   version=$(_existing RELEASE_FIRST_VERSION || app_version)
   say "자기 Mac에서 설치와 점검을 마쳤으면 v$version을 공개합니다."
   publish_release "$version"
   [[ "$(gh api "repos/$(repo)/releases/latest" --jq '.tag_name')" == "v$version" ]] || stop_here "releases/latest가 v$version이 아닙니다."
-  printf '  %s✓%s releases/latest가 v%s입니다.\n' "$GREEN" "$RESET" "$version"
+  ok "releases/latest가 v$version입니다."
   say "사이트의 /api/releases는 CDN에 5분 캐시됩니다. 새 값이 안 보이면 몇 분 뒤 다시 확인하세요."
   while :; do
     curl -sS "$SITE_URL/api/releases" | grep -q "\"$version\"" && break
     confirm "/api/releases에 $version이 아직 없습니다. 다시 확인할까요?" || stop_here "/api/releases에 $version이 없습니다."
   done
-  printf '  %s✓%s /api/releases에 %s이 있습니다.\n' "$GREEN" "$RESET" "$version"
+  ok "/api/releases에 $version이 있습니다."
   for os in mac windows; do
     location=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$SITE_URL/download/$os" || true)
     say "/download/$os → $location"
   done
   open_url "$SITE_URL"
   step "첫 화면의 버전·날짜·파일 크기, 다운로드 버튼, 변경 내역, SHA256 표를 봅니다. 다운로드 버튼을 눌러 받아지는지도 봅니다."
-  record "Release 공개 뒤 사이트의 버전·다운로드·/api/releases"
+  ask_result "Release 공개 뒤 사이트의 버전·다운로드·/api/releases"
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -878,6 +917,7 @@ bump_version() {
 
 # next_patch VERSION은 패치 번호를 하나 올린 버전.
 next_patch() {
+  # SemVer의 세 숫자.
   local major minor patch
   IFS=. read -r major minor patch <<<"$1"
   printf '%s.%s.%s' "$major" "$minor" "$((patch + 1))"
@@ -886,6 +926,7 @@ next_patch() {
 # tamper_update_info VERSION MODE는 초안 Release의 latest-mac.yml을 일부러 틀리게 고쳐 다시 올린다.
 # MODE가 sha512이면 sha512 값을, signature이면 서명 목록을 모양은 맞지만 틀린 값으로 바꾼다.
 tamper_update_info() {
+  # 버전, 변조 방식, 내려받은 yml을 둘 임시 폴더.
   local version="$1" mode="$2" dir
   dir=$(mktemp -d)
   run gh release download "v$version" --repo "$(repo)" --pattern latest-mac.yml --dir "$dir"
@@ -910,6 +951,7 @@ tamper_update_info() {
 
 stage_15() {
   stage "두 번째 버전으로 앱 내 업데이트 실측"
+  # 설치한 첫 버전, 업데이트로 받을 두 번째 버전.
   local first second
   first=$(_existing RELEASE_FIRST_VERSION || app_version)
   say "설치한 v$first 앱이 공개한 새 버전을 스스로 받아 다시 시작하는지 봅니다."
@@ -922,18 +964,23 @@ stage_15() {
     if [[ "$(app_version)" == "$second" ]]; then push_tag_and_check "$second"; else bump_version "$second"; fi
   fi
   publish_release "$second"
+  write_env RELEASE_LATEST_VERSION "$second"
+
+  substage "(선택) 표준 계정과 ~/Applications에서 위치 확인"
+  say "설치한 v$first보다 새 v$second이 공개됐으니 지금 위치 확인 판정을 볼 수 있습니다(13단계)."
+  location_check
 
   substage "받는 중과 다시 시작 확인 화면"
   step "설치한 앱의 설정 > 일반에서 업데이트 칸의 ${BOLD}지금 확인${RESET}을 누릅니다(켜고 1분 뒤에도 저절로 확인)."
   step "오른쪽 클릭 메뉴의 \"$second 받는 중… n%\"와 설정의 진행 막대를 봅니다."
-  record "받는 중 표시"
+  ask_result "받는 중 표시"
   step "준비되면 작은 창 띠 \"새 버전 $second이(가) 준비됐습니다\"의 ${BOLD}다시 시작${RESET}을 누릅니다."
   step "작은 창에 \"${second}(으)로 다시 시작합니다\" 확인 화면과 Keychain 예시 화면(항상 허용 강조)이 뜨는지 봅니다. ${BOLD}다시 시작${RESET}."
-  record "다시 시작 확인 화면"
+  ask_result "다시 시작 확인 화면"
   step "다시 켜지며 'Stardraft Safe Storage' 사용을 묻습니다. Mac 로그인 암호를 넣고 ${BOLD}항상 허용${RESET}."
-  record "Keychain 항상 허용"
+  ask_result "Keychain 항상 허용"
   step "작은 창 띠 \"${second}(으)로 업데이트했습니다\"가 한 번 보이는지 봅니다."
-  record "업데이트 직후 띠"
+  ask_result "업데이트 직후 띠"
 
   # 업데이트한 앱이 새 버전이고 최상위 명시 DR이 그대로인가요?
   local installed requirement
@@ -942,9 +989,9 @@ stage_15() {
   say "설치된 버전: $installed"
   say "최상위 DR: $requirement"
   if [[ "$installed" == "$second" && "$requirement" == 'designated => identifier "app.squadify.stardraft"' ]]; then
-    record_result "앱 내 업데이트와 재실행(최상위 DR 유지)" "통과" "$first → $second"
+    record "앱 내 업데이트와 재실행(최상위 DR 유지)" "통과" "$first → $second"
   else
-    record_result "앱 내 업데이트와 재실행(최상위 DR 유지)" "실패" "버전 $installed, $requirement"
+    record "앱 내 업데이트와 재실행(최상위 DR 유지)" "실패" "버전 $installed, $requirement"
   fi
   pause "Enter를 누르면 오류 경로 시험으로"
 
@@ -952,8 +999,8 @@ stage_15() {
   say "변조한 latest-mac.yml을 실은 버전을 하나씩 공개하고, 앱이 설치하지 않고 서명 실패를 보이는지 봅니다."
   warn "버전 번호 두 개를 씁니다. 공개 Release는 고칠 수 없어, 확인한 뒤 사전 릴리스로 바꿔 멈춥니다."
   warn "공개된 동안 사이트의 다운로드도 그 버전을 가리킵니다(DMG·exe 자체는 정상)."
-  local mode version label
-  version="$second"
+  # 변조 방식, 그 경우에 쓰는 버전과 .env 키, 기록할 항목 이름, 사전 릴리스 전환 뒤 /download/mac의 리디렉트.
+  local mode version key label location
   for mode in sha512 signature; do
     case "$mode" in
       sha512) label="yml의 sha512를 틀리게 고친 경우" ;;
@@ -961,22 +1008,47 @@ stage_15() {
     esac
     substage "오류 경로: $label"
     if ! confirm "이 경우를 시험할까요?"; then
-      record_result "$label" "건너뜀" ""
+      record "$label" "건너뜀" ""
       continue
     fi
-    version=$(next_patch "$(app_version)")
-    bump_version "$version"
-    tamper_update_info "$version" "$mode"
+    # 이어서 하는 경우 이 경우에 정한 버전을 다시 쓴다.
+    key="RELEASE_TAMPER_VERSION_$mode"
+    version=$(saved "$key")
+    if [[ -z "$version" ]]; then
+      version=$(next_patch "$(app_version)")
+      write_env "$key" "$version"
+    fi
+    if ! gh release view "v$version" --repo "$(repo)" >/dev/null 2>&1; then
+      if [[ "$(app_version)" == "$version" ]]; then push_tag_and_check "$version"; else bump_version "$version"; fi
+    fi
+    # 공개한 Release는 고칠 수 없으니 초안일 때만 변조한다.
+    [[ "$(gh release view "v$version" --repo "$(repo)" --json isDraft --jq '.isDraft')" == "true" ]] && tamper_update_info "$version" "$mode"
     publish_release "$version"
-    step "앱의 설정 > 일반에서 ${BOLD}지금 확인${RESET}. 다 받은 뒤 \"업데이트 파일의 서명이 맞지 않아 설치하지 않았습니다. 지금 버전을 계속 씁니다.\"가"
+    step "앱의 설정 > 일반에서 ${BOLD}지금 확인${RESET}(앞 경우의 서명 실패가 보이면 ${BOLD}다시 시도${RESET})."
+    step "다 받은 뒤 \"업데이트 파일의 서명이 맞지 않아 설치하지 않았습니다. 지금 버전을 계속 씁니다.\"가"
     step "설정(다시 시도)과 작은 창 띠(닫기)에 보이고, 다시 시작 메뉴가 생기지 않는지 봅니다."
-    record "$label"
-    warn "v$version을 사전 릴리스로 바꿔 멈춥니다."
-    require "바꿀까요?"
-    run gh release edit "v$version" --repo "$(repo)" --prerelease
+    ask_result "$label"
+    if [[ "$(gh release view "v$version" --repo "$(repo)" --json isPrerelease --jq '.isPrerelease')" != "true" ]]; then
+      warn "v$version을 사전 릴리스로 바꿔 멈춥니다."
+      require "바꿀까요?"
+      run gh release edit "v$version" --repo "$(repo)" --prerelease
+    fi
     say "releases/latest: $(gh api "repos/$(repo)/releases/latest" --jq '.tag_name')"
+    location=$(curl -sS -o /dev/null -w '%{redirect_url}' "$SITE_URL/download/mac" || true)
+    say "/download/mac → $location"
+    if [[ "$location" == *"Stardraft-$second-arm64.dmg" ]]; then
+      record "사전 릴리스 전환 뒤 /download/mac이 이전 버전" "통과" "v$version 사전 릴리스 → $second"
+    else
+      record "사전 릴리스 전환 뒤 /download/mac이 이전 버전" "실패" "$location"
+    fi
+    step "앱의 설정 > 일반에서 ${BOLD}지금 확인${RESET}(또는 ${BOLD}다시 시도${RESET}). v$version을 더 찾지 않고 \"최신 버전입니다\"가 되나요?"
+    ask_result "사전 릴리스 전환 뒤 앱의 업데이트 확인이 이전 버전"
   done
   note "다음 정식 버전은 지금 apps/desktop/package.json의 버전($(app_version))보다 높게 냅니다."
+
+  substage "업데이트 뒤 로그아웃·로그인 자동 시작"
+  step "업데이트한 앱의 설정 > 일반에서 자동 시작이 켜져 있는지 봅니다."
+  logout_check "업데이트 뒤 로그아웃·로그인 자동 시작" 16
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -985,7 +1057,7 @@ stage_16() {
   say "두 가지는 혼자 볼 수 없습니다. 동료 한 명에게 미리 부탁하세요."
   step "동료가 Flow 업무(게시물이나 댓글)에서 나를 멘션합니다. 앱이 초안을 만들면 검토해 ${BOLD}게시${RESET}합니다."
   step "동료에게 내 답글의 멘션 알림이 Flow에서 왔는지 물어봅니다."
-  record "받는 사람에게 멘션 알림이 감"
+  ask_result "받는 사람에게 멘션 알림이 감"
   note "결과에 따라 스펙의 받는 사람 줄을 유지할지 정해 스펙에 적습니다."
 
   substage "채팅 멘션이 알림 목록에 오는지"
@@ -993,6 +1065,7 @@ stage_16() {
   pause "두 메시지를 받았으면 Enter"
   say "Flow 알림 목록(GET /user/alarms)에 두 표지가 있는지 셉니다. 본문은 화면에 보이지 않습니다."
   note "키는 화면에 보이지 않고 어디에도 저장하지 않습니다."
+  # Flow 키(저장하지 않음), 알림 목록 필터, 응답 본문, 두 표지의 건수.
   local flow_key="" filter body group dm
   ask_secret flow_key "Flow 개인 API 키:"
   [[ -n "$flow_key" ]] || stop_here "키가 비었습니다."
@@ -1003,7 +1076,7 @@ stage_16() {
     group=$( (grep -o 'PROBE-GROUP' <<<"$body" || true) | wc -l | tr -d ' ')
     dm=$( (grep -o 'PROBE-DM' <<<"$body" || true) | wc -l | tr -d ' ')
     say "${filter:-필터 없음}: PROBE-GROUP $group건, PROBE-DM $dm건"
-    record_result "채팅 멘션 알림 목록 포함(${filter:-필터 없음})" "관찰" "PROBE-GROUP $group건, PROBE-DM $dm건"
+    record "채팅 멘션 알림 목록 포함(${filter:-필터 없음})" "관찰" "PROBE-GROUP $group건, PROBE-DM $dm건"
   done
   flow_key=""
   note "채팅 멘션은 범위 밖입니다. 결과를 스펙의 범위 밖 항목에 적고, 다시 다루려면 새 작업으로 시작합니다."
@@ -1011,6 +1084,12 @@ stage_16() {
 }
 
 parse_args "$@"
+# 저장소 주인. 1단계에서 정하고 .env에 기억한다.
+OWNER=$(saved GITHUB_OWNER)
+if ((FROM_STAGE > 1)) && [[ -z "$OWNER" ]]; then
+  printf '저장소 주인을 모릅니다. 1단계부터 하세요: scripts/release-wizard.sh\n'
+  exit 1
+fi
 banner "Stardraft 첫 출시 (macOS)"
 ask_pending
 for ((n = FROM_STAGE; n <= TO_STAGE; n++)); do
@@ -1019,5 +1098,6 @@ for ((n = FROM_STAGE; n <= TO_STAGE; n++)); do
   "stage_$n"
 done
 finish
+((SITE_ENV_WRITTEN)) && note "사이트 로컬 실행 값(VERCEL_GIT_REPO_OWNER, GITHUB_RELEASE_TOKEN)은 ${SITE_ENV_FILE#"$REPO_ROOT"/}에 썼습니다."
 say "점검 결과: ${RESULTS_FILE#"$REPO_ROOT"/}"
 say "회사 이름·사람 이름·실제 ID가 없는지 본 뒤 커밋하세요. 실기에서 드러난 문제는 새 티켓으로 만드세요."

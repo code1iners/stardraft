@@ -1,0 +1,34 @@
+---
+import type { InstallerOs } from '../lib/releases';
+import { CopyButton } from './CopyButton';
+
+/** OS마다 데이터 폴더. 데스크톱 앱이 설정·상태·암호화한 키를 두는 곳이다. */
+const dataFolders: Record<InstallerOs, string> = {
+  mac: '~/Library/Application Support/Stardraft/',
+  windows: '%APPDATA%\\Stardraft\\',
+};
+---
+
+<div class="remove-os">
+  <h3>macOS</h3>
+  <ol class="plain">
+    <li>메뉴 막대의 Stardraft 아이콘을 오른쪽 클릭해 <b>종료</b>를 누릅니다.</li>
+    <li>응용 프로그램 폴더(또는 홈 폴더의 응용 프로그램)의 Stardraft를 휴지통으로 옮깁니다.</li>
+    <li>
+      데이터 폴더를 지웁니다. Finder에서 <b>이동</b> &gt; <b>폴더로 이동</b>을 누르고 아래 경로를 붙여 넣으면 열립니다.
+      <span class="pathcopy"><code>{dataFolders.mac}</code><CopyButton client:visible text={dataFolders.mac} /></span>
+    </li>
+    <li><b>키체인 접근</b> 앱에서 <code>Stardraft Safe Storage</code>를 찾아 지웁니다. 저장한 개인 API 키를 암호화하던 항목입니다.</li>
+  </ol>
+</div>
+<div class="remove-os">
+  <h3>Windows</h3>
+  <ol class="plain">
+    <li>트레이의 Stardraft 아이콘을 오른쪽 클릭해 <b>종료</b>를 누릅니다.</li>
+    <li><b>설정</b> &gt; <b>앱</b> &gt; <b>설치된 앱</b>(Windows 10은 <b>앱 및 기능</b>)에서 Stardraft를 찾아 <b>제거</b>를 누릅니다.</li>
+    <li>
+      데이터 폴더를 지웁니다. 파일 탐색기 주소 표시줄에 아래 경로를 붙여 넣으면 열립니다.
+      <span class="pathcopy"><code>{dataFolders.windows}</code><CopyButton client:visible text={dataFolders.windows} /></span>
+    </li>
+  </ol>
+</div>

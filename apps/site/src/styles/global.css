@@ -12,6 +12,7 @@
   --warn-text: #4d3500;
   --warn-bg: #fdf4de;
   --warn-border: #efd9a2;
+  /* 완료 기준(✓)의 색. */
   --ok: #1e7438;
   /* 누를 곳과 아이콘 자리를 가리키는 색. */
   --call: #d9480f;
@@ -742,6 +743,7 @@ table.states th {
 }
 .example-stage {
   position: relative;
+  outline: none;
   padding: 14px;
   background: var(--hatch);
 }
@@ -765,7 +767,7 @@ table.states th {
   min-height: 22px;
 }
 .example-cap.warn {
-  color: #9a2c10;
+  color: var(--warn-text);
   font-weight: 600;
 }
 .example-ctl {
@@ -799,7 +801,7 @@ table.states th {
   animation: exPulse 1.8s ease-out 0.9s infinite;
 }
 /* 찾은 아이콘: 메뉴 막대·트레이의 Stardraft */
-.found {
+.ex-found {
   box-shadow: 0 0 0 2px var(--call);
   border-radius: 4px;
 }
@@ -1432,7 +1434,7 @@ table.states th {
     box-shadow: 0 0 0 3px var(--call);
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(217, 72, 15, 0.15);
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--call) 15%, transparent);
   }
   100% {
     box-shadow: 0 0 0 3px var(--call);

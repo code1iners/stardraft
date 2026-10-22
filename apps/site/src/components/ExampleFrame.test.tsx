@@ -63,6 +63,10 @@ describe('예시 화면 틀', () => {
     expect(textOf(html)).toContain('처음부터');
   });
 
+  it('누를 곳이 없는 장면(설치 진행)에는 처음부터가 없다', () => {
+    expect(textOf(render('win-install'))).not.toContain('처음부터');
+  });
+
   it('막히는 곳에 실제 스크린숏이 있으면 그것이 기본이고 예시로 바꿀 수 있다', () => {
     const html = renderToStaticMarkup(<ExampleFrame scene="mac-blocked" shot={SHOT} />);
 

@@ -1,12 +1,9 @@
 import type { ReactNode } from 'react';
 import { formatFileSize, formatReleaseDate } from '../lib/format';
 import { announceInstallOs } from '../lib/install-os';
-import { latestDownloadPath, SITE_URL, type InstallerFile, type InstallerOs, type ReleaseSummary } from '../lib/releases';
+import { INSTALLER_OS_NAMES, latestDownloadPath, SITE_URL, type InstallerFile, type InstallerOs, type ReleaseSummary } from '../lib/releases';
 import { visitorOs, type Visitor } from '../lib/visitor';
 import { CopyButton } from './CopyButton';
-
-/** OS 이름. */
-const OS_NAMES: Record<InstallerOs, string> = { mac: 'macOS', windows: 'Windows' };
 
 /** OS마다 지원 환경 문구. */
 const SUPPORT_TEXT: Record<InstallerOs, string> = {
@@ -76,12 +73,12 @@ function PrimaryDownload({ os, latest, hint }: { os: InstallerOs; latest: Releas
   return (
     <>
       <div className="dl-row">
-        <DownloadLink os={os} label={`${OS_NAMES[os]}용 다운로드`} primary />
+        <DownloadLink os={os} label={`${INSTALLER_OS_NAMES[os]}용 다운로드`} primary />
       </div>
       <p className="support">{file ? `${SUPPORT_TEXT[os]} · ${formatFileSize(file.size)}` : SUPPORT_TEXT[os]}</p>
       {hint && <p className="hint">{hint}</p>}
       <p className="other">
-        <TextDownloadLink os={other} label={`${OS_NAMES[other]}용 받기`} />
+        <TextDownloadLink os={other} label={`${INSTALLER_OS_NAMES[other]}용 받기`} />
       </p>
     </>
   );

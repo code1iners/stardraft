@@ -18,6 +18,7 @@ const files = import.meta.glob<{ default: Screenshot }>('../assets/screenshots/*
 
 /** 막히는 곳의 실제 스크린숏. 아직 찍지 않았으면 null이고, 그때는 예시 화면만 보인다. */
 export function stuckScreenshot(id: StuckScreenshotId): Screenshot | null {
+  /** 그 이름의 PNG. */
   const image = files[`../assets/screenshots/${id}.png`]?.default;
   return image ? { src: image.src, width: image.width, height: image.height } : null;
 }

@@ -96,9 +96,14 @@ export function exampleTarget(scene: ExampleSceneId, state: ExampleState): strin
 
 /** 예시 화면의 버튼을 누른다. 누를 곳이면 다음 모습으로, 잘못된 버튼이면 경고를 띄우고, 그 밖에는 그대로 둔다. */
 export function pressExample(scene: ExampleSceneId, state: ExampleState, button: string): ExampleState {
+  /** 지금 모습의 규칙. */
   const rule = phaseOf(scene, state.phase);
+  // 누를 곳이면 다음 모습으로 넘어가며 경고를 지운다.
   if (rule.target === button && rule.next) return { phase: rule.next, warning: null };
+  /** 잘못된 버튼이면 그 경고. */
   const warning = rule.wrong?.[button];
+  // 잘못된 버튼이면 모습은 그대로 두고 경고만 띄운다.
   if (warning) return { phase: state.phase, warning };
+  // 누를 수 없는 곳이면 아무 일도 없다.
   return state;
 }

@@ -61,7 +61,7 @@ function MacMenuBar({ found }: { found: boolean }) {
       <span className="r">
         <i className="ico" />
         <i className="ico" />
-        <span className={found ? 'star found' : 'star'}>
+        <span className={found ? 'star ex-found' : 'star'}>
           <Star size={13} />
         </span>
         <span>금 오후 3:12</span>
@@ -384,7 +384,7 @@ function WinDone({ phase }: { phase: string }) {
           <span>
             <i className="g" />
           </span>
-          <span className="found">
+          <span className="ex-found">
             <Star size={16} />
           </span>
         </div>

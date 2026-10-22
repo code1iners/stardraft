@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react';
-import { pressExample, startExample, type ExampleSceneId, type ExampleState } from '../lib/example-scenes';
+import { exampleTarget, pressExample, startExample, type ExampleSceneId, type ExampleState } from '../lib/example-scenes';
 import { planCursor, readReducedMotion, watchReducedMotion, type Point } from '../lib/motion';
 import type { Screenshot } from '../lib/screenshots';
 import { ExampleScene, SCENE_CAPTIONS } from './ExampleScene';
@@ -28,8 +28,8 @@ type Props = {
   /** 장면 이름. */
   scene: ExampleSceneId;
   /** 막히는 곳의 실제 스크린숏. 막히는 곳이 아니면 없다. */
-  shot?: ShotProps;
-  /** 처음 상태. 테스트에서 특정 모습을 그려 볼 때만 넘긴다. */
+  shot?: ShotProps | undefined;
+  /** 처음 상태. 브라우저 없이 특정 모습을 그려 보는 테스트에서만 넘긴다. */
   initialState?: ExampleState;
   /** 동작 줄이기의 처음 값. 브라우저에서는 OS 설정을 다시 읽는다. */
   initialReduced?: boolean;
@@ -47,11 +47,14 @@ function useReducedMotion(initial: boolean): boolean {
 
 /** 요소가 처음으로 충분히 보였는지. 한 번 보이면 그대로 둔다. 요소가 그려져 있을 때(`mounted`)만 지켜본다. */
 function useSeenOnce(element: RefObject<HTMLElement | null>, mounted: boolean): boolean {
+  /** 한 번이라도 충분히 보였는지. */
   const [seen, setSeen] = useState(false);
   useEffect(
     function watchFirstSight() {
+      /** 지켜볼 요소. */
       const target = element.current;
       if (!mounted || !target || seen) return;
+      /** 요소가 보이는 비율을 지켜보는 관찰자. */
       const observer = new IntersectionObserver(
         (entries) => {
           if (entries.some((entry) => entry.isIntersecting)) setSeen(true);
@@ -77,9 +80,12 @@ function Cursor({ cursorRef }: { cursorRef: RefObject<SVGSVGElement | null> }) {
 
 /** 요소 안의 누를 곳 위치. 누를 곳 가운데에서 조금 오른쪽 아래를 가리킨다. */
 function targetPoint(view: HTMLElement): Point | null {
+  /** 지금 누를 곳. */
   const target = view.querySelector('[data-target]');
   if (!target) return null;
+  /** 예시 화면 칸의 화면 위치. */
   const viewBox = view.getBoundingClientRect();
+  /** 누를 곳의 화면 위치. */
   const box = target.getBoundingClientRect();
   return { x: box.left - viewBox.left + box.width * 0.55, y: box.top - viewBox.top + box.height * 0.55 };
 }
@@ -98,6 +104,8 @@ export function ExampleFrame({ scene, shot, initialState, initialReduced = false
   const [view, setView] = useState<FrameView>(shot?.image ? 'shot' : 'example');
   /** 예시 화면 상태. */
   const [state, setState] = useState<ExampleState>(initialState ?? startExample());
+  /** [처음부터]를 누른 횟수. 첫 모습에서 경고만 띄운 뒤 되돌려도 커서가 구석에서 다시 출발하게 한다. */
+  const [round, setRound] = useState(0);
   /** 동작 줄이기. */
   const reduced = useReducedMotion(initialReduced);
   /** 장면과 커서를 담는 빗금 칸. */
@@ -108,12 +116,17 @@ export function ExampleFrame({ scene, shot, initialState, initialReduced = false
   const lastPointRef = useRef<Point | null>(null);
   /** 예시 화면이 보이는 위치까지 스크롤했는지. */
   const seen = useSeenOnce(stageRef, view === 'example');
+  /** 장면 안 버튼에 키보드 초점이 있을 때 눌렀는지. 모습이 바뀌면 버튼이 새로 그려지므로 초점을 다시 준다. */
+  const refocusRef = useRef(false);
 
   useLayoutEffect(
     function moveCursorToTarget() {
+      /** 장면과 커서를 담는 칸. */
       const stage = stageRef.current;
+      /** 커서. */
       const cursor = cursorRef.current;
       if (view !== 'example' || !stage || !cursor) return;
+      /** 커서를 놓을 곳과 움직일지. */
       const plan = planCursor({
         reduced,
         seen,
@@ -131,26 +144,46 @@ export function ExampleFrame({ scene, shot, initialState, initialReduced = false
       cursor.classList.add('on');
       lastPointRef.current = plan.to;
       if (!plan.animate) return;
+      /** 누를 곳으로 옮기는 다음 프레임. */
       const frame = requestAnimationFrame(() => {
         cursor.classList.add('moving');
         placeAt(cursor, plan.to);
       });
       return () => cancelAnimationFrame(frame);
     },
-    [view, state.phase, reduced, seen],
+    [view, state.phase, round, reduced, seen],
+  );
+
+  useLayoutEffect(
+    function keepKeyboardFocusInStage() {
+      if (!refocusRef.current) return;
+      refocusRef.current = false;
+      /** 장면과 커서를 담는 칸. */
+      const stage = stageRef.current;
+      /** 새 누를 곳. 마지막 모습이면 없다. */
+      const target = stage?.querySelector<HTMLElement>('[data-target]');
+      // 새 누를 곳이 있으면 거기로, 마지막 모습이면 칸으로 초점을 옮긴다.
+      if (target) target.focus();
+      else stage?.focus();
+    },
+    [state.phase],
   );
 
   useEffect(
     function keepCursorOnTargetWhenResized() {
+      /** 장면과 커서를 담는 칸. */
       const stage = stageRef.current;
       if (view !== 'example' || !stage) return;
       /** 마지막으로 본 폭. 높이만 바뀌는 것은 모습이 바뀐 것이라 커서 이동이 맡는다. */
       let width = stage.clientWidth;
       // 폭이 바뀌면 누를 곳도 움직이므로 커서를 전환 없이 다시 놓는다.
+      /** 칸의 크기를 지켜보는 관찰자. */
       const observer = new ResizeObserver(() => {
         if (stage.clientWidth === width) return;
         width = stage.clientWidth;
+        /** 커서. */
         const cursor = cursorRef.current;
+        /** 바뀐 폭에서 누를 곳. */
         const point = targetPoint(stage);
         if (!cursor || !point || !lastPointRef.current) return;
         cursor.classList.remove('moving');
@@ -167,10 +200,19 @@ export function ExampleFrame({ scene, shot, initialState, initialReduced = false
   const restart = () => {
     lastPointRef.current = null;
     setState(startExample());
+    setRound((count) => count + 1);
+  };
+
+  /** 장면 안의 버튼을 누른다. */
+  const handlePress = (button: string) => {
+    refocusRef.current = stageRef.current?.contains(document.activeElement) ?? false;
+    setState((current) => pressExample(scene, current, button));
   };
 
   /** 실제 스크린숏을 보이는지. */
   const showShot = view === 'shot' && shot?.image;
+  /** 눌러 볼 곳이 있는 장면인지. 누를 곳이 없는 장면(설치 진행)에는 [처음부터]가 필요 없다. */
+  const interactive = exampleTarget(scene, startExample()) !== null;
   /** 장면 밑 안내 문구. 잘못 누르면 경고가 대신한다. */
   const caption = state.warning ?? SCENE_CAPTIONS[scene][state.phase];
 
@@ -186,8 +228,8 @@ export function ExampleFrame({ scene, shot, initialState, initialReduced = false
       ) : (
         <>
           <figcaption className="example-band">{EXAMPLE_BAND}</figcaption>
-          <div ref={stageRef} className={seen && !reduced ? 'example-stage seen' : 'example-stage'}>
-            <ExampleScene scene={scene} state={state} reduced={reduced} onPress={(button) => setState((current) => pressExample(scene, current, button))} />
+          <div ref={stageRef} className={seen && !reduced ? 'example-stage seen' : 'example-stage'} tabIndex={-1}>
+            <ExampleScene scene={scene} state={state} reduced={reduced} onPress={handlePress} />
             <Cursor cursorRef={cursorRef} />
           </div>
         </>
@@ -207,7 +249,7 @@ export function ExampleFrame({ scene, shot, initialState, initialReduced = false
               </button>
             </div>
           )}
-          {!showShot && (
+          {!showShot && interactive && (
             <button type="button" className="btn sm" onClick={restart}>
               처음부터
             </button>

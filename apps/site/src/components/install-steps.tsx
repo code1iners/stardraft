@@ -49,7 +49,7 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
   mac: [
     {
       title: 'DMG를 열고 응용 프로그램 폴더로 옮기기',
-      seen: 'Stardraft 아이콘과 Applications 폴더가 있는 창',
+      seen: 'Applications',
       body: (
         <>
           <p>
@@ -149,7 +149,7 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
       seen: '‘Stardraft’을(를) 열겠습니까?',
       body: (
         <p>
-          다시 뜨는 창에서 <b>그래도 열기</b>를 누르고 Mac 로그인 암호를 입력합니다. 이 확인은 처음 한 번만 합니다.
+          다시 뜨는 창에서 <b>그래도 열기</b>를 누르고, Mac 로그인 암호를 넣은 뒤 <b>설정 수정</b>을 누릅니다. 이 확인은 처음 한 번만 합니다.
         </p>
       ),
       scene: 'mac-confirm',

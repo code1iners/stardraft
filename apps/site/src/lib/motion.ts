@@ -57,7 +57,9 @@ export function readReducedMotion(matchMedia: MatchMediaLike): boolean {
 
 /** 동작 줄이기 설정이 바뀔 때마다 알린다. 돌려받은 함수를 부르면 그만 듣는다. */
 export function watchReducedMotion(matchMedia: MatchMediaLike, onChange: (reduced: boolean) => void): () => void {
+  /** 동작 줄이기 미디어 쿼리 결과. */
   const query = matchMedia(REDUCED_MOTION_QUERY);
+  /** 설정이 바뀌었을 때 알리는 함수. */
   const listener = () => onChange(query.matches);
   query.addEventListener('change', listener);
   return () => query.removeEventListener('change', listener);

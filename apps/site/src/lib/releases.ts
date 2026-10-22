@@ -6,6 +6,9 @@ export type InstallerOs = 'mac' | 'windows';
 /** 설치 파일 OS 목록. 페이지에 그리는 순서이기도 하다. */
 export const INSTALLER_OSES: readonly InstallerOs[] = ['mac', 'windows'];
 
+/** 화면에 쓰는 OS 이름. */
+export const INSTALLER_OS_NAMES: Record<InstallerOs, string> = { mac: 'macOS', windows: 'Windows' };
+
 /** 다운로드 사이트 주소. */
 export const SITE_URL = 'https://stardraft.squadify.app/';
 

@@ -12,6 +12,7 @@ export function announceInstallOs(os: InstallerOs, page: EventTarget = window): 
 
 /** 받을 OS를 고를 때마다 알린다. 돌려받은 함수를 부르면 그만 듣는다. */
 export function onInstallOsChosen(listener: (os: InstallerOs) => void, page: EventTarget = window): () => void {
+  /** 페이지 이벤트에서 OS를 꺼내 알리는 함수. */
   const handle = (event: Event) => listener((event as CustomEvent<InstallerOs>).detail);
   page.addEventListener(INSTALL_OS_EVENT, handle);
   return () => page.removeEventListener(INSTALL_OS_EVENT, handle);

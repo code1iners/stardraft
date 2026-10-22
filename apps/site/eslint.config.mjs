@@ -15,7 +15,16 @@ const browserRestrictedImports = {
 };
 
 /** 브라우저에서 도는 파일. 테스트는 Node에서 돈다. */
-const browserFiles = ['src/components/**/*.{ts,tsx}', 'src/lib/releases.ts', 'src/lib/visitor.ts', 'src/lib/format.ts'];
+const browserFiles = [
+  'src/components/**/*.{ts,tsx}',
+  'src/lib/releases.ts',
+  'src/lib/visitor.ts',
+  'src/lib/format.ts',
+  'src/lib/example-scenes.ts',
+  'src/lib/motion.ts',
+  'src/lib/install-os.ts',
+  'src/lib/screenshots.ts',
+];
 
 // .astro 파일은 `astro check`가 타입을 본다.
 export default defineConfig(

@@ -12,8 +12,11 @@
   --warn-text: #4d3500;
   --warn-bg: #fdf4de;
   --warn-border: #efd9a2;
+  --ok: #1e7438;
   /* 누를 곳과 아이콘 자리를 가리키는 색. */
   --call: #d9480f;
+  /* 예시 화면을 감싸는 빗금 배경. */
+  --hatch: repeating-linear-gradient(45deg, #eef0f3 0 10px, #e8ebef 10px 20px);
   /* 첫 화면 그림의 반짝임 별 색. */
   --sparkle: #e2a712;
   --font: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', sans-serif;
@@ -580,6 +583,887 @@ ol.plain li {
   margin-top: 18px;
 }
 
+/* 설치 안내: OS 탭과 번호 단계 */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 12px 0 8px;
+}
+.tab {
+  border: 0;
+  background: none;
+  padding: 10px 14px;
+  font: 600 15px var(--font);
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.tab[aria-selected='true'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.steps > li {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 0 16px;
+  padding: 22px 0;
+  border-top: 1px solid var(--border);
+}
+.steps > li:first-child {
+  border-top: 0;
+}
+.num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+}
+.quote-line {
+  font-size: 14px;
+  color: var(--muted);
+}
+.quote-line q {
+  color: var(--text);
+  font-weight: 600;
+  quotes: none;
+}
+.check {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--ok);
+}
+.check svg {
+  flex: none;
+  transform: translateY(2px);
+}
+details.stuck {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+details.stuck summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+details.stuck[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+.qa {
+  margin: 0;
+  padding: 4px 14px 14px;
+  font-size: 15px;
+}
+.qa dt {
+  font-weight: 600;
+  margin-top: 10px;
+}
+.qa dd {
+  margin: 2px 0 0;
+}
+table.states {
+  border-collapse: collapse;
+  font-size: 15px;
+  margin: 6px 0 10px;
+}
+table.states th,
+table.states td {
+  text-align: left;
+  padding: 6px 16px 6px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+table.states th {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg button {
+  border: 0;
+  background: var(--bg);
+  height: 28px;
+  padding: 0 10px;
+  font: 600 13px var(--font);
+  color: var(--muted);
+  cursor: pointer;
+}
+.seg button + button {
+  border-left: 1px solid var(--border-strong);
+}
+.seg button[aria-pressed='true'] {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* 예시 화면 틀: 노란 띠, 빗금 배경 속 장면과 커서, 안내 문구와 조작. 언제나 단계 안에 둔다. */
+.example {
+  margin: 14px 0 6px;
+  max-width: 600px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.example-band {
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--warn-border);
+}
+.example-band.real {
+  color: var(--muted);
+  background: var(--bg-2);
+  border-bottom-color: var(--border);
+}
+.example-stage {
+  position: relative;
+  padding: 14px;
+  background: var(--hatch);
+}
+.example-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.example-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.example-cap {
+  margin: 0;
+  font-size: 14px;
+  flex: 1 1 220px;
+  min-height: 22px;
+}
+.example-cap.warn {
+  color: #9a2c10;
+  font-weight: 600;
+}
+.example-ctl {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ex-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 26px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 6;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+}
+.ex-cursor.on {
+  opacity: 1;
+}
+.ex-cursor.moving {
+  transition: transform 0.9s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 지금 누를 곳: 강조 테두리. 예시 화면이 보이면 커서가 닿을 즈음부터 깜빡인다. */
+.ex-target {
+  box-shadow: 0 0 0 3px var(--call) !important;
+  border-radius: 6px;
+}
+.example-stage.seen .ex-target {
+  animation: exPulse 1.8s ease-out 0.9s infinite;
+}
+/* 찾은 아이콘: 메뉴 막대·트레이의 Stardraft */
+.found {
+  box-shadow: 0 0 0 2px var(--call);
+  border-radius: 4px;
+}
+
+/* 재현한 OS 창 */
+.scene {
+  position: relative;
+  min-height: 270px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  border-radius: 6px;
+  overflow: hidden;
+  font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', 'Malgun Gothic', sans-serif;
+  color: #1d1d1f;
+  user-select: none;
+  text-align: left;
+}
+.scene.enter {
+  animation: sceneIn 0.25s ease-out both;
+}
+.scene.mac {
+  background: #c7d0da;
+}
+.scene.win {
+  background: #c4d1df;
+  font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, 'Apple SD Gothic Neo', sans-serif;
+}
+.scene.top {
+  align-items: flex-end;
+}
+.scene.bottom {
+  align-items: flex-start;
+}
+.scene button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.appicon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: 23%;
+  background: var(--accent);
+  color: #fff;
+}
+.desk-note {
+  color: #3d434a;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+.lights {
+  display: inline-flex;
+  gap: 6px;
+  margin-right: 8px;
+}
+.lights i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  display: block;
+  background: #ff5f57;
+}
+.lights i:nth-child(2) {
+  background: #febc2e;
+}
+.lights i:nth-child(3) {
+  background: #28c840;
+}
+.m-alert,
+.m-auth {
+  width: 262px;
+  background: #ececec;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+  padding: 18px 16px 14px;
+  text-align: center;
+}
+.m-alert .appicon {
+  margin: 0 auto 10px;
+}
+.m-alert-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.m-alert-body {
+  font-size: 11px;
+  color: #333;
+  margin-bottom: 14px;
+}
+.m-btns {
+  display: grid;
+  gap: 7px;
+}
+.m-btns.two {
+  grid-template-columns: 1fr 1fr;
+  margin-top: 10px;
+}
+.m-btn {
+  display: grid;
+  place-items: center;
+  height: 26px;
+  border-radius: 6px;
+  border: 0;
+  background: #fff;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.18), 0 1px 1px rgba(0, 0, 0, 0.08);
+  font-size: 12px;
+  padding: 0 12px;
+}
+.scene .m-btn.def {
+  background: #1a73e8;
+  color: #fff;
+}
+.m-input {
+  display: block;
+  height: 24px;
+  margin: 6px 0;
+  border: 1px solid #c9c9c9;
+  border-radius: 5px;
+  padding: 0 8px;
+  background: #fff;
+  font-size: 11px;
+  line-height: 22px;
+  text-align: left;
+}
+.m-win {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  width: 100%;
+  max-width: 480px;
+}
+.m-titlebar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: #f2f2f2;
+  border-bottom: 1px solid #e2e2e2;
+  font-weight: 600;
+}
+.dmg-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 30px 16px 26px;
+  background: #f8f8f8;
+}
+.dmg-item {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 0;
+  background: none;
+}
+.dmg-item.leaving {
+  animation: toFolder 0.7s ease-in both;
+}
+.dmg-item.left {
+  visibility: hidden;
+}
+.dmg-item.got .folder-ico {
+  animation: bump 0.3s ease-out 0.55s both;
+}
+.folder-ico {
+  position: relative;
+  width: 60px;
+  height: 48px;
+  border-radius: 6px;
+  background: #5aa0e8;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 18px;
+}
+.folder-ico::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 0;
+  width: 26px;
+  height: 10px;
+  border-radius: 4px 4px 0 0;
+  background: #5aa0e8;
+}
+.dmg-arrow {
+  color: #8a9099;
+}
+.m-set {
+  display: grid;
+  grid-template-columns: 136px minmax(0, 1fr);
+  min-height: 216px;
+}
+.m-side {
+  background: #ebebeb;
+  padding: 8px 6px;
+  font-size: 11px;
+  display: grid;
+  align-content: start;
+  gap: 1px;
+}
+.m-side div {
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.m-side .sel {
+  background: #1a73e8;
+  color: #fff;
+}
+.m-main {
+  padding: 12px 14px;
+}
+.m-main h5 {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+.m-head {
+  font-size: 11px;
+  font-weight: 700;
+  margin: 12px 0 6px;
+  color: #333;
+}
+.m-group {
+  background: #f6f6f6;
+  border-radius: 8px;
+  border: 1px solid #e5e5e5;
+}
+.m-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-top: 1px solid #e8e8e8;
+  font-size: 11px;
+}
+.m-row:first-child {
+  border-top: 0;
+}
+.m-row.dim,
+.m-row .dim {
+  color: #8b8b8b;
+}
+.m-row .m-btn {
+  flex: none;
+  height: 22px;
+}
+.m-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  background: rgba(246, 246, 247, 0.95);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.m-bar .r {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.m-bar .ico {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  background: #8d939a;
+}
+.m-bar .star {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 18px;
+}
+.m-banner {
+  position: absolute;
+  top: 34px;
+  right: 10px;
+  width: 252px;
+  background: rgba(250, 250, 250, 0.98);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+  padding: 10px;
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  align-items: flex-start;
+}
+.m-banner b {
+  display: block;
+  font-size: 11.5px;
+}
+.m-banner .m-btn {
+  margin-top: 6px;
+  height: 22px;
+}
+.w-win {
+  background: #f3f3f3;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  width: 100%;
+  max-width: 480px;
+  overflow: hidden;
+  border: 1px solid #c9ced4;
+}
+.w-title {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-size: 11px;
+}
+.w-ctl {
+  color: #555;
+  letter-spacing: 2px;
+}
+.w-sec {
+  display: grid;
+  grid-template-columns: 136px minmax(0, 1fr);
+  min-height: 216px;
+}
+.w-nav {
+  padding: 4px 6px;
+  font-size: 11px;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+.w-nav > div,
+.w-nav-item {
+  position: relative;
+  padding: 5px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  border: 0;
+  background: none;
+}
+.w-nav .sel {
+  background: #e4e4e4;
+}
+.w-nav .sel::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: #0067c0;
+}
+.w-main {
+  background: #fafafa;
+  padding: 12px 14px;
+  border-top-left-radius: 8px;
+}
+.w-crumb {
+  font-size: 10.5px;
+  color: #666;
+}
+.w-main h5 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 2px 0 4px;
+}
+.w-desc {
+  font-size: 11px;
+  color: #444;
+  margin: 0 0 10px;
+}
+.w-block .w-desc {
+  margin: 2px 0 6px;
+}
+.w-link {
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  margin-left: -4px;
+  font-size: 11.5px;
+  color: #0067c0 !important;
+  text-decoration: underline;
+}
+.w-radios {
+  padding: 4px;
+}
+.w-radio {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 5px 2px;
+  font-size: 11.5px;
+}
+.w-radio i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid #666;
+  flex: none;
+  margin-top: 2px;
+  background: #fff;
+}
+.w-radio.on i {
+  border: 4px solid #0067c0;
+}
+.w-radio span {
+  display: block;
+  color: #555;
+  font-size: 10.5px;
+}
+.w-ss {
+  width: 100%;
+  max-width: 430px;
+  background: #0b62b4;
+  color: #fff;
+  padding: 18px 20px 14px;
+  min-height: 226px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+}
+.w-ss h5 {
+  font-size: 20px;
+  font-weight: 400;
+  margin: 0 0 10px;
+}
+.w-ss p {
+  font-size: 11.5px;
+  margin: 0 0 8px;
+}
+.scene .w-ss .more {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  margin-left: -4px;
+  color: #fff;
+  text-decoration: underline;
+  font-size: 11.5px;
+}
+.w-btns {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+}
+.scene .w-btn {
+  min-width: 86px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 11.5px;
+  padding: 0 10px;
+}
+.w-inst {
+  width: 300px;
+  background: #fff;
+  border: 1px solid #c9ced4;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+}
+.w-inst .w-title {
+  border-bottom: 1px solid #eee;
+}
+.w-inst-body {
+  padding: 16px;
+  font-size: 11.5px;
+}
+.w-bar {
+  height: 8px;
+  background: #e5e5e5;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 10px;
+}
+.w-bar i {
+  display: block;
+  height: 100%;
+  background: #0067c0;
+  transform-origin: left;
+  animation: progress 3.2s ease-in-out infinite;
+}
+/* 동작 줄이기(JS): 다 찬 모습으로 선다. */
+.w-bar i.full {
+  animation: none;
+}
+.w-task {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40px;
+  background: rgba(238, 241, 245, 0.97);
+  border-top: 1px solid #d3d8de;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+}
+.w-task .mid {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+.tb-ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: #a9b4c0;
+}
+.tb-ico.start {
+  background: #2b7bd6;
+}
+.w-task .r {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  line-height: 1.25;
+  text-align: right;
+}
+.chev {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  border: 0;
+  background: none;
+  font-size: 12px;
+}
+.w-fly {
+  position: absolute;
+  right: 74px;
+  bottom: 48px;
+  background: #f7f7f7;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 26px);
+  gap: 6px;
+}
+.w-fly > span {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+}
+.w-fly .g {
+  background: #c4ccd5;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+
+/* 키체인 대화상자 예시 화면. 앱의 다시 시작 확인 화면과 같은 모습이다. */
+.keychain-example {
+  max-width: 420px;
+}
+.keychain-example .example-stage {
+  display: flex;
+  justify-content: center;
+}
+.keychain-dialog {
+  width: 250px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #ececec;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25), 0 4px 12px rgba(0, 0, 0, 0.12);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.keychain-text {
+  margin: 0 0 8px;
+}
+.keychain-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.keychain-input {
+  flex: 1;
+  height: 20px;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
+  background: #fff;
+}
+.keychain-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.keychain-btn {
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: #fff;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+}
+/* 누를 곳: 실제 대화상자에는 없는 강조 테두리로 "항상 허용"을 가리킨다. */
+.keychain-btn.emphasized {
+  box-shadow: 0 0 0 2px var(--accent);
+  font-weight: 600;
+}
+
+@keyframes exPulse {
+  0% {
+    box-shadow: 0 0 0 3px var(--call);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(217, 72, 15, 0.15);
+  }
+  100% {
+    box-shadow: 0 0 0 3px var(--call);
+  }
+}
+@keyframes sceneIn {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes toFolder {
+  to {
+    transform: translateX(150px) scale(0.4);
+    opacity: 0;
+  }
+}
+@keyframes bump {
+  50% {
+    transform: scale(1.12);
+  }
+}
+@keyframes progress {
+  0% {
+    transform: scaleX(0.05);
+  }
+  80%,
+  100% {
+    transform: scaleX(1);
+  }
+}
+
 @media (max-width: 1040px) {
   .hero {
     grid-template-columns: 1fr;
@@ -640,6 +1524,30 @@ ol.plain li {
   table.files td:nth-child(3) {
     grid-column: 1 / -1;
   }
+  .steps > li {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 0 10px;
+  }
+}
+@media (max-width: 520px) {
+  .scene {
+    padding: 14px 10px;
+    min-height: 240px;
+  }
+  .m-set,
+  .w-sec {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+  .m-side,
+  .w-nav {
+    font-size: 10px;
+  }
+  .m-banner {
+    width: 220px;
+  }
+  .m-row {
+    flex-wrap: wrap;
+  }
 }
 
 /* OS의 "동작 줄이기"를 따른다. 켜져 있지 않을 때만 부드럽게 스크롤한다. */
@@ -648,12 +1556,18 @@ ol.plain li {
     scroll-behavior: smooth;
   }
 }
-/* 동작 줄이기: 움직임을 모두 멈추고 마지막 모습만 보인다. 첫 화면 그림은 반짝임 별·테두리·안내가 모두 보이는 모습으로 선다. */
+/*
+ * 동작 줄이기: 움직임을 모두 멈추고 마지막 모습만 보인다. 첫 화면 그림은 반짝임 별·테두리·안내가 모두 보이는 모습으로 선다.
+ * 예시 화면은 커서가 누를 곳에 바로 놓이고(JS), 강조 테두리는 깜빡이지 않고 서 있으며, 옮겨 간 아이콘은 빈자리, 진행 막대는 다 찬 모습이다.
+ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation: none !important;
     transition: none !important;
+  }
+  .dmg-item.leaving {
+    visibility: hidden;
   }
 }

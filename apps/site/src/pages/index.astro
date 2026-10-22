@@ -6,6 +6,7 @@ import UpdateSection from '../components/UpdateSection.astro';
 import { Changelog } from '../components/Changelog';
 import { CurrentFiles } from '../components/CurrentFiles';
 import { DownloadHero } from '../components/DownloadHero';
+import { InstallGuide } from '../components/InstallGuide';
 import { releaseListUrl, repoUrl } from '../lib/releases';
 import '../styles/global.css';
 
@@ -70,7 +71,8 @@ const sections = [
 
         <section id="install">
           <h2>설치 안내</h2>
-          {/* OS 탭과 단계별 예시 화면은 설치 안내 티켓에서 채운다. */}
+          {/* 첫 화면의 다운로드 링크가 고른 OS를 바로 들어야 해서 보이기 전에 깨운다. */}
+          <InstallGuide client:load />
         </section>
 
         <section id="update">

@@ -1,7 +1,7 @@
 import type { InstallerOs } from '../lib/releases';
 
 /** 앱 아이콘의 별 모양. 색은 감싼 요소의 글자색(CSS)을 따른다. */
-function Star({ size, className }: { size: number; className?: string }) {
+export function Star({ size, className }: { size: number; className?: string }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 1.8l2.5 7.2 7.3 3-7.3 3L12 22.2 9.5 15 2.2 12l7.3-3z" fill="currentColor" />

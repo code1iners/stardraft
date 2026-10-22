@@ -29,6 +29,16 @@ describe('동작 줄이기', () => {
     expect(reduce).toMatch(/\*,\s*\*::before,\s*\*::after\s*\{[^}]*animation:\s*none !important;[^}]*transition:\s*none !important;/);
   });
 
+  it('예시 화면의 강조 테두리는 서 있고, 보이는 위치까지 스크롤한 뒤에만 깜빡인다', () => {
+    expect(css).toMatch(/\.ex-target\s*\{[^}]*box-shadow:[^}]*var\(--call\)/);
+    expect(css).toMatch(/\.example-stage\.seen \.ex-target\s*\{[^}]*animation:\s*exPulse/);
+    expect(css).not.toMatch(/(?<!\.seen )\.ex-target\s*\{[^}]*animation/);
+  });
+
+  it('동작 줄이기면 예시 화면도 마지막 모습만: 옮겨 간 아이콘은 빈자리로 둔다', () => {
+    expect(mediaBlock('prefers-reduced-motion: reduce')).toMatch(/\.dmg-item\.leaving\s*\{[^}]*visibility:\s*hidden/);
+  });
+
   it('부드러운 스크롤은 동작 줄이기가 꺼졌을 때만', () => {
     expect(mediaBlock('prefers-reduced-motion: no-preference')).toContain('scroll-behavior: smooth');
     expect(css.replace(mediaBlock('prefers-reduced-motion: no-preference'), '')).not.toContain('scroll-behavior: smooth');

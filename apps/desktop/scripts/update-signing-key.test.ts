@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { UPDATE_PUBLIC_KEYS } from '../src/core/update/update-public-keys.mts';
 import { generateSigningKeyPair, publicKeyOf } from '../src/core/update/update-signature.mts';
-import { type KeygenPorts, runKeygen } from './update-signing-key.mts';
+import { type KeygenPorts, renderPublicKeysModule, runKeygen } from './update-signing-key.mts';
 
 /** 테스트마다 만드는 임시 폴더. */
 let dir: string;
@@ -170,5 +171,14 @@ describe('업데이트 서명 키 회전(--rotate)', () => {
     );
 
     expect(secrets.size).toBe(0);
+  });
+});
+
+describe('앱 소스의 공개 키 목록 파일', () => {
+  it('release:keygen이 쓰는 모양 그대로라서, 다음 키 생성이 손으로 고친 내용을 조용히 덮어쓰지 않는다', async () => {
+    /** 커밋된 공개 키 목록 파일. */
+    const committed = await readFile(new URL('../src/core/update/update-public-keys.mts', import.meta.url), 'utf8');
+
+    expect(committed).toBe(renderPublicKeysModule(UPDATE_PUBLIC_KEYS));
   });
 });

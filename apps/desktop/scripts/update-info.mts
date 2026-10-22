@@ -10,12 +10,14 @@ import {
   publicKeyOf,
   readSignatureList,
   SIGNATURES_FIELD,
+  type SignedFile,
+  type SigningKeyPair,
   signUpdateFile,
 } from '../src/core/update/update-signature.mts';
 import { releaseFileNames, SIGNING_KEY_SECRETS, type UpdateInfoTarget, updateInfoTargets } from './release-config.mts';
 
-/** 검사하고 서명할 Release 파일 묶음. */
-export type ReleaseDir = {
+/** 검사하고 서명할 Release 파일. */
+export type ReleaseFileSet = {
   /** Release에 올릴 파일을 모은 폴더. */
   dir: string;
   /** 앱 이름(package.json의 productName). */
@@ -24,23 +26,22 @@ export type ReleaseDir = {
   version: string;
 };
 
-/** release 환경 비밀값에서 읽은 서명 키. */
-export type SigningKey = {
+/**
+ * release 환경 비밀값에서 읽은 서명 키. 개인 키는 화면과 로그에 내지 않고,
+ * 짝인 공개 키는 앱 소스의 공개 키 목록과 견줄 수 있게 로그에 낸다.
+ */
+export type SigningKey = SigningKeyPair & {
   /** 비밀값 이름. */
-  name: (typeof SIGNING_KEY_SECRETS)[number];
-  /** 개인 키. 화면과 로그에 내지 않는다. */
-  privateKey: string;
-  /** 짝인 공개 키. 앱 소스의 공개 키 목록과 견줄 수 있게 로그에 낸다. */
-  publicKey: string;
+  name: (typeof SIGNING_KEY_SECRETS)[keyof typeof SIGNING_KEY_SECRETS];
 };
 
 /**
  * 태그 워크플로가 환경 변수로 넘긴 release 환경 비밀값에서 서명 키를 읽는다.
- * Actions는 등록하지 않은 비밀값을 빈 문자열로 넘기므로 빈 칸은 없는 것으로 본다. 하나도 없거나 키가 아닌 값이 있으면 멈춘다.
+ * Actions는 등록하지 않은 비밀값을 빈 문자열로 넘기므로 빈 비밀값은 없는 것으로 본다. 하나도 없거나 키가 아닌 값이 있으면 멈춘다.
  */
 export function readSigningKeys(env: Readonly<Record<string, string | undefined>>): SigningKey[] {
-  /** 값이 있는 칸. */
-  const keys = SIGNING_KEY_SECRETS.flatMap((name) => {
+  /** 값이 있는 비밀값. */
+  const keys = Object.values(SIGNING_KEY_SECRETS).flatMap((name) => {
     /** 비밀값. */
     const privateKey = env[name]?.trim();
     if (!privateKey) return [];
@@ -52,19 +53,19 @@ export function readSigningKeys(env: Readonly<Record<string, string | undefined>
     }
   });
   if (keys.length === 0) {
-    throw new Error(`release 환경 비밀값이 없습니다: ${SIGNING_KEY_SECRETS[0]}. pnpm release:keygen으로 서명 키를 만드세요.`);
+    throw new Error(`release 환경 비밀값이 없습니다: ${SIGNING_KEY_SECRETS.primary}. pnpm release:keygen으로 서명 키를 만드세요.`);
   }
   return keys;
 }
 
 /** 검사를 통과한 업데이트 안내 파일 하나. */
-type CheckedUpdateInfo = {
+type CheckedUpdateInfo = UpdateInfoTarget & {
   /** yml을 읽은 객체. */
   content: Record<string, unknown>;
   /** 업데이트 파일 항목. `content` 안의 객체 그대로라, 고치면 다시 쓸 때 반영된다. */
   entry: Record<string, unknown>;
-  /** 실제 업데이트 파일의 sha512(base64). */
-  sha512: string;
+  /** 서명 문장에 담는 값. sha512는 yml에 적힌 값이 아니라 실제 파일에서 다시 계산한 값이다. */
+  file: SignedFile;
   /** 실제 업데이트 파일의 바이트 수. */
   size: number;
 };
@@ -75,7 +76,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Release 폴더에 다섯 파일이 모두 있고 다른 파일은 없는지 확인한다. */
-async function checkFileSet({ dir, productName, version }: ReleaseDir): Promise<void> {
+async function checkFileSet({ dir, productName, version }: ReleaseFileSet): Promise<void> {
   /** 있어야 하는 파일. */
   const expected = Object.values(releaseFileNames(productName, version));
   /** 폴더에 있는 이름. */
@@ -93,7 +94,7 @@ async function checkFileSet({ dir, productName, version }: ReleaseDir): Promise<
  * 업데이트 안내 파일 하나를 읽어 버전, 가리키는 파일 이름, 크기, sha512가 실제 업데이트 파일과 맞는지 확인한다.
  * 앱은 이 yml의 값으로 파일을 받고 sha512를 확인하므로, 하나라도 틀리면 모든 PC의 업데이트가 실패한다.
  */
-async function checkUpdateInfo({ dir, version }: ReleaseDir, { updateInfo, updateFile }: UpdateInfoTarget): Promise<CheckedUpdateInfo> {
+async function checkUpdateInfo({ dir, version }: ReleaseFileSet, { updateInfo, updateFile }: UpdateInfoTarget): Promise<CheckedUpdateInfo> {
   /** yml을 읽은 객체. */
   const content = load(await readFile(join(dir, updateInfo), 'utf8'));
   if (!isRecord(content)) throw new Error(`업데이트 안내 파일로 읽을 수 없습니다: ${updateInfo}`);
@@ -131,54 +132,43 @@ async function checkUpdateInfo({ dir, version }: ReleaseDir, { updateInfo, updat
     throw new Error(`${updateInfo}의 예전 형식 sha512가 ${updateFile}의 sha512와 다릅니다.`);
   }
 
-  return { content, entry, sha512, size };
+  return { updateInfo, updateFile, content, entry, file: { version, fileName: updateFile, sha512 }, size };
+}
+
+/** Release의 업데이트 안내 파일을 모두 검사한다. 하나라도 틀리면 아무것도 고치지 않고 거부한다. */
+async function checkAllUpdateInfo(release: ReleaseFileSet): Promise<CheckedUpdateInfo[]> {
+  /** 검사한 안내 파일. */
+  const checked: CheckedUpdateInfo[] = [];
+  for (const target of updateInfoTargets(releaseFileNames(release.productName, release.version))) {
+    checked.push(await checkUpdateInfo(release, target));
+  }
+  return checked;
 }
 
 /**
  * Release 폴더가 다섯 파일만 담고, 업데이트 안내 파일의 버전·파일 이름·크기·sha512가 실제 파일과 맞는지 확인한다.
  * 통과하면 안내 파일마다 확인한 내용을 한 줄씩 돌려주고, 틀리면 이유와 함께 거부한다.
  */
-export async function checkReleaseFiles(release: ReleaseDir): Promise<string[]> {
+export async function checkReleaseFiles(release: ReleaseFileSet): Promise<string[]> {
   await checkFileSet(release);
-
-  /** 확인 결과. */
-  const report: string[] = [];
-  for (const target of updateInfoTargets(releaseFileNames(release.productName, release.version))) {
-    /** 검사한 업데이트 파일의 크기. */
-    const { size } = await checkUpdateInfo(release, target);
-    report.push(`${target.updateInfo}: ${target.updateFile} ${size}바이트, sha512 일치`);
-  }
-  return report;
-}
-
-/** 검사를 통과한 업데이트 안내 파일과 그 이름. */
-type CheckedTarget = CheckedUpdateInfo & UpdateInfoTarget;
-
-/** Release의 업데이트 안내 파일을 모두 검사한다. 하나라도 틀리면 아무것도 고치지 않고 거부한다. */
-async function checkAllUpdateInfo(release: ReleaseDir): Promise<CheckedTarget[]> {
-  /** 검사한 안내 파일. */
-  const checked: CheckedTarget[] = [];
-  for (const target of updateInfoTargets(releaseFileNames(release.productName, release.version))) {
-    checked.push({ ...target, ...(await checkUpdateInfo(release, target)) });
-  }
-  return checked;
+  return (await checkAllUpdateInfo(release)).map(
+    ({ updateInfo, updateFile, size }) => `${updateInfo}: ${updateFile} ${size}바이트, sha512 일치`,
+  );
 }
 
 /**
  * 업데이트 안내 파일마다 업데이트 파일 항목에 서명 목록 필드를 넣는다. 개인 키마다 서명을 하나씩 만든다(회전 중이면 둘).
- * 서명 문장의 sha512는 yml에 적힌 값이 아니라 실제 파일에서 다시 계산한 값이다. 다른 칸은 그대로 두고 electron-builder와 같은 방식으로 다시 쓴다.
+ * 다른 필드는 그대로 두고 electron-builder와 같은 방식으로 다시 쓴다.
  */
-export async function signUpdateInfo(release: ReleaseDir, privateKeys: readonly string[]): Promise<string[]> {
+export async function signUpdateInfo(release: ReleaseFileSet, privateKeys: readonly string[]): Promise<string[]> {
   if (privateKeys.length === 0) throw new Error('서명할 개인 키가 없습니다.');
 
-  /** 서명할 안내 파일. 모두 검사를 통과한 뒤에 하나라도 고친다. */
+  /** 서명할 안내 파일. 모두 검사를 통과한 뒤에야 고친다. */
   const targets = await checkAllUpdateInfo(release);
   /** 서명 결과. */
   const report: string[] = [];
-  for (const { updateInfo, updateFile, content, entry, sha512 } of targets) {
-    /** 서명 문장에 담는 값. */
-    const file = { version: release.version, fileName: updateFile, sha512 };
-    // 읽은 객체를 그대로 고쳐 다른 칸과 순서를 지킨다.
+  for (const { updateInfo, updateFile, content, entry, file } of targets) {
+    // 읽은 객체를 그대로 고쳐 다른 필드와 순서를 지킨다.
     entry[SIGNATURES_FIELD] = privateKeys.map((privateKey) => signUpdateFile(file, privateKey));
     // electron-builder의 serializeToYaml과 같은 옵션이다.
     await writeFile(join(release.dir, updateInfo), dump(content, { lineWidth: 8000, noRefs: true }));
@@ -192,7 +182,7 @@ export async function signUpdateInfo(release: ReleaseDir, privateKeys: readonly 
  * 앱처럼 실제 파일에서 다시 계산한 sha512로 서명 문장을 만든다. 넣은 서명은 모두 목록의 키 하나로 검증되어야 하고,
  * 목록의 키마다 그 키로 만든 서명이 있어야 한다. 회전 중 비밀값 하나가 빠지면 그 키만 아는 앱이 업데이트를 받지 못하기 때문이다.
  */
-export async function verifyUpdateInfo(release: ReleaseDir, publicKeys: readonly string[]): Promise<string[]> {
+export async function verifyUpdateInfo(release: ReleaseFileSet, publicKeys: readonly string[]): Promise<string[]> {
   if (publicKeys.length === 0) {
     throw new Error('앱 소스의 공개 키 목록이 비어 있습니다. pnpm release:keygen으로 서명 키를 만들고 공개 키를 커밋하세요.');
   }
@@ -201,13 +191,11 @@ export async function verifyUpdateInfo(release: ReleaseDir, publicKeys: readonly
 
   /** 검증 결과. */
   const report: string[] = [];
-  for (const { updateInfo, updateFile, entry, sha512 } of await checkAllUpdateInfo(release)) {
+  for (const { updateInfo, updateFile, entry, file } of await checkAllUpdateInfo(release)) {
     /** 넣은 서명 목록. */
     const signatures = readSignatureList(entry);
     if (!signatures) throw new Error(`${updateInfo}의 ${updateFile} 항목에 서명 목록(${SIGNATURES_FIELD})이 없거나 형식이 틀립니다.`);
 
-    /** 앱이 받은 파일로 만드는 서명 문장의 값. */
-    const file = { version: release.version, fileName: updateFile, sha512 };
     /** 목록의 어떤 키로도 검증되지 않는 서명. */
     const unverified = signatures.filter((signature) => !isSignedByAnyKey(file, [signature], publicKeys));
     if (unverified.length > 0) {

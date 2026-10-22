@@ -42,7 +42,8 @@ jobs:
   release:
     name: 초안 Release
     needs: build
-    # 업데이트 서명 키(release 환경 비밀값)는 이 작업에서만 읽는다. 저장소 설정에서도 release 환경을 v* 태그에만 허용한다.
+    # 업데이트 서명 키(release 환경 비밀값)는 이 작업에서만 읽는다. 실제로 막는 것은 저장소 설정의 release 환경 배포 규칙(v* 태그만)이다.
+    # 이 if는 이 파일에 다른 트리거를 더해도 태그가 아니면 돌지 않게 하는 보조 장치다.
     if: startsWith(github.ref, 'refs/tags/v')
     environment: release
     runs-on: ubuntu-latest
@@ -81,9 +82,11 @@ jobs:
         run: pnpm --filter @stardraft/desktop release:verify
 
       # 검사가 폴더에 다섯 파일만 있는 것을 확인했다. SHA256SUMS.txt와 blockmap은 올리지 않는다.
+      # 릴리스 노트는 사이트 변경 내역에 그대로 나가므로 비워 두고, 저장소 주인이 공개 전에 직접 쓴다.
+      # 자동 생성 노트에는 PR 작성자 같은 사람 이름이 들어간다.
       - name: 초안 Release 만들기
         run: >-
           gh release create "$GITHUB_REF_NAME" apps/desktop/release/*
-          --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$GITHUB_REF_NAME" --notes ""
         env:
           GH_TOKEN: ${{ github.token }}

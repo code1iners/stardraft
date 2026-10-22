@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { UPDATE_PUBLIC_KEYS } from '../src/core/update/update-public-keys.mts';
 import { RELEASE_ENVIRONMENT } from './release-config.mts';
-import { type KeygenPorts, runKeygen } from './update-signing-key.mts';
+import { type KeygenPorts, reasonOf, runKeygen } from './update-signing-key.mts';
 
 /** 사용법 안내. */
 const USAGE = `사용법: pnpm release:keygen [--rotate]
@@ -65,7 +65,7 @@ function readOptions(): { rotate: boolean; help: boolean } {
       options: { rotate: { type: 'boolean', default: false }, help: { type: 'boolean', short: 'h', default: false } },
     }).values;
   } catch (error) {
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\n\n${USAGE}`, { cause: error });
+    throw new Error(`${reasonOf(error)}\n\n${USAGE}`, { cause: error });
   }
 }
 

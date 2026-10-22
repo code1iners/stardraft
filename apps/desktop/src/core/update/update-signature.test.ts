@@ -41,7 +41,7 @@ describe('서명 문장', () => {
     ['hex로 쓴 sha512', { sha512: 'c6af59c6fbd43af415f93272aca78403e2bc0706b5eba84a3315b63768dbe17e' }],
     ['base64가 아닌 sha512', { sha512: `${MAC_ZIP_SHA512.slice(0, -2)}!!` }],
     ['64바이트가 아닌 sha512', { sha512: 'xq9ZxvvUOvQV+TJyrKeEA+K8Bwa166hKMxW2N2jb4X4=' }],
-  ])('%s처럼 칸의 경계가 흐려지는 값으로는 문장을 만들지 않는다', (_case, change) => {
+  ])('%s처럼 줄의 경계를 흐리는 값으로는 서명 문장을 만들지 않는다', (_case, change) => {
     /** 바꾸기 전의 올바른 값. */
     const file = { version: '0.2.0', fileName: 'Stardraft-0.2.0-arm64-mac.zip', sha512: MAC_ZIP_SHA512 };
 
@@ -56,6 +56,7 @@ describe('서명과 검증', () => {
   const newKey = generateSigningKeyPair();
 
   it('서명은 서명 문장의 UTF-8 바이트에 대한 표준 Ed25519 서명이다', () => {
+    /** 만든 서명. */
     const signature = signUpdateFile(macZip, oldKey.privateKey);
 
     /** 공개 키 목록에 들어가는 문자열(SPKI DER의 base64)로 읽은 공개 키. */
@@ -66,6 +67,7 @@ describe('서명과 검증', () => {
   });
 
   it('짝인 공개 키가 목록에 있으면 검증된다', () => {
+    /** 처음 만든 키로 만든 서명 목록. */
     const signatures = [signUpdateFile(macZip, oldKey.privateKey)];
 
     expect(isSignedByAnyKey(macZip, signatures, [oldKey.publicKey])).toBe(true);
@@ -76,12 +78,14 @@ describe('서명과 검증', () => {
     ['이름을 바꾼 파일', { fileName: 'Stardraft-0.2.0-arm64-mac-copy.zip' }],
     ['내용이 바뀐 파일(sha512가 다름)', { sha512: WIN_SETUP_SHA512 }],
   ])('%s은 원래 파일의 서명으로 검증되지 않는다', (_case, change) => {
+    /** 원래 파일의 서명 목록. */
     const signatures = [signUpdateFile(macZip, oldKey.privateKey)];
 
     expect(isSignedByAnyKey({ ...macZip, ...change }, signatures, [oldKey.publicKey])).toBe(false);
   });
 
   it('목록에 없는 키로 만든 서명은 검증되지 않는다', () => {
+    /** 목록에 없는 키로 만든 서명 목록. */
     const signatures = [signUpdateFile(macZip, newKey.privateKey)];
 
     expect(isSignedByAnyKey(macZip, signatures, [oldKey.publicKey])).toBe(false);
@@ -97,6 +101,7 @@ describe('서명과 검증', () => {
   });
 
   it('회전 중 두 키로 함께 서명하면 옛 키만 아는 앱도 새 키만 아는 앱도 검증한다', () => {
+    /** 두 키로 함께 만든 서명 목록. */
     const signatures = [signUpdateFile(macZip, oldKey.privateKey), signUpdateFile(macZip, newKey.privateKey)];
 
     expect(isSignedByAnyKey(macZip, signatures, [oldKey.publicKey])).toBe(true);
@@ -104,6 +109,7 @@ describe('서명과 검증', () => {
   });
 
   it('서명 목록이나 공개 키 목록이 비어 있으면 검증되지 않는다', () => {
+    /** 처음 만든 키로 만든 서명 목록. */
     const signatures = [signUpdateFile(macZip, oldKey.privateKey)];
 
     expect(isSignedByAnyKey(macZip, [], [oldKey.publicKey])).toBe(false);
@@ -168,12 +174,14 @@ describe('키 문자열', () => {
   });
 
   it('개인 키에서 짝인 공개 키를 얻는다', () => {
+    /** 새 키 쌍. */
     const key = generateSigningKeyPair();
 
     expect(publicKeyOf(key.privateKey)).toBe(key.publicKey);
   });
 
   it('붙여 넣으며 생긴 앞뒤 공백이 있어도 같은 개인 키로 서명한다', () => {
+    /** 새 키 쌍. */
     const key = generateSigningKeyPair();
 
     /** 끝에 줄바꿈이 붙은 개인 키로 만든 서명. */

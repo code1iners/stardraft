@@ -48,10 +48,10 @@ export type SignedFile = {
 /**
  * 서명하는 짧은 서명 문장을 만든다. 형식 이름, 버전, 파일 이름, sha512를 한 줄씩 담는다.
  * 100MB가 넘는 zip에 직접 서명하지 않고 sha512로 묶으며, 버전과 파일 이름을 함께 묶어 진짜 서명이 붙은 옛 파일을 새 버전처럼 내밀지 못하게 한다.
- * 칸의 경계가 흐려지는 값(빈 값, 줄바꿈, 폴더가 붙은 파일 이름, 64바이트 base64가 아닌 sha512)은 거부한다.
+ * 줄의 경계를 흐리는 값(빈 값, 줄바꿈, 폴더가 붙은 파일 이름, 64바이트 base64가 아닌 sha512)은 거부한다.
  */
 export function createSigningSentence({ version, fileName, sha512 }: SignedFile): string {
-  // 줄바꿈이 든 값은 다음 칸을 흉내 낼 수 있다.
+  // 줄바꿈이 든 값은 다음 줄을 흉내 낼 수 있다.
   if (!version || /[\r\n]/.test(version)) throw new Error(`서명 문장에 넣을 수 없는 버전입니다: ${JSON.stringify(version)}`);
   if (!fileName || /[\r\n/\\]/.test(fileName)) {
     throw new Error(`서명 문장에 넣을 수 없는 파일 이름입니다: ${JSON.stringify(fileName)}`);

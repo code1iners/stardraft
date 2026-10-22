@@ -61,6 +61,15 @@ afterEach(async () => {
 /** 0.2.0 Release 폴더. */
 const release = () => ({ dir, productName: 'Stardraft', version: '0.2.0' });
 
+/** 처음 만든 서명 키. */
+const oldKey = generateSigningKeyPair();
+/** 회전할 때 더한 서명 키. */
+const newKey = generateSigningKeyPair();
+/** 앱이 macOS zip을 받은 뒤 서명 문장에 담는 값. */
+const receivedMacZip = { version: '0.2.0', fileName: 'Stardraft-0.2.0-arm64-mac.zip', sha512: MAC_ZIP_SHA512 };
+/** 앱이 Windows 설치 파일을 받은 뒤 서명 문장에 담는 값. */
+const receivedWinSetup = { version: '0.2.0', fileName: 'Stardraft-Setup-0.2.0.exe', sha512: WIN_SETUP_SHA512 };
+
 describe('Release 파일 검사', () => {
   it('다섯 파일이 모두 있고 업데이트 안내 파일이 실제 파일과 맞으면 통과한다', async () => {
     await expect(checkReleaseFiles(release())).resolves.toEqual([
@@ -104,10 +113,13 @@ describe('Release 파일 검사', () => {
     await expect(checkReleaseFiles(release())).rejects.toThrow(/latest-mac\.yml.*0\.1\.9/);
   });
 
-  it('예전 형식의 path와 sha512가 파일 항목과 다르면 멈춘다', async () => {
-    await writeFile(join(dir, 'latest.yml'), LATEST_YML.replace(`sha512: ${WIN_SETUP_SHA512}\nreleaseDate`, `sha512: ${MAC_ZIP_SHA512}\nreleaseDate`));
+  it.each([
+    ['path', 'path: Stardraft-Setup-0.2.0.exe', 'path: Stardraft-Setup-0.1.0.exe', /latest\.yml의 path/],
+    ['sha512', `sha512: ${WIN_SETUP_SHA512}\nreleaseDate`, `sha512: ${MAC_ZIP_SHA512}\nreleaseDate`, /latest\.yml의 예전 형식 sha512/],
+  ])('예전 형식의 %s가 파일 항목과 다르면 멈춘다', async (_field, before, after, message) => {
+    await writeFile(join(dir, 'latest.yml'), LATEST_YML.replace(before, after));
 
-    await expect(checkReleaseFiles(release())).rejects.toThrow(/latest\.yml.*sha512/);
+    await expect(checkReleaseFiles(release())).rejects.toThrow(message);
   });
 
   it('Release에 올리지 않는 파일(blockmap 등)이 섞여 있으면 멈춘다', async () => {
@@ -134,11 +146,6 @@ function firstEntry(content: Record<string, unknown>): unknown {
 }
 
 describe('업데이트 안내 파일 서명', () => {
-  /** 처음 만든 키. */
-  const oldKey = generateSigningKeyPair();
-  /** 회전할 때 더한 키. */
-  const newKey = generateSigningKeyPair();
-
   it('업데이트 파일 항목에 서명 목록을 넣고, 앱은 받은 파일의 값으로 그 서명을 검증한다', async () => {
     await signUpdateInfo(release(), [oldKey.privateKey]);
 
@@ -146,15 +153,11 @@ describe('업데이트 안내 파일 서명', () => {
     const mac = await readYml('latest-mac.yml');
     /** 서명을 넣은 latest.yml. */
     const win = await readYml('latest.yml');
-    /** 앱이 macOS zip을 받은 뒤 확인하는 값. */
-    const macZip = { version: '0.2.0', fileName: 'Stardraft-0.2.0-arm64-mac.zip', sha512: MAC_ZIP_SHA512 };
-    /** 앱이 Windows 설치 파일을 받은 뒤 확인하는 값. */
-    const winSetup = { version: '0.2.0', fileName: 'Stardraft-Setup-0.2.0.exe', sha512: WIN_SETUP_SHA512 };
-    expect(isSignedByAnyKey(macZip, readSignatureList(firstEntry(mac)) ?? [], [oldKey.publicKey])).toBe(true);
-    expect(isSignedByAnyKey(winSetup, readSignatureList(firstEntry(win)) ?? [], [oldKey.publicKey])).toBe(true);
+    expect(isSignedByAnyKey(receivedMacZip, readSignatureList(firstEntry(mac)) ?? [], [oldKey.publicKey])).toBe(true);
+    expect(isSignedByAnyKey(receivedWinSetup, readSignatureList(firstEntry(win)) ?? [], [oldKey.publicKey])).toBe(true);
   });
 
-  it('서명 목록 말고 electron-builder가 쓴 칸은 그대로 둔다', async () => {
+  it('서명 목록 말고 electron-builder가 쓴 필드는 그대로 둔다', async () => {
     await signUpdateInfo(release(), [oldKey.privateKey]);
 
     /** 서명을 넣은 latest-mac.yml. */
@@ -180,11 +183,9 @@ describe('업데이트 안내 파일 서명', () => {
 
     /** 두 키로 서명한 latest.yml의 서명 목록. */
     const signatures = readSignatureList(firstEntry(await readYml('latest.yml'))) ?? [];
-    /** 앱이 Windows 설치 파일을 받은 뒤 확인하는 값. */
-    const winSetup = { version: '0.2.0', fileName: 'Stardraft-Setup-0.2.0.exe', sha512: WIN_SETUP_SHA512 };
     expect(signatures).toHaveLength(2);
-    expect(isSignedByAnyKey(winSetup, signatures, [oldKey.publicKey])).toBe(true);
-    expect(isSignedByAnyKey(winSetup, signatures, [newKey.publicKey])).toBe(true);
+    expect(isSignedByAnyKey(receivedWinSetup, signatures, [oldKey.publicKey])).toBe(true);
+    expect(isSignedByAnyKey(receivedWinSetup, signatures, [newKey.publicKey])).toBe(true);
   });
 
   it('업데이트 안내 파일이 실제 파일과 맞지 않으면 서명하지 않는다', async () => {
@@ -200,11 +201,6 @@ describe('업데이트 안내 파일 서명', () => {
 });
 
 describe('서명 다시 검증', () => {
-  /** 처음 만든 키. */
-  const oldKey = generateSigningKeyPair();
-  /** 회전할 때 더한 키. */
-  const newKey = generateSigningKeyPair();
-
   it('넣은 서명이 앱 소스의 공개 키 목록으로 모두 검증되고 목록의 키마다 서명이 있으면 통과한다', async () => {
     await signUpdateInfo(release(), [oldKey.privateKey, newKey.privateKey]);
 
@@ -255,19 +251,14 @@ describe('서명 다시 검증', () => {
 });
 
 describe('release 환경 비밀값의 서명 키', () => {
-  /** 처음 만든 키. */
-  const oldKey = generateSigningKeyPair();
-  /** 회전할 때 더한 키. */
-  const newKey = generateSigningKeyPair();
-
-  it('두 칸 중 값이 있는 칸만 서명 키로 쓰고, 칸마다 짝인 공개 키를 알려 준다', () => {
+  it('두 비밀값 중 값이 있는 것만 서명 키로 쓰고, 비밀값마다 짝인 공개 키를 알려 준다', () => {
     // Actions는 등록하지 않은 비밀값을 빈 문자열로 넘긴다.
     expect(readSigningKeys({ UPDATE_SIGNING_KEY: oldKey.privateKey, UPDATE_SIGNING_KEY_2: '' })).toEqual([
       { name: 'UPDATE_SIGNING_KEY', privateKey: oldKey.privateKey, publicKey: oldKey.publicKey },
     ]);
   });
 
-  it('키를 회전하는 동안에는 두 칸을 모두 쓴다', () => {
+  it('키를 회전하는 동안에는 두 비밀값을 모두 쓴다', () => {
     const keys = readSigningKeys({ UPDATE_SIGNING_KEY: oldKey.privateKey, UPDATE_SIGNING_KEY_2: newKey.privateKey });
 
     expect(keys.map(({ name, publicKey }) => [name, publicKey])).toEqual([
@@ -276,11 +267,11 @@ describe('release 환경 비밀값의 서명 키', () => {
     ]);
   });
 
-  it('두 칸이 모두 비어 있으면 키 만드는 명령을 알리며 멈춘다', () => {
+  it('두 비밀값이 모두 비어 있으면 키 만드는 명령을 알리며 멈춘다', () => {
     expect(() => readSigningKeys({ UPDATE_SIGNING_KEY: '' })).toThrow(/UPDATE_SIGNING_KEY.*release:keygen/);
   });
 
-  it('개인 키가 아닌 값이 든 칸은 이름을 알리며 멈추고, 그 값은 오류 문구에 남기지 않는다', () => {
+  it('개인 키가 아닌 값이 든 비밀값은 이름을 알리며 멈추고, 그 값은 오류 문구에 남기지 않는다', () => {
     /** 개인 키 자리에 잘못 넣은 공개 키. */
     const wrongValue = newKey.publicKey;
 

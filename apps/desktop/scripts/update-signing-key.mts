@@ -44,7 +44,7 @@ export function renderPublicKeysModule(publicKeys: readonly string[]): string {
 }
 
 /** 오류에서 사람이 읽을 문구를 꺼낸다. */
-function reasonOf(error: unknown): string {
+export function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -66,7 +66,7 @@ export async function runKeygen({ rotate, publicKeys, publicKeysFile }: KeygenIn
   for (const publicKey of publicKeys) parsePublicKey(publicKey);
 
   /** 개인 키를 둘 비밀값 이름. 처음에는 첫째, 회전할 때는 둘째다. */
-  const secretName = rotate ? SIGNING_KEY_SECRETS[1] : SIGNING_KEY_SECRETS[0];
+  const secretName = rotate ? SIGNING_KEY_SECRETS.rotation : SIGNING_KEY_SECRETS.primary;
   /** 새 키 쌍. */
   const { publicKey, privateKey } = generateSigningKeyPair();
 
@@ -80,7 +80,7 @@ export async function runKeygen({ rotate, publicKeys, publicKeysFile }: KeygenIn
   }
   ports.print(`${RELEASE_ENVIRONMENT} 환경 비밀값에 개인 키를 등록했습니다: ${secretName}`);
 
-  // Actions 비밀값은 다시 읽을 수 없으므로, 잃어도 복구할 수 있게 비밀번호 관리자에 사본을 둔다.
+  // Actions 비밀값은 다시 읽을 수 없으므로, 잃어도 복구할 수 있게 비밀번호 관리자에 사본(ADR 0002의 오프라인 사본)을 둔다.
   try {
     await ports.copyToClipboard(privateKey);
     await ports.waitForEnter('개인 키를 클립보드에 복사했습니다. 비밀번호 관리자에 붙여 넣어 저장한 뒤 Enter를 누르세요.');
@@ -101,8 +101,8 @@ export async function runKeygen({ rotate, publicKeys, publicKeysFile }: KeygenIn
       [
         '회전하는 동안 태그 워크플로가 두 키로 함께 서명합니다. 팀원 PC가 이 공개 키를 넣은 버전으로 올라온 뒤 회전을 마칩니다.',
         `  1. 공개 키 목록에서 옛 공개 키를 빼고 커밋합니다: ${publicKeys[0]}`,
-        `  2. 비밀번호 관리자의 새 개인 키로 첫째 비밀값을 바꿉니다: gh secret set ${SIGNING_KEY_SECRETS[0]} --env ${RELEASE_ENVIRONMENT}`,
-        `  3. 둘째 비밀값을 지웁니다: gh secret delete ${SIGNING_KEY_SECRETS[1]} --env ${RELEASE_ENVIRONMENT}`,
+        `  2. 비밀번호 관리자의 새 개인 키로 첫째 비밀값을 바꿉니다: gh secret set ${SIGNING_KEY_SECRETS.primary} --env ${RELEASE_ENVIRONMENT}`,
+        `  3. 둘째 비밀값을 지웁니다: gh secret delete ${SIGNING_KEY_SECRETS.rotation} --env ${RELEASE_ENVIRONMENT}`,
       ].join('\n'),
     );
   }

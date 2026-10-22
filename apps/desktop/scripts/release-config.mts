@@ -1,4 +1,18 @@
 // Release에 올리는 파일과 업데이트 서명 키의 이름. 빌드 스크립트와 태그 워크플로(.github/workflows/release.yml)가 이 이름을 함께 쓴다.
+import { readFile } from 'node:fs/promises';
+
+/** 데스크톱 앱 package.json에서 읽는 값. Release 파일 이름이 이 둘로 정해진다. */
+export type AppPackageInfo = {
+  /** 앱 이름(productName). */
+  productName: string;
+  /** 앱 버전. */
+  version: string;
+};
+
+/** 데스크톱 앱의 package.json에서 앱 이름과 버전을 읽는다. */
+export async function readAppPackageInfo(): Promise<AppPackageInfo> {
+  return JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as AppPackageInfo;
+}
 
 /** Release에 올리는 다섯 파일의 이름. 이름은 electron-builder 기본 이름과 nsis.artifactName(build-config.mts)을 따른다. */
 export type ReleaseFileNames = {
@@ -41,11 +55,13 @@ export function updateInfoTargets(names: ReleaseFileNames): UpdateInfoTarget[] {
   ];
 }
 
-/**
- * 업데이트 서명 개인 키를 담는 `release` 환경 비밀값 이름. 태그 워크플로는 같은 이름의 환경 변수로 넘긴다.
- * 평소에는 첫째만 쓰고, 키를 회전하는 동안에만 둘째에 새 키를 둬 두 키로 함께 서명한다.
- */
-export const SIGNING_KEY_SECRETS = ['UPDATE_SIGNING_KEY', 'UPDATE_SIGNING_KEY_2'] as const;
+/** 업데이트 서명 개인 키를 담는 `release` 환경 비밀값 이름. 태그 워크플로는 같은 이름의 환경 변수로 넘긴다. */
+export const SIGNING_KEY_SECRETS = {
+  /** 평소의 서명 키. 처음 만든 키가 여기 있고, 회전을 마치면 새 키로 바꾼다. */
+  primary: 'UPDATE_SIGNING_KEY',
+  /** 키를 회전하는 동안에만 두는 새 키. 그동안 두 키로 함께 서명한다. */
+  rotation: 'UPDATE_SIGNING_KEY_2',
+} as const;
 
 /** 업데이트 서명 개인 키를 두는 Actions 환경. 저장소 설정에서 `v*` 태그만 이 환경을 쓸 수 있게 막는다. */
 export const RELEASE_ENVIRONMENT = 'release';

@@ -1,4 +1,4 @@
-# PR과 main 푸시에서 lint, typecheck, 테스트를 Linux와 Windows에서 돌린다.
+# PR과 main 푸시에서 lint, typecheck, 테스트를 Linux와 Windows에서 돌리고, Linux에서 출시·점검 마법사를 shellcheck로 검사한다.
 # pull_request 이벤트는 비밀값을 받지 않는다. 외부인이 연 PR은 저장소 설정에서 승인을 받은 뒤에만 돈다.
 name: CI
 
@@ -40,3 +40,9 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      # 출시·점검 마법사(scripts/*.sh). ubuntu 러너에는 shellcheck가 깔려 있다.
+      - name: 마법사 검사
+        if: runner.os == 'Linux'
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          shellcheck scripts/*.sh

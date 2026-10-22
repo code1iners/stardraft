@@ -1,8 +1,10 @@
-# 데스크톱 앱 설치 파일을 macOS와 Windows에서 빌드해 워크플로 아티팩트로 올린다. 손으로 돌리고, Release에는 올리지 않는다.
+# 데스크톱 앱 설치 파일을 macOS와 Windows에서 빌드해 워크플로 아티팩트로 올린다.
+# 손으로 돌리면 아티팩트로만 받는다. v* 태그를 푸시하면 Release 워크플로(release.yml)가 이 빌드를 불러 초안 Release를 만든다.
 name: Build
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -16,7 +18,8 @@ jobs:
         include:
           - os: macos-latest
             artifact: stardraft-mac-arm64
-          # Intel Mac(x64)은 만들지 않는다. 만들게 되면 Intel 러너 항목을 여기 더하고, mac.target의 arch와 서명 검사의 arm64 경로도 함께 고친다.
+          # Intel Mac(x64)은 만들지 않는다. 만들게 되면 Intel 러너 항목을 여기 더하고, mac.target의 arch, 서명 검사의 arm64 경로,
+          # Release 파일 이름과 업데이트 안내 파일의 짝(scripts/release-config.mts)도 함께 고친다.
           - os: windows-latest
             artifact: stardraft-win-x64
     runs-on: ${{ matrix.os }}

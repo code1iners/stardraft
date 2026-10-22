@@ -66,7 +66,8 @@ export default defineConfig(
     languageOptions: { globals: globals.node },
   },
   {
-    files: ['src/core/**/*.ts'],
+    // .mts는 빌드 스크립트도 Node로 직접 불러오는 core 모듈이다.
+    files: ['src/core/**/*.{ts,mts}'],
     rules: { 'no-restricted-imports': ['error', coreRestrictedImports] },
   },
   {

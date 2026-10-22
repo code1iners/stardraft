@@ -44,6 +44,8 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, trial: event.trial });
       } else if (event.type === 'draft-settings-changed') {
         setSnapshot((current) => current && { ...current, draftSettings: event.draftSettings });
+      } else if (event.type === 'update-changed') {
+        setSnapshot((current) => current && { ...current, update: event.update });
       }
     });
   }, []);

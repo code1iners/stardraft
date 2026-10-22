@@ -57,4 +57,11 @@ export interface StateStore {
   getDraftQueue(): Promise<QueuedDraft[]>;
   /** 초안 대기열을 남긴다. 앞서 남긴 것은 통째로 바꾼다. 대기열이 바뀔 때마다와 앱을 끌 때 남긴다. */
   setDraftQueue(queue: readonly QueuedDraft[]): Promise<void>;
+  /**
+   * 받은 파일의 서명 검증에 실패한 업데이트 버전. 이 버전은 앱을 다시 켠 뒤에도 자동으로 다시 받지 않는다. 없으면 `null`.
+   * 계정과 상관없는 앱의 기록이라 다른 계정으로 처음부터 시작해도 남는다.
+   */
+  getSignatureFailedVersion(): Promise<string | null>;
+  /** 서명 검증에 실패한 업데이트 버전을 남긴다. `null`이면 지운다. */
+  setSignatureFailedVersion(version: string | null): Promise<void>;
 }

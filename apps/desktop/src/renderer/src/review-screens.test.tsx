@@ -114,6 +114,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     review: { bundles, sections: SECTIONS, repoPicker: null },
     trial: { canStart: true, bundleId: null, picker: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
+    update: { kind: 'idle' },
     ...overrides,
   };
 }

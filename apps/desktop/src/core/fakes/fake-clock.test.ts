@@ -41,4 +41,20 @@ describe('가짜 시계', () => {
 
     expect(pollTimes).toEqual([60_000, 120_000, 180_000]);
   });
+
+  it('잠자기를 흉내 내면 지금 시각은 흐르지만 예약된 일은 그만큼 늦게 실행된다', () => {
+    const clock = new FakeClock();
+    const fired: number[] = [];
+    clock.after(60_000, () => fired.push(clock.now()));
+
+    clock.advance(10_000);
+    clock.sleep(3_600_000);
+
+    expect(clock.now()).toBe(3_610_000);
+    expect(fired).toEqual([]);
+    clock.advance(49_999);
+    expect(fired).toEqual([]);
+    clock.advance(1);
+    expect(fired).toEqual([3_660_000]);
+  });
 });

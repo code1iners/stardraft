@@ -3,7 +3,7 @@ import { BundleFooter, BundleSections, OpenInFlowButton, PostStatusLine, RunLine
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
-import { BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatMentionTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
+import { BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
 
@@ -65,7 +65,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                       <span>
                         {senderLine(selected.senderNames)}님이 {BUNDLE_PLACE_LABELS[selected.place]}에서 멘션
                       </span>
-                      <span>{formatMentionTime(selected.lastMentionAt)}</span>
+                      <span>{formatTime(selected.lastMentionAt)}</span>
                     </p>
                     <OpenInFlowButton bundle={selected} />
                   </div>
@@ -157,7 +157,7 @@ function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
               >
                 <span className="list-row-top">
                   <strong>{senderLine(bundle.senderNames)}</strong>
-                  <span className="small muted">{formatMentionTime(bundle.lastMentionAt)}</span>
+                  <span className="small muted">{formatTime(bundle.lastMentionAt)}</span>
                 </span>
                 <span className="list-row-sub">{bundle.draft?.requirement.summary || postLine(bundle)}</span>
                 <span className="list-row-tags">

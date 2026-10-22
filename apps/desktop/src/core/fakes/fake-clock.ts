@@ -54,6 +54,15 @@ export class FakeClock implements Clock {
     this.current = target;
   }
 
+  /**
+   * 잠자기를 흉내 낸다. 지금 시각은 `ms`만큼 흐르지만, 잠든 동안 멈춘 타이머처럼 예약된 일은 실행하지 않고 그만큼 늦춘다.
+   * macOS는 잠자는 동안 타이머가 흐르지 않아, 깨어난 뒤 밀린 일을 따로 챙겨야 하는 규칙을 검사할 때 쓴다.
+   */
+  sleep(ms: number): void {
+    this.current += ms;
+    for (const task of this.tasks) task.dueAt += ms;
+  }
+
   /** `target` 시각까지 실행할 예약 가운데 가장 이른 것. */
   private earliestTaskUntil(target: number): ScheduledTask | undefined {
     return this.tasks

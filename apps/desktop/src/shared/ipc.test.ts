@@ -324,6 +324,14 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'test-notification', title: '가짜' })).toEqual({ type: 'test-notification' });
   });
 
+  it('업데이트 [지금 확인]과 [다시 시도] 명령은 값 없이 받고, [사이트에서 받기]는 정해진 사이트 섹션만 받으며 렌더러가 실은 주소는 버린다', () => {
+    expect(parseAppCommand({ type: 'check-for-update' })).toEqual({ type: 'check-for-update' });
+    expect(parseAppCommand({ type: 'retry-update', version: '0.2.0' })).toEqual({ type: 'retry-update' });
+    expect(parseAppCommand({ type: 'open-site', section: 'update', url: 'https://example.test/' })).toEqual({ type: 'open-site', section: 'update' });
+    expect(parseAppCommand({ type: 'open-site', section: 'https://example.test/' })).toBeNull();
+    expect(parseAppCommand({ type: 'open-site' })).toBeNull();
+  });
+
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {
     expect(parseAppCommand({ type: 'open-settings', section: '../../etc' })).toBeNull();
     expect(parseAppCommand({ type: 'run-shell', command: 'rm -rf /' })).toBeNull();

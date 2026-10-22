@@ -454,6 +454,23 @@ p.setup-tray-hint {
   gap: 8px;
 }
 
+/* 설정 "일반"의 업데이트: 상태 한 줄, 받는 중의 진행 막대, 상태마다의 버튼. */
+.update-status {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.update-progress {
+  display: block;
+  width: 240px;
+  margin-top: 8px;
+  accent-color: var(--accent);
+}
+
+.update-action {
+  margin-top: 8px;
+}
+
 /* Flow 계정 칸: 키 입력과 연결된 계정 카드. */
 .key-input {
   flex: 1;

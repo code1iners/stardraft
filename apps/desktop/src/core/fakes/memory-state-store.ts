@@ -18,6 +18,8 @@ export class MemoryStateStore implements StateStore {
   private nextBundleId = 1;
   /** 마지막으로 남긴 초안 대기열. */
   private draftQueue: QueuedDraft[] = [];
+  /** 서명 검증에 실패한 업데이트 버전. 다른 계정으로 처음부터 시작해도 남는다. */
+  private signatureFailedVersion: string | null = null;
 
   async getAccount(): Promise<FlowEmployee | null> {
     return this.account && { ...this.account };
@@ -108,6 +110,14 @@ export class MemoryStateStore implements StateStore {
 
   async setDraftQueue(queue: readonly QueuedDraft[]): Promise<void> {
     this.draftQueue = structuredClone([...queue]);
+  }
+
+  async getSignatureFailedVersion(): Promise<string | null> {
+    return this.signatureFailedVersion;
+  }
+
+  async setSignatureFailedVersion(version: string | null): Promise<void> {
+    this.signatureFailedVersion = version;
   }
 
   /** 묶음의 멘션 위치가 다른 묶음에 이미 들어 있으면 실패한다. 시험 묶음의 멘션 위치는 따로 두므로 서로 견주지 않는다. */

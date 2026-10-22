@@ -99,9 +99,9 @@ const TIME_FORMAT = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: 
 /** 다른 날 시각 표기. 예: 10월 19일 오후 3:12 */
 const DATE_TIME_FORMAT = new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-/** 멘션 시각을 이 PC의 시간대로 보인다. 오늘이면 시각만, 아니면 날짜와 시각이다. */
-export function formatMentionTime(at: number, now = Date.now()): string {
-  /** 멘션 시각과 지금. */
+/** 시각을 이 PC의 시간대로 보인다. 오늘이면 시각만, 아니면 날짜와 시각이다. */
+export function formatTime(at: number, now = Date.now()): string {
+  /** 보일 시각과 지금. */
   const [when, today] = [new Date(at), new Date(now)];
   /** 같은 날인지 여부. */
   const sameDay =

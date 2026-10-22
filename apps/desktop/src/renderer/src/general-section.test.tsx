@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { AppSnapshot, EditorSnapshot } from '../../shared/ipc';
-import { EditorField, NotificationField } from './GeneralSection';
+import type { AppSnapshot, EditorSnapshot, UpdateSnapshot } from '../../shared/ipc';
+import { EditorField, NotificationField, UpdateField } from './GeneralSection';
 
 /** 이 PC에서 찾은 가짜 에디터. */
 const INSTALLED: EditorSnapshot['installed'] = [
@@ -57,5 +57,66 @@ describe('설정 "일반"의 알림 시험', () => {
     expect(mac).toContain('<button type="button" class="btn">알림 시험</button>');
     expect(mac).toContain('시스템 설정 &gt; 알림에서 Stardraft의 알림을 허용해 주세요.');
     expect(windows).toContain('설정 &gt; 시스템 &gt; 알림에서 Stardraft Dev의 알림을 허용해 주세요.');
+  });
+});
+
+/** 업데이트 칸을 그린 HTML. */
+function updateHtmlOf(update: UpdateSnapshot | null): string {
+  return renderToStaticMarkup(<UpdateField update={update} />);
+}
+
+describe('설정 "일반"의 업데이트', () => {
+  it('최신 버전이거나 확인에 실패했으면 상태 문구와 [지금 확인]을 보인다', () => {
+    /** 최신 버전일 때. */
+    const upToDate = updateHtmlOf({ kind: 'up-to-date', checkedAt: Date.now() });
+    /** 확인에 실패했을 때. */
+    const failed = updateHtmlOf({ kind: 'check-failed', failedAt: Date.now() });
+
+    expect(upToDate).toContain('최신 버전입니다 · 마지막 확인');
+    expect(upToDate).toContain('>지금 확인</button>');
+    expect(failed).toContain('마지막 확인 실패 · 방금');
+    expect(failed).toContain('>지금 확인</button>');
+  });
+
+  it('확인 중에는 [지금 확인]을 보이지 않는다', () => {
+    /** 확인 중일 때. */
+    const html = updateHtmlOf({ kind: 'checking' });
+
+    expect(html).toContain('확인 중…');
+    expect(html).not.toContain('<button');
+  });
+
+  it('받는 중이면 받은 비율을 문구와 진행 막대로 보인다', () => {
+    /** 받는 중일 때. */
+    const html = updateHtmlOf({ kind: 'downloading', version: '0.2.0', percent: 45 });
+
+    expect(html).toContain('0.2.0 받는 중… 45%');
+    expect(html).toMatch(/<progress[^>]* max="100" value="45"/);
+  });
+
+  it('서명 검증에 실패했으면 실패 문구를 위험 색으로 보이고 [다시 시도]만 둔다', () => {
+    /** 서명 검증에 실패했을 때. */
+    const html = updateHtmlOf({ kind: 'signature-failed', version: '0.2.0' });
+
+    expect(html).toMatch(/class="[^"]*danger-text[^"]*">업데이트 파일의 서명이 맞지 않아 설치하지 않았습니다\. 지금 버전을 계속 씁니다\./);
+    expect(html.match(/<button/g)).toHaveLength(1);
+    expect(html).toContain('>다시 시도</button>');
+  });
+
+  it('앱이 스스로 바꿀 수 없는 위치면 까닭과 [사이트에서 받기]만 보인다', () => {
+    /** 읽기 전용 위치일 때. */
+    const html = updateHtmlOf({ kind: 'location-blocked', version: '0.2.0', reason: 'read-only' });
+
+    expect(html).toContain('새 버전 0.2.0 · 응용 프로그램 폴더로 옮긴 뒤 다시 여세요');
+    expect(html.match(/<button/g)).toHaveLength(1);
+    expect(html).toContain('>사이트에서 받기</button>');
+  });
+
+  it('소스에서 실행하면 업데이트를 확인하지 않는다고 알리고 버튼을 두지 않는다', () => {
+    /** 업데이트를 끈 소스 실행일 때. */
+    const html = updateHtmlOf(null);
+
+    expect(html).toContain('개발 중 실행에서는 업데이트를 확인하지 않습니다.');
+    expect(html).not.toContain('<button');
   });
 });

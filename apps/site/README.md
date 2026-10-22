@@ -21,7 +21,7 @@ pnpm --filter @stardraft/site test
 ## Vercel 프로젝트 설정
 
 - **Root Directory**: `apps/site`. 이 폴더의 `vercel.json`이 프레임워크(Astro)와 Ignored Build Step을 정한다.
-- **Ignored Build Step**: 직전 커밋과 비교해 이 폴더와 루트의 의존성 파일(`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.node-version`)이 바뀌지 않았으면 빌드하지 않는다. 앱 코드만 바뀐 푸시는 건너뛴다.
+- **Ignored Build Step**: 마지막으로 성공한 배포의 커밋(`VERCEL_GIT_PREVIOUS_SHA`, 없으면 직전 커밋)과 비교해 이 폴더와 루트의 의존성 파일(`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.node-version`)이 바뀌지 않았으면 빌드하지 않는다. 앱 코드만 바뀐 푸시는 건너뛴다. 비교할 커밋을 찾지 못하면 git이 실패해 빌드한다.
 - **환경 변수**
   - `VERCEL_GIT_REPO_OWNER`: Vercel이 Git 연결 프로젝트에 넣어 준다("Automatically expose System Environment Variables"가 켜져 있어야 함).
   - `GITHUB_RELEASE_TOKEN`: 공개 정보만 읽는 fine-grained 토큰(저장소 접근은 "Public repositories", 권한 없음). Vercel 서버는 IP를 나눠 써서 인증 없이 부르면 남이 한도를 소진할 수 있다.

@@ -1,6 +1,7 @@
 import { formatReleaseDate } from '../lib/format';
 import { useReleases, type ReleasesState } from './use-releases';
 
+/** 변경 내역이 받는 것. */
 type Props = {
   /** GitHub Release 목록 주소. */
   releaseListUrl: string;
@@ -21,7 +22,7 @@ export function ChangelogList({ state, releaseListUrl }: Props & { state: Releas
                 <b>v{release.version}</b>
                 <span className="muted small">{formatReleaseDate(release.date)}</span>
               </div>
-              {/* 릴리스 노트는 저장소 주인이 쓴 마크다운이지만 HTML로 풀지 않고 글 그대로 보인다. */}
+              {/* 릴리스 노트는 Release를 공개하는 저장소 주인이 쓴 마크다운이지만 HTML로 풀지 않고 글 그대로 보인다. */}
               {release.notes.trim() && <p className="notes">{release.notes.trim()}</p>}
             </li>
           ))}

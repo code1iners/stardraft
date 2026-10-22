@@ -1,8 +1,9 @@
 ---
+import type { InstallerOs } from '../lib/releases';
 import { CopyButton } from './CopyButton';
 
 /** OS마다 데이터 폴더. 데스크톱 앱이 설정·상태·암호화한 키를 두는 곳이다. */
-const dataFolders = {
+const dataFolders: Record<InstallerOs, string> = {
   mac: '~/Library/Application Support/Stardraft/',
   windows: '%APPDATA%\\Stardraft\\',
 };

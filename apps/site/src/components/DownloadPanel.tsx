@@ -1,24 +1,39 @@
 import type { ReactNode } from 'react';
 import { formatFileSize, formatReleaseDate } from '../lib/format';
-import { latestDownloadPath, SITE_URL, type InstallerOs, type ReleaseSummary } from '../lib/releases';
-import type { Visitor } from '../lib/visitor';
+import { latestDownloadPath, SITE_URL, type InstallerFile, type InstallerOs, type ReleaseSummary } from '../lib/releases';
+import { visitorOs, type Visitor } from '../lib/visitor';
 import { CopyButton } from './CopyButton';
 
 /** OS 이름. */
 const OS_NAMES: Record<InstallerOs, string> = { mac: 'macOS', windows: 'Windows' };
 
-/** OS마다 지원 환경. */
-const SUPPORT: Record<InstallerOs, string> = {
+/** OS마다 지원 환경 문구. */
+const SUPPORT_TEXT: Record<InstallerOs, string> = {
   mac: 'Apple Silicon Mac · macOS 13 이상',
   windows: 'Windows 10 이상 · x64',
 };
 
+/** 다운로드 자리가 받는 것. */
 type Props = {
   /** 감지한 방문 환경. JS가 돌기 전이거나 아직 감지하지 못했으면 null. */
   visitor: Visitor | null;
   /** 가장 최근 공개 Release. 아직 받지 못했거나 받지 못하면 null. */
   latest: ReleaseSummary | null;
 };
+
+/** Release에서 OS의 설치 파일. */
+function installerOf(release: ReleaseSummary | null, os: InstallerOs | null): InstallerFile | undefined {
+  return release?.files.find((file) => file.os === os);
+}
+
+/** 지원 OS 두 개의 지원 환경 한 줄. */
+function BothSupportLine() {
+  return (
+    <p className="support">
+      {SUPPORT_TEXT.mac} / {SUPPORT_TEXT.windows}
+    </p>
+  );
+}
 
 /** 다운로드 링크. */
 function DownloadLink({ os, label, primary = false }: { os: InstallerOs; label: string; primary?: boolean }) {
@@ -46,9 +61,7 @@ function BothOses() {
         <DownloadLink os="mac" label="macOS용 다운로드" />
         <DownloadLink os="windows" label="Windows용 다운로드" />
       </div>
-      <p className="support">
-        {SUPPORT.mac} / {SUPPORT.windows}
-      </p>
+      <BothSupportLine />
     </>
   );
 }
@@ -58,13 +71,13 @@ function PrimaryDownload({ os, latest, hint }: { os: InstallerOs; latest: Releas
   /** 다른 OS. */
   const other: InstallerOs = os === 'mac' ? 'windows' : 'mac';
   /** 이 OS 설치 파일. */
-  const file = latest?.files.find((candidate) => candidate.os === os);
+  const file = installerOf(latest, os);
   return (
     <>
       <div className="dl-row">
         <DownloadLink os={os} label={`${OS_NAMES[os]}용 다운로드`} primary />
       </div>
-      <p className="support">{file ? `${SUPPORT[os]} · ${formatFileSize(file.size)}` : SUPPORT[os]}</p>
+      <p className="support">{file ? `${SUPPORT_TEXT[os]} · ${formatFileSize(file.size)}` : SUPPORT_TEXT[os]}</p>
       {hint && <p className="hint">{hint}</p>}
       <p className="other">
         <TextDownloadLink os={other} label={`${OS_NAMES[other]}용 받기`} />
@@ -111,7 +124,7 @@ function DownloadChoice({ visitor, latest }: Props) {
         <PrimaryDownload
           os="windows"
           latest={latest}
-          hint="ARM 기반 Windows PC로 보입니다. Windows 11은 x64 앱인 Stardraft를 에뮬레이션으로 실행합니다. Windows 10 ARM에서는 실행되지 않습니다."
+          hint="ARM 기반 Windows PC에서는 Windows 11의 x64 에뮬레이션으로 실행됩니다."
         />
       );
     case 'mobile':
@@ -123,9 +136,7 @@ function DownloadChoice({ visitor, latest }: Props) {
           <div className="dl-row">
             <CopyButton text={SITE_URL} label="PC에서 열 링크 복사" look="primary" />
           </div>
-          <p className="support">
-            {SUPPORT.mac} / {SUPPORT.windows}
-          </p>
+          <BothSupportLine />
         </>
       );
     case 'other':
@@ -140,17 +151,10 @@ function DownloadChoice({ visitor, latest }: Props) {
   }
 }
 
-/** SHA256을 복사해 줄 OS. 받을 OS가 정해진 방문 환경에서만. */
-function shaOs(visitor: Visitor | null): InstallerOs | null {
-  if (visitor === 'mac-arm' || visitor === 'mac-unknown' || visitor === 'mac-intel') return 'mac';
-  if (visitor === 'windows' || visitor === 'windows-arm') return 'windows';
-  return null;
-}
-
 /** 버전·날짜, 변경 내역 링크, SHA256 복사 한 줄. */
 function VersionLine({ visitor, latest }: Props) {
-  /** SHA256을 복사해 줄 설치 파일. */
-  const file = latest?.files.find((candidate) => candidate.os === shaOs(visitor));
+  /** SHA256을 복사해 줄 설치 파일. 받을 OS가 정해진 방문 환경에서만. */
+  const file = installerOf(latest, visitorOs(visitor));
   return (
     <p className="ver">
       {latest && (

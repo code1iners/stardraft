@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { readVisitor, type Visitor } from '../lib/visitor';
+import { readVisitor, visitorOs, type Visitor } from '../lib/visitor';
 import { DownloadPanel } from './DownloadPanel';
 import { TrayArt } from './TrayArt';
 import { useReleases } from './use-releases';
@@ -29,7 +29,7 @@ export function DownloadHero({ intro }: { intro: string }) {
         <p className="lead">{intro}</p>
         <DownloadPanel visitor={visitor} latest={latest} />
       </div>
-      <TrayArt os={visitor === 'windows' || visitor === 'windows-arm' ? 'windows' : 'mac'} />
+      <TrayArt os={visitorOs(visitor) ?? 'mac'} />
     </div>
   );
 }

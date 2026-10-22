@@ -1,5 +1,7 @@
 // 방문한 PC가 어떤 설치 파일을 받아야 하는지 브라우저 정보로 가늠한다. 칩은 Chromium의 `userAgentData`만 알려 준다.
 
+import type { InstallerOs } from './releases';
+
 /**
  * 첫 화면을 고르는 방문 환경.
  * - `mac-arm`: Apple Silicon Mac(Chromium이 알려 줌)
@@ -44,13 +46,26 @@ export function detectVisitor(signals: VisitorSignals): Visitor {
   return 'other';
 }
 
+/** 방문 환경이 받을 설치 파일의 OS. 휴대폰과 그 밖의 OS는 정해진 OS가 없어 null. */
+export function visitorOs(visitor: Visitor | null): InstallerOs | null {
+  if (visitor === 'mac-arm' || visitor === 'mac-unknown' || visitor === 'mac-intel') return 'mac';
+  if (visitor === 'windows' || visitor === 'windows-arm') return 'windows';
+  return null;
+}
+
 /** 감지에 쓰는 `navigator`의 일부. */
 export type NavigatorLike = {
+  /** `navigator.userAgent`. */
   userAgent: string;
+  /** `navigator.maxTouchPoints`. */
   maxTouchPoints: number;
+  /** Chromium의 UA Client Hints. 다른 브라우저에는 없다. */
   userAgentData?: {
+    /** OS 이름. */
     platform: string;
+    /** 휴대폰 브라우저인지. */
     mobile: boolean;
+    /** 칩 같은 고엔트로피 값을 묻는다. 거부될 수 있다. */
     getHighEntropyValues(hints: string[]): Promise<{ architecture?: string }>;
   };
 };

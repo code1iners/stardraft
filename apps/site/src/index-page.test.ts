@@ -2,7 +2,7 @@ import { getContainerRenderer } from '@astrojs/react/container-renderer';
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';
 import { loadRenderers } from 'astro:container';
 import { beforeAll, describe, expect, it } from 'vitest';
-import Page from './index.astro';
+import Page from './pages/index.astro';
 
 /** 빌드한 페이지 HTML(JS가 돌기 전 모습). */
 let html = '';

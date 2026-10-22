@@ -6,11 +6,11 @@ import UpdateSection from '../components/UpdateSection.astro';
 import { Changelog } from '../components/Changelog';
 import { CurrentFiles } from '../components/CurrentFiles';
 import { DownloadHero } from '../components/DownloadHero';
-import { RELEASE_REPO, releaseListUrl } from '../lib/releases';
+import { releaseListUrl, repoUrl } from '../lib/releases';
 import '../styles/global.css';
 
-/** 소스 저장소 주소. */
-const repoUrl = `https://github.com/${VERCEL_GIT_REPO_OWNER}/${RELEASE_REPO}`;
+/** 소스 코드가 있는 GitHub 저장소 주소. */
+const sourceUrl = repoUrl(VERCEL_GIT_REPO_OWNER);
 /** GitHub Release 목록 주소. */
 const releasesUrl = releaseListUrl(VERCEL_GIT_REPO_OWNER);
 /** 한 줄 소개. 기능 홍보 없이 무엇인지만 적는다. */
@@ -45,7 +45,7 @@ const sections = [
         <nav class="topnav" aria-label="바로 가기">
           <a href="#install">설치 안내</a>
           <a href="#changelog">변경 내역</a>
-          <a class="keep" href={repoUrl}>GitHub</a>
+          <a class="keep" href={sourceUrl}>GitHub</a>
         </nav>
       </div>
     </header>
@@ -101,7 +101,7 @@ const sections = [
     </div>
 
     <footer class="foot">
-      <div class="wrap">Stardraft · MIT 라이선스 · <a href={repoUrl}>소스 코드</a></div>
+      <div class="wrap">Stardraft · MIT 라이선스 · <a href={sourceUrl}>소스 코드</a></div>
     </footer>
 
     <script>

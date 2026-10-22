@@ -59,7 +59,12 @@ export function versionDownloadPath(version: string, os: InstallerOs): string {
   return `/download/${version}/${os}`;
 }
 
-/** 저장소의 GitHub Release 목록 주소. */
+/** 소스 코드와 Release가 있는 GitHub 저장소 주소. */
+export function repoUrl(owner: string): string {
+  return `https://github.com/${owner}/${RELEASE_REPO}`;
+}
+
+/** GitHub 저장소의 Release 목록 주소. */
 export function releaseListUrl(owner: string): string {
-  return `https://github.com/${owner}/${RELEASE_REPO}/releases`;
+  return `${repoUrl(owner)}/releases`;
 }

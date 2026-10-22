@@ -3,6 +3,10 @@ import { useEffect, useState } from 'react';
 /** 복사 결과를 버튼 글에 보여 주는 시간(ms). */
 const FEEDBACK_MS = 2000;
 
+/** 마지막 복사 결과. */
+type CopyResult = 'idle' | 'copied' | 'failed';
+
+/** 복사 버튼이 받는 것. */
 type Props = {
   /** 복사할 글. */
   text: string;
@@ -15,7 +19,7 @@ type Props = {
 /** 누르면 글을 클립보드에 복사하고 잠깐 결과를 보여 주는 버튼. */
 export function CopyButton({ text, label = '복사', look = 'small' }: Props) {
   /** 마지막 복사 결과. 잠시 뒤 idle로 돌아간다. */
-  const [result, setResult] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [result, setResult] = useState<CopyResult>('idle');
 
   useEffect(
     function resetFeedbackLater() {

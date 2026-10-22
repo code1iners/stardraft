@@ -1,16 +1,13 @@
 import type { InstallerOs } from '../lib/releases';
 
-/** 앱 아이콘의 별 모양. */
-function Star({ size, color, className }: { size: number; color: string; className?: string }) {
+/** 앱 아이콘의 별 모양. 색은 감싼 요소의 글자색(CSS)을 따른다. */
+function Star({ size, className }: { size: number; className?: string }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 1.8l2.5 7.2 7.3 3-7.3 3L12 22.2 9.5 15 2.2 12l7.3-3z" fill={color} />
+      <path d="M12 1.8l2.5 7.2 7.3 3-7.3 3L12 22.2 9.5 15 2.2 12l7.3-3z" fill="currentColor" />
     </svg>
   );
 }
-
-/** 반짝임 별의 색. */
-const SPARKLE = '#e2a712';
 
 /** 설치하면 아이콘이 생기는 자리(macOS 메뉴 막대, Windows 트레이) 그림. 별 반짝임은 장식 모션이다. */
 export function TrayArt({ os }: { os: InstallerOs }) {
@@ -18,20 +15,20 @@ export function TrayArt({ os }: { os: InstallerOs }) {
   const star = (
     <span className="ha-star">
       <span className="ring" />
-      <Star size={22} color="#1d1f22" className="main" />
+      <Star size={22} className="main" />
       <i className="spk k1">
-        <Star size={10} color={SPARKLE} />
+        <Star size={10} />
       </i>
       <i className="spk k2">
-        <Star size={8} color={SPARKLE} />
+        <Star size={8} />
       </i>
       {os === 'mac' && (
         <>
           <i className="spk k3">
-            <Star size={9} color={SPARKLE} />
+            <Star size={9} />
           </i>
           <i className="spk k4">
-            <Star size={7} color={SPARKLE} />
+            <Star size={7} />
           </i>
         </>
       )}

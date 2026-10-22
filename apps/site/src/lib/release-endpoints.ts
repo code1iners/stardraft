@@ -4,9 +4,9 @@ import { INSTALLER_OSES, installerFileName, type InstallerFile, type InstallerOs
 export type ReleaseSource = {
   /** GitHub API를 부르는 fetch. 테스트는 가짜를 넣는다. */
   fetch: typeof fetch;
-  /** 저장소 주인. */
+  /** GitHub 저장소 주인. */
   owner: string;
-  /** 저장소 이름. */
+  /** GitHub 저장소 이름. */
   repo: string;
   /** 공개 정보만 읽는 토큰. 없으면 인증 없이 부른다(한도가 낮아 로컬 개발에서만). */
   token: string | undefined;
@@ -40,7 +40,7 @@ class GitHubUnavailableError extends Error {}
 
 /** 주소의 OS 칸을 설치 파일 OS로 읽는다. 모르는 값이면 null. */
 function parseOs(value: string | undefined): InstallerOs | null {
-  return value === 'mac' || value === 'windows' ? value : null;
+  return INSTALLER_OSES.find((os) => os === value) ?? null;
 }
 
 /** GitHub API를 부른다. 404면 null, 그 밖의 실패는 GitHubUnavailableError. */
@@ -99,6 +99,16 @@ function textError(status: number, message: string): Response {
   return new Response(message, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 }
 
+/** 모르는 OS를 받았을 때. */
+function unknownOsResponse(): Promise<Response> {
+  return Promise.resolve(textError(404, '이 OS용 설치 파일은 없습니다.'));
+}
+
+/** 설치 파일을 찾다가 GitHub가 답하지 않았을 때. */
+function downloadUnavailable(message: string): Response {
+  return textError(502, `설치 파일을 찾지 못했습니다. 잠시 뒤 다시 시도하세요. (${message})`);
+}
+
 /** GitHub 실패를 응답으로 바꾼다. */
 async function withGitHubErrors(run: () => Promise<Response>, toResponse: (message: string) => Response): Promise<Response> {
   try {
@@ -113,7 +123,7 @@ async function withGitHubErrors(run: () => Promise<Response>, toResponse: (messa
 export function latestDownloadResponse(source: ReleaseSource, osParam: string | undefined): Promise<Response> {
   /** 받을 OS. */
   const os = parseOs(osParam);
-  if (!os) return Promise.resolve(textError(404, '이 OS용 설치 파일은 없습니다.'));
+  if (!os) return unknownOsResponse();
 
   return withGitHubErrors(
     async () => {
@@ -124,7 +134,7 @@ export function latestDownloadResponse(source: ReleaseSource, osParam: string | 
       if (!installer) return textError(404, '아직 공개된 설치 파일이 없습니다.');
       return redirectTo(installer.browser_download_url);
     },
-    (message) => textError(502, `설치 파일을 찾지 못했습니다. 잠시 뒤 다시 시도하세요. (${message})`),
+    downloadUnavailable,
   );
 }
 
@@ -135,7 +145,7 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 export function versionDownloadResponse(source: ReleaseSource, version: string | undefined, osParam: string | undefined): Promise<Response> {
   /** 받을 OS. */
   const os = parseOs(osParam);
-  if (!os) return Promise.resolve(textError(404, '이 OS용 설치 파일은 없습니다.'));
+  if (!os) return unknownOsResponse();
   if (!version || !VERSION_PATTERN.test(version)) return Promise.resolve(textError(404, '버전 모양이 아닙니다. 예: /download/0.1.0/mac'));
 
   return withGitHubErrors(
@@ -147,7 +157,7 @@ export function versionDownloadResponse(source: ReleaseSource, version: string |
       if (!installer) return textError(404, `v${version}의 공개된 설치 파일이 없습니다.`);
       return redirectTo(installer.browser_download_url);
     },
-    (message) => textError(502, `설치 파일을 찾지 못했습니다. 잠시 뒤 다시 시도하세요. (${message})`),
+    downloadUnavailable,
   );
 }
 

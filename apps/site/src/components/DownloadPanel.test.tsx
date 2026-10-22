@@ -95,7 +95,7 @@ describe('첫 화면의 다운로드 버튼', () => {
     const { links, text } = render('windows-arm');
 
     expect(links[0]).toEqual({ label: 'Windows용 다운로드', href: '/download/windows', primary: true });
-    expect(text).toContain('에뮬레이션으로 실행합니다');
+    expect(text).toContain('x64 에뮬레이션으로 실행됩니다');
   });
 
   it('휴대폰: 받기 대신 PC에서 열 링크 복사', () => {

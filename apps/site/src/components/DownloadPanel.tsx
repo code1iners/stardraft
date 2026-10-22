@@ -1,11 +1,9 @@
 import type { ReactNode } from 'react';
 import { formatFileSize, formatReleaseDate } from '../lib/format';
-import { latestDownloadPath, SITE_URL, type InstallerFile, type InstallerOs, type ReleaseSummary } from '../lib/releases';
+import { announceInstallOs } from '../lib/install-os';
+import { INSTALLER_OS_NAMES, latestDownloadPath, SITE_URL, type InstallerFile, type InstallerOs, type ReleaseSummary } from '../lib/releases';
 import { visitorOs, type Visitor } from '../lib/visitor';
 import { CopyButton } from './CopyButton';
-
-/** OS 이름. */
-const OS_NAMES: Record<InstallerOs, string> = { mac: 'macOS', windows: 'Windows' };
 
 /** OS마다 지원 환경 문구. */
 const SUPPORT_TEXT: Record<InstallerOs, string> = {
@@ -35,19 +33,19 @@ function BothSupportLine() {
   );
 }
 
-/** 다운로드 링크. */
+/** 다운로드 링크. 누르면 설치 안내의 OS 탭도 그 OS로 바뀐다. */
 function DownloadLink({ os, label, primary = false }: { os: InstallerOs; label: string; primary?: boolean }) {
   return (
-    <a className={primary ? 'btn primary lg' : 'btn'} href={latestDownloadPath(os)}>
+    <a className={primary ? 'btn primary lg' : 'btn'} href={latestDownloadPath(os)} onClick={() => announceInstallOs(os)}>
       {label}
     </a>
   );
 }
 
-/** 글 사이의 다운로드 링크. */
+/** 글 사이의 다운로드 링크. 다른 OS용 받기도 이것이라, 누르면 설치 안내의 OS 탭이 그 OS로 바뀐다. */
 function TextDownloadLink({ os, label }: { os: InstallerOs; label: string }) {
   return (
-    <a className="link" href={latestDownloadPath(os)}>
+    <a className="link" href={latestDownloadPath(os)} onClick={() => announceInstallOs(os)}>
       {label}
     </a>
   );
@@ -75,12 +73,12 @@ function PrimaryDownload({ os, latest, hint }: { os: InstallerOs; latest: Releas
   return (
     <>
       <div className="dl-row">
-        <DownloadLink os={os} label={`${OS_NAMES[os]}용 다운로드`} primary />
+        <DownloadLink os={os} label={`${INSTALLER_OS_NAMES[os]}용 다운로드`} primary />
       </div>
       <p className="support">{file ? `${SUPPORT_TEXT[os]} · ${formatFileSize(file.size)}` : SUPPORT_TEXT[os]}</p>
       {hint && <p className="hint">{hint}</p>}
       <p className="other">
-        <TextDownloadLink os={other} label={`${OS_NAMES[other]}용 받기`} />
+        <TextDownloadLink os={other} label={`${INSTALLER_OS_NAMES[other]}용 받기`} />
       </p>
     </>
   );

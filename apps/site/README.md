@@ -26,3 +26,16 @@ pnpm --filter @stardraft/site test
   - `VERCEL_GIT_REPO_OWNER`: Vercel이 Git 연결 프로젝트에 넣어 준다("Automatically expose System Environment Variables"가 켜져 있어야 함).
   - `GITHUB_RELEASE_TOKEN`: 공개 정보만 읽는 fine-grained 토큰(저장소 접근은 "Public repositories", 권한 없음). Vercel 서버는 IP를 나눠 써서 인증 없이 부르면 남이 한도를 소진할 수 있다.
 - **도메인**: `stardraft.squadify.app`은 저장소 주인이 직접 연결한다.
+
+## 설치 안내의 스크린숏
+
+설치 안내의 막히는 네 곳은 실제 스크린숏을 기본으로 보이고, [예시]로 바꾸면 HTML로 재현한 예시 화면이 된다. 스크린숏은 `src/assets/screenshots/`에 아래 이름의 PNG로 넣으면 빌드할 때 찾아 쓴다. 파일이 없는 곳은 예시 화면만 보인다.
+
+| 파일 | 화면 | 찍는 때 |
+| :- | :- | :- |
+| `mac-blocked.png` | macOS "'Stardraft'을(를) 열지 않음" 창 | 첫 릴리스 빌드, 한국어 macOS |
+| `mac-settings.png` | 시스템 설정 > 개인정보 보호 및 보안의 **그래도 열기** 위치 | 첫 릴리스 빌드, 한국어 macOS |
+| `win-smartscreen.png` | "Windows의 PC 보호" 창 | 팀 배포 전 Windows 점검, 한국어 Windows |
+| `win-sac.png` | Windows 보안의 스마트 앱 컨트롤 설정 화면 | 팀 배포 전 Windows 점검, 한국어 Windows |
+
+OS 메이저 업데이트로 화면이 바뀌면 다시 찍는다. 스크린숏을 넣을 때 예시 화면(`src/components/ExampleScene.tsx`)과 단계 문구(`src/components/install-steps.tsx`)가 실제 화면의 문구와 맞는지도 함께 고친다.

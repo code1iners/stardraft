@@ -2,5 +2,37 @@
   "name": "@stardraft/site",
   "version": "0.1.0",
   "private": true,
-  "description": "Stardraft 다운로드 사이트. 아직 비어 있다."
+  "description": "Stardraft 다운로드 사이트",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "lint": "eslint .",
+    "typecheck": "astro check",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@astrojs/react": "7.1.0",
+    "@astrojs/vercel": "11.0.16",
+    "astro": "7.4.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.11",
+    "@eslint/js": "10.0.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "eslint": "10.13.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.13.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2",
+    "vitest": "5.0.5"
+  }
 }

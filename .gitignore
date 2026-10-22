@@ -7,6 +7,9 @@ dist/
 release/
 *.tsbuildinfo
 .turbo/
+# Astro가 만드는 타입과 Vercel 빌드 출력·로컬 연결 정보
+.astro/
+.vercel/
 
 # 비밀값과 로컬 환경 변수. 예시 파일만 커밋한다.
 .env*

@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "pnpm --filter @stardraft/desktop dev",
     "dist": "pnpm --filter @stardraft/desktop dist",
+    "release:keygen": "pnpm --filter @stardraft/desktop release:keygen",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test"

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { releaseFileNames } from './release-config.mts';
 
 /** 명령의 출력. */
 type CommandOutput = {
@@ -74,7 +75,7 @@ export async function verifyMacBuild({ releaseDir, productName, version, identif
   /** 빌드 폴더의 앱 번들. */
   const appPath = join(releaseDir, 'mac-arm64', `${productName}.app`);
   /** 앱 내 업데이트용 zip. */
-  const zipPath = join(releaseDir, `${productName}-${version}-arm64-mac.zip`);
+  const zipPath = join(releaseDir, releaseFileNames(productName, version).macZip);
   /** 검사 결과. */
   const report = [`${appPath}: ${await checkMacSignature(appPath, identifier, run)}`];
 

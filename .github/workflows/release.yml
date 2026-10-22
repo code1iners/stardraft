@@ -1,0 +1,92 @@
+# v* 태그를 푸시하면 태그와 앱 버전을 맞춰 보고, 두 OS에서 빌드해 macOS 서명을 검사한 뒤,
+# 업데이트 안내 파일(latest*.yml)을 검사하고 서명하고 다시 검증해 다섯 파일을 담은 초안 Release를 만든다.
+# 하나라도 틀리면 초안 Release를 만들지 않는다. 공개는 저장소 주인이 자기 PC에 먼저 설치해 본 뒤 직접 한다.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# 같은 태그를 다시 푸시해도 Release 작업이 겹쳐 돌지 않게 한다.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: 태그와 앱 버전 확인
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 태그가 v<데스크톱 앱 버전>인지 확인
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::태그($GITHUB_REF_NAME)가 데스크톱 앱 버전(v$version)과 다릅니다. apps/desktop/package.json의 version을 맞춘 커밋에 태그를 다시 다세요."
+            exit 1
+          fi
+
+  # macOS 작업은 afterSign 뒤 .app과, zip을 ditto로 푼 .app의 서명과 최상위 DR을 검사한다. 틀리면 여기서 멈춘다.
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+    # Windows 서명용 AZURE_* 저장소 비밀값을 넘긴다. release 환경 비밀값은 그 환경을 쓰는 작업에만 가므로 빌드에는 넘어가지 않는다.
+    secrets: inherit
+
+  release:
+    name: 초안 Release
+    needs: build
+    # 업데이트 서명 키(release 환경 비밀값)는 이 작업에서만 읽는다. 실제로 막는 것은 저장소 설정의 release 환경 배포 규칙(v* 태그만)이다.
+    # 이 if는 이 파일에 다른 트리거를 더해도 태그가 아니면 돌지 않게 하는 보조 장치다.
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # pnpm 버전은 package.json의 packageManager를 따른다.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      # 서명 스크립트는 js-yaml과 Node 내장 모듈만 쓴다. 서명 키를 다루는 작업이라 의존성의 설치 스크립트는 돌리지 않는다.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # 두 빌드의 아티팩트를 electron-builder 출력 폴더 하나에 모은다.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: stardraft-*
+          merge-multiple: true
+          path: apps/desktop/release
+
+      - name: Release 파일과 업데이트 안내 파일 검사
+        run: pnpm --filter @stardraft/desktop release:check
+      # 비밀값 이름은 scripts/release-config.mts의 SIGNING_KEY_SECRETS와 같다. 둘째는 키를 회전하는 동안만 있다.
+      - name: 업데이트 안내 파일 서명
+        run: pnpm --filter @stardraft/desktop release:sign
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_SIGNING_KEY_2: ${{ secrets.UPDATE_SIGNING_KEY_2 }}
+      - name: 앱 소스의 공개 키 목록으로 서명 다시 검증
+        run: pnpm --filter @stardraft/desktop release:verify
+
+      # 검사가 폴더에 다섯 파일만 있는 것을 확인했다. SHA256SUMS.txt와 blockmap은 올리지 않는다.
+      # 릴리스 노트는 사이트 변경 내역에 그대로 나가므로 비워 두고, 저장소 주인이 공개 전에 직접 쓴다.
+      # 자동 생성 노트에는 PR 작성자 같은 사람 이름이 들어간다.
+      - name: 초안 Release 만들기
+        run: >-
+          gh release create "$GITHUB_REF_NAME" apps/desktop/release/*
+          --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$GITHUB_REF_NAME" --notes ""
+        env:
+          GH_TOKEN: ${{ github.token }}

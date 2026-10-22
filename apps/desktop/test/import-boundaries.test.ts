@@ -29,6 +29,12 @@ describe('import 경계', { timeout: 60_000 }, () => {
     expect(rules).toContain('no-restricted-imports');
   });
 
+  it('빌드 스크립트와 함께 쓰는 core의 .mts 모듈이 Electron을 import해도 lint가 실패한다', async () => {
+    const rules = await lintAs('src/core/probe.mts', "import { app } from 'electron';\nexport const name = app.name;\n");
+
+    expect(rules).toContain('no-restricted-imports');
+  });
+
   it('core가 main을 import하면 lint가 실패한다', async () => {
     const rules = await lintAs('src/core/probe.ts', "import { start } from '../main/app';\nexport const run = start;\n");
 

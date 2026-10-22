@@ -27,9 +27,9 @@ export const APP_FOLDERS = ['data', 'logs'] as const;
 export type AppFolder = (typeof APP_FOLDERS)[number];
 
 /** 앱이 여는 다운로드 사이트의 섹션. 주소는 main이 정하고 렌더러는 이름만 보낸다. */
-export const SITE_SECTIONS = ['update'] as const;
+export const SITE_SECTIONS = ['update', 'changelog'] as const;
 
-/** 다운로드 사이트의 섹션 하나. `update`는 업데이트 섹션이다([사이트에서 받기]). */
+/** 다운로드 사이트의 섹션 하나. `update`는 업데이트 섹션([사이트에서 받기]), `changelog`는 변경 내역 섹션([변경 내역])이다. */
 export type SiteSection = (typeof SITE_SECTIONS)[number];
 
 /** 키 확인 명령이 받는 키의 최대 길이. 이보다 긴 값은 키가 아니므로 main에 보내지 않는다. */
@@ -70,6 +70,9 @@ export const EXTRA_INSTRUCTIONS_MAX_LENGTH = 4_000;
 
 /** 비밀 파일 패턴 추가 명령이 받는 패턴의 최대 길이. core의 상한과 같다. */
 export const SECRET_PATTERN_MAX_LENGTH = 200;
+
+/** 업데이트 띠 닫기 명령이 받는 띠 이름의 최대 길이. 띠 이름은 상태와 버전(`signature-failed:0.2.0`)이다. */
+export const UPDATE_BANNER_MAX_LENGTH = 100;
 
 /** "Flow 계정" 칸의 계정 카드에 보일 계정. */
 export interface FlowAccountProfile {
@@ -807,7 +810,31 @@ export type UpdateSnapshot =
   /** 받은 파일의 서명이 맞지 않아 지우고 설치하지 않았다. */
   | { kind: 'signature-failed'; version: string }
   /** 앱이 스스로 바꿀 수 없는 위치라 새 버전을 받지 않았다. */
-  | { kind: 'location-blocked'; version: string; reason: BlockedLocationReasonSnapshot };
+  | { kind: 'location-blocked'; version: string; reason: BlockedLocationReasonSnapshot }
+  /** [다시 시작]을 눌렀지만 진행 중인 일이 끝나기를 기다린다. */
+  | { kind: 'restart-pending'; version: string; waitingFor: RestartWaitSnapshot }
+  /** 새 버전으로 업데이트하지 못했다. `rejected`는 Squirrel.Mac이 앱 안에서 거부한 것이라 다시 시도할 수 없다. */
+  | { kind: 'install-failed'; version: string; reason: 'not-applied' | 'rejected' };
+
+/** 다시 시작이 기다리는 일. */
+export interface RestartWaitSnapshot {
+  /** 에이전트 실행(초안 생성)이 끝나기를 기다린다. */
+  drafting: boolean;
+  /** 게시 카운트다운이나 게시 요청이 끝나기를 기다린다. */
+  posting: boolean;
+}
+
+/** 앱 내 업데이트의 화면 상태. 오른쪽 클릭 메뉴, 작은 창 띠와 다시 시작 확인 화면, 설정 "일반"이 그린다. */
+export interface UpdateStateSnapshot {
+  /** 업데이트 상태. */
+  status: UpdateSnapshot;
+  /** 업데이트 직후 첫 실행이면 업데이트한 버전. 아니면 `null`. */
+  justUpdated: string | null;
+  /** macOS 다시 시작 확인 화면에 보일 새 버전. 확인 화면을 띄우지 않았으면 `null`. */
+  restartConfirm: string | null;
+  /** 작은 창에서 닫은 띠의 이름들. 같은 이름의 띠는 다시 보이지 않는다. */
+  dismissedBanners: string[];
+}
 
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
@@ -841,8 +868,8 @@ export interface AppSnapshot {
   trial: TrialSnapshot;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettingsSnapshot;
-  /** 앱 내 업데이트의 상태. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
-  update: UpdateSnapshot | null;
+  /** 앱 내 업데이트의 화면 상태. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
+  update: UpdateStateSnapshot | null;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -876,7 +903,7 @@ export type AppEvent =
   /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
   | { type: 'draft-settings-changed'; draftSettings: DraftSettingsSnapshot }
   /** 앱 내 업데이트의 상태가 바뀌었다. */
-  | { type: 'update-changed'; update: UpdateSnapshot }
+  | { type: 'update-changed'; update: UpdateStateSnapshot }
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
   | { type: 'review-bundle-requested'; bundleId: number }
   /** 묶음의 게시가 실패했다. 다른 묶음을 보고 있어도 토스트를 한 번 띄운다. */
@@ -1010,8 +1037,22 @@ export type AppCommand =
   | { type: 'check-for-update' }
   /** 서명 검증 실패 뒤의 [다시 시도]. 실패한 버전을 다시 받는다. 서명 검증 실패가 아니면 main이 무시한다. */
   | { type: 'retry-update' }
-  /** 다운로드 사이트의 섹션을 기본 브라우저로 연다. [사이트에서 받기]는 업데이트 섹션이다. 주소는 main이 정한다. */
-  | { type: 'open-site'; section: SiteSection };
+  /** 다운로드 사이트의 섹션을 기본 브라우저로 연다. [사이트에서 받기]는 업데이트 섹션, [변경 내역]은 변경 내역 섹션이다. 주소는 main이 정한다. */
+  | { type: 'open-site'; section: SiteSection }
+  /** 설치 준비됨의 [다시 시작]. macOS는 작은 창에 확인 화면을 먼저 띄운다. 설치 준비됨이 아니면 main이 무시한다. */
+  | { type: 'restart-to-update' }
+  /** 다시 시작 확인 화면의 [다시 시작]. */
+  | { type: 'confirm-update-restart' }
+  /** 다시 시작 확인 화면의 [나중에]. */
+  | { type: 'cancel-update-restart-confirm' }
+  /** "다시 시작 대기"의 [지금 다시 시작]. 진행 중인 에이전트 실행을 끊고 다시 시작한다. */
+  | { type: 'restart-update-now' }
+  /** "다시 시작 대기"의 [취소]. 대기를 푼다. */
+  | { type: 'cancel-update-restart' }
+  /** 설치 실패의 [다시 시도]. 받아 둔 업데이트를 다시 확인하고 다시 시작한다. */
+  | { type: 'retry-update-install' }
+  /** 작은 창의 업데이트 띠를 닫는다. `banner`는 띠 이름이다. */
+  | { type: 'dismiss-update-banner'; banner: string };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -1036,6 +1077,11 @@ function isAppFolder(value: unknown): value is AppFolder {
 /** 다운로드 사이트의 섹션 이름인지 확인한다. */
 function isSiteSection(value: unknown): value is SiteSection {
   return typeof value === 'string' && (SITE_SECTIONS as readonly string[]).includes(value);
+}
+
+/** 업데이트 띠 이름으로 받을 수 있는 값인지 확인한다. 상태 이름과 버전을 쌍점으로 이은 것이다. */
+function isUpdateBannerInput(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= UPDATE_BANNER_MAX_LENGTH && /^[a-z-]+:[0-9A-Za-z.+-]+$/.test(value);
 }
 
 /** 앱이 아는 에이전트인지 확인한다. */
@@ -1136,6 +1182,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isAppFolder(candidate.folder) ? { type: 'open-folder', folder: candidate.folder } : null;
     case 'open-site':
       return isSiteSection(candidate.section) ? { type: 'open-site', section: candidate.section } : null;
+    case 'dismiss-update-banner':
+      return isUpdateBannerInput(candidate.banner) ? { type: 'dismiss-update-banner', banner: candidate.banner } : null;
     case 'check-flow-key':
       return isFlowApiKeyInput(candidate.apiKey) ? { type: 'check-flow-key', apiKey: candidate.apiKey } : null;
     case 'set-default-agent':
@@ -1241,6 +1289,12 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'test-notification':
     case 'check-for-update':
     case 'retry-update':
+    case 'restart-to-update':
+    case 'confirm-update-restart':
+    case 'cancel-update-restart-confirm':
+    case 'restart-update-now':
+    case 'cancel-update-restart':
+    case 'retry-update-install':
       return { type: candidate.type };
     default:
       return null;

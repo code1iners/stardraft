@@ -5,6 +5,7 @@ import { SetupChecklist, WindowsTrayHint } from './Onboarding';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
 import { TrialButton, TrialPickerSheet } from './TrialPicker';
+import { RestartConfirm, UpdateBanner } from './UpdatePrompts';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
 
@@ -33,11 +34,25 @@ interface PopoverContentProps {
 /**
  * 작은 창 내용. 맨 위 띠 자리 아래에, 감지를 시작하기 전이면 필수 설정 전 화면을,
  * 시작한 뒤면 멘션 묶음을 하나씩 보인다. 보여 줄 묶음이 없으면 빈 화면이다.
+ * 띠 자리는 하나이고 전역 문제 띠가 업데이트 띠보다 앞선다. macOS 다시 시작 확인 화면을 띄웠으면 그 화면만 보인다.
  */
 export function PopoverContent({ snapshot, initialBundleId = null }: PopoverContentProps) {
+  /** 앱 내 업데이트의 화면 상태. 소스 실행이면 `null`. */
+  const update = snapshot.update;
+  if (update?.restartConfirm) {
+    return (
+      <div className="popover">
+        <RestartConfirm version={update.restartConfirm} appName={snapshot.appName} />
+      </div>
+    );
+  }
   return (
     <div className="popover">
-      {snapshot.globalProblem && <GlobalProblemBanner problem={snapshot.globalProblem} platform={snapshot.platform} />}
+      {snapshot.globalProblem ? (
+        <GlobalProblemBanner problem={snapshot.globalProblem} platform={snapshot.platform} />
+      ) : (
+        update && <UpdateBanner update={update} />
+      )}
       {snapshot.onboarding.detectionStarted ? (
         <CompactReview snapshot={snapshot} initialBundleId={initialBundleId} />
       ) : (

@@ -1043,4 +1043,43 @@ describe('앱 내 업데이트', () => {
 
     await expect(store.getSignatureFailedVersions()).resolves.toEqual([]);
   });
+
+  it('업데이트 시도를 남기면 다시 열어도 읽고, 바꾸면 마지막 것만 남으며, 지우면 없다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const first = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    /** 처음 연 저장소. */
+    const firstStore = new SqliteStateStore(first);
+    await expect(firstStore.getUpdateAttempt()).resolves.toBeNull();
+    await firstStore.setUpdateAttempt({ fromVersion: '0.1.0', toVersion: '0.2.0', attemptedAt: 1_000, rejected: false });
+    await firstStore.setUpdateAttempt({ fromVersion: '0.1.0', toVersion: '0.2.0', attemptedAt: 1_000, rejected: true });
+    first.close();
+
+    /** 다시 연 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.2.0'));
+    await expect(store.getUpdateAttempt()).resolves.toEqual({ fromVersion: '0.1.0', toVersion: '0.2.0', attemptedAt: 1_000, rejected: true });
+
+    await store.clearUpdateAttempt();
+    await expect(store.getUpdateAttempt()).resolves.toBeNull();
+  });
+
+  it('다른 계정으로 처음부터 시작해도 업데이트 시도는 남는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setUpdateAttempt({ fromVersion: '0.1.0', toVersion: '0.2.0', attemptedAt: 1_000, rejected: false });
+
+    await store.resetForAccount(NEW_ACCOUNT);
+
+    await expect(store.getUpdateAttempt()).resolves.toMatchObject({ toVersion: '0.2.0' });
+  });
+
+  it('형식 17에서 올리면 업데이트 시도가 없다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    openStateDatabase(path, STATE_MIGRATIONS.slice(0, 17), '0.1.0').close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.2.0'));
+
+    await expect(store.getUpdateAttempt()).resolves.toBeNull();
+  });
 });

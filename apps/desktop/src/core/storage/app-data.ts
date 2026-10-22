@@ -23,13 +23,12 @@ import {
   SqliteStateStore,
   STATE_MIGRATIONS,
 } from './state-database';
+import { BACKUPS_DIR_NAME } from './migration-backups';
 
 /** 설정 파일 이름. */
 const SETTINGS_FILE_NAME = 'settings.json';
 /** 상태 DB 파일 이름. */
 const STATE_FILE_NAME = 'state.db';
-/** 마이그레이션 전 사본을 두는 폴더 이름. */
-const BACKUPS_DIR_NAME = 'backups';
 /** 암호화한 Flow 개인 API 키 파일 이름. 형식 검사와 마이그레이션 사본에는 넣지 않는다. */
 const FLOW_API_KEY_FILE_NAME = 'flow-api-key.bin';
 
@@ -186,7 +185,7 @@ interface BackupTargets {
 /**
  * 올리기 전의 `state.db`와 `settings.json`을 사본 폴더에 복사한다.
  * 이미 있는 사본은 덮어쓰지 않는다. 같은 버전으로 다시 올리는 경우(예: `state.db`만 올라가고 `settings.json` 쓰기가 실패한 뒤)
- * 먼저 남긴 사본만이 올리기 전 원본이기 때문이다. 지우는 일은 업데이트 쪽이 맡는다.
+ * 먼저 남긴 사본만이 올리기 전 원본이기 때문이다. 새 버전이 정상으로 뜬 지 7일이 지나면 `MigrationBackups`가 지운다.
  */
 async function backUpBeforeMigration({ backupDir, statePath, settingsPath }: BackupTargets): Promise<void> {
   await mkdir(backupDir, { recursive: true });

@@ -789,6 +789,36 @@ describe('초안 실행: 진행 단계와 취소', () => {
   });
 });
 
+describe('초안 실행: 앱 내 업데이트의 다시 시작 대기', () => {
+  it('다시 시작을 기다리는 동안 실행 중인 실행은 끝까지 가지만 다음 실행은 시작하지 않고, 대기를 풀면 다시 돈다', async () => {
+    const { flow, executor, drafts, bundles, repos, poll } = await setup();
+    /** 끝을 붙잡아 둔 첫 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    flow.addComment(POST_ID, { commentId: '701', contents: `${MY_MARKUP} 다른 질문`, registerId: SENDER, registeredDateTime: '20261020085600' });
+    await poll(alarm('101'), alarm('102', { remarkId: '701', registeredDateTime: '20261020085600' }));
+    /** 먼저 온 묶음과 나중에 온 묶음. */
+    const [first, second] = bundles.state();
+    expect(drafts.isRunning()).toBe(true);
+
+    drafts.holdForRestart(true);
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    expect(bundles.get(first!.id)?.status).toBe('ready');
+    expect(drafts.isRunning()).toBe(false);
+    expect(drafts.progress(second!.id)).toEqual({ status: 'waiting' });
+    expect(executor.requests).toHaveLength(1);
+
+    drafts.holdForRestart(false);
+    await settle();
+
+    expect(bundles.get(second!.id)?.status).toBe('ready');
+    expect(executor.requests).toHaveLength(2);
+  });
+});
+
 describe('초안 실행: 생성 중 묶음의 변화', () => {
   it('생성 중 묶음에 새 멘션이 오면 실행을 끊고, 새 멘션을 합쳐 처음부터 다시 만든다. 합친 멘션은 "새 멘션"으로 세지 않는다', async () => {
     const { flow, executor, bundles, repos, poll } = await setup();

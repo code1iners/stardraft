@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DownloadOutcome, UpdateFeed, UpdateManifest } from '../ports/update-feed';
+import type { DownloadOutcome, InstallFailure, UpdateFeed, UpdateManifest } from '../ports/update-feed';
 
 /** 가짜 피드에 공개한 Release 하나. */
 export interface FakeUpdateRelease {
@@ -33,6 +33,10 @@ export class FakeUpdateFeed implements UpdateFeed {
   downloadCount = 0;
   /** 받은 파일의 경로. 받은 순서다. */
   readonly downloads: string[] = [];
+  /** 설치하며 다시 시작한 횟수. 실제 앱이라면 여기서 꺼진다. */
+  installCount = 0;
+  /** 설치하지 못했을 때 부를 함수. */
+  private readonly installFailureListeners = new Set<(failure: InstallFailure) => void>();
   /** 마지막 확인에서 찾은 Release. electron-updater처럼 받을 때는 이것을 받는다. */
   private found: FakeUpdateRelease | null = null;
 
@@ -60,5 +64,21 @@ export class FakeUpdateFeed implements UpdateFeed {
     await writeFile(file, release.content);
     this.downloads.push(file);
     return { kind: 'downloaded', update: { file, manifest: structuredClone(release.manifest) } };
+  }
+
+  install(): void {
+    this.installCount += 1;
+  }
+
+  onInstallFailed(listener: (failure: InstallFailure) => void): () => void {
+    this.installFailureListeners.add(listener);
+    return () => {
+      this.installFailureListeners.delete(listener);
+    };
+  }
+
+  /** electron-updater처럼 앱 안에서 설치하지 못했다고 알린다. 앱은 꺼지지 않은 채다. */
+  failInstall(failure: InstallFailure): void {
+    for (const listener of this.installFailureListeners) listener(failure);
   }
 }

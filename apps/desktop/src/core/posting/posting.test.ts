@@ -217,6 +217,58 @@ describe('게시: 카운트다운과 취소', () => {
   });
 });
 
+describe('게시: 앱 내 업데이트가 기다리는 게시', () => {
+  it('카운트다운부터 게시 요청의 응답을 받을 때까지 진행 중이고, 끝나면 진행 중이 아니라고 알린다', async () => {
+    const { clock, flow, posting, bundleId } = await setup('post');
+    /** 게시 요청의 응답을 놓아 줄 함수. */
+    const release = flow.hold(`POST /user/comments/${POST_ID}`);
+    /** 알림을 받을 때마다의 진행 여부. */
+    const seen: boolean[] = [];
+    posting.onChange(() => seen.push(posting.isActive()));
+    expect(posting.isActive()).toBe(false);
+
+    await posting.post(bundleId);
+    expect(posting.isActive()).toBe(true);
+
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    expect(posting.isActive()).toBe(true);
+
+    release();
+    await settle();
+    expect(posting.isActive()).toBe(false);
+    expect(seen.at(-1)).toBe(false);
+  });
+
+  it('카운트다운을 취소하면 진행 중이 아니다', async () => {
+    const { posting, bundleId } = await setup('post');
+    await posting.post(bundleId);
+
+    await posting.cancel(bundleId);
+
+    expect(posting.isActive()).toBe(false);
+  });
+
+  it('429 뒤 다시 보내기를 기다리는 동안과 다시 보낸 요청의 응답을 받을 때까지도 진행 중이다', async () => {
+    const { clock, flow, posting, bundleId } = await setup('post');
+    flow.failOn(`POST /user/comments/${POST_ID}`, { kind: 'rate-limited', retryAfterMs: 3_000 }, 1);
+    await posting.post(bundleId);
+    clock.advance(COUNTDOWN_MS);
+    await settle();
+    expect(posting.isActive()).toBe(true);
+
+    /** 다시 보낸 요청의 응답을 놓아 줄 함수. */
+    const release = flow.hold(`POST /user/comments/${POST_ID}`);
+    clock.advance(3_000);
+    await settle();
+    expect(posting.isActive()).toBe(true);
+
+    release();
+    await settle();
+    expect(posting.isActive()).toBe(false);
+  });
+});
+
 describe('게시: 보내기 전 기록과 성공 기록', () => {
   /** 댓글 700의 댓글 멘션 위치. 게시한 글이 답한 범위로 기록된다. */
   const THREAD_MENTION = { postId: POST_ID, remarkId: '700', replyId: '-1' };

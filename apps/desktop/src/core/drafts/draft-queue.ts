@@ -123,11 +123,12 @@ const PRIORITY_ORDER: Readonly<Record<QueuePriority, number>> = { resume: 0, use
 /**
  * 대기열을 멈추게 한 까닭. `agent`는 에이전트를 쓸 수 없음(전역 실패), `flow-key`는 Flow 키를 쓸 수 없음("키 확인 필요")이고,
  * 둘은 그 까닭이 바뀌었다는 알림이 오면 풀린다. `flow-unreachable`은 지금 Flow에 닿지 못함(네트워크 오류, 요청 한도)이고 시간이 지나면 풀린다.
+ * `restart`는 앱 내 업데이트의 다시 시작을 기다림이고, 다시 시작을 거두면 풀린다.
  */
-type PauseCause = 'agent' | 'flow-key' | 'flow-unreachable';
+type PauseCause = 'agent' | 'flow-key' | 'flow-unreachable' | 'restart';
 
 /** 그 까닭이 바뀌었다는 알림이 오면 풀리는 멈춤의 까닭. */
-type NotifiedCause = Exclude<PauseCause, 'flow-unreachable'>;
+type NotifiedCause = Exclude<PauseCause, 'flow-unreachable' | 'restart'>;
 
 /** 실행하고 있는 묶음. */
 interface RunningDraft {
@@ -294,6 +295,20 @@ export class DraftQueue {
   progress(bundleId: number): DraftProgress | null {
     if (this.running?.bundleId === bundleId) return { status: 'running', step: this.running.step, filesRead: this.running.filesRead };
     return this.isWaiting(bundleId) ? { status: 'waiting' } : null;
+  }
+
+  /** 에이전트 실행이 진행 중인지 본다. 앱 내 업데이트는 실행이 끝날 때까지 다시 시작을 미룬다. */
+  isRunning(): boolean {
+    return this.running !== null;
+  }
+
+  /**
+   * 참이면 앱 내 업데이트의 다시 시작을 기다리는 동안 다음 실행을 시작하지 않는다. 실행 중인 실행은 끝까지 가고 묶음은 대기열에서 기다린다.
+   * 거짓이면(다시 시작을 거둠) 다시 돈다.
+   */
+  holdForRestart(held: boolean): void {
+    if (held) this.pause('restart');
+    else this.resume('restart');
   }
 
   /** 진행(대기열, 진행 단계, 읽은 파일 수)이 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */

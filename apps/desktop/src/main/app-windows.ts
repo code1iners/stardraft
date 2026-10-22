@@ -20,6 +20,8 @@ const REOPEN_GUARD_MS = 300;
 export interface AppWindowsHooks {
   /** 설정 창이 닫혔다. 설정 창에서 시작한 일(키 확인 등)을 그만둘 때 쓴다. */
   onSettingsClosed: () => void;
+  /** 작은 창이 닫혔다. 작은 창에 띄운 다시 시작 확인 화면을 거둘 때 쓴다. */
+  onPopoverClosed: () => void;
 }
 
 /**
@@ -136,6 +138,7 @@ export class AppWindows {
     });
     window.on('closed', () => {
       this.popover = null;
+      this.hooks.onPopoverClosed();
     });
 
     this.popover = window;

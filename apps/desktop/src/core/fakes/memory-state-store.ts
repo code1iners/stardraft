@@ -3,6 +3,7 @@ import { mentionLocationKey, type MentionLocation } from '../detection/mention';
 import type { QueuedDraft } from '../drafts/draft';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
+import type { UpdateAttempt } from '../update/update-restart';
 
 /** 메모리에만 두는 상태 저장소. */
 export class MemoryStateStore implements StateStore {
@@ -20,6 +21,8 @@ export class MemoryStateStore implements StateStore {
   private draftQueue: QueuedDraft[] = [];
   /** 서명 검증에 실패한 업데이트 버전들. 다른 계정으로 처음부터 시작해도 남는다. */
   private readonly signatureFailedVersions = new Set<string>();
+  /** 마지막 "업데이트 시도". 다른 계정으로 처음부터 시작해도 남는다. */
+  private updateAttempt: UpdateAttempt | null = null;
 
   async getAccount(): Promise<FlowEmployee | null> {
     return this.account && { ...this.account };
@@ -122,6 +125,18 @@ export class MemoryStateStore implements StateStore {
 
   async removeSignatureFailedVersion(version: string): Promise<void> {
     this.signatureFailedVersions.delete(version);
+  }
+
+  async getUpdateAttempt(): Promise<UpdateAttempt | null> {
+    return this.updateAttempt && { ...this.updateAttempt };
+  }
+
+  async setUpdateAttempt(attempt: UpdateAttempt): Promise<void> {
+    this.updateAttempt = { ...attempt };
+  }
+
+  async clearUpdateAttempt(): Promise<void> {
+    this.updateAttempt = null;
   }
 
   /** 묶음의 멘션 위치가 다른 묶음에 이미 들어 있으면 실패한다. 시험 묶음의 멘션 위치는 따로 두므로 서로 견주지 않는다. */

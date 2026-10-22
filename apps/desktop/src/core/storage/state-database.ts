@@ -15,6 +15,7 @@ import type { BundleContext } from '../flow/bundle-context';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
+import type { UpdateAttempt } from '../update/update-restart';
 
 /** 열린 `state.db` 연결. */
 export type StateDatabase = Database.Database;
@@ -237,13 +238,24 @@ export const STATE_MIGRATIONS: readonly string[] = [
     version TEXT PRIMARY KEY
   ) STRICT;
   `,
+  // 18: 앱 내 업데이트의 "업데이트 시도". 다시 시작하기 직전에 한 줄을 남기고, 다시 켰을 때 버전을 견줘 설치 실패인지 본 뒤 지운다.
+  // `rejected`는 Squirrel.Mac이 앱 안에서 거부해 앱이 꺼지지 않은 것이다. 이미 있던 앱은 다시 시작한 적이 없다.
+  `
+  CREATE TABLE update_attempt (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    from_version TEXT NOT NULL,
+    to_version TEXT NOT NULL,
+    attempted_at INTEGER NOT NULL,
+    rejected INTEGER NOT NULL CHECK (rejected IN (0, 1))
+  ) STRICT;
+  `,
 ];
 
 /**
  * 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 계정과 상관없는 앱의 기록이다.
- * 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록과, 서명 검증에 실패한 업데이트 버전이다.
+ * 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록, 서명 검증에 실패한 업데이트 버전, 업데이트 시도다.
  */
-const TABLES_KEPT_ON_RESET: ReadonlySet<string> = new Set(['app_meta', 'update_signature_failure']);
+const TABLES_KEPT_ON_RESET: ReadonlySet<string> = new Set(['app_meta', 'update_signature_failure', 'update_attempt']);
 
 /** 열기 전에 읽은 `state.db`의 형식. */
 export interface StateDatabaseInfo {
@@ -704,6 +716,28 @@ export class SqliteStateStore implements StateStore {
 
   async removeSignatureFailedVersion(version: string): Promise<void> {
     this.db.prepare('DELETE FROM update_signature_failure WHERE version = ?').run(version);
+  }
+
+  async getUpdateAttempt(): Promise<UpdateAttempt | null> {
+    /** 남긴 업데이트 시도. */
+    const row = this.db.prepare('SELECT from_version, to_version, attempted_at, rejected FROM update_attempt WHERE id = 1').get() as
+      | { from_version: string; to_version: string; attempted_at: number; rejected: number }
+      | undefined;
+    return row ? { fromVersion: row.from_version, toVersion: row.to_version, attemptedAt: row.attempted_at, rejected: row.rejected === 1 } : null;
+  }
+
+  async setUpdateAttempt(attempt: UpdateAttempt): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO update_attempt (id, from_version, to_version, attempted_at, rejected) VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET from_version = excluded.from_version, to_version = excluded.to_version,
+           attempted_at = excluded.attempted_at, rejected = excluded.rejected`,
+      )
+      .run(attempt.fromVersion, attempt.toVersion, attempt.attemptedAt, attempt.rejected ? 1 : 0);
+  }
+
+  async clearUpdateAttempt(): Promise<void> {
+    this.db.prepare('DELETE FROM update_attempt').run();
   }
 
   /** 기준점 한 줄을 넣거나 바꾼다. */

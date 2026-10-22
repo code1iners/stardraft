@@ -27,16 +27,19 @@ import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { TrialRun } from '../core/trial/trial-run';
 import { openAppData, type AppData } from '../core/storage/app-data';
+import { MigrationBackups } from '../core/storage/migration-backups';
 import { trayIndicator, type TrayIndicatorInput } from '../core/tray-indicator';
 import { InAppUpdate } from '../core/update/in-app-update';
+import { UpdateRestart } from '../core/update/update-restart';
 import { checkInstallLocation, macBundlePathOf, type BlockedLocationReason } from '../core/update/install-location';
 import { UPDATE_PUBLIC_KEYS } from '../core/update/update-public-keys.mts';
 import { globalProblemText, type GlobalProblemText } from '../shared/global-problem-text';
+import { updateMenuItem } from '../shared/update-text';
 import { APP_ID, appPlatform, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
 import { createAppLogger } from './app-logger';
 import { AppWindows } from './app-windows';
 import { editorSystem } from './editor-system';
-import { globalProblemSnapshot, registerIpc } from './ipc';
+import { globalProblemSnapshot, openSite, registerIpc } from './ipc';
 import { OsNotifier } from './os-notifier';
 import { ReviewSections } from './review-sections';
 import { hardenRenderers } from './security';
@@ -62,6 +65,10 @@ let posting: Posting | null = null;
 let retention: BundleRetention | null = null;
 /** 앱 내 업데이트. 끝낼 때 다음 확인을 멈춘다. 소스 실행에서는 없다. */
 let appUpdate: InAppUpdate | null = null;
+/** 앱 내 업데이트의 다시 시작. 작은 창이 닫히면 다시 시작 확인 화면을 거둔다. 소스 실행에서는 없다. */
+let appRestart: UpdateRestart | null = null;
+/** 마이그레이션 전 사본 정리. 끝낼 때 다음 정리를 멈춘다. */
+let migrationBackups: MigrationBackups | null = null;
 
 applyAppIdentity();
 
@@ -140,6 +147,8 @@ function start(): void {
     const appWindows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
       // 설정 창을 닫으면 그 창에서 시작한 키 확인과 확인을 기다리던 계정 바꾸기를 그만둔다.
       onSettingsClosed: () => flowAccount.cancelKeyCheck(),
+      // 다시 시작 확인 화면을 띄운 작은 창을 닫으면 [나중에]와 같다.
+      onPopoverClosed: () => appRestart?.cancelConfirm(),
     });
     windows = appWindows;
     /**
@@ -316,9 +325,10 @@ function start(): void {
      * 앱 내 업데이트. 공개 Release에서 새 버전을 확인해 받고, 서명을 확인한 뒤 설치 준비됨으로 둔다.
      * 소스에서 실행할 때는 끈다. electron-updater도 설치본에서만 확인한다.
      */
-    const inAppUpdate = app.isPackaged
+    const updateFeed = app.isPackaged ? electronUpdateFeed(autoUpdater, logger) : null;
+    const inAppUpdate = updateFeed
       ? new InAppUpdate({
-          feed: electronUpdateFeed(autoUpdater, logger),
+          feed: updateFeed,
           currentVersion: app.getVersion(),
           publicKeys: UPDATE_PUBLIC_KEYS,
           checkLocation: checkAppLocation,
@@ -328,6 +338,41 @@ function start(): void {
         })
       : null;
     appUpdate = inAppUpdate;
+    /**
+     * 앱 내 업데이트의 다시 시작. 사용자가 [다시 시작]을 누를 때만 설치한다. macOS는 먼저 작은 창에 확인 화면을 띄우고,
+     * 에이전트 실행·게시 카운트다운·게시 요청이 끝날 때까지 미룬다. 켤 때 앞선 업데이트 시도로 설치 실패와 업데이트 직후 첫 실행을 정한다.
+     */
+    const updateRestart =
+      updateFeed && inAppUpdate
+        ? new UpdateRestart({
+            update: inAppUpdate,
+            feed: updateFeed,
+            currentVersion: app.getVersion(),
+            confirmsBeforeRestart: process.platform === 'darwin',
+            activity: {
+              blockers: () => ({ drafting: draftQueue.isRunning(), posting: bundlePosting.isActive() }),
+              onChange: (listener) => unsubscribeAll([draftQueue.onChange(listener), bundlePosting.onChange(listener)]),
+              holdDrafts: (held) => draftQueue.holdForRestart(held),
+            },
+            // 편집기 내용은 바뀔 때마다 묶음에 맡겨 저장하므로, 맡긴 저장이 끝나기를 기다린다.
+            saveEdits: () => mentionBundles.whenIdle(),
+            stateStore: appData.stateStore,
+            clock: systemClock,
+            logger,
+          })
+        : null;
+    await updateRestart?.load();
+    appRestart = updateRestart;
+    // 메뉴나 설정 창에서 [다시 시작]을 눌러도 확인 화면은 작은 창에 띄운다. 메뉴 막대 앱이라 앞으로 가져와야 작은 창이 바로 닫히지 않는다.
+    /** 작은 창에 띄운 확인 화면의 버전. 같은 확인 화면을 거듭 띄우지 않으려고 둔다. */
+    let shownConfirm: string | null = null;
+    updateRestart?.onChange(({ restartConfirm }) => {
+      if (restartConfirm && restartConfirm !== shownConfirm) {
+        if (process.platform === 'darwin') app.focus({ steal: true });
+        appWindows.openPopover();
+      }
+      shownConfirm = restartConfirm;
+    });
     registerIpc({
       windows: appWindows,
       logger,
@@ -349,6 +394,7 @@ function start(): void {
       draftSettings,
       notifier,
       inAppUpdate,
+      updateRestart,
     });
     /**
      * 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣고,
@@ -400,9 +446,27 @@ function start(): void {
       openPopover: () => appWindows.openPopover(),
       openSettings: (section) => appWindows.openSettings(section),
       checkNow: () => void mentionDetection.checkNow(),
+      runUpdateAction: (action) => {
+        switch (action) {
+          case 'restart':
+            void updateRestart?.requestRestart();
+            return;
+          case 'open-popover':
+            appWindows.openPopover();
+            return;
+          case 'open-site':
+            void openSite('update', logger);
+            return;
+        }
+      },
       quit: () => app.quit(),
     });
     tray = appTray;
+    // 업데이트 상태는 메뉴 항목으로만 보이고 아이콘은 바꾸지 않는다.
+    /** 메뉴의 업데이트 항목을 지금 상태에 맞춘다. */
+    const refreshUpdateItem = () => appTray.setUpdateItem(updateRestart && updateMenuItem(updateRestart.state().status));
+    refreshUpdateItem();
+    updateRestart?.onChange(refreshUpdateItem);
     /** 전역 문제, 감지 시작 여부, 묶음 상태(검토 대기 수, 실패·게시 실패, 생성 중)에 맞춰 트레이 표시를 바꾼다. */
     const refreshTray = () =>
       appTray.show(
@@ -441,6 +505,9 @@ function start(): void {
     void agentConnections.checkAll();
     // 켜고 1분 뒤 처음 확인하고, 그 뒤 4시간마다 확인한다.
     inAppUpdate?.start();
+    // 여기까지 왔으면 이 버전이 정상으로 뜬 것이다. 마이그레이션 전 사본은 그때부터 7일 뒤 지운다.
+    migrationBackups = new MigrationBackups({ dataDir: dataFolderPath(), clock: systemClock, logger });
+    void migrationBackups.start();
   });
 }
 
@@ -454,6 +521,7 @@ async function prepareQuit(): Promise<void> {
   detection?.stop();
   retention?.stop();
   appUpdate?.stop();
+  migrationBackups?.stop();
   try {
     // 에이전트 CLI는 새 프로세스 그룹으로 띄워 앱과 함께 끝나지 않으므로 실행을 끊어 프로세스 트리를 끝낸다.
     // 카운트다운 중이던 게시는 보내지 않고 게시 중으로 남아, 다시 켤 때 준비됨으로 돌아간다.

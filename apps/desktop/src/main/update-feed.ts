@@ -1,9 +1,11 @@
 import type { Logger as UpdaterLogger, ProgressInfo, UpdateCheckResult, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater';
 import { errorFields, type Logger } from '../core/logging/logger';
-import type { UpdateFeed, UpdateManifest } from '../core/ports/update-feed';
+import type { InstallFailure, UpdateFeed, UpdateManifest } from '../core/ports/update-feed';
 
 /** electron-updater가 받은 파일의 sha512가 업데이트 안내와 다를 때 던지는 오류 코드. 이때 받은 파일은 이미 지웠다. */
 const CHECKSUM_MISMATCH_CODE = 'ERR_CHECKSUM_MISMATCH';
+/** Squirrel.Mac이 새 번들의 코드 서명을 거부할 때 오류 문구에 들어 있는 말. 이 버전은 앱 안에서 설치할 수 없다. */
+const SQUIRREL_REJECTED_TEXT = 'did not pass validation';
 
 /** 어댑터가 쓰는 electron-updater의 부분. 앱에서는 `autoUpdater`를 넘기고, 테스트는 가짜를 넘긴다. */
 export interface ElectronUpdater {
@@ -25,6 +27,11 @@ export interface ElectronUpdater {
   checkForUpdates(): Promise<UpdateCheckResult | null>;
   /** 마지막 확인에서 찾은 버전을 받는다. 받은 파일의 경로를 돌려주고, 첫 경로가 업데이트 파일이다. 받지 못하면 던진다. */
   downloadUpdate(): Promise<string[]>;
+  /**
+   * 받아 둔 업데이트를 설치하며 앱을 끄고 다시 켠다. `isSilent`와 `isForceRunAfter`는 Windows 설치 파일을 창 없이 돌리고 설치 뒤 앱을 켤지 여부다.
+   * macOS는 이때 Squirrel.Mac에 업데이트를 넘기고, 거부하면 앱을 끄지 않고 `error`를 낸다.
+   */
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
   /** 받는 동안 받은 비율을 알린다. */
   on(event: 'download-progress', listener: (info: ProgressInfo) => void): unknown;
   /** 다 받았다. 업데이트 안내에 받은 파일 경로(`downloadedFile`)를 더한 값을 준다. */
@@ -52,12 +59,23 @@ export function electronUpdateFeed(updater: ElectronUpdater, logger: Logger): Up
   let reportProgress: ((percent: number) => void) | null = null;
   /** 마지막으로 받은 업데이트 파일과 그 안내. */
   let lastDownloaded: UpdateDownloadedEvent | null = null;
+  /** 설치를 맡긴 뒤인지 여부. 그 뒤의 오류는 설치하지 못한 것이다. */
+  let installing = false;
+  /** 설치하지 못했을 때 부를 함수. */
+  const installFailureListeners = new Set<(failure: InstallFailure) => void>();
   updater.on('download-progress', (info) => reportProgress?.(info.percent));
   updater.on('update-downloaded', (event) => {
     lastDownloaded = event;
   });
   // 듣는 곳이 없으면 EventEmitter가 오류를 던져 앱이 멈춘다. Squirrel.Mac의 오류도 이 이벤트로 온다.
-  updater.on('error', (error) => logger.warn('update.updater-error', errorFields(error)));
+  updater.on('error', (error) => {
+    logger.warn('update.updater-error', errorFields(error));
+    if (!installing) return;
+    installing = false;
+    /** 설치하지 못한 까닭. */
+    const failure: InstallFailure = String(error?.message ?? '').includes(SQUIRREL_REJECTED_TEXT) ? 'rejected' : 'failed';
+    for (const listener of installFailureListeners) listener(failure);
+  });
 
   return {
     async check() {
@@ -81,6 +99,17 @@ export function electronUpdateFeed(updater: ElectronUpdater, logger: Logger): Up
       // 이번 다운로드가 낸 update-downloaded인지 받은 파일로 확인한다.
       if (!lastDownloaded || lastDownloaded.downloadedFile !== files[0]) throw new Error('update-downloaded 없이 다운로드가 끝났습니다.');
       return { kind: 'downloaded', update: { file: lastDownloaded.downloadedFile, manifest: manifestOf(lastDownloaded) } };
+    },
+    install() {
+      installing = true;
+      // Windows는 사용자별 설치라 UAC 없이 조용히 설치하고 새 버전을 켠다. macOS는 두 인수를 쓰지 않는다.
+      updater.quitAndInstall(true, true);
+    },
+    onInstallFailed(listener) {
+      installFailureListeners.add(listener);
+      return () => {
+        installFailureListeners.delete(listener);
+      };
     },
   };
 }

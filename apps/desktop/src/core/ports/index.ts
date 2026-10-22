@@ -32,4 +32,4 @@ export type { SecretReadResult, SecretStore } from './secret-store';
 export { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from './settings-store';
 export type { EditorChoice, Settings, SettingsStore } from './settings-store';
 export type { StateStore } from './state-store';
-export type { DownloadedUpdate, UpdateFeed, UpdateManifest } from './update-feed';
+export type { DownloadedUpdate, DownloadOutcome, UpdateFeed, UpdateManifest } from './update-feed';

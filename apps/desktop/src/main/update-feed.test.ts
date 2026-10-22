@@ -100,19 +100,28 @@ describe('electron-updater 업데이트 피드', () => {
     const percents: number[] = [];
 
     /** 받은 결과. */
-    const downloaded = await feed.download((percent) => percents.push(percent));
+    const outcome = await feed.download((percent) => percents.push(percent));
 
     expect(percents).toEqual([12.5, 100]);
-    expect(downloaded.file).toBe('/fake/cache/pending/Stardraft-0.2.0-arm64-mac.zip');
-    expect(downloaded.manifest.version).toBe('0.2.0');
-    expect(downloaded.manifest.files).toEqual(UPDATE_INFO.files);
+    expect(outcome).toEqual({
+      kind: 'downloaded',
+      update: { file: '/fake/cache/pending/Stardraft-0.2.0-arm64-mac.zip', manifest: { version: '0.2.0', files: UPDATE_INFO.files } },
+    });
   });
 
-  it('받지 못하면 그 오류를 그대로 던진다', async () => {
+  it('받은 파일의 sha512가 안내와 달라 electron-updater가 거부하면(ERR_CHECKSUM_MISMATCH) 던지지 않고 sha512 불일치를 돌려준다', async () => {
     const { updater, feed } = setup();
-    updater.downloadError = new Error('sha512 checksum mismatch');
+    // builder-util-runtime의 newError처럼 code를 붙인 오류다.
+    updater.downloadError = Object.assign(new Error('sha512 checksum mismatch, expected AAAA, got BBBB'), { code: 'ERR_CHECKSUM_MISMATCH' });
 
-    await expect(feed.download(() => {})).rejects.toThrow('sha512 checksum mismatch');
+    await expect(feed.download(() => {})).resolves.toEqual({ kind: 'sha512-mismatch' });
+  });
+
+  it('받지 못하면(네트워크 오류, 받다가 끊김) 그 오류를 그대로 던진다', async () => {
+    const { updater, feed } = setup();
+    updater.downloadError = new Error('net::ERR_CONNECTION_RESET');
+
+    await expect(feed.download(() => {})).rejects.toThrow('net::ERR_CONNECTION_RESET');
   });
 
   it('electron-updater가 낸 오류 이벤트는 앱을 멈추지 않고 진단 로그에 남긴다', () => {
@@ -128,9 +137,9 @@ describe('electron-updater 업데이트 피드', () => {
     updater.logger?.info('Checking for update');
     updater.logger?.warn('Cannot download differentially');
 
-    expect(logLines.some((line) => line.includes('"info"') && line.includes('"electron-updater"') && line.includes('Checking for update'))).toBe(true);
-    expect(logLines.some((line) => line.includes('"warn"') && line.includes('"electron-updater"') && line.includes('Cannot download differentially'))).toBe(
-      true,
-    );
+    expect(logLines.some((line) => line.includes('"info"') && line.includes('"update.updater-log"') && line.includes('Checking for update'))).toBe(true);
+    expect(
+      logLines.some((line) => line.includes('"warn"') && line.includes('"update.updater-log"') && line.includes('Cannot download differentially')),
+    ).toBe(true);
   });
 });

@@ -2,19 +2,34 @@ import type { Logger as UpdaterLogger, ProgressInfo, UpdateCheckResult, UpdateDo
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { UpdateFeed, UpdateManifest } from '../core/ports/update-feed';
 
+/** electron-updater가 받은 파일의 sha512가 업데이트 안내와 다를 때 던지는 오류 코드. 이때 받은 파일은 이미 지웠다. */
+const CHECKSUM_MISMATCH_CODE = 'ERR_CHECKSUM_MISMATCH';
+
 /** 어댑터가 쓰는 electron-updater의 부분. 앱에서는 `autoUpdater`를 넘기고, 테스트는 가짜를 넘긴다. */
 export interface ElectronUpdater {
+  /** 새 버전을 찾자마자 받을지 여부. */
   autoDownload: boolean;
+  /** 받은 업데이트를 앱을 끌 때 설치할지 여부. */
   autoInstallOnAppQuit: boolean;
+  /** 차등 다운로드(blockmap으로 바뀐 부분만 받기)를 끌지 여부. */
   disableDifferentialDownload: boolean;
+  /** Windows 웹 설치 파일(설치 중에 패키지를 받는 설치 파일)을 쓰지 않을지 여부. */
   disableWebInstaller: boolean;
+  /** 지금보다 낮은 버전으로 바꾸는 것을 허용할지 여부. */
   allowDowngrade: boolean;
+  /** 사전 릴리스를 받을지 여부. */
   allowPrerelease: boolean;
+  /** electron-updater가 자기 로그를 남길 곳. */
   logger: UpdaterLogger | null;
+  /** 새 버전을 확인한다. 업데이터가 꺼져 있으면(소스 실행) `null`. 확인하지 못하면 던진다. */
   checkForUpdates(): Promise<UpdateCheckResult | null>;
+  /** 마지막 확인에서 찾은 버전을 받는다. 받은 파일의 경로를 돌려주고, 첫 경로가 업데이트 파일이다. 받지 못하면 던진다. */
   downloadUpdate(): Promise<string[]>;
+  /** 받는 동안 받은 비율을 알린다. */
   on(event: 'download-progress', listener: (info: ProgressInfo) => void): unknown;
+  /** 다 받았다. 업데이트 안내에 받은 파일 경로(`downloadedFile`)를 더한 값을 준다. */
   on(event: 'update-downloaded', listener: (event: UpdateDownloadedEvent) => void): unknown;
+  /** 확인·다운로드·설치 중의 오류. 듣는 곳이 없으면 EventEmitter가 던진다. */
   on(event: 'error', listener: (error: Error) => void): unknown;
 }
 
@@ -56,12 +71,16 @@ export function electronUpdateFeed(updater: ElectronUpdater, logger: Logger): Up
       let files: string[];
       try {
         files = await updater.downloadUpdate();
+      } catch (error) {
+        // 끝까지 받았지만 sha512가 안내와 다르다. 받다가 끊긴 것은 네트워크 오류로 오므로 여기에 들지 않는다.
+        if ((error as NodeJS.ErrnoException).code === CHECKSUM_MISMATCH_CODE) return { kind: 'sha512-mismatch' };
+        throw error;
       } finally {
         reportProgress = null;
       }
       // 이번 다운로드가 낸 update-downloaded인지 받은 파일로 확인한다.
       if (!lastDownloaded || lastDownloaded.downloadedFile !== files[0]) throw new Error('update-downloaded 없이 다운로드가 끝났습니다.');
-      return { file: lastDownloaded.downloadedFile, manifest: manifestOf(lastDownloaded) };
+      return { kind: 'downloaded', update: { file: lastDownloaded.downloadedFile, manifest: manifestOf(lastDownloaded) } };
     },
   };
 }
@@ -74,8 +93,8 @@ function manifestOf(info: UpdateInfo): UpdateManifest {
 /** electron-updater의 로그를 진단 로그에 같은 수준으로 남기는 로거. */
 function updaterLogger(logger: Logger): UpdaterLogger {
   return {
-    info: (message: unknown) => logger.info('electron-updater', { message: String(message) }),
-    warn: (message: unknown) => logger.warn('electron-updater', { message: String(message) }),
-    error: (message: unknown) => logger.error('electron-updater', { message: String(message) }),
+    info: (message: unknown) => logger.info('update.updater-log', { message: String(message) }),
+    warn: (message: unknown) => logger.warn('update.updater-log', { message: String(message) }),
+    error: (message: unknown) => logger.error('update.updater-log', { message: String(message) }),
   };
 }

@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { compareVersions } from '../agent/cli-version';
 import type { DownloadedUpdate } from '../ports/update-feed';
 import { computeFileSha512, isSignedByAnyKey, readSignatureList } from './update-signature.mts';
 
@@ -57,13 +58,5 @@ const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 /** `candidate`가 `current`보다 높은 버전인지 본다. 둘 중 하나라도 `MAJOR.MINOR.PATCH`가 아니면 높지 않은 것으로 본다. */
 function isNewerVersion(candidate: string, current: string): boolean {
-  /** 숫자로 나눈 두 버전. */
-  const [next, now] = [candidate, current].map((version) => VERSION_PATTERN.exec(version)?.slice(1).map(Number) ?? null);
-  if (!next || !now) return false;
-  for (let index = 0; index < next.length; index += 1) {
-    /** 이 자리의 차이. */
-    const diff = (next[index] ?? 0) - (now[index] ?? 0);
-    if (diff !== 0) return diff > 0;
-  }
-  return false;
+  return VERSION_PATTERN.test(candidate) && VERSION_PATTERN.test(current) && compareVersions(candidate, current) > 0;
 }

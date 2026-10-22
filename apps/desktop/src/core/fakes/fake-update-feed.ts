@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DownloadedUpdate, UpdateFeed, UpdateManifest } from '../ports/update-feed';
+import type { DownloadOutcome, UpdateFeed, UpdateManifest } from '../ports/update-feed';
 
 /** 가짜 피드에 공개한 Release 하나. */
 export interface FakeUpdateRelease {
@@ -12,7 +12,10 @@ export interface FakeUpdateRelease {
   content: string;
 }
 
-/** 공개한 Release를 돌려주고, 받으면 그 내용을 임시 폴더에 파일로 쓰는 업데이트 피드. 실제 GitHub에는 닿지 않는다. */
+/**
+ * 공개한 Release를 돌려주고, 받으면 그 내용을 임시 폴더에 파일로 쓰는 업데이트 피드. 실제 GitHub에는 닿지 않는다.
+ * 받은 내용의 sha512를 안내와 견주지는 않는다. 앱이 업데이터의 확인에 기대지 않고 직접 다시 계산하는지 보려는 것이다.
+ */
 export class FakeUpdateFeed implements UpdateFeed {
   /** 지금 공개된 최신 Release. `null`이면 지금 버전이 최신이다. */
   latest: FakeUpdateRelease | null = null;
@@ -20,10 +23,14 @@ export class FakeUpdateFeed implements UpdateFeed {
   checkError: Error | null = null;
   /** 다운로드를 실패시킬 오류. 있으면 받을 때마다 던진다. */
   downloadError: Error | null = null;
+  /** 참이면 electron-updater처럼 받은 파일의 sha512가 안내와 다르다며 파일을 남기지 않는다. */
+  sha512Mismatch = false;
   /** 받는 동안 차례로 알릴 진행률. */
   progress: number[] = [];
   /** 확인한 횟수. */
   checkCount = 0;
+  /** 받기 시작한 횟수. 받지 못했거나 sha512가 달라 파일을 남기지 않은 것도 센다. */
+  downloadCount = 0;
   /** 받은 파일의 경로. 받은 순서다. */
   readonly downloads: string[] = [];
   /** 마지막 확인에서 찾은 Release. electron-updater처럼 받을 때는 이것을 받는다. */
@@ -39,17 +46,19 @@ export class FakeUpdateFeed implements UpdateFeed {
     return this.found && structuredClone(this.found.manifest);
   }
 
-  async download(onProgress: (percent: number) => void): Promise<DownloadedUpdate> {
+  async download(onProgress: (percent: number) => void): Promise<DownloadOutcome> {
     /** 받을 Release. */
     const release = this.found;
     if (!release) throw new Error('새 버전을 찾기 전에 받으려 했습니다.');
+    this.downloadCount += 1;
     if (this.downloadError) throw this.downloadError;
 
     for (const percent of this.progress) onProgress(percent);
+    if (this.sha512Mismatch) return { kind: 'sha512-mismatch' };
     /** 받은 파일의 경로. */
     const file = join(this.downloadDir, release.fileName);
     await writeFile(file, release.content);
     this.downloads.push(file);
-    return { file, manifest: structuredClone(release.manifest) };
+    return { kind: 'downloaded', update: { file, manifest: structuredClone(release.manifest) } };
   }
 }

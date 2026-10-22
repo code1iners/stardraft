@@ -2,9 +2,9 @@ import { rm } from 'node:fs/promises';
 import { errorFields, type Logger } from '../logging/logger';
 import type { CancelScheduled, Clock } from '../ports/clock';
 import type { StateStore } from '../ports/state-store';
-import type { DownloadedUpdate, UpdateFeed, UpdateManifest } from '../ports/update-feed';
+import type { DownloadOutcome, UpdateFeed, UpdateManifest } from '../ports/update-feed';
 import type { BlockedLocationReason } from './install-location';
-import { verifyDownloadedUpdate } from './update-verification';
+import { verifyDownloadedUpdate, type UpdateVerificationFailure } from './update-verification';
 
 /** 앱을 켜고 처음 확인하기까지 기다리는 시간(밀리초). */
 const FIRST_CHECK_DELAY_MS = 60_000;
@@ -25,7 +25,7 @@ export type UpdateStatus =
   | { kind: 'downloading'; version: string; percent: number }
   /** 받은 파일의 서명을 확인했다. 사용자가 [다시 시작]을 누르면 설치한다. */
   | { kind: 'ready'; version: string }
-  /** 받은 파일의 서명이 맞지 않아 파일을 지우고 설치하지 않았다. 지금 버전을 계속 쓴다. */
+  /** 받은 파일이 업데이트 안내의 sha512나 서명과 맞지 않아 파일을 지우고 설치하지 않았다. 지금 버전을 계속 쓴다. */
   | { kind: 'signature-failed'; version: string }
   /** 앱이 스스로 바꿀 수 없는 위치라 새 버전을 받지 않았다. 사이트에서 받게 안내한다. */
   | { kind: 'location-blocked'; version: string; reason: BlockedLocationReason };
@@ -35,6 +35,9 @@ export type UpdateStatus =
  * `user`는 설정 "일반"의 [지금 확인], `retry`는 서명 검증 실패 뒤의 [다시 시도]다.
  */
 type CheckTrigger = 'schedule' | 'user' | 'retry';
+
+/** 받은 파일을 설치하지 않는 까닭. 진단 로그에만 남는다. `sha512-mismatch`는 업데이터가 받으며 거부한 것이고, 나머지는 앱의 검증이 거부한 것이다. */
+type RejectionReason = UpdateVerificationFailure | 'sha512-mismatch';
 
 /** 앱 내 업데이트에 필요한 포트와 값. */
 export interface InAppUpdateOptions {
@@ -47,7 +50,7 @@ export interface InAppUpdateOptions {
   /** 앱이 스스로 바꿀 수 없는 위치인지 본다. 바꿀 수 있으면 `null`, 아니면 그 까닭이다. */
   checkLocation: () => Promise<BlockedLocationReason | null>;
   /** 서명 검증에 실패한 버전을 남기는 상태 저장소. */
-  stateStore: Pick<StateStore, 'getSignatureFailedVersion' | 'setSignatureFailedVersion'>;
+  stateStore: Pick<StateStore, 'getSignatureFailedVersions' | 'addSignatureFailedVersion' | 'removeSignatureFailedVersion'>;
   /** 확인 시점을 재는 시계. */
   clock: Clock;
   /** 진단 로그. */
@@ -67,10 +70,10 @@ export class InAppUpdate {
   /** 마지막으로 확인에 성공한 시각(Unix epoch 밀리초). 아직 없으면 `null`. */
   private lastCheckedAt: number | null = null;
   /**
-   * 받은 파일의 서명 검증에 실패한 버전. 이 버전은 [다시 시도]를 누를 때만 다시 받는다. 다시 켠 뒤에도 그렇게 state.db에 남긴다.
-   * 아직 state.db에서 읽지 않았으면 `undefined`다.
+   * 받은 파일의 서명 검증에 실패한 버전들. 이 버전들은 [다시 시도]를 누를 때만 다시 받는다. 다시 켠 뒤에도 그렇게 state.db에 남긴다.
+   * 아직 state.db에서 읽지 않았으면 `null`이다.
    */
-  private signatureFailedVersion: string | null | undefined = undefined;
+  private signatureFailedVersions: Set<string> | null = null;
   /** 상태가 바뀔 때 부를 함수. */
   private readonly listeners = new Set<(status: UpdateStatus) => void>();
 
@@ -130,7 +133,10 @@ export class InAppUpdate {
     await this.run('retry');
   }
 
-  /** 진행 중인 확인과 다운로드가 끝나면 풀린다. 진행 중인 일이 없으면 바로 풀린다. */
+  /**
+   * 진행 중인 확인과 다운로드가 끝나면 풀린다. 진행 중인 일이 없으면 바로 풀린다.
+   * 시계가 시작한 확인은 기다릴 약속을 돌려주지 않으므로, 그 확인이 끝나기를 기다릴 때 쓴다.
+   */
   whenIdle(): Promise<void> {
     return this.inFlight ?? Promise.resolve();
   }
@@ -184,7 +190,7 @@ export class InAppUpdate {
       this.setStatus(before);
       return;
     }
-    if (trigger !== 'retry' && manifest.version === (await this.failedVersion())) {
+    if (trigger !== 'retry' && (await this.failedVersions()).has(manifest.version)) {
       this.options.logger.info('update.failed-version-skipped', { version: manifest.version });
       this.setStatus({ kind: 'signature-failed', version: manifest.version });
       return;
@@ -198,36 +204,52 @@ export class InAppUpdate {
       return;
     }
     this.setStatus({ kind: 'downloading', version: manifest.version, percent: 0 });
-    /** 받은 파일. */
-    let downloaded: DownloadedUpdate;
+    /** 끝까지 받은 결과. */
+    let outcome: DownloadOutcome;
     try {
-      downloaded = await this.options.feed.download((percent) =>
+      outcome = await this.options.feed.download((percent) =>
         this.setStatus({ kind: 'downloading', version: manifest.version, percent: Math.min(100, Math.max(0, Math.floor(percent))) }),
       );
     } catch (error) {
-      // 네트워크 손상은 electron-updater의 sha512 확인에서 먼저 걸린다. 서명 검증 실패와 달리 다음 확인에서 같은 버전을 다시 받는다.
+      // 네트워크 오류나 받다가 끊긴 것이다. 서명 검증 실패와 달리 다음 확인에서 같은 버전을 다시 받는다.
       this.options.logger.warn('update.download-failed', { version: manifest.version, ...errorFields(error) });
       this.setStatus({ kind: 'check-failed', failedAt: this.options.clock.now() });
       return;
     }
+    // 받은 파일이 안내의 sha512와 달라 업데이터가 지웠다. 받은 파일이 안내와 다르므로 서명 검증 실패와 같다.
+    if (outcome.kind === 'sha512-mismatch') {
+      await this.reject(manifest.version, 'sha512-mismatch', null);
+      return;
+    }
+    /** 받은 파일. */
+    const downloaded = outcome.update;
     /** 받은 버전. */
     const version = downloaded.manifest.version;
     /** 검증이 실패한 까닭. 통과하면 `null`. */
     const failure = await verifyDownloadedUpdate(downloaded, this.options.currentVersion, this.options.publicKeys);
     if (failure) {
-      this.options.logger.warn('update.signature-failed', { version, reason: failure });
-      // 설치하지 않을 파일이 남아 있지 않게 지운다. 지우지 못해도 설치 준비됨이 아니므로 설치되지 않는다.
-      await rm(downloaded.file, { force: true }).catch((error: unknown) =>
-        this.options.logger.error('update.file-delete-failed', { version, ...errorFields(error) }),
-      );
-      await this.rememberFailedVersion(version);
-      this.setStatus({ kind: 'signature-failed', version });
+      await this.reject(version, failure, downloaded.file);
       return;
     }
     // [다시 시도]로 받은 실패한 버전이 통과했으면 더는 실패한 버전이 아니다.
-    if ((await this.failedVersion()) === version) await this.rememberFailedVersion(null);
+    if ((await this.failedVersions()).has(version)) await this.forgetFailedVersion(version);
     this.options.logger.info('update.ready', { version });
     this.setStatus({ kind: 'ready', version });
+  }
+
+  /**
+   * 받은 업데이트 파일을 설치하지 않는다. 남은 파일이 있으면 지우고, 이 버전을 서명 검증에 실패한 버전으로 남긴다.
+   * 지우지 못해도 설치 준비됨이 아니므로 설치되지 않는다.
+   */
+  private async reject(version: string, reason: RejectionReason, file: string | null): Promise<void> {
+    this.options.logger.warn('update.signature-failed', { version, reason });
+    if (file) {
+      await rm(file, { force: true }).catch((error: unknown) =>
+        this.options.logger.error('update.file-delete-failed', { version, ...errorFields(error) }),
+      );
+    }
+    await this.rememberFailedVersion(version);
+    this.setStatus({ kind: 'signature-failed', version });
   }
 
   /** 앱이 스스로 바꿀 수 없는 위치의 까닭. 위치를 보지 못하면 쓸 수 있다고 확인되지 않은 것이므로 권한이 없는 것으로 본다. */
@@ -247,24 +269,36 @@ export class InAppUpdate {
     for (const listener of this.listeners) listener(status);
   }
 
-  /** 서명 검증에 실패한 버전. 처음 한 번 state.db에서 읽는다. 읽지 못하면 없는 것으로 본다. */
-  private async failedVersion(): Promise<string | null> {
-    if (this.signatureFailedVersion === undefined) {
+  /** 서명 검증에 실패한 버전들. 처음 한 번 state.db에서 읽는다. 읽지 못하면 없는 것으로 본다. */
+  private async failedVersions(): Promise<Set<string>> {
+    if (!this.signatureFailedVersions) {
+      /** state.db에서 읽은 버전. */
+      let versions: string[] = [];
       try {
-        this.signatureFailedVersion = await this.options.stateStore.getSignatureFailedVersion();
+        versions = await this.options.stateStore.getSignatureFailedVersions();
       } catch (error) {
         this.options.logger.error('update.failed-version-read-failed', errorFields(error));
-        this.signatureFailedVersion = null;
       }
+      this.signatureFailedVersions = new Set(versions);
     }
-    return this.signatureFailedVersion;
+    return this.signatureFailedVersions;
   }
 
-  /** 서명 검증에 실패한 버전을 바꾸고 state.db에 남긴다. 남기지 못해도 이번 실행에서는 기억한다. */
-  private async rememberFailedVersion(version: string | null): Promise<void> {
-    this.signatureFailedVersion = version;
+  /** 서명 검증에 실패한 버전을 더하고 state.db에 남긴다. 남기지 못해도 이번 실행에서는 기억한다. */
+  private async rememberFailedVersion(version: string): Promise<void> {
+    (await this.failedVersions()).add(version);
     try {
-      await this.options.stateStore.setSignatureFailedVersion(version);
+      await this.options.stateStore.addSignatureFailedVersion(version);
+    } catch (error) {
+      this.options.logger.error('update.failed-version-save-failed', errorFields(error));
+    }
+  }
+
+  /** 서명 검증에 실패한 버전에서 빼고 state.db에서도 지운다. 지우지 못해도 이번 실행에서는 잊는다. */
+  private async forgetFailedVersion(version: string): Promise<void> {
+    (await this.failedVersions()).delete(version);
+    try {
+      await this.options.stateStore.removeSignatureFailedVersion(version);
     } catch (error) {
       this.options.logger.error('update.failed-version-save-failed', errorFields(error));
     }

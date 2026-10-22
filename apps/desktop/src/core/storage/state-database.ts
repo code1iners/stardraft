@@ -229,21 +229,21 @@ export const STATE_MIGRATIONS: readonly string[] = [
     PRIMARY KEY (bundle_id, post_id, remark_id, reply_id)
   ) STRICT;
   `,
-  // 17: 앱 내 업데이트. 받은 파일의 서명 검증에 실패한 버전을 두어, 앱을 다시 켠 뒤에도 같은 버전을 자동으로 다시 받지 않는다.
+  // 17: 앱 내 업데이트. 받은 파일의 서명 검증에 실패한 버전마다 한 줄을 두어, 앱을 다시 켠 뒤에도 그 버전들을 자동으로 다시 받지 않는다.
+  // 하나만 두면 더 새 버전마저 실패한 뒤 그 버전을 사전 릴리스로 내렸을 때 앞 버전을 다시 받는다.
   // 이미 있던 앱은 서명 검증에 실패한 적이 없다(앱 내 업데이트가 이 형식과 함께 생긴다).
   `
-  CREATE TABLE app_update (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    signature_failed_version TEXT
+  CREATE TABLE update_signature_failure (
+    version TEXT PRIMARY KEY
   ) STRICT;
   `,
 ];
 
 /**
  * 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 계정과 상관없는 앱의 기록이다.
- * 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록과 앱 내 업데이트 기록이다.
+ * 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록과, 서명 검증에 실패한 업데이트 버전이다.
  */
-const TABLES_KEPT_ON_RESET: ReadonlySet<string> = new Set(['app_meta', 'app_update']);
+const TABLES_KEPT_ON_RESET: ReadonlySet<string> = new Set(['app_meta', 'update_signature_failure']);
 
 /** 열기 전에 읽은 `state.db`의 형식. */
 export interface StateDatabaseInfo {
@@ -692,20 +692,18 @@ export class SqliteStateStore implements StateStore {
     })();
   }
 
-  async getSignatureFailedVersion(): Promise<string | null> {
-    /** 앱 내 업데이트 기록 한 줄. */
-    const row = this.db.prepare('SELECT signature_failed_version FROM app_update WHERE id = 1').get() as
-      | { signature_failed_version: string | null }
-      | undefined;
-    return row?.signature_failed_version ?? null;
+  async getSignatureFailedVersions(): Promise<string[]> {
+    /** 서명 검증에 실패한 버전마다 한 줄. */
+    const rows = this.db.prepare('SELECT version FROM update_signature_failure ORDER BY version').all() as { version: string }[];
+    return rows.map((row) => row.version);
   }
 
-  async setSignatureFailedVersion(version: string | null): Promise<void> {
-    this.db
-      .prepare(
-        'INSERT INTO app_update (id, signature_failed_version) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET signature_failed_version = excluded.signature_failed_version',
-      )
-      .run(version);
+  async addSignatureFailedVersion(version: string): Promise<void> {
+    this.db.prepare('INSERT INTO update_signature_failure (version) VALUES (?) ON CONFLICT (version) DO NOTHING').run(version);
+  }
+
+  async removeSignatureFailedVersion(version: string): Promise<void> {
+    this.db.prepare('DELETE FROM update_signature_failure WHERE version = ?').run(version);
   }
 
   /** 기준점 한 줄을 넣거나 바꾼다. */

@@ -135,6 +135,7 @@ describe('받은 업데이트 파일의 서명 검증', () => {
       '파일을 바꿔치고 안내의 sha512도 고쳤으면(sha512 변조)',
       () => signedRelease('0.2.0', { content: '바꿔치기한 zip', signedAs: { sha512: sha512Of('가짜 업데이트 zip 0.2.0') } }),
     ],
+    // 업데이터의 sha512 확인을 지나왔더라도 앱이 받은 파일로 직접 다시 계산해 거른다.
     ['안내와 서명은 그대로인데 받은 파일의 내용이 다르면(sha512 변조)', () => signedRelease('0.2.0', { downloadedContent: '바꿔치기한 zip' })],
     ['서명을 한 글자 바꿨으면(서명 변조)', () => signedRelease('0.2.0', { signaturesField: validSignaturesOf('0.2.0').map(tamper) })],
     ['앱의 공개 키 목록에 없는 키로 서명했으면(서명 변조)', () => signedRelease('0.2.0', { signingKeys: [OTHER_KEY] })],
@@ -157,6 +158,19 @@ describe('받은 업데이트 파일의 서명 검증', () => {
     expect(context.update.state()).toEqual({ kind: 'signature-failed', version: release.manifest.version });
     expect(context.feed.downloads).toHaveLength(1);
     expect(context.feed.downloads.filter((file) => existsSync(file))).toEqual([]);
+  });
+
+  it('업데이터가 받은 파일의 sha512가 업데이트 안내와 달라 거부하면, 서명 검증 실패가 되고 같은 버전은 자동으로 다시 받지 않는다', async () => {
+    const context = setup(signedRelease('0.2.0'));
+    context.feed.sha512Mismatch = true;
+
+    await startAndCheck(context);
+    expect(context.update.state()).toEqual({ kind: 'signature-failed', version: '0.2.0' });
+
+    context.clock.advance(4 * HOUR_MS);
+    await context.update.whenIdle();
+    expect(context.feed.downloadCount).toBe(1);
+    expect(context.update.state()).toEqual({ kind: 'signature-failed', version: '0.2.0' });
   });
 
   it('안내에 파일 항목이 여럿이면 받은 파일의 항목에 든 서명으로 검증한다', async () => {
@@ -336,6 +350,27 @@ describe('서명 검증 실패 뒤', () => {
     expect(update.state()).toEqual({ kind: 'ready', version: '0.3.0' });
   });
 
+  it('서명 검증에 실패한 버전은 모두 기억해, 더 새 버전마저 실패한 뒤 그 버전을 사전 릴리스로 내려도 앞 버전을 다시 받지 않는다', async () => {
+    const { clock, feed, update, stateStore } = await failedOnce();
+    feed.latest = signedRelease('0.3.0', { signingKeys: [OTHER_KEY] });
+    clock.advance(4 * HOUR_MS);
+    await update.whenIdle();
+    expect(update.state()).toEqual({ kind: 'signature-failed', version: '0.3.0' });
+
+    // 잘못 나간 0.3.0을 사전 릴리스로 내려 최신이 다시 0.2.0이다.
+    feed.latest = badRelease();
+    clock.advance(4 * HOUR_MS);
+    await update.whenIdle();
+    expect(feed.downloads).toHaveLength(2);
+    expect(update.state()).toEqual({ kind: 'signature-failed', version: '0.2.0' });
+
+    /** 같은 state.db로 다시 켠 앱. 최신은 다시 0.3.0이다. */
+    const restarted = setup(signedRelease('0.3.0', { signingKeys: [OTHER_KEY] }), stateStore);
+    await startAndCheck(restarted);
+    expect(restarted.feed.downloads).toEqual([]);
+    expect(restarted.update.state()).toEqual({ kind: 'signature-failed', version: '0.3.0' });
+  });
+
   it('[다시 시도]를 누르면 같은 버전을 다시 받아 다시 검증한다', async () => {
     const { feed, update } = await failedOnce();
 
@@ -409,9 +444,9 @@ describe('확인·다운로드 실패', () => {
     expect(context.update.state()).toEqual({ kind: 'ready', version: '0.2.0' });
   });
 
-  it('받지 못하면(네트워크 오류, electron-updater의 sha512 불일치) 확인 실패가 되고, 다음 확인에서 같은 버전을 다시 받는다', async () => {
+  it('받지 못하면(네트워크 오류, 받다가 끊김) 확인 실패가 되고, 다음 확인에서 같은 버전을 다시 받는다', async () => {
     const context = setup(signedRelease('0.2.0'));
-    context.feed.downloadError = new Error('sha512 checksum mismatch');
+    context.feed.downloadError = new Error('net::ERR_CONNECTION_RESET');
 
     await startAndCheck(context);
     expect(context.update.state()).toEqual({ kind: 'check-failed', failedAt: NOW + MINUTE_MS });

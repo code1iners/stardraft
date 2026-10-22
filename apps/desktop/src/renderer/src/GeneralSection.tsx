@@ -1,6 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import type { AppCommand, AppFolder, AppSnapshot, EditorSnapshot, UpdateSnapshot } from '../../shared/ipc';
-import { updateStatusText } from './update-text';
+import { updateFieldView, type UpdateFieldButton } from './update-text';
 
 /** 선택 상자에서 "처음 열 때 고르기"의 값. */
 const UNCHOSEN_VALUE = '';
@@ -155,16 +155,21 @@ interface UpdateFieldProps {
 /** 확인 실패의 "n분 전"을 새로 그리는 간격(밀리초). */
 const ELAPSED_TICK_MS = 60_000;
 
-/**
- * 앱 내 업데이트 칸. 상태 문구와 상태마다의 버튼 하나를 보인다. 업데이트를 끄는 설정은 없다.
- * [지금 확인]은 아직 확인하지 않았거나 최신이거나 확인에 실패했을 때, [다시 시도]는 서명 검증 실패일 때,
- * [사이트에서 받기]는 앱이 스스로 바꿀 수 없는 위치일 때 둔다.
- */
+/** 업데이트 칸의 버튼마다 이름과 보낼 명령. 사이트 주소는 main이 정한다. */
+const UPDATE_BUTTONS: Record<UpdateFieldButton, { label: string; command: AppCommand }> = {
+  'check-now': { label: '지금 확인', command: { type: 'check-for-update' } },
+  retry: { label: '다시 시도', command: { type: 'retry-update' } },
+  'open-site': { label: '사이트에서 받기', command: { type: 'open-site', section: 'update' } },
+};
+
+/** 앱 내 업데이트 칸. 상태 문구와 상태마다의 버튼 하나를 보인다. 업데이트를 끄는 설정은 없다. */
 export function UpdateField({ update }: UpdateFieldProps) {
   /** 지금 시각. 확인 실패의 "n분 전"을 새로 그리려고 그동안 1분마다 다시 읽는다. */
   const [now, setNow] = useState(() => Date.now());
+  /** 지금 상태의 문구와 버튼. 소스 실행이면 `null`. */
+  const view = update && updateFieldView(update, now);
   /** 지난 시간을 보이는 상태인지 여부. */
-  const showsElapsed = update?.kind === 'check-failed';
+  const showsElapsed = view?.showsElapsed ?? false;
 
   useEffect(
     function tickElapsedTime() {
@@ -176,42 +181,26 @@ export function UpdateField({ update }: UpdateFieldProps) {
     [showsElapsed],
   );
 
-  /** 상태마다 둘 버튼. 없으면 `null`. */
-  const action = update && updateActionOf(update);
+  /** 둘 버튼. 없으면 `null`. */
+  const button = view?.button ? UPDATE_BUTTONS[view.button] : null;
   return (
     <div className="field">
       <span className="field-label">업데이트</span>
-      {update === null ? (
+      {view === null ? (
         <p className="update-status muted">개발 중 실행에서는 업데이트를 확인하지 않습니다.</p>
       ) : (
         <>
-          <p className={update.kind === 'signature-failed' ? 'update-status danger-text' : 'update-status'}>{updateStatusText(update, now)}</p>
-          {update.kind === 'downloading' && <progress className="update-progress" aria-label="받은 비율" max={100} value={update.percent} />}
-          {action && (
-            <button type="button" className="btn update-action" onClick={() => void window.stardraft.send(action.command)}>
-              {action.label}
+          <p className={view.danger ? 'update-status danger-text' : 'update-status'}>{view.text}</p>
+          {view.progress !== null && <progress className="update-progress" aria-label="받은 비율" max={100} value={view.progress} />}
+          {button && (
+            <button type="button" className="btn update-action" onClick={() => void window.stardraft.send(button.command)}>
+              {button.label}
             </button>
           )}
         </>
       )}
     </div>
   );
-}
-
-/** 업데이트 상태마다 둘 버튼의 이름과 보낼 명령. 누를 것이 없는 상태면 `null`. */
-function updateActionOf(update: UpdateSnapshot): { label: string; command: AppCommand } | null {
-  switch (update.kind) {
-    case 'idle':
-    case 'up-to-date':
-    case 'check-failed':
-      return { label: '지금 확인', command: { type: 'check-for-update' } };
-    case 'signature-failed':
-      return { label: '다시 시도', command: { type: 'retry-update' } };
-    case 'location-blocked':
-      return { label: '사이트에서 받기', command: { type: 'open-site', section: 'update' } };
-    default:
-      return null;
-  }
 }
 
 /**

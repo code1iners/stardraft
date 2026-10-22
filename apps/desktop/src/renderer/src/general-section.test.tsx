@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, EditorSnapshot, UpdateSnapshot } from '../../shared/ipc';
 import { EditorField, NotificationField, UpdateField } from './GeneralSection';
 
@@ -66,15 +66,27 @@ function updateHtmlOf(update: UpdateSnapshot | null): string {
 }
 
 describe('설정 "일반"의 업데이트', () => {
+  /** 화면을 그리는 시각. 이 PC의 시간대로 2026-10-22 13:00이다. 확인 실패의 지난 시간을 이 시각으로 센다. */
+  const NOW = new Date(2026, 9, 22, 13, 0).getTime();
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('최신 버전이거나 확인에 실패했으면 상태 문구와 [지금 확인]을 보인다', () => {
     /** 최신 버전일 때. */
-    const upToDate = updateHtmlOf({ kind: 'up-to-date', checkedAt: Date.now() });
-    /** 확인에 실패했을 때. */
-    const failed = updateHtmlOf({ kind: 'check-failed', failedAt: Date.now() });
+    const upToDate = updateHtmlOf({ kind: 'up-to-date', checkedAt: new Date(2026, 9, 22, 10, 20).getTime() });
+    /** 3시간 전에 확인에 실패했을 때. */
+    const failed = updateHtmlOf({ kind: 'check-failed', failedAt: NOW - 3 * 60 * 60_000 });
 
-    expect(upToDate).toContain('최신 버전입니다 · 마지막 확인');
+    expect(upToDate).toContain('최신 버전입니다 · 마지막 확인 오전 10:20');
     expect(upToDate).toContain('>지금 확인</button>');
-    expect(failed).toContain('마지막 확인 실패 · 방금');
+    expect(failed).toContain('마지막 확인 실패 · 3시간 전');
     expect(failed).toContain('>지금 확인</button>');
   });
 

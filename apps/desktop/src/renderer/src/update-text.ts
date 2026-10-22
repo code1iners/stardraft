@@ -13,26 +13,51 @@ const BLOCKED_LOCATION_TEXT: Record<BlockedLocationReasonSnapshot, string> = {
   'no-permission': '이 계정은 Stardraft를 바꿀 권한이 없습니다',
 };
 
-/** 설정 "일반"의 업데이트 칸에 보일 상태 문구. `now`(Unix epoch 밀리초)는 "3시간 전"처럼 지난 시간을 셀 지금 시각이다. */
-export function updateStatusText(update: UpdateSnapshot, now: number): string {
+/** 설정 "일반"의 업데이트 칸에 둘 수 있는 버튼. [지금 확인], [다시 시도], [사이트에서 받기]다. */
+export type UpdateFieldButton = 'check-now' | 'retry' | 'open-site';
+
+/** 설정 "일반"의 업데이트 칸에 보일 모습. */
+export interface UpdateFieldView {
+  /** 상태 문구. */
+  text: string;
+  /** 문구를 위험 색으로 보일지 여부. 서명 검증 실패만 그렇다. */
+  danger: boolean;
+  /** 받는 중이면 받은 비율(0~100)이고 진행 막대로 보인다. 받는 중이 아니면 `null`. */
+  progress: number | null;
+  /** 상태마다 둘 버튼 하나. 누를 것이 없으면 `null`. */
+  button: UpdateFieldButton | null;
+  /** 문구가 "3시간 전"처럼 지난 시간을 보여 지금 시각이 흐르면 새로 그려야 하는지 여부. */
+  showsElapsed: boolean;
+}
+
+/**
+ * 설정 "일반"의 업데이트 칸에 보일 문구와 버튼. `now`(Unix epoch 밀리초)는 "3시간 전"처럼 지난 시간을 셀 지금 시각이다.
+ * 업데이트를 끄는 설정은 없으므로, 누를 것은 상태마다 하나뿐이다.
+ */
+export function updateFieldView(update: UpdateSnapshot, now: number): UpdateFieldView {
   switch (update.kind) {
     case 'idle':
-      return '아직 확인하지 않았습니다';
+      return plain('아직 확인하지 않았습니다', 'check-now');
     case 'checking':
-      return '확인 중…';
+      return plain('확인 중…', null);
     case 'up-to-date':
-      return `최신 버전입니다 · 마지막 확인 ${formatTime(update.checkedAt, now)}`;
+      return plain(`최신 버전입니다 · 마지막 확인 ${formatTime(update.checkedAt, now)}`, 'check-now');
     case 'check-failed':
-      return `마지막 확인 실패 · ${elapsedText(update.failedAt, now)}`;
+      return { ...plain(`마지막 확인 실패 · ${elapsedText(update.failedAt, now)}`, 'check-now'), showsElapsed: true };
     case 'downloading':
-      return `${update.version} 받는 중… ${update.percent}%`;
+      return { ...plain(`${update.version} 받는 중… ${update.percent}%`, null), progress: update.percent };
     case 'ready':
-      return `새 버전 ${update.version}${subjectParticle(update.version)} 준비됐습니다`;
+      return plain(`새 버전 ${update.version}${subjectParticle(update.version)} 준비됐습니다`, null);
     case 'signature-failed':
-      return SIGNATURE_FAILED_TEXT;
+      return { ...plain(SIGNATURE_FAILED_TEXT, 'retry'), danger: true };
     case 'location-blocked':
-      return `새 버전 ${update.version} · ${BLOCKED_LOCATION_TEXT[update.reason]}`;
+      return plain(`새 버전 ${update.version} · ${BLOCKED_LOCATION_TEXT[update.reason]}`, 'open-site');
   }
+}
+
+/** 위험 색도 진행 막대도 없고 지난 시간도 보이지 않는 모습. */
+function plain(text: string, button: UpdateFieldButton | null): UpdateFieldView {
+  return { text, danger: false, progress: null, button, showsElapsed: false };
 }
 
 /** `at`부터 `now`까지 지난 시간을 "방금", "n분 전", "n시간 전", "n일 전"으로 보인다. */

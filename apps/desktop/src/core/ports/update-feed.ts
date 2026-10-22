@@ -22,7 +22,13 @@ export type DownloadOutcome =
   | { kind: 'sha512-mismatch' };
 
 /**
- * 업데이트 피드 포트. 공개 Release에서 새 버전을 찾고 그 업데이트 파일을 받는다.
+ * 앱 안에서 설치하지 못한 까닭. `rejected`는 Squirrel.Mac이 새 번들의 코드 서명을 거부한 것(`did not pass validation`)이라 다시 시도해도 소용이 없고,
+ * `failed`는 그 밖의 설치 오류다.
+ */
+export type InstallFailure = 'rejected' | 'failed';
+
+/**
+ * 업데이트 피드 포트. 공개 Release에서 새 버전을 찾고 그 업데이트 파일을 받으며, 받아 둔 업데이트를 설치한다.
  * 앱에서는 electron-updater의 `github` provider가 맡고, 테스트는 가짜 피드를 쓴다.
  */
 export interface UpdateFeed {
@@ -33,4 +39,11 @@ export interface UpdateFeed {
    * 끝까지 받으면 그 결과를 돌려준다. 받지 못하면(네트워크 오류, 받다가 끊김 등) 던진다.
    */
   download(onProgress: (percent: number) => void): Promise<DownloadOutcome>;
+  /**
+   * 마지막으로 받아 서명을 확인한 업데이트를 설치하며 앱을 끄고 새 버전으로 다시 켠다. 설치 준비됨일 때만 부른다.
+   * 앱 안에서 설치하지 못하면 앱은 꺼지지 않고 `onInstallFailed`에 둔 함수가 불린다.
+   */
+  install(): void;
+  /** 앱 안에서 설치하지 못할 때마다 `listener`를 그 까닭으로 부른다. 돌려준 함수를 부르면 그만 부른다. */
+  onInstallFailed(listener: (failure: InstallFailure) => void): () => void;
 }

@@ -6,6 +6,7 @@ const SITE_URL = 'https://stardraft.squadify.app/';
 /** 섹션마다의 앵커(요소 id). 사이트는 한 페이지 문서라 섹션을 앵커로 연다. 사이트도 같은 id를 둔다. */
 const SECTION_ANCHORS: Record<SiteSection, string> = {
   update: 'update',
+  changelog: 'changelog',
 };
 
 /** 다운로드 사이트 섹션의 주소. */

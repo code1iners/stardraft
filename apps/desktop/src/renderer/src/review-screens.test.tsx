@@ -114,7 +114,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     review: { bundles, sections: SECTIONS, repoPicker: null },
     trial: { canStart: true, bundleId: null, picker: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
-    update: { kind: 'idle' },
+    update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
     ...overrides,
   };
 }
@@ -225,6 +225,78 @@ describe('작은 창: 멘션 묶음', () => {
 
     expect(text).toContain('아직 멘션이 없습니다.');
     expect(text).toContain('펼쳐 보기');
+  });
+});
+
+describe('작은 창: 앱 내 업데이트', () => {
+  /** 업데이트 화면 상태. 주지 않은 것은 업데이트 직후도 아니고 확인 화면도 없다. */
+  const updateState = (overrides: Partial<NonNullable<AppSnapshot['update']>>): AppSnapshot['update'] => ({
+    status: { kind: 'idle' },
+    justUpdated: null,
+    restartConfirm: null,
+    dismissedBanners: [],
+    ...overrides,
+  });
+
+  it('설치 준비됨이면 맨 위 띠에 "새 버전 0.2.0이 준비됐습니다"와 [다시 시작] [변경 내역]을 묶음 위에 보인다', () => {
+    const html = renderToStaticMarkup(
+      <PopoverContent snapshot={snapshot([bundle(1)], { update: updateState({ status: { kind: 'ready', version: '0.2.0' } }) })} />,
+    );
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+    expect(html).toContain('class="update-banner"');
+    expect(text).toContain('새 버전 0.2.0이 준비됐습니다 다시 시작 변경 내역');
+    expect(text.indexOf('새 버전 0.2.0이 준비됐습니다')).toBeLessThan(text.indexOf('1 / 1'));
+  });
+
+  it('띠 자리는 하나라 전역 문제가 있으면 전역 문제 띠만 보이고 업데이트 띠는 미룬다', () => {
+    const html = renderToStaticMarkup(
+      <PopoverContent
+        snapshot={snapshot([bundle(1)], {
+          globalProblem: { cause: 'flow-key', reason: 'rejected' },
+          update: updateState({ status: { kind: 'ready', version: '0.2.0' } }),
+        })}
+      />,
+    );
+
+    expect(html).toContain('Flow가 키를 거부했습니다.');
+    expect(html).not.toContain('새 버전 0.2.0이 준비됐습니다');
+  });
+
+  it('서명 검증 실패 띠를 닫았으면 띠를 보이지 않는다', () => {
+    const text = textOf(
+      <PopoverContent
+        snapshot={snapshot([bundle(1)], {
+          update: updateState({ status: { kind: 'signature-failed', version: '0.2.0' }, dismissedBanners: ['signature-failed:0.2.0'] }),
+        })}
+      />,
+    );
+
+    expect(text).not.toContain('서명이 맞지 않아');
+  });
+
+  it('macOS 다시 시작 확인 화면은 제목, 키체인 안내, "항상 허용"을 강조한 예시 화면, [다시 시작] [나중에]를 묶음 대신 보인다', () => {
+    const html = renderToStaticMarkup(
+      <PopoverContent
+        snapshot={snapshot([bundle(1)], {
+          update: updateState({ status: { kind: 'ready', version: '0.2.0' }, restartConfirm: '0.2.0' }),
+        })}
+      />,
+    );
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/\s+/g, ' ');
+
+    expect(text).toContain('0.2.0으로 다시 시작합니다');
+    expect(text).toContain(
+      "다시 켜지면 macOS가 'Stardraft Safe Storage' 사용을 묻습니다. Mac 로그인 암호를 넣고 '항상 허용'을 누르세요.",
+    );
+    expect(text).toContain("관리자 권한을 주는 창이 아닙니다. '허용'만 누르면 다음에 또 묻습니다.");
+    expect(text).toContain('예시 화면 · 실제 창이 아닙니다');
+    expect(html).toContain('class="example-frame"');
+    expect(html).toMatch(/class="keychain-btn emphasized"[^>]*>항상 허용</);
+    expect(text).toMatch(/다시 시작 나중에\s*$/);
+    expect(text).not.toContain('새 버전 0.2.0이 준비됐습니다');
+    expect(text).not.toContain('1 / 1');
+    expect(text).not.toContain('다시 보지 않기');
   });
 });
 

@@ -10,6 +10,7 @@ import {
   RECIPIENT_NAME_MAX_LENGTH,
   REGENERATION_TEXT_MAX_LENGTH,
   SECRET_PATTERN_MAX_LENGTH,
+  UPDATE_BANNER_MAX_LENGTH,
   WORK_FOLDER_PATH_MAX_LENGTH,
 } from './ipc';
 
@@ -330,6 +331,27 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'open-site', section: 'update', url: 'https://example.test/' })).toEqual({ type: 'open-site', section: 'update' });
     expect(parseAppCommand({ type: 'open-site', section: 'https://example.test/' })).toBeNull();
     expect(parseAppCommand({ type: 'open-site' })).toBeNull();
+    expect(parseAppCommand({ type: 'open-site', section: 'changelog' })).toEqual({ type: 'open-site', section: 'changelog' });
+  });
+
+  it('다시 시작 명령들은 값 없이 받고, 띠 닫기는 상태와 버전으로 된 띠 이름만 받는다', () => {
+    for (const type of [
+      'restart-to-update',
+      'confirm-update-restart',
+      'cancel-update-restart-confirm',
+      'restart-update-now',
+      'cancel-update-restart',
+      'retry-update-install',
+    ] as const) {
+      expect(parseAppCommand({ type, version: '0.2.0' })).toEqual({ type });
+    }
+    expect(parseAppCommand({ type: 'dismiss-update-banner', banner: 'signature-failed:0.2.0' })).toEqual({
+      type: 'dismiss-update-banner',
+      banner: 'signature-failed:0.2.0',
+    });
+    expect(parseAppCommand({ type: 'dismiss-update-banner', banner: 'x'.repeat(UPDATE_BANNER_MAX_LENGTH + 1) })).toBeNull();
+    expect(parseAppCommand({ type: 'dismiss-update-banner', banner: '<script>' })).toBeNull();
+    expect(parseAppCommand({ type: 'dismiss-update-banner' })).toBeNull();
   });
 
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {

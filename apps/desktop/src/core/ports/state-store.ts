@@ -1,6 +1,7 @@
 import type { MentionBundle, MinimalRecord, UnsavedBundle } from '../bundles/mention-bundle';
 import type { MentionLocation } from '../detection/mention';
 import type { QueuedDraft } from '../drafts/draft';
+import type { UpdateAttempt } from '../update/update-restart';
 import type { FlowEmployee } from './flow-api';
 
 /**
@@ -66,4 +67,13 @@ export interface StateStore {
   addSignatureFailedVersion(version: string): Promise<void>;
   /** 서명 검증에 실패한 업데이트 버전에서 뺀다. [다시 시도]로 받은 그 버전이 검증을 통과했을 때 쓴다. */
   removeSignatureFailedVersion(version: string): Promise<void>;
+  /**
+   * 마지막 "업데이트 시도". 다시 시작하기 직전에 남기고, 다시 켰을 때 버전을 견줘 설치 실패인지 본 뒤 지운다. 없으면 `null`.
+   * 계정과 상관없는 앱의 기록이라 다른 계정으로 처음부터 시작해도 남는다.
+   */
+  getUpdateAttempt(): Promise<UpdateAttempt | null>;
+  /** "업데이트 시도"를 남긴다. 앞서 남긴 것은 바꾼다. */
+  setUpdateAttempt(attempt: UpdateAttempt): Promise<void>;
+  /** "업데이트 시도"를 지운다. */
+  clearUpdateAttempt(): Promise<void>;
 }

@@ -36,6 +36,8 @@ class FakeElectronUpdater extends EventEmitter implements ElectronUpdater {
   progress: number[] = [];
   /** 받기를 실패시킬 오류. */
   downloadError: Error | null = null;
+  /** `quitAndInstall`에 넘긴 인수. 부른 순서다. */
+  readonly installs: [boolean | undefined, boolean | undefined][] = [];
 
   async checkForUpdates(): Promise<UpdateCheckResult | null> {
     return this.checkResult;
@@ -48,6 +50,10 @@ class FakeElectronUpdater extends EventEmitter implements ElectronUpdater {
     const event: UpdateDownloadedEvent = { ...UPDATE_INFO, downloadedFile: '/fake/cache/pending/Stardraft-0.2.0-arm64-mac.zip' };
     this.emit('update-downloaded', event);
     return [event.downloadedFile];
+  }
+
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void {
+    this.installs.push([isSilent, isForceRunAfter]);
   }
 }
 
@@ -141,5 +147,31 @@ describe('electron-updater 업데이트 피드', () => {
     expect(
       logLines.some((line) => line.includes('"warn"') && line.includes('"update.updater-log"') && line.includes('Cannot download differentially')),
     ).toBe(true);
+  });
+
+  it('설치는 Windows에서 창 없이 설치하고 다시 켜지도록 quitAndInstall(true, true)로 맡긴다', () => {
+    const { updater, feed } = setup();
+
+    feed.install();
+
+    expect(updater.installs).toEqual([[true, true]]);
+  });
+
+  it('설치를 맡긴 뒤 Squirrel.Mac이 새 번들의 서명을 거부하면 거부로, 다른 오류는 설치 실패로 알린다. 설치를 맡기기 전의 오류는 알리지 않는다', () => {
+    const { updater, feed } = setup();
+    /** 알린 실패. */
+    const failures: string[] = [];
+    feed.onInstallFailed((failure) => failures.push(failure));
+
+    updater.emit('error', new Error('net::ERR_INTERNET_DISCONNECTED'));
+    feed.install();
+    updater.emit(
+      'error',
+      new Error('Code signature at URL file:///Users/me/Library/Caches/app.squadify.stardraft.ShipIt/update.x/Stardraft.app/ did not pass validation: 코드가 지정된 코드 요구 사항을 충족시키는데 실패함'),
+    );
+    feed.install();
+    updater.emit('error', new Error('ShipIt 실행 실패'));
+
+    expect(failures).toEqual(['rejected', 'failed']);
   });
 });

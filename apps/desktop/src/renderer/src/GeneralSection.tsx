@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
-import type { AppCommand, AppFolder, AppSnapshot, EditorSnapshot, UpdateSnapshot } from '../../shared/ipc';
-import { updateFieldView, type UpdateFieldButton } from './update-text';
+import type { AppFolder, AppSnapshot, EditorSnapshot, UpdateSnapshot } from '../../shared/ipc';
+import { UPDATE_BUTTONS } from './UpdatePrompts';
+import { updateFieldView } from './update-text';
 
 /** 선택 상자에서 "처음 열 때 고르기"의 값. */
 const UNCHOSEN_VALUE = '';
@@ -155,14 +156,7 @@ interface UpdateFieldProps {
 /** 확인 실패의 "n분 전"을 새로 그리는 간격(밀리초). */
 const ELAPSED_TICK_MS = 60_000;
 
-/** 업데이트 칸의 버튼마다 이름과 보낼 명령. 사이트 주소는 main이 정한다. */
-const UPDATE_BUTTONS: Record<UpdateFieldButton, { label: string; command: AppCommand }> = {
-  'check-now': { label: '지금 확인', command: { type: 'check-for-update' } },
-  retry: { label: '다시 시도', command: { type: 'retry-update' } },
-  'open-site': { label: '사이트에서 받기', command: { type: 'open-site', section: 'update' } },
-};
-
-/** 앱 내 업데이트 칸. 상태 문구와 상태마다의 버튼 하나를 보인다. 업데이트를 끄는 설정은 없다. */
+/** 앱 내 업데이트 칸. 상태 문구와 상태마다의 버튼을 보인다. 업데이트를 끄는 설정은 없다. */
 export function UpdateField({ update }: UpdateFieldProps) {
   /** 지금 시각. 확인 실패의 "n분 전"을 새로 그리려고 그동안 1분마다 다시 읽는다. */
   const [now, setNow] = useState(() => Date.now());
@@ -181,8 +175,6 @@ export function UpdateField({ update }: UpdateFieldProps) {
     [showsElapsed],
   );
 
-  /** 둘 버튼. 없으면 `null`. */
-  const button = view?.button ? UPDATE_BUTTONS[view.button] : null;
   return (
     <div className="field">
       <span className="field-label">업데이트</span>
@@ -192,10 +184,23 @@ export function UpdateField({ update }: UpdateFieldProps) {
         <>
           <p className={view.danger ? 'update-status danger-text' : 'update-status'}>{view.text}</p>
           {view.progress !== null && <progress className="update-progress" aria-label="받은 비율" max={100} value={view.progress} />}
-          {button && (
-            <button type="button" className="btn update-action" onClick={() => void window.stardraft.send(button.command)}>
-              {button.label}
-            </button>
+          {view.buttons.length > 0 && (
+            <div className="row">
+              {view.buttons.map((name) => {
+                /** 버튼의 이름과 명령. */
+                const button = UPDATE_BUTTONS[name];
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    className={button.primary ? 'btn primary update-action' : 'btn update-action'}
+                    onClick={() => void window.stardraft.send(button.command)}
+                  >
+                    {button.label}
+                  </button>
+                );
+              })}
+            </div>
           )}
         </>
       )}
@@ -231,7 +236,7 @@ export function GeneralSection({ snapshot }: GeneralSectionProps) {
       )}
       {snapshot && <NotificationField appName={snapshot.appName} platform={snapshot.platform} />}
       {snapshot && <EditorField editor={snapshot.editor} platform={snapshot.platform} />}
-      {snapshot && <UpdateField update={snapshot.update} />}
+      {snapshot && <UpdateField update={snapshot.update?.status ?? null} />}
       <div className="field">
         <span className="field-label">데이터</span>
         <div className="row">

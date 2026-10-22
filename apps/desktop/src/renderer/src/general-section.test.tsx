@@ -124,6 +124,37 @@ describe('설정 "일반"의 업데이트', () => {
     expect(html).toContain('>사이트에서 받기</button>');
   });
 
+  it('설치 준비됨이면 새 버전 문구와 [다시 시작] [변경 내역]을 보인다', () => {
+    /** 설치 준비됨일 때. */
+    const html = updateHtmlOf({ kind: 'ready', version: '0.2.0' });
+
+    expect(html).toContain('새 버전 0.2.0이 준비됐습니다');
+    expect(html.match(/<button[^>]*>[^<]*<\/button>/g)).toEqual([
+      '<button type="button" class="btn primary update-action">다시 시작</button>',
+      '<button type="button" class="btn update-action">변경 내역</button>',
+    ]);
+  });
+
+  it('다시 시작 대기면 같은 문구만 보이고 버튼은 두지 않는다', () => {
+    /** 초안 생성을 기다릴 때. */
+    const html = updateHtmlOf({ kind: 'restart-pending', version: '0.2.0', waitingFor: { drafting: true, posting: false } });
+
+    expect(html).toContain('초안 생성이 끝나면 다시 시작합니다');
+    expect(html).not.toContain('<button');
+  });
+
+  it('설치 실패면 실패 문구를 위험 색으로 보이고 [다시 시도] [사이트에서 받기]를, 앱 안에서 거부됐으면 [사이트에서 받기]만 둔다', () => {
+    /** 버전이 그대로일 때. */
+    const notApplied = updateHtmlOf({ kind: 'install-failed', version: '0.2.0', reason: 'not-applied' });
+    /** Squirrel.Mac이 거부했을 때. */
+    const rejected = updateHtmlOf({ kind: 'install-failed', version: '0.2.0', reason: 'rejected' });
+
+    expect(notApplied).toMatch(/class="[^"]*danger-text[^"]*">0\.2\.0으로 업데이트하지 못했습니다/);
+    expect(notApplied.match(/>[^<]+<\/button>/g)).toEqual(['>다시 시도</button>', '>사이트에서 받기</button>']);
+    expect(rejected).toContain('이 버전은 앱 안에서 업데이트할 수 없습니다. 사이트에서 받아 설치하세요.');
+    expect(rejected.match(/>[^<]+<\/button>/g)).toEqual(['>사이트에서 받기</button>']);
+  });
+
   it('소스에서 실행하면 업데이트를 확인하지 않는다고 알리고 버튼을 두지 않는다', () => {
     /** 업데이트를 끈 소스 실행일 때. */
     const html = updateHtmlOf(null);

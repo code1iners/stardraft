@@ -67,6 +67,8 @@ export class Posting {
   private readonly waits = new Map<number, CancelScheduled>();
   /** 보낸 게시 요청마다 응답을 받아 결과를 기록하기까지의 일. 앱을 끌 때 응답을 기다린다. */
   private readonly pendingSends = new Set<Promise<void>>();
+  /** `429` 뒤 다시 보내기를 기다리는 묶음. */
+  private readonly resendWaits = new Set<number>();
   /** 앱을 끝내며 멈췄는지 여부. 멈춘 뒤에는 새 카운트다운과 기다렸다가 할 일을 두지 않는다. */
   private stopped = false;
 
@@ -117,7 +119,15 @@ export class Posting {
     return attempt?.stage === 'countdown' ? attempt.endsAt : null;
   }
 
-  /** 카운트다운이 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
+  /**
+   * 게시 카운트다운이나 게시 요청이 진행 중인지 본다. 카운트다운(확인을 기다리는 시간 포함), 응답을 기다리는 게시 요청, `429` 뒤 다시 보내기를 기다리는 것이다.
+   * 앱 내 업데이트는 이것이 끝날 때까지 다시 시작을 미룬다. 올라갔는지 다시 확인하는 일은 다시 켠 뒤에도 이어지므로 세지 않는다.
+   */
+  isActive(): boolean {
+    return this.attempts.size > 0 || this.pendingSends.size > 0 || this.resendWaits.size > 0;
+  }
+
+  /** 카운트다운이나 게시 요청의 진행 여부가 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => {
@@ -137,6 +147,7 @@ export class Posting {
     this.attempts.clear();
     for (const cancel of this.waits.values()) cancel();
     this.waits.clear();
+    this.resendWaits.clear();
     if (this.pendingSends.size === 0) return;
 
     this.options.logger.info('posting.waiting-before-quit', { count: this.pendingSends.size });
@@ -231,18 +242,14 @@ export class Posting {
     const outcome = await this.options.bundles.checkBeforePost(bundleId).catch(() => 'unchecked' as const);
     if (this.attempts.get(bundleId) !== attempt || (outcome !== 'passed' && outcome !== 'unchecked')) return;
     attempt.checked = true;
-    if (attempt.stage === 'waiting') {
-      this.drop(bundleId);
-      await this.sendSafely(bundleId);
-    }
+    if (attempt.stage === 'waiting') await this.sendAndDrop(bundleId);
   }
 
   /** 카운트다운이 끝났다. 게시를 누를 때의 확인이 끝났으면 게시 요청을 보내고, 아니면 확인을 5초 더 기다린다. */
   private countdownEnded(bundleId: number, attempt: Attempt): void {
     if (this.attempts.get(bundleId) !== attempt) return;
     if (attempt.checked) {
-      this.drop(bundleId);
-      void this.sendSafely(bundleId);
+      void this.sendAndDrop(bundleId);
       return;
     }
     attempt.stage = 'waiting';
@@ -255,8 +262,7 @@ export class Posting {
     if (this.attempts.get(bundleId) !== attempt) return;
     this.options.logger.warn('posting.check-timed-out', { bundleId });
     this.options.bundles.endPostCheck(bundleId);
-    this.drop(bundleId);
-    void this.sendSafely(bundleId);
+    void this.sendAndDrop(bundleId);
   }
 
   /** 묶음의 시도를 지운다. 남은 예약도 지우고 듣는 쪽에 카운트다운이 바뀌었다고 알린다. */
@@ -270,18 +276,30 @@ export class Posting {
   }
 
   /**
-   * 카운트다운이 끝난 묶음의 게시 요청을 보내고, 도중에 예외가 나면 로그만 남긴다.
-   * 보내기 전 기록을 남긴 뒤라면 묶음은 그 기록을 둔 채 게시 중으로 남는다. 올라갔는지 알 수 없기 때문이다.
+   * 카운트다운이 끝난 묶음의 게시 요청을 보내고 시도를 지운다. 보내기 시작한 뒤에 지워, 그 사이에도 게시가 진행 중인 것으로 보이게 한다.
+   * 보내기 전 기록을 남긴 뒤 예외가 나면 묶음은 그 기록을 둔 채 게시 중으로 남는다. 올라갔는지 알 수 없기 때문이다.
    */
-  private sendSafely(bundleId: number): Promise<void> {
+  private sendAndDrop(bundleId: number): Promise<void> {
     /** 게시 요청을 보내고 결과를 기록하는 일. */
-    const task = this.send(bundleId)
+    const sending = this.track(bundleId, () => this.send(bundleId));
+    this.drop(bundleId);
+    return sending;
+  }
+
+  /** 게시 요청을 보내고 결과를 기록하는 일을 진행 중인 게시 요청으로 센다. 도중에 예외가 나면 로그만 남긴다. */
+  private track(bundleId: number, work: () => Promise<void>): Promise<void> {
+    /** 게시 요청을 보내고 결과를 기록하는 일. */
+    const task = work()
       .catch(() => {
         // 예외 문구에 게시 본문이나 Flow 글이 섞일 수 있어 로그에는 남기지 않는다.
         this.options.logger.error('posting.crashed', { bundleId });
       })
-      .finally(() => this.pendingSends.delete(task));
+      .finally(() => {
+        this.pendingSends.delete(task);
+        this.emit();
+      });
     this.pendingSends.add(task);
+    this.emit();
     return task;
   }
 
@@ -344,7 +362,7 @@ export class Posting {
       const delay = rateLimitDelayMs(failure.retryAfterMs);
       if (delay !== null) {
         this.options.logger.warn('posting.rate-limited', { bundleId, delayMs: delay });
-        this.waitThen(bundleId, delay, () => this.deliver(bundleId, body, true));
+        this.waitThen(bundleId, delay, () => this.track(bundleId, () => this.deliver(bundleId, body, true)), true);
         return;
       }
     }
@@ -377,15 +395,20 @@ export class Posting {
     for (const listener of this.failureListeners) listener(bundleId);
   }
 
-  /** `delayMs` 뒤에 묶음의 일을 한다. 같은 묶음에 기다리던 일이 있으면 지운다. 앱을 끝낼 때(`stop`) 모두 지우고, 그 뒤에는 새로 두지 않는다. */
-  private waitThen(bundleId: number, delayMs: number, task: () => Promise<void>): void {
+  /**
+   * `delayMs` 뒤에 묶음의 일을 한다. 같은 묶음에 기다리던 일이 있으면 지운다. 앱을 끝낼 때(`stop`) 모두 지우고, 그 뒤에는 새로 두지 않는다.
+   * `resend`가 참이면 `429` 뒤 다시 보내기라 기다리는 동안도 게시 요청이 진행 중인 것으로 센다.
+   */
+  private waitThen(bundleId: number, delayMs: number, task: () => Promise<void>, resend = false): void {
     this.cancelWait(bundleId);
     // 앱을 끝내는 중이면 기다리지 않는다. 결과가 없는 게시는 다시 켤 때 확인한다.
     if (this.stopped) return;
+    if (resend) this.resendWaits.add(bundleId);
     this.waits.set(
       bundleId,
       this.options.clock.after(delayMs, () => {
         this.waits.delete(bundleId);
+        this.resendWaits.delete(bundleId);
         task().catch(() => this.options.logger.error('posting.crashed', { bundleId }));
       }),
     );
@@ -395,9 +418,10 @@ export class Posting {
   private cancelWait(bundleId: number): void {
     this.waits.get(bundleId)?.();
     this.waits.delete(bundleId);
+    if (this.resendWaits.delete(bundleId)) this.emit();
   }
 
-  /** 듣는 쪽에 카운트다운이 바뀌었다고 알린다. */
+  /** 듣는 쪽에 카운트다운이나 게시 요청의 진행 여부가 바뀌었다고 알린다. */
   private emit(): void {
     for (const listener of this.listeners) listener();
   }

@@ -179,6 +179,114 @@ html[data-platform='win32'] .popover {
   color: var(--text);
 }
 
+/* 작은 창 맨 위 띠 자리의 앱 내 업데이트 띠. 전역 문제 띠가 없을 때만 보인다. 서명 검증 실패와 설치 실패는 전역 문제 띠(.problem-banner)의 모습을 쓴다. */
+.update-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-bg);
+}
+
+.update-banner p {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+}
+
+.update-banner .btn {
+  flex: none;
+}
+
+/* macOS 다시 시작 확인 화면: 제목, 키체인 안내, 키체인 대화상자의 예시 화면. */
+.restart-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.restart-confirm p {
+  margin: 0;
+}
+
+.restart-foot {
+  gap: 8px;
+}
+
+/* 예시 화면: 노란 띠로 실제 창이 아님을 알리고 바깥을 빗금 틀로 감싼다(다운로드 사이트의 예시 화면과 같은 표현). */
+.example {
+  margin: 12px 0 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.example-label {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.example-frame {
+  display: flex;
+  justify-content: center;
+  padding: 14px;
+  background: var(--hatch);
+}
+
+.keychain-dialog {
+  width: 250px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #ececec;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25), 0 4px 12px rgba(0, 0, 0, 0.12);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.keychain-text {
+  margin: 0 0 8px;
+}
+
+.keychain-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.keychain-input {
+  flex: 1;
+  height: 20px;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.keychain-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.keychain-btn {
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: #fff;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+}
+
+/* 누를 곳: 실제 대화상자에는 없는 강조 테두리로 "항상 허용"을 가리킨다. */
+.keychain-btn.emphasized {
+  box-shadow: 0 0 0 2px var(--accent);
+  font-weight: 600;
+}
+
 .popover-head {
   flex: none;
   display: flex;

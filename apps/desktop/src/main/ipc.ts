@@ -19,7 +19,8 @@ import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import type { TrialRun } from '../core/trial/trial-run';
-import type { InAppUpdate, UpdateStatus } from '../core/update/in-app-update';
+import type { InAppUpdate } from '../core/update/in-app-update';
+import type { UpdateRestart, UpdateState } from '../core/update/update-restart';
 import { agentFixCommand } from '../shared/agent-fix-command';
 import { AGENT_INFO } from '../shared/agent-info';
 import {
@@ -38,7 +39,7 @@ import {
   type OnboardingSnapshot,
   type RepoMappingsSnapshot,
   type SiteSection,
-  type UpdateSnapshot,
+  type UpdateStateSnapshot,
   type WorkFoldersSnapshot,
 } from '../shared/ipc';
 import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
@@ -90,6 +91,8 @@ export interface IpcServices {
   notifier: Notifier;
   /** 앱 내 업데이트. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
   inAppUpdate: InAppUpdate | null;
+  /** 앱 내 업데이트의 다시 시작과 화면 상태. 소스에서 실행하면 `null`이다. */
+  updateRestart: UpdateRestart | null;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -155,7 +158,8 @@ export function registerIpc(services: IpcServices): void {
   services.draftSettings.onChange(() =>
     services.windows.broadcast({ type: 'draft-settings-changed', draftSettings: draftSettingsSnapshot(services.draftSettings.state()) }),
   );
-  services.inAppUpdate?.onChange((status) => services.windows.broadcast({ type: 'update-changed', update: updateSnapshot(status) }));
+  // 다시 시작은 앱 내 업데이트의 상태 변화도 함께 알린다.
+  services.updateRestart?.onChange((state) => services.windows.broadcast({ type: 'update-changed', update: updateSnapshot(state) }));
 }
 
 /** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서, 게시 카운트다운은 게시에서 읽는다. */
@@ -209,7 +213,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     review: currentReviewSnapshot(services),
     trial: currentTrialSnapshot(services),
     draftSettings: draftSettingsSnapshot(services.draftSettings.state()),
-    update: services.inAppUpdate && updateSnapshot(services.inAppUpdate.state()),
+    update: services.updateRestart && updateSnapshot(services.updateRestart.state()),
   };
 }
 
@@ -236,6 +240,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     draftSettings,
     notifier,
     inAppUpdate,
+    updateRestart,
   } = services;
   switch (command.type) {
     case 'open-settings':
@@ -429,16 +434,37 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'open-site':
       await openSite(command.section, logger);
       return;
+    case 'restart-to-update':
+      await updateRestart?.requestRestart();
+      return;
+    case 'confirm-update-restart':
+      await updateRestart?.confirm();
+      return;
+    case 'cancel-update-restart-confirm':
+      updateRestart?.cancelConfirm();
+      return;
+    case 'restart-update-now':
+      await updateRestart?.restartNow();
+      return;
+    case 'cancel-update-restart':
+      updateRestart?.cancelRestart();
+      return;
+    case 'retry-update-install':
+      await updateRestart?.retryInstall();
+      return;
+    case 'dismiss-update-banner':
+      updateRestart?.dismissBanner(command.banner);
+      return;
   }
 }
 
-/** core의 앱 내 업데이트 상태를 렌더러에 넘길 모양으로 바꾼다. */
-function updateSnapshot(status: UpdateStatus): UpdateSnapshot {
-  return { ...status };
+/** core의 앱 내 업데이트 화면 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function updateSnapshot(state: UpdateState): UpdateStateSnapshot {
+  return { ...state, status: { ...state.status }, dismissedBanners: [...state.dismissedBanners] };
 }
 
 /** 다운로드 사이트의 섹션을 기본 브라우저로 연다. 열지 못하면 로그만 남긴다. */
-async function openSite(section: SiteSection, logger: Logger): Promise<void> {
+export async function openSite(section: SiteSection, logger: Logger): Promise<void> {
   try {
     await shell.openExternal(siteSectionUrl(section));
   } catch (error) {

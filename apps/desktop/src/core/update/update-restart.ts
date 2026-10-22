@@ -274,7 +274,7 @@ export class UpdateRestart {
     // 앱이 꺼지지 않고 오류도 오지 않으면 다시 시작을 누를 수 없게 멈춰 있지 않도록 설치하지 못한 것으로 본다.
     this.cancelTimer = this.options.clock.after(INSTALL_TIMEOUT_MS, () => {
       this.cancelTimer = null;
-      void this.installFailed('failed');
+      void this.installFailed('timed-out');
     });
     try {
       this.options.feed.install();
@@ -284,8 +284,12 @@ export class UpdateRestart {
     }
   }
 
-  /** 앱 안에서 설치하지 못했다. 앱은 켜진 채라 설치 실패를 보이고 초안 대기열을 다시 돌린다. 거부됐으면 다시 켜도 그렇게 보이게 기록에 남긴다. */
-  private async installFailed(failure: InstallFailure): Promise<void> {
+  /**
+   * 앱 안에서 설치하지 못했다. 앱은 켜진 채라 설치 실패를 보이고 초안 대기열을 다시 돌린다.
+   * 거부됐으면 다시 켜도 그렇게 보이게 기록에 남기고, 설치 오류면 이미 알렸으므로 기록을 지운다.
+   * 시간 초과(`timed-out`)는 늦게라도 꺼져 설치됐을 수 있어 기록을 남겨 다시 켤 때 버전으로 정한다.
+   */
+  private async installFailed(failure: InstallFailure | 'timed-out'): Promise<void> {
     if (this.step.kind !== 'restarting') return;
     /** 설치하지 못한 버전. */
     const version = this.step.version;
@@ -295,6 +299,7 @@ export class UpdateRestart {
     this.installFailure = { version, reason };
     this.release();
     if (this.attempt && failure === 'rejected') await this.saveAttempt({ ...this.attempt, rejected: true });
+    if (failure === 'failed') await this.clearAttempt();
   }
 
   /** 앱 내 업데이트의 상태가 바뀌었다. 확인 화면이나 대기 중에 설치 준비됨이 아니게 되면(더 새 버전을 받는 중 등) 다시 시작을 거둔다. */
@@ -339,6 +344,15 @@ export class UpdateRestart {
       await this.options.stateStore.setUpdateAttempt(attempt);
     } catch (error) {
       this.options.logger.error('update.attempt-save-failed', errorFields(error));
+    }
+  }
+
+  /** "업데이트 시도"를 지운다. 지우지 못하면 다음 실행에서 설치 실패를 한 번 더 보일 뿐이다. */
+  private async clearAttempt(): Promise<void> {
+    try {
+      await this.options.stateStore.clearUpdateAttempt();
+    } catch (error) {
+      this.options.logger.error('update.attempt-clear-failed', errorFields(error));
     }
   }
 

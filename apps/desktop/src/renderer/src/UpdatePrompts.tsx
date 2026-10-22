@@ -1,15 +1,20 @@
 import type { AppCommand, UpdateStateSnapshot } from '../../shared/ipc';
 import { restartConfirmTitle } from '../../shared/update-text';
-import { updateBannerView, type UpdateBannerButton } from './update-text';
+import { updateBannerView, type UpdateButton, type UpdateCommandButton } from './update-text';
 
-/** 띠의 버튼마다 이름과 보낼 명령. 사이트 주소는 main이 정한다. 띠 닫기는 띠 이름을 실어야 해서 따로 만든다. */
-const BANNER_BUTTONS: Record<Exclude<UpdateBannerButton, 'dismiss'>, { label: string; command: AppCommand }> = {
-  restart: { label: '다시 시작', command: { type: 'restart-to-update' } },
+/**
+ * 업데이트 칸과 작은 창 띠의 버튼마다 이름, 보낼 명령, 주된 행동인지 여부. 사이트 주소는 main이 정한다.
+ * 띠 닫기는 띠 이름을 실어야 해서 띠가 따로 만든다.
+ */
+export const UPDATE_BUTTONS: Record<UpdateCommandButton, { label: string; command: AppCommand; primary?: boolean }> = {
+  'check-now': { label: '지금 확인', command: { type: 'check-for-update' } },
+  retry: { label: '다시 시도', command: { type: 'retry-update' } },
+  'open-site': { label: '사이트에서 받기', command: { type: 'open-site', section: 'update' } },
+  restart: { label: '다시 시작', command: { type: 'restart-to-update' }, primary: true },
   changelog: { label: '변경 내역', command: { type: 'open-site', section: 'changelog' } },
+  'retry-install': { label: '다시 시도', command: { type: 'retry-update-install' } },
   'restart-now': { label: '지금 다시 시작', command: { type: 'restart-update-now' } },
   'cancel-restart': { label: '취소', command: { type: 'cancel-update-restart' } },
-  'open-site': { label: '사이트에서 받기', command: { type: 'open-site', section: 'update' } },
-  'retry-install': { label: '다시 시도', command: { type: 'retry-update-install' } },
 };
 
 /** 업데이트 띠에 넘기는 값. */
@@ -25,15 +30,16 @@ export function UpdateBanner({ update }: UpdateBannerProps) {
   if (!view) return null;
 
   /** 버튼을 누르면 보낼 명령. */
-  const commandOf = (button: UpdateBannerButton): AppCommand =>
-    button === 'dismiss' ? { type: 'dismiss-update-banner', banner: view.id } : BANNER_BUTTONS[button].command;
+  const commandOf = (button: UpdateButton): AppCommand =>
+    button === 'dismiss' ? { type: 'dismiss-update-banner', banner: view.id } : UPDATE_BUTTONS[button].command;
 
+  // 위험 띠(서명 검증 실패, 설치 실패)는 전역 문제 띠와 같은 모습이다.
   return (
-    <div className={view.danger ? 'update-banner danger' : 'update-banner'} role="status">
+    <div className={view.danger ? 'problem-banner' : 'update-banner'} role="status">
       <p>{view.text}</p>
       {view.buttons.map((button) => (
         <button key={button} type="button" className="btn sm" onClick={() => void window.stardraft.send(commandOf(button))}>
-          {button === 'dismiss' ? '닫기' : BANNER_BUTTONS[button].label}
+          {button === 'dismiss' ? '닫기' : UPDATE_BUTTONS[button].label}
         </button>
       ))}
     </div>

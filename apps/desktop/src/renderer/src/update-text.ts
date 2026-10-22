@@ -1,4 +1,4 @@
-import type { UpdateSnapshot, UpdateStateSnapshot } from '../../shared/ipc';
+import type { InstallFailureReasonSnapshot, UpdateSnapshot, UpdateStateSnapshot } from '../../shared/ipc';
 import {
   installFailedText,
   locationBlockedText,
@@ -10,10 +10,22 @@ import {
 import { formatTime } from './review-text';
 
 /**
- * 설정 "일반"의 업데이트 칸에 둘 수 있는 버튼. [지금 확인], 서명 검증 실패의 [다시 시도], [사이트에서 받기], [다시 시작], [변경 내역],
- * 설치 실패의 [다시 시도]다.
+ * 업데이트 칸과 작은 창 띠에 둘 수 있는 버튼. [지금 확인], 서명 검증 실패의 [다시 시도], [사이트에서 받기], [다시 시작], [변경 내역],
+ * 설치 실패의 [다시 시도], 다시 시작 대기의 [지금 다시 시작]과 [취소], 띠의 [닫기]다.
  */
-export type UpdateFieldButton = 'check-now' | 'retry' | 'open-site' | 'restart' | 'changelog' | 'retry-install';
+export type UpdateButton =
+  | 'check-now'
+  | 'retry'
+  | 'open-site'
+  | 'restart'
+  | 'changelog'
+  | 'retry-install'
+  | 'restart-now'
+  | 'cancel-restart'
+  | 'dismiss';
+
+/** 명령을 보내는 버튼. 띠 이름을 싣는 [닫기]만 빠진다. 설정 칸의 버튼은 모두 이것이다. */
+export type UpdateCommandButton = Exclude<UpdateButton, 'dismiss'>;
 
 /** 설정 "일반"의 업데이트 칸에 보일 모습. */
 export interface UpdateFieldView {
@@ -24,7 +36,7 @@ export interface UpdateFieldView {
   /** 받는 중이면 받은 비율(0~100)이고 진행 막대로 보인다. 받는 중이 아니면 `null`. */
   progress: number | null;
   /** 상태마다 둘 버튼. 보일 순서다. */
-  buttons: UpdateFieldButton[];
+  buttons: UpdateCommandButton[];
   /** 문구가 "3시간 전"처럼 지난 시간을 보여 지금 시각이 흐르면 새로 그려야 하는지 여부. */
   showsElapsed: boolean;
 }
@@ -58,9 +70,6 @@ export function updateFieldView(update: UpdateSnapshot, now: number): UpdateFiel
   }
 }
 
-/** 작은 창의 업데이트 띠에 둘 수 있는 버튼. [다시 시작], [변경 내역], [지금 다시 시작], [취소], [사이트에서 받기], [닫기], 설치 실패의 [다시 시도]다. */
-export type UpdateBannerButton = 'restart' | 'changelog' | 'restart-now' | 'cancel-restart' | 'open-site' | 'dismiss' | 'retry-install';
-
 /** 작은 창의 업데이트 띠. */
 export interface UpdateBannerView {
   /** 띠 이름. 상태와 버전이고, [닫기]로 닫으면 같은 이름의 띠는 다시 보이지 않는다. */
@@ -70,7 +79,7 @@ export interface UpdateBannerView {
   /** 위험 색으로 보일지 여부. */
   danger: boolean;
   /** 띠의 버튼. 보일 순서다. */
-  buttons: UpdateBannerButton[];
+  buttons: UpdateButton[];
 }
 
 /**
@@ -111,17 +120,17 @@ function justUpdatedBanner(version: string): UpdateBannerView {
 }
 
 /** 상태의 종류와 버전을 이름으로 한 띠. */
-function banner(status: { kind: string; version: string }, text: string, danger: boolean, buttons: UpdateBannerButton[]): UpdateBannerView {
+function banner(status: { kind: string; version: string }, text: string, danger: boolean, buttons: UpdateButton[]): UpdateBannerView {
   return { id: `${status.kind}:${status.version}`, text, danger, buttons };
 }
 
 /** 설치 실패의 버튼. 앱 안에서 거부됐으면 다시 시도해도 소용이 없어 [사이트에서 받기]만 둔다. */
-function installFailedButtons(reason: 'not-applied' | 'rejected'): ('retry-install' | 'open-site')[] {
+function installFailedButtons(reason: InstallFailureReasonSnapshot): UpdateCommandButton[] {
   return reason === 'rejected' ? ['open-site'] : ['retry-install', 'open-site'];
 }
 
 /** 위험 색도 진행 막대도 없고 지난 시간도 보이지 않는 모습. */
-function plain(text: string, buttons: UpdateFieldButton[]): UpdateFieldView {
+function plain(text: string, buttons: UpdateCommandButton[]): UpdateFieldView {
   return { text, danger: false, progress: null, buttons, showsElapsed: false };
 }
 

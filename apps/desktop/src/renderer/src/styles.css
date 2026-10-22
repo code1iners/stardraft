@@ -179,14 +179,14 @@ html[data-platform='win32'] .popover {
   color: var(--text);
 }
 
-/* 작은 창 맨 위 띠 자리의 앱 내 업데이트 띠. 전역 문제 띠가 없을 때만 보인다. 서명 검증 실패와 설치 실패는 위험 색이다. */
+/* 작은 창 맨 위 띠 자리의 앱 내 업데이트 띠. 전역 문제 띠가 없을 때만 보인다. 서명 검증 실패와 설치 실패는 전역 문제 띠(.problem-banner)의 모습을 쓴다. */
 .update-banner {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid #c9d8f1;
+  border-bottom: 1px solid var(--border);
   background: var(--accent-bg);
 }
 
@@ -198,17 +198,6 @@ html[data-platform='win32'] .popover {
 
 .update-banner .btn {
   flex: none;
-}
-
-.update-banner.danger {
-  border-bottom-color: var(--danger-border);
-  background: var(--danger-bg);
-  color: var(--danger);
-}
-
-.update-banner.danger .btn {
-  border-color: var(--danger-border);
-  color: var(--text);
 }
 
 /* macOS 다시 시작 확인 화면: 제목, 키체인 안내, 키체인 대화상자의 예시 화면. */
@@ -235,9 +224,9 @@ html[data-platform='win32'] .popover {
 
 .example-label {
   padding: 5px 10px;
-  border-bottom: 1px solid #ecd9a6;
-  background: #fbf1d5;
-  color: #5b4300;
+  border-bottom: 1px solid var(--border);
+  background: var(--warn-bg);
+  color: var(--warn);
   font-size: 12px;
   font-weight: 600;
 }

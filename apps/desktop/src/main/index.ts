@@ -321,11 +321,12 @@ function start(): void {
       clock: systemClock,
       logger,
     });
+    /** electron-updater로 공개 Release에서 새 버전을 찾고 받고 설치하는 업데이트 피드. 설치본에서만 만든다. */
+    const updateFeed = app.isPackaged ? electronUpdateFeed(autoUpdater, logger) : null;
     /**
      * 앱 내 업데이트. 공개 Release에서 새 버전을 확인해 받고, 서명을 확인한 뒤 설치 준비됨으로 둔다.
      * 소스에서 실행할 때는 끈다. electron-updater도 설치본에서만 확인한다.
      */
-    const updateFeed = app.isPackaged ? electronUpdateFeed(autoUpdater, logger) : null;
     const inAppUpdate = updateFeed
       ? new InAppUpdate({
           feed: updateFeed,

@@ -813,8 +813,14 @@ export type UpdateSnapshot =
   | { kind: 'location-blocked'; version: string; reason: BlockedLocationReasonSnapshot }
   /** [다시 시작]을 눌렀지만 진행 중인 일이 끝나기를 기다린다. */
   | { kind: 'restart-pending'; version: string; waitingFor: RestartWaitSnapshot }
-  /** 새 버전으로 업데이트하지 못했다. `rejected`는 Squirrel.Mac이 앱 안에서 거부한 것이라 다시 시도할 수 없다. */
-  | { kind: 'install-failed'; version: string; reason: 'not-applied' | 'rejected' };
+  /** 새 버전으로 업데이트하지 못했다. */
+  | { kind: 'install-failed'; version: string; reason: InstallFailureReasonSnapshot };
+
+/**
+ * 새 버전으로 업데이트하지 못한 까닭. `not-applied`는 다시 켰는데 버전이 그대로이거나 설치 중 오류가 난 것이고,
+ * `rejected`는 Squirrel.Mac이 앱 안에서 거부한 것이라 다시 시도할 수 없다.
+ */
+export type InstallFailureReasonSnapshot = 'not-applied' | 'rejected';
 
 /** 다시 시작이 기다리는 일. */
 export interface RestartWaitSnapshot {

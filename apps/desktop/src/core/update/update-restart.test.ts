@@ -340,8 +340,20 @@ describe('설치 실패 판정', () => {
     expect(relaunched.restart.state().status).toEqual({ kind: 'install-failed', version: '0.2.0', reason: 'rejected' });
   });
 
+  it('앱이 켜진 채 설치 오류가 나면 그 자리에서 설치 실패를 보이고, 이미 알렸으므로 다음 실행에서 다시 보이지 않는다', async () => {
+    const { restart, update, feed, stateStore } = await setUp();
+    update.set({ kind: 'ready', version: '0.2.0' });
+    await restart.requestRestart();
+
+    feed.failInstall('failed');
+    await flush();
+
+    expect(restart.state().status).toEqual({ kind: 'install-failed', version: '0.2.0', reason: 'not-applied' });
+    await expect(stateStore.getUpdateAttempt()).resolves.toBeNull();
+  });
+
   it('설치를 맡긴 뒤 2분이 지나도 꺼지지 않으면 설치하지 못한 것으로 본다', async () => {
-    const { restart, update, clock } = await setUp();
+    const { restart, update, clock, stateStore } = await setUp();
     update.set({ kind: 'ready', version: '0.2.0' });
     await restart.requestRestart();
 
@@ -349,6 +361,8 @@ describe('설치 실패 판정', () => {
     await flush();
 
     expect(restart.state().status).toEqual({ kind: 'install-failed', version: '0.2.0', reason: 'not-applied' });
+    // 늦게라도 꺼져 설치됐을 수 있으므로 기록은 남겨 다시 켤 때 버전으로 정한다.
+    await expect(stateStore.getUpdateAttempt()).resolves.toMatchObject({ toVersion: '0.2.0' });
   });
 
   it('[다시 시도]는 받아 둔 업데이트를 다시 확인하고 설치 준비됨이 되면 다시 시작한다', async () => {

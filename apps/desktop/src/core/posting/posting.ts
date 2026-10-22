@@ -242,18 +242,14 @@ export class Posting {
     const outcome = await this.options.bundles.checkBeforePost(bundleId).catch(() => 'unchecked' as const);
     if (this.attempts.get(bundleId) !== attempt || (outcome !== 'passed' && outcome !== 'unchecked')) return;
     attempt.checked = true;
-    if (attempt.stage === 'waiting') {
-      this.drop(bundleId);
-      await this.sendSafely(bundleId);
-    }
+    if (attempt.stage === 'waiting') await this.sendAndDrop(bundleId);
   }
 
   /** 카운트다운이 끝났다. 게시를 누를 때의 확인이 끝났으면 게시 요청을 보내고, 아니면 확인을 5초 더 기다린다. */
   private countdownEnded(bundleId: number, attempt: Attempt): void {
     if (this.attempts.get(bundleId) !== attempt) return;
     if (attempt.checked) {
-      this.drop(bundleId);
-      void this.sendSafely(bundleId);
+      void this.sendAndDrop(bundleId);
       return;
     }
     attempt.stage = 'waiting';
@@ -266,8 +262,7 @@ export class Posting {
     if (this.attempts.get(bundleId) !== attempt) return;
     this.options.logger.warn('posting.check-timed-out', { bundleId });
     this.options.bundles.endPostCheck(bundleId);
-    this.drop(bundleId);
-    void this.sendSafely(bundleId);
+    void this.sendAndDrop(bundleId);
   }
 
   /** 묶음의 시도를 지운다. 남은 예약도 지우고 듣는 쪽에 카운트다운이 바뀌었다고 알린다. */
@@ -281,11 +276,14 @@ export class Posting {
   }
 
   /**
-   * 카운트다운이 끝난 묶음의 게시 요청을 보내고, 도중에 예외가 나면 로그만 남긴다.
-   * 보내기 전 기록을 남긴 뒤라면 묶음은 그 기록을 둔 채 게시 중으로 남는다. 올라갔는지 알 수 없기 때문이다.
+   * 카운트다운이 끝난 묶음의 게시 요청을 보내고 시도를 지운다. 보내기 시작한 뒤에 지워, 그 사이에도 게시가 진행 중인 것으로 보이게 한다.
+   * 보내기 전 기록을 남긴 뒤 예외가 나면 묶음은 그 기록을 둔 채 게시 중으로 남는다. 올라갔는지 알 수 없기 때문이다.
    */
-  private sendSafely(bundleId: number): Promise<void> {
-    return this.track(bundleId, () => this.send(bundleId));
+  private sendAndDrop(bundleId: number): Promise<void> {
+    /** 게시 요청을 보내고 결과를 기록하는 일. */
+    const sending = this.track(bundleId, () => this.send(bundleId));
+    this.drop(bundleId);
+    return sending;
   }
 
   /** 게시 요청을 보내고 결과를 기록하는 일을 진행 중인 게시 요청으로 센다. 도중에 예외가 나면 로그만 남긴다. */

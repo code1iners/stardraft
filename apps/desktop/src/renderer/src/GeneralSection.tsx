@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
-import type { AppCommand, AppFolder, AppSnapshot, EditorSnapshot, UpdateSnapshot } from '../../shared/ipc';
-import { updateFieldView, type UpdateFieldButton } from './update-text';
+import type { AppFolder, AppSnapshot, EditorSnapshot, UpdateSnapshot } from '../../shared/ipc';
+import { UPDATE_BUTTONS } from './UpdatePrompts';
+import { updateFieldView } from './update-text';
 
 /** 선택 상자에서 "처음 열 때 고르기"의 값. */
 const UNCHOSEN_VALUE = '';
@@ -154,16 +155,6 @@ interface UpdateFieldProps {
 
 /** 확인 실패의 "n분 전"을 새로 그리는 간격(밀리초). */
 const ELAPSED_TICK_MS = 60_000;
-
-/** 업데이트 칸의 버튼마다 이름, 보낼 명령, 주된 행동인지 여부. 사이트 주소는 main이 정한다. */
-const UPDATE_BUTTONS: Record<UpdateFieldButton, { label: string; command: AppCommand; primary?: boolean }> = {
-  'check-now': { label: '지금 확인', command: { type: 'check-for-update' } },
-  retry: { label: '다시 시도', command: { type: 'retry-update' } },
-  'open-site': { label: '사이트에서 받기', command: { type: 'open-site', section: 'update' } },
-  restart: { label: '다시 시작', command: { type: 'restart-to-update' }, primary: true },
-  changelog: { label: '변경 내역', command: { type: 'open-site', section: 'changelog' } },
-  'retry-install': { label: '다시 시도', command: { type: 'retry-update-install' } },
-};
 
 /** 앱 내 업데이트 칸. 상태 문구와 상태마다의 버튼을 보인다. 업데이트를 끄는 설정은 없다. */
 export function UpdateField({ update }: UpdateFieldProps) {

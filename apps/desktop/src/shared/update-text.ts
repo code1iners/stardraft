@@ -1,4 +1,4 @@
-import type { BlockedLocationReasonSnapshot, RestartWaitSnapshot, UpdateSnapshot } from './ipc';
+import type { BlockedLocationReasonSnapshot, InstallFailureReasonSnapshot, RestartWaitSnapshot, UpdateSnapshot } from './ipc';
 
 /**
  * 받은 파일의 서명 검증에 실패했을 때의 문구. 사이트에서 받아 설치하라고 권하지 않는다.
@@ -65,7 +65,7 @@ export function restartPendingText(waitingFor: RestartWaitSnapshot): string {
 }
 
 /** 설치 실패의 문구. 앱 안에서 거부됐으면 사이트에서 받으라고 한다. */
-export function installFailedText(version: string, reason: 'not-applied' | 'rejected'): string {
+export function installFailedText(version: string, reason: InstallFailureReasonSnapshot): string {
   return reason === 'rejected' ? INSTALL_REJECTED_TEXT : `${version}${directionParticle(version)} 업데이트하지 못했습니다`;
 }
 

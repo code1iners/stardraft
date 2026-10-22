@@ -237,7 +237,8 @@ describe('게시: 앱 내 업데이트가 기다리는 게시', () => {
     release();
     await settle();
     expect(posting.isActive()).toBe(false);
-    expect(seen.at(-1)).toBe(false);
+    // 카운트다운이 끝나 게시 요청으로 넘어가는 사이에도 진행 중이 아니라고 알리지 않는다. 그 틈에 앱 내 업데이트가 다시 시작하면 안 된다.
+    expect(seen.indexOf(false)).toBe(seen.length - 1);
   });
 
   it('카운트다운을 취소하면 진행 중이 아니다', async () => {

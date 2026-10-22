@@ -22,7 +22,7 @@ import {
   countdownToastText,
   evidenceLocation,
   failureText,
-  formatMentionTime,
+  formatTime,
   generationStepText,
   LINKED_NOTE,
   linkButtonText,
@@ -124,7 +124,7 @@ export function BundleMeta({ bundle }: BundleProps) {
       <p className="review-meta">
         <strong>{senderLine(bundle.senderNames)}</strong>
         <span>{BUNDLE_PLACE_LABELS[bundle.place]}</span>
-        <span>{formatMentionTime(bundle.lastMentionAt)}</span>
+        <span>{formatTime(bundle.lastMentionAt)}</span>
       </p>
       <p className="post-line">
         <span>{postLine(bundle)}</span>
@@ -224,7 +224,7 @@ function MentionList({ bundle }: BundleProps) {
           <div className="mention-meta">
             <strong>{mention.senderName || '이름 없음'}</strong>
             <span>{MENTION_PLACE_LABELS[mention.place]}</span>
-            <span>{formatMentionTime(mention.at)}</span>
+            <span>{formatTime(mention.at)}</span>
             <ChangeTag change={mention.edited ? 'edited' : null} />
           </div>
           <PartsText parts={mention.text} />
@@ -267,7 +267,7 @@ function ThreadEntryItem({ entry }: ThreadEntryItemProps) {
       <div className="mention-meta">
         <strong>{entry.authorName || '이름 없음'}</strong>
         <span>{MENTION_PLACE_LABELS[entry.place]}</span>
-        {entry.at !== null && <span>{formatMentionTime(entry.at)}</span>}
+        {entry.at !== null && <span>{formatTime(entry.at)}</span>}
         {entry.mention && <span className="tag warn">멘션</span>}
         <ChangeTag change={entry.change} />
       </div>

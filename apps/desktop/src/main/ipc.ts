@@ -19,6 +19,7 @@ import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import type { TrialRun } from '../core/trial/trial-run';
+import type { InAppUpdate, UpdateStatus } from '../core/update/in-app-update';
 import { agentFixCommand } from '../shared/agent-fix-command';
 import { AGENT_INFO } from '../shared/agent-info';
 import {
@@ -36,10 +37,13 @@ import {
   type GlobalProblemSnapshot,
   type OnboardingSnapshot,
   type RepoMappingsSnapshot,
+  type SiteSection,
+  type UpdateSnapshot,
   type WorkFoldersSnapshot,
 } from '../shared/ipc';
 import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
 import type { AppWindows } from './app-windows';
+import { siteSectionUrl } from './download-site';
 import { isAppRendererUrl } from './renderer-page';
 import type { ReviewSections } from './review-sections';
 import { flowUrlOf, reviewSnapshot, trialSnapshot, type ProjectLookup } from './review-snapshot';
@@ -84,6 +88,8 @@ export interface IpcServices {
   draftSettings: DraftSettings;
   /** 설정 "일반"의 [알림 시험]이 띄우는 OS 알림. */
   notifier: Notifier;
+  /** 앱 내 업데이트. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
+  inAppUpdate: InAppUpdate | null;
 }
 
 /** 렌더러가 보내는 스냅숏 요청과 명령을 처리하고, main의 상태 변경을 열린 창에 알린다. */
@@ -149,6 +155,7 @@ export function registerIpc(services: IpcServices): void {
   services.draftSettings.onChange(() =>
     services.windows.broadcast({ type: 'draft-settings-changed', draftSettings: draftSettingsSnapshot(services.draftSettings.state()) }),
   );
+  services.inAppUpdate?.onChange((status) => services.windows.broadcast({ type: 'update-changed', update: updateSnapshot(status) }));
 }
 
 /** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서, 게시 카운트다운은 게시에서 읽는다. */
@@ -202,6 +209,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     review: currentReviewSnapshot(services),
     trial: currentTrialSnapshot(services),
     draftSettings: draftSettingsSnapshot(services.draftSettings.state()),
+    update: services.inAppUpdate && updateSnapshot(services.inAppUpdate.state()),
   };
 }
 
@@ -227,6 +235,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     trialRun,
     draftSettings,
     notifier,
+    inAppUpdate,
   } = services;
   switch (command.type) {
     case 'open-settings':
@@ -411,6 +420,29 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'test-notification':
       notifier.notify(testNotification(app.name));
       return;
+    case 'check-for-update':
+      await inAppUpdate?.checkNow();
+      return;
+    case 'retry-update':
+      await inAppUpdate?.retry();
+      return;
+    case 'open-site':
+      await openSite(command.section, logger);
+      return;
+  }
+}
+
+/** core의 앱 내 업데이트 상태를 렌더러에 넘길 모양으로 바꾼다. */
+function updateSnapshot(status: UpdateStatus): UpdateSnapshot {
+  return { ...status };
+}
+
+/** 다운로드 사이트의 섹션을 기본 브라우저로 연다. 열지 못하면 로그만 남긴다. */
+async function openSite(section: SiteSection, logger: Logger): Promise<void> {
+  try {
+    await shell.openExternal(siteSectionUrl(section));
+  } catch (error) {
+    logger.warn('site.open-failed', { section, ...errorFields(error) });
   }
 }
 

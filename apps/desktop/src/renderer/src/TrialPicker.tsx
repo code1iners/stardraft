@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from 'react';
 import type { TrialCandidateSnapshot, TrialLoadFailureSnapshot, TrialPickerSnapshot, TrialSnapshot, TrialWindowSnapshot } from '../../shared/ipc';
-import { formatMentionTime } from './review-text';
+import { formatTime } from './review-text';
 
 /** 최근 멘션을 불러오지 못한 까닭의 쉬운 말. */
 const LOAD_FAILURE_TEXT: Record<TrialLoadFailureSnapshot, string> = {
@@ -111,7 +111,7 @@ function TrialChoice({ candidate }: TrialChoiceProps) {
           <strong>{candidate.senderName || '이름 없음'}</strong>
           {candidate.answered && <span className="tag done">답함</span>}
           <span className="spacer" />
-          <span className="small muted">{formatMentionTime(candidate.at)}</span>
+          <span className="small muted">{formatTime(candidate.at)}</span>
         </span>
         <span className="small muted">{candidate.projectTitle ?? 'Flow 프로젝트 이름 모름'}</span>
         <span className="list-row-sub">{candidate.firstLine}</span>

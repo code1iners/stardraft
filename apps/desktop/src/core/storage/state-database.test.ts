@@ -1003,3 +1003,44 @@ describe('다시 켜기', () => {
     await expect(store.getDraftQueue()).resolves.toEqual([]);
   });
 });
+
+describe('앱 내 업데이트', () => {
+  it('서명 검증에 실패한 버전을 여럿 남기면 다시 열어도 모두 읽고, 같은 버전은 한 번만 남으며, 뺀 버전은 없다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const first = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    /** 처음 연 저장소. */
+    const firstStore = new SqliteStateStore(first);
+    await firstStore.addSignatureFailedVersion('0.3.0');
+    await firstStore.addSignatureFailedVersion('0.2.0');
+    await firstStore.addSignatureFailedVersion('0.2.0');
+    first.close();
+
+    /** 다시 연 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await expect(store.getSignatureFailedVersions()).resolves.toEqual(['0.2.0', '0.3.0']);
+
+    await store.removeSignatureFailedVersion('0.2.0');
+    await expect(store.getSignatureFailedVersions()).resolves.toEqual(['0.3.0']);
+  });
+
+  it('다른 계정으로 처음부터 시작해도 서명 검증에 실패한 버전은 남는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.addSignatureFailedVersion('0.2.0');
+
+    await store.resetForAccount(NEW_ACCOUNT);
+
+    await expect(store.getSignatureFailedVersions()).resolves.toEqual(['0.2.0']);
+  });
+
+  it('형식 16에서 올리면 서명 검증에 실패한 버전이 없다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    openStateDatabase(path, STATE_MIGRATIONS.slice(0, 16), '0.0.16').close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+    await expect(store.getSignatureFailedVersions()).resolves.toEqual([]);
+  });
+});

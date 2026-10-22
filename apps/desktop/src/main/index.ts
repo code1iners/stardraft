@@ -1,4 +1,5 @@
 import { app, dialog, Menu, net, powerMonitor, safeStorage } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { AgentConnections } from '../core/agent/agent-connections';
@@ -27,6 +28,9 @@ import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '..
 import { TrialRun } from '../core/trial/trial-run';
 import { openAppData, type AppData } from '../core/storage/app-data';
 import { trayIndicator, type TrayIndicatorInput } from '../core/tray-indicator';
+import { InAppUpdate } from '../core/update/in-app-update';
+import { checkInstallLocation, macBundlePathOf, type BlockedLocationReason } from '../core/update/install-location';
+import { UPDATE_PUBLIC_KEYS } from '../core/update/update-public-keys.mts';
 import { globalProblemText, type GlobalProblemText } from '../shared/global-problem-text';
 import { APP_ID, appPlatform, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
 import { createAppLogger } from './app-logger';
@@ -38,6 +42,7 @@ import { ReviewSections } from './review-sections';
 import { hardenRenderers } from './security';
 import { systemClock } from './system-clock';
 import { AppTray, type TrayView } from './tray';
+import { electronUpdateFeed } from './update-feed';
 
 /** 트레이 아이콘. 변수로 붙잡아 두지 않으면 가비지 컬렉션으로 사라진다. */
 let tray: AppTray | null = null;
@@ -55,6 +60,8 @@ let drafts: DraftQueue | null = null;
 let posting: Posting | null = null;
 /** 처리됨 목록 정리. 끝낼 때 다음 정리를 멈춘다. */
 let retention: BundleRetention | null = null;
+/** 앱 내 업데이트. 끝낼 때 다음 확인을 멈춘다. 소스 실행에서는 없다. */
+let appUpdate: InAppUpdate | null = null;
 
 applyAppIdentity();
 
@@ -305,6 +312,22 @@ function start(): void {
       clock: systemClock,
       logger,
     });
+    /**
+     * 앱 내 업데이트. 공개 Release에서 새 버전을 확인해 받고, 서명을 확인한 뒤 설치 준비됨으로 둔다.
+     * 소스에서 실행할 때는 끈다. electron-updater도 설치본에서만 확인한다.
+     */
+    const inAppUpdate = app.isPackaged
+      ? new InAppUpdate({
+          feed: electronUpdateFeed(autoUpdater, logger),
+          currentVersion: app.getVersion(),
+          publicKeys: UPDATE_PUBLIC_KEYS,
+          checkLocation: checkAppLocation,
+          stateStore: appData.stateStore,
+          clock: systemClock,
+          logger,
+        })
+      : null;
+    appUpdate = inAppUpdate;
     registerIpc({
       windows: appWindows,
       logger,
@@ -325,6 +348,7 @@ function start(): void {
       trialRun,
       draftSettings,
       notifier,
+      inAppUpdate,
     });
     /**
      * 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣고,
@@ -359,9 +383,11 @@ function start(): void {
     flowAccount.onChange(syncDetection);
     globalProblems.onChange(syncDetection);
     // 잠자기에서 깨어나면 밀린 멘션을 바로 조회하고, 잠든 동안 멈춘 하루 타이머 대신 처리됨 목록도 정리한다.
+    // 앱 내 업데이트는 마지막 확인이 4시간보다 오래됐을 때만 바로 확인한다.
     powerMonitor.on('resume', () => {
       void mentionDetection.checkNow();
       retention?.cleanUpNow();
+      void inAppUpdate?.checkIfDue();
     });
 
     // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
@@ -413,6 +439,8 @@ function start(): void {
       });
     // 앱을 시작할 때 후보 에이전트의 연결을 확인한다(작동 확인 포함). 쓸 에이전트가 없으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
     void agentConnections.checkAll();
+    // 켜고 1분 뒤 처음 확인하고, 그 뒤 4시간마다 확인한다.
+    inAppUpdate?.start();
   });
 }
 
@@ -425,6 +453,7 @@ async function prepareQuit(): Promise<void> {
   // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
   detection?.stop();
   retention?.stop();
+  appUpdate?.stop();
   try {
     // 에이전트 CLI는 새 프로세스 그룹으로 띄워 앱과 함께 끝나지 않으므로 실행을 끊어 프로세스 트리를 끝낸다.
     // 카운트다운 중이던 게시는 보내지 않고 게시 중으로 남아, 다시 켤 때 준비됨으로 돌아간다.
@@ -440,6 +469,18 @@ function unsubscribeAll(unsubscribes: readonly (() => void)[]): () => void {
   return () => {
     for (const unsubscribe of unsubscribes) unsubscribe();
   };
+}
+
+/**
+ * 앱이 스스로 바꿀 수 없는 위치인지 본다. Windows는 사용자별 설치라 늘 바꿀 수 있다.
+ * macOS 실행 파일이 앱 번들 안에 있지 않으면 위치를 알 수 없으므로 던진다(앱 내 업데이트는 받지 않는다).
+ */
+async function checkAppLocation(): Promise<BlockedLocationReason | null> {
+  if (process.platform !== 'darwin') return null;
+  /** 실행 중인 앱 번들. */
+  const bundlePath = macBundlePathOf(process.execPath);
+  if (!bundlePath) throw new Error('실행 파일이 앱 번들 안에 있지 않습니다.');
+  return checkInstallLocation(bundlePath);
 }
 
 /** 사용자의 로그인 셸. Finder에서 켠 앱도 `$SHELL`을 받지만, 없으면 계정 정보의 셸을 쓴다. */

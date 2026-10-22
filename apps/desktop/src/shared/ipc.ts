@@ -26,6 +26,12 @@ export const APP_FOLDERS = ['data', 'logs'] as const;
 /** 여는 폴더 하나. `data`는 데이터 폴더, `logs`는 진단 로그 폴더다. */
 export type AppFolder = (typeof APP_FOLDERS)[number];
 
+/** 앱이 여는 다운로드 사이트의 섹션. 주소는 main이 정하고 렌더러는 이름만 보낸다. */
+export const SITE_SECTIONS = ['update'] as const;
+
+/** 다운로드 사이트의 섹션 하나. `update`는 업데이트 섹션이다([사이트에서 받기]). */
+export type SiteSection = (typeof SITE_SECTIONS)[number];
+
 /** 키 확인 명령이 받는 키의 최대 길이. 이보다 긴 값은 키가 아니므로 main에 보내지 않는다. */
 export const FLOW_API_KEY_MAX_LENGTH = 512;
 
@@ -781,6 +787,28 @@ export interface EditorSnapshot {
   picker: { editors: InstalledEditorSnapshot[] } | null;
 }
 
+/** 앱이 스스로 바꿀 수 없는 위치의 까닭. `read-only`는 읽기 전용 볼륨(DMG 안, App Translocation), `no-permission`은 번들이나 부모 폴더에 쓸 권한이 없는 것이다. */
+export type BlockedLocationReasonSnapshot = 'read-only' | 'no-permission';
+
+/** 앱 내 업데이트의 상태. 설정 "일반"의 업데이트 칸이 그린다. */
+export type UpdateSnapshot =
+  /** 이번 실행에서 아직 확인하지 않았다. */
+  | { kind: 'idle' }
+  /** 새 버전을 확인하고 있다. */
+  | { kind: 'checking' }
+  /** 지금 버전이 최신이다. `checkedAt`은 마지막으로 확인한 시각(Unix epoch 밀리초)이다. */
+  | { kind: 'up-to-date'; checkedAt: number }
+  /** 확인이나 다운로드가 실패했다(네트워크 등). 다음 확인에서 저절로 다시 시도한다. `failedAt`은 실패한 시각이다. */
+  | { kind: 'check-failed'; failedAt: number }
+  /** 새 버전을 받고 있다. `percent`는 받은 비율(0~100의 정수)이다. */
+  | { kind: 'downloading'; version: string; percent: number }
+  /** 받은 파일의 서명을 확인했다. 사용자가 [다시 시작]을 누르면 설치한다. */
+  | { kind: 'ready'; version: string }
+  /** 받은 파일의 서명이 맞지 않아 지우고 설치하지 않았다. */
+  | { kind: 'signature-failed'; version: string }
+  /** 앱이 스스로 바꿀 수 없는 위치라 새 버전을 받지 않았다. */
+  | { kind: 'location-blocked'; version: string; reason: BlockedLocationReasonSnapshot };
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -813,6 +841,8 @@ export interface AppSnapshot {
   trial: TrialSnapshot;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettingsSnapshot;
+  /** 앱 내 업데이트의 상태. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
+  update: UpdateSnapshot | null;
 }
 
 /** main → 렌더러 변경 이벤트. */
@@ -845,6 +875,8 @@ export type AppEvent =
   | { type: 'trial-changed'; trial: TrialSnapshot }
   /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
   | { type: 'draft-settings-changed'; draftSettings: DraftSettingsSnapshot }
+  /** 앱 내 업데이트의 상태가 바뀌었다. */
+  | { type: 'update-changed'; update: UpdateSnapshot }
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
   | { type: 'review-bundle-requested'; bundleId: number }
   /** 묶음의 게시가 실패했다. 다른 묶음을 보고 있어도 토스트를 한 번 띄운다. */
@@ -973,7 +1005,13 @@ export type AppCommand =
    */
   | { type: 'add-secret-pattern'; pattern: string }
   /** 설정 "일반"의 [알림 시험]. 시험 알림을 하나 띄운다. */
-  | { type: 'test-notification' };
+  | { type: 'test-notification' }
+  /** 설정 "일반"의 업데이트 [지금 확인]. 업데이트를 끈 소스 실행에서는 main이 무시한다. */
+  | { type: 'check-for-update' }
+  /** 서명 검증 실패 뒤의 [다시 시도]. 실패한 버전을 다시 받는다. 서명 검증 실패가 아니면 main이 무시한다. */
+  | { type: 'retry-update' }
+  /** 다운로드 사이트의 섹션을 기본 브라우저로 연다. [사이트에서 받기]는 업데이트 섹션이다. 주소는 main이 정한다. */
+  | { type: 'open-site'; section: SiteSection };
 
 /** preload가 렌더러에 `window.stardraft`로 노출하는 IPC. */
 export interface StardraftBridge {
@@ -993,6 +1031,11 @@ export function isSettingsSection(value: unknown): value is SettingsSection {
 /** 여는 폴더 이름인지 확인한다. */
 function isAppFolder(value: unknown): value is AppFolder {
   return typeof value === 'string' && (APP_FOLDERS as readonly string[]).includes(value);
+}
+
+/** 다운로드 사이트의 섹션 이름인지 확인한다. */
+function isSiteSection(value: unknown): value is SiteSection {
+  return typeof value === 'string' && (SITE_SECTIONS as readonly string[]).includes(value);
 }
 
 /** 앱이 아는 에이전트인지 확인한다. */
@@ -1091,6 +1134,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     }
     case 'open-folder':
       return isAppFolder(candidate.folder) ? { type: 'open-folder', folder: candidate.folder } : null;
+    case 'open-site':
+      return isSiteSection(candidate.section) ? { type: 'open-site', section: candidate.section } : null;
     case 'check-flow-key':
       return isFlowApiKeyInput(candidate.apiKey) ? { type: 'check-flow-key', apiKey: candidate.apiKey } : null;
     case 'set-default-agent':
@@ -1194,6 +1239,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'reload-trial-picker':
     case 'close-trial-picker':
     case 'test-notification':
+    case 'check-for-update':
+    case 'retry-update':
       return { type: candidate.type };
     default:
       return null;

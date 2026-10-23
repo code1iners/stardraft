@@ -4,8 +4,6 @@ Flow에서 나를 멘션한 업무에 답할 초안을 내 PC의 Claude Code 또
 
 ## 처음 사용하는 분을 위한 영상 가이드
 
-macOS에서 처음 설정부터 멘션 확인, 답변 초안 검토와 게시까지 2분 30초로 안내합니다. 한국어 음성과 자막이 포함되어 있습니다.
-
 https://github.com/user-attachments/assets/f596ca02-cad0-4dcf-82fd-966c2a9185f9
 
 <details>

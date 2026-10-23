@@ -3,4 +3,6 @@
 // 목록이 비어 있으면 태그 워크플로가 서명을 검증하지 못해 Release를 만들지 않는다.
 
 /** Ed25519 공개 키(SPKI DER의 base64). 평소에는 하나이고, 키를 회전하는 동안에만 둘이다. */
-export const UPDATE_PUBLIC_KEYS: readonly string[] = [];
+export const UPDATE_PUBLIC_KEYS: readonly string[] = [
+  'MCowBQYDK2VwAyEAONA6ojTWYd+AH6FxwtFXrCIHB70uZ0juj+MDwEQOp80=',
+];

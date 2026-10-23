@@ -1,0 +1,16 @@
+{
+  "head": "fcbad7a30d7ac958aa00a8106c340939c2900f7f",
+  "duration": 150,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "videoCodec": "h264",
+  "audioCodec": "aac",
+  "sampleRate": 48000,
+  "integratedLUFS": -14.68,
+  "truePeakDBTP": -1.83,
+  "humanAudioReview": false,
+  "sceneCount": 16,
+  "voiceCount": 31,
+  "externalPosting": false
+}

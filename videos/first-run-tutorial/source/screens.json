@@ -1,0 +1,112 @@
+[
+  {
+    "name": "welcome",
+    "width": 480,
+    "height": 430
+  },
+  {
+    "name": "flow-before",
+    "width": 840,
+    "height": 530
+  },
+  {
+    "name": "flow-after",
+    "width": 840,
+    "height": 530
+  },
+  {
+    "name": "agent",
+    "width": 840,
+    "height": 530
+  },
+  {
+    "name": "agent-find",
+    "width": 840,
+    "height": 530
+  },
+  {
+    "name": "agent-version",
+    "width": 840,
+    "height": 530
+  },
+  {
+    "name": "agent-login",
+    "width": 840,
+    "height": 530
+  },
+  {
+    "name": "agent-run-check",
+    "width": 840,
+    "height": 530
+  },
+  {
+    "name": "folders-before",
+    "width": 840,
+    "height": 560
+  },
+  {
+    "name": "folders-after",
+    "width": 840,
+    "height": 560
+  },
+  {
+    "name": "ready",
+    "width": 480,
+    "height": 470
+  },
+  {
+    "name": "empty",
+    "width": 480,
+    "height": 300
+  },
+  {
+    "name": "generating",
+    "width": 760,
+    "height": 540
+  },
+  {
+    "name": "review",
+    "width": 760,
+    "height": 650
+  },
+  {
+    "name": "evidence",
+    "width": 760,
+    "height": 730
+  },
+  {
+    "name": "edited",
+    "width": 760,
+    "height": 650
+  },
+  {
+    "name": "trial",
+    "width": 760,
+    "height": 650
+  },
+  {
+    "name": "posting-5",
+    "width": 760,
+    "height": 650
+  },
+  {
+    "name": "posting-4",
+    "width": 760,
+    "height": 650
+  },
+  {
+    "name": "posting-3",
+    "width": 760,
+    "height": 650
+  },
+  {
+    "name": "posting-2",
+    "width": 760,
+    "height": 650
+  },
+  {
+    "name": "posting-1",
+    "width": 760,
+    "height": 650
+  }
+]

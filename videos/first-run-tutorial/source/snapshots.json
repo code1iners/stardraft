@@ -1,0 +1,1254 @@
+{
+  "ok": true,
+  "outputDir": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d",
+  "frames": [
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-01-at-0.3s.png",
+      "time": 0.3,
+      "role": "beat",
+      "label": "question"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-02-at-5s.png",
+      "time": 5,
+      "role": "beat",
+      "label": "question mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-03-at-10.3s.png",
+      "time": 10.3,
+      "role": "beat",
+      "label": "open"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-04-at-14s.png",
+      "time": 14,
+      "role": "beat",
+      "label": "open mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-05-at-18.3s.png",
+      "time": 18.3,
+      "role": "beat",
+      "label": "prepare"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-06-at-22s.png",
+      "time": 22,
+      "role": "beat",
+      "label": "prepare mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-07-at-26.3s.png",
+      "time": 26.3,
+      "role": "beat",
+      "label": "flow"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-08-at-30s.png",
+      "time": 30,
+      "role": "beat",
+      "label": "flow mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-09-at-34.3s.png",
+      "time": 34.3,
+      "role": "beat",
+      "label": "agent"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-10-at-38s.png",
+      "time": 38,
+      "role": "beat",
+      "label": "agent mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-11-at-42.3s.png",
+      "time": 42.3,
+      "role": "beat",
+      "label": "folders"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-12-at-46s.png",
+      "time": 46,
+      "role": "beat",
+      "label": "folders mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-13-at-50.3s.png",
+      "time": 50.3,
+      "role": "beat",
+      "label": "start"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-14-at-55s.png",
+      "time": 55,
+      "role": "beat",
+      "label": "start mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-15-at-60.3s.png",
+      "time": 60.3,
+      "role": "beat",
+      "label": "mention"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-16-at-65s.png",
+      "time": 65,
+      "role": "beat",
+      "label": "mention mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-17-at-70.3s.png",
+      "time": 70.3,
+      "role": "beat",
+      "label": "generation"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-18-at-75s.png",
+      "time": 75,
+      "role": "beat",
+      "label": "generation mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-19-at-80.3s.png",
+      "time": 80.3,
+      "role": "beat",
+      "label": "review"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-20-at-85s.png",
+      "time": 85,
+      "role": "beat",
+      "label": "review mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-21-at-90.3s.png",
+      "time": 90.3,
+      "role": "beat",
+      "label": "evidence"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-22-at-96s.png",
+      "time": 96,
+      "role": "beat",
+      "label": "evidence mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-23-at-102.3s.png",
+      "time": 102.3,
+      "role": "beat",
+      "label": "edit"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-24-at-108s.png",
+      "time": 108,
+      "role": "beat",
+      "label": "edit mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-25-at-114.3s.png",
+      "time": 114.3,
+      "role": "beat",
+      "label": "post"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-26-at-119.5s.png",
+      "time": 119.5,
+      "role": "beat",
+      "label": "post mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-27-at-125.3s.png",
+      "time": 125.3,
+      "role": "beat",
+      "label": "posted"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-28-at-127.5s.png",
+      "time": 127.5,
+      "role": "beat",
+      "label": "posted mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-29-at-130.3s.png",
+      "time": 130.3,
+      "role": "beat",
+      "label": "trial"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-30-at-136s.png",
+      "time": 136,
+      "role": "beat",
+      "label": "trial mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-31-at-142.3s.png",
+      "time": 142.3,
+      "role": "beat",
+      "label": "finish"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-32-at-146s.png",
+      "time": 146,
+      "role": "beat",
+      "label": "finish mid"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-1-at-9.8s.png",
+      "time": 9.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-2-at-9.9s.png",
+      "time": 9.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-3-at-10s.png",
+      "time": 10,
+      "role": "seam",
+      "label": "cut question -> open"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-4-at-10.1s.png",
+      "time": 10.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-5-at-10.2s.png",
+      "time": 10.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-1-at-17.8s.png",
+      "time": 17.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-2-at-17.9s.png",
+      "time": 17.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-3-at-18s.png",
+      "time": 18,
+      "role": "seam",
+      "label": "cut open -> prepare"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-4-at-18.1s.png",
+      "time": 18.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-5-at-18.2s.png",
+      "time": 18.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-1-at-25.8s.png",
+      "time": 25.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-2-at-25.9s.png",
+      "time": 25.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-3-at-26s.png",
+      "time": 26,
+      "role": "seam",
+      "label": "cut prepare -> flow"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-4-at-26.1s.png",
+      "time": 26.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-5-at-26.2s.png",
+      "time": 26.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-1-at-33.8s.png",
+      "time": 33.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-2-at-33.9s.png",
+      "time": 33.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-3-at-34s.png",
+      "time": 34,
+      "role": "seam",
+      "label": "cut flow -> agent"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-4-at-34.1s.png",
+      "time": 34.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-5-at-34.2s.png",
+      "time": 34.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-1-at-41.8s.png",
+      "time": 41.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-2-at-41.9s.png",
+      "time": 41.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-3-at-42s.png",
+      "time": 42,
+      "role": "seam",
+      "label": "cut agent -> folders"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-4-at-42.1s.png",
+      "time": 42.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-5-at-42.2s.png",
+      "time": 42.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-1-at-49.8s.png",
+      "time": 49.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-2-at-49.9s.png",
+      "time": 49.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-3-at-50s.png",
+      "time": 50,
+      "role": "seam",
+      "label": "cut folders -> start"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-4-at-50.1s.png",
+      "time": 50.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-5-at-50.2s.png",
+      "time": 50.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-1-at-59.8s.png",
+      "time": 59.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-2-at-59.9s.png",
+      "time": 59.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-3-at-60s.png",
+      "time": 60,
+      "role": "seam",
+      "label": "cut start -> mention"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-4-at-60.1s.png",
+      "time": 60.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-5-at-60.2s.png",
+      "time": 60.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-1-at-69.8s.png",
+      "time": 69.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-2-at-69.9s.png",
+      "time": 69.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-3-at-70s.png",
+      "time": 70,
+      "role": "seam",
+      "label": "cut mention -> generation"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-4-at-70.1s.png",
+      "time": 70.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-5-at-70.2s.png",
+      "time": 70.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-1-at-79.8s.png",
+      "time": 79.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-2-at-79.9s.png",
+      "time": 79.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-3-at-80s.png",
+      "time": 80,
+      "role": "seam",
+      "label": "cut generation -> review"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-4-at-80.1s.png",
+      "time": 80.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-5-at-80.2s.png",
+      "time": 80.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-1-at-89.8s.png",
+      "time": 89.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-2-at-89.9s.png",
+      "time": 89.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-3-at-90s.png",
+      "time": 90,
+      "role": "seam",
+      "label": "cut review -> evidence"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-4-at-90.1s.png",
+      "time": 90.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-5-at-90.2s.png",
+      "time": 90.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-1-at-101.8s.png",
+      "time": 101.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-2-at-101.9s.png",
+      "time": 101.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-3-at-102s.png",
+      "time": 102,
+      "role": "seam",
+      "label": "cut evidence -> edit"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-4-at-102.1s.png",
+      "time": 102.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-5-at-102.2s.png",
+      "time": 102.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-1-at-113.8s.png",
+      "time": 113.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-2-at-113.9s.png",
+      "time": 113.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-3-at-114s.png",
+      "time": 114,
+      "role": "seam",
+      "label": "cut edit -> post"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-4-at-114.1s.png",
+      "time": 114.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-5-at-114.2s.png",
+      "time": 114.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-1-at-124.8s.png",
+      "time": 124.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-2-at-124.9s.png",
+      "time": 124.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-3-at-125s.png",
+      "time": 125,
+      "role": "seam",
+      "label": "cut post -> posted"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-4-at-125.1s.png",
+      "time": 125.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-5-at-125.2s.png",
+      "time": 125.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-1-at-129.8s.png",
+      "time": 129.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-2-at-129.9s.png",
+      "time": 129.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-3-at-130s.png",
+      "time": 130,
+      "role": "seam",
+      "label": "cut posted -> trial"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-4-at-130.1s.png",
+      "time": 130.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-5-at-130.2s.png",
+      "time": 130.2,
+      "role": "seam",
+      "label": "+0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-1-at-141.8s.png",
+      "time": 141.8,
+      "role": "seam",
+      "label": "cut -0.2"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-2-at-141.9s.png",
+      "time": 141.9,
+      "role": "seam",
+      "label": "-0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-3-at-142s.png",
+      "time": 142,
+      "role": "seam",
+      "label": "cut trial -> finish"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-4-at-142.1s.png",
+      "time": 142.1,
+      "role": "seam",
+      "label": "+0.1"
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-5-at-142.2s.png",
+      "time": 142.2,
+      "role": "seam",
+      "label": "+0.2"
+    }
+  ],
+  "contactSheets": [
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-beats-1.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-beats-2.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-01.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-02.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-03.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-04.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-05.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-06.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-07.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-08.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-09.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-10.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-11.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-12.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-13.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-14.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-15.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-phone-1.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-phone-2.jpg"
+  ],
+  "review": {
+    "window": [
+      0,
+      150
+    ],
+    "scenes": [
+      {
+        "id": "question",
+        "start": 0,
+        "end": 10
+      },
+      {
+        "id": "open",
+        "start": 10,
+        "end": 18
+      },
+      {
+        "id": "prepare",
+        "start": 18,
+        "end": 26
+      },
+      {
+        "id": "flow",
+        "start": 26,
+        "end": 34
+      },
+      {
+        "id": "agent",
+        "start": 34,
+        "end": 42
+      },
+      {
+        "id": "folders",
+        "start": 42,
+        "end": 50
+      },
+      {
+        "id": "start",
+        "start": 50,
+        "end": 60
+      },
+      {
+        "id": "mention",
+        "start": 60,
+        "end": 70
+      },
+      {
+        "id": "generation",
+        "start": 70,
+        "end": 80
+      },
+      {
+        "id": "review",
+        "start": 80,
+        "end": 90
+      },
+      {
+        "id": "evidence",
+        "start": 90,
+        "end": 102
+      },
+      {
+        "id": "edit",
+        "start": 102,
+        "end": 114
+      },
+      {
+        "id": "post",
+        "start": 114,
+        "end": 125
+      },
+      {
+        "id": "posted",
+        "start": 125,
+        "end": 130
+      },
+      {
+        "id": "trial",
+        "start": 130,
+        "end": 142
+      },
+      {
+        "id": "finish",
+        "start": 142,
+        "end": 150
+      }
+    ],
+    "beats": [
+      {
+        "time": 0.3,
+        "label": "question",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-01-at-0.3s.png"
+      },
+      {
+        "time": 5,
+        "label": "question mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-02-at-5s.png"
+      },
+      {
+        "time": 10.3,
+        "label": "open",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-03-at-10.3s.png"
+      },
+      {
+        "time": 14,
+        "label": "open mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-04-at-14s.png"
+      },
+      {
+        "time": 18.3,
+        "label": "prepare",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-05-at-18.3s.png"
+      },
+      {
+        "time": 22,
+        "label": "prepare mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-06-at-22s.png"
+      },
+      {
+        "time": 26.3,
+        "label": "flow",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-07-at-26.3s.png"
+      },
+      {
+        "time": 30,
+        "label": "flow mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-08-at-30s.png"
+      },
+      {
+        "time": 34.3,
+        "label": "agent",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-09-at-34.3s.png"
+      },
+      {
+        "time": 38,
+        "label": "agent mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-10-at-38s.png"
+      },
+      {
+        "time": 42.3,
+        "label": "folders",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-11-at-42.3s.png"
+      },
+      {
+        "time": 46,
+        "label": "folders mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-12-at-46s.png"
+      },
+      {
+        "time": 50.3,
+        "label": "start",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-13-at-50.3s.png"
+      },
+      {
+        "time": 55,
+        "label": "start mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-14-at-55s.png"
+      },
+      {
+        "time": 60.3,
+        "label": "mention",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-15-at-60.3s.png"
+      },
+      {
+        "time": 65,
+        "label": "mention mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-16-at-65s.png"
+      },
+      {
+        "time": 70.3,
+        "label": "generation",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-17-at-70.3s.png"
+      },
+      {
+        "time": 75,
+        "label": "generation mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-18-at-75s.png"
+      },
+      {
+        "time": 80.3,
+        "label": "review",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-19-at-80.3s.png"
+      },
+      {
+        "time": 85,
+        "label": "review mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-20-at-85s.png"
+      },
+      {
+        "time": 90.3,
+        "label": "evidence",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-21-at-90.3s.png"
+      },
+      {
+        "time": 96,
+        "label": "evidence mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-22-at-96s.png"
+      },
+      {
+        "time": 102.3,
+        "label": "edit",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-23-at-102.3s.png"
+      },
+      {
+        "time": 108,
+        "label": "edit mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-24-at-108s.png"
+      },
+      {
+        "time": 114.3,
+        "label": "post",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-25-at-114.3s.png"
+      },
+      {
+        "time": 119.5,
+        "label": "post mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-26-at-119.5s.png"
+      },
+      {
+        "time": 125.3,
+        "label": "posted",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-27-at-125.3s.png"
+      },
+      {
+        "time": 127.5,
+        "label": "posted mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-28-at-127.5s.png"
+      },
+      {
+        "time": 130.3,
+        "label": "trial",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-29-at-130.3s.png"
+      },
+      {
+        "time": 136,
+        "label": "trial mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-30-at-136s.png"
+      },
+      {
+        "time": 142.3,
+        "label": "finish",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-31-at-142.3s.png"
+      },
+      {
+        "time": 146,
+        "label": "finish mid",
+        "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/beat-32-at-146s.png"
+      }
+    ],
+    "seams": [
+      {
+        "time": 10,
+        "from": "question",
+        "to": "open",
+        "times": [
+          9.8,
+          9.9,
+          10,
+          10.1,
+          10.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-1-at-9.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-2-at-9.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-3-at-10s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-4-at-10.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-01-5-at-10.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-01.jpg"
+      },
+      {
+        "time": 18,
+        "from": "open",
+        "to": "prepare",
+        "times": [
+          17.8,
+          17.9,
+          18,
+          18.1,
+          18.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-1-at-17.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-2-at-17.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-3-at-18s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-4-at-18.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-02-5-at-18.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-02.jpg"
+      },
+      {
+        "time": 26,
+        "from": "prepare",
+        "to": "flow",
+        "times": [
+          25.8,
+          25.9,
+          26,
+          26.1,
+          26.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-1-at-25.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-2-at-25.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-3-at-26s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-4-at-26.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-03-5-at-26.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-03.jpg"
+      },
+      {
+        "time": 34,
+        "from": "flow",
+        "to": "agent",
+        "times": [
+          33.8,
+          33.9,
+          34,
+          34.1,
+          34.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-1-at-33.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-2-at-33.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-3-at-34s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-4-at-34.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-04-5-at-34.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-04.jpg"
+      },
+      {
+        "time": 42,
+        "from": "agent",
+        "to": "folders",
+        "times": [
+          41.8,
+          41.9,
+          42,
+          42.1,
+          42.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-1-at-41.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-2-at-41.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-3-at-42s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-4-at-42.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-05-5-at-42.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-05.jpg"
+      },
+      {
+        "time": 50,
+        "from": "folders",
+        "to": "start",
+        "times": [
+          49.8,
+          49.9,
+          50,
+          50.1,
+          50.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-1-at-49.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-2-at-49.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-3-at-50s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-4-at-50.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-06-5-at-50.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-06.jpg"
+      },
+      {
+        "time": 60,
+        "from": "start",
+        "to": "mention",
+        "times": [
+          59.8,
+          59.9,
+          60,
+          60.1,
+          60.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-1-at-59.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-2-at-59.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-3-at-60s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-4-at-60.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-07-5-at-60.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-07.jpg"
+      },
+      {
+        "time": 70,
+        "from": "mention",
+        "to": "generation",
+        "times": [
+          69.8,
+          69.9,
+          70,
+          70.1,
+          70.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-1-at-69.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-2-at-69.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-3-at-70s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-4-at-70.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-08-5-at-70.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-08.jpg"
+      },
+      {
+        "time": 80,
+        "from": "generation",
+        "to": "review",
+        "times": [
+          79.8,
+          79.9,
+          80,
+          80.1,
+          80.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-1-at-79.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-2-at-79.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-3-at-80s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-4-at-80.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-09-5-at-80.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-09.jpg"
+      },
+      {
+        "time": 90,
+        "from": "review",
+        "to": "evidence",
+        "times": [
+          89.8,
+          89.9,
+          90,
+          90.1,
+          90.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-1-at-89.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-2-at-89.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-3-at-90s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-4-at-90.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-10-5-at-90.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-10.jpg"
+      },
+      {
+        "time": 102,
+        "from": "evidence",
+        "to": "edit",
+        "times": [
+          101.8,
+          101.9,
+          102,
+          102.1,
+          102.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-1-at-101.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-2-at-101.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-3-at-102s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-4-at-102.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-11-5-at-102.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-11.jpg"
+      },
+      {
+        "time": 114,
+        "from": "edit",
+        "to": "post",
+        "times": [
+          113.8,
+          113.9,
+          114,
+          114.1,
+          114.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-1-at-113.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-2-at-113.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-3-at-114s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-4-at-114.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-12-5-at-114.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-12.jpg"
+      },
+      {
+        "time": 125,
+        "from": "post",
+        "to": "posted",
+        "times": [
+          124.8,
+          124.9,
+          125,
+          125.1,
+          125.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-1-at-124.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-2-at-124.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-3-at-125s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-4-at-125.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-13-5-at-125.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-13.jpg"
+      },
+      {
+        "time": 130,
+        "from": "posted",
+        "to": "trial",
+        "times": [
+          129.8,
+          129.9,
+          130,
+          130.1,
+          130.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-1-at-129.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-2-at-129.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-3-at-130s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-4-at-130.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-14-5-at-130.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-14.jpg"
+      },
+      {
+        "time": 142,
+        "from": "trial",
+        "to": "finish",
+        "times": [
+          141.8,
+          141.9,
+          142,
+          142.1,
+          142.2
+        ],
+        "paths": [
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-1-at-141.8s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-2-at-141.9s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-3-at-142s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-4-at-142.1s.png",
+          "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/seam-15-5-at-142.2s.png"
+        ],
+        "sheet": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-15.jpg"
+      }
+    ],
+    "sheets": {
+      "beats": [
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-beats-1.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-beats-2.jpg"
+      ],
+      "seams": [
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-01.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-02.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-03.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-04.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-05.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-06.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-07.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-08.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-09.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-10.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-11.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-12.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-13.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-14.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-seam-15.jpg"
+      ],
+      "phone": [
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-phone-1.jpg",
+        "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/519261b1-745f-4f6a-834d-87524ba2c12d/review-phone-2.jpg"
+      ]
+    },
+    "notes": []
+  },
+  "_meta": {
+    "version": "0.8.186",
+    "latestVersion": "0.8.186",
+    "updateAvailable": false
+  }
+}

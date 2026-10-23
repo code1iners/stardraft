@@ -1,0 +1,55 @@
+{
+  "ok": true,
+  "outputDir": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0",
+  "frames": [
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-00-at-35s.png",
+      "time": 35
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-01-at-37.6s.png",
+      "time": 37.6
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-02-at-40s.png",
+      "time": 40
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-03-at-45.8s.png",
+      "time": 45.8
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-04-at-95s.png",
+      "time": 95
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-05-at-99s.png",
+      "time": 99
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-06-at-119.5s.png",
+      "time": 119.5
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-07-at-137s.png",
+      "time": 137
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-08-at-147s.png",
+      "time": 147
+    },
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/frame-09-at-145.5s.png",
+      "time": 145.5
+    }
+  ],
+  "contactSheets": [
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/contact-sheet-1.jpg",
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/501c9a67-82c1-4868-b57a-1ecad6f3c5b0/contact-sheet-2.jpg"
+  ],
+  "_meta": {
+    "version": "0.8.186",
+    "latestVersion": "0.8.186",
+    "updateAvailable": false
+  }
+}

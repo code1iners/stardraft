@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "outputDir": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/1c6980f4-9e80-4bc0-b36a-250197235e22",
+  "frames": [
+    {
+      "path": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/1c6980f4-9e80-4bc0-b36a-250197235e22/frame-00-at-99s.png",
+      "time": 99
+    }
+  ],
+  "contactSheets": [
+    "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/snapshots/1c6980f4-9e80-4bc0-b36a-250197235e22/contact-sheet.jpg"
+  ],
+  "_meta": {
+    "version": "0.8.186",
+    "latestVersion": "0.8.186",
+    "updateAvailable": false
+  }
+}

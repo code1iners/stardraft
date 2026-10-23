@@ -1,0 +1,802 @@
+{
+  "query": "caption clean bar",
+  "tier": "words",
+  "tier_detail": "local word match",
+  "dropped": 0,
+  "unindexed": 0,
+  "shown": 49,
+  "total": 448,
+  "report_gap": "npx hyperframes feedback --search-miss \"caption clean bar\" --wanted \"<the move you needed>\" --tier words",
+  "results": [
+    {
+      "name": "lt-clean-bar",
+      "type": "block",
+      "title": "Lower Third — Clean Bar",
+      "description": "Minimal white-card lower third for podcasts/interviews: accent tab, name + role, clip-wipe entrance",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 4.8
+    },
+    {
+      "name": "animated-bar-chart",
+      "type": "component",
+      "title": "Animated Bar Chart",
+      "description": "A compact data card with deterministic bar growth and value callouts.",
+      "tags": [
+        "data"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/animated-bar-chart.png"
+      }
+    },
+    {
+      "name": "caption-pill-karaoke",
+      "type": "component",
+      "title": "Pill Karaoke",
+      "description": "Pill-shaped container with per-word karaoke color highlight",
+      "tags": [
+        "captions",
+        "caption-style",
+        "karaoke",
+        "pill"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-pill-karaoke/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-pill-karaoke.png"
+      }
+    },
+    {
+      "name": "caption-particle-burst",
+      "type": "component",
+      "title": "Particle Burst",
+      "description": "Keyword words trigger colored particle explosions",
+      "tags": [
+        "captions",
+        "caption-style",
+        "particles",
+        "burst",
+        "effects"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-particle-burst/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-particle-burst.png"
+      }
+    },
+    {
+      "name": "caption-neon-glow",
+      "type": "component",
+      "title": "Neon Glow",
+      "description": "Cyan and magenta neon glow with keyword accent colors",
+      "tags": [
+        "captions",
+        "caption-style",
+        "neon",
+        "glow",
+        "gaming"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-neon-glow/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-neon-glow.png"
+      }
+    },
+    {
+      "name": "caption-neon-accent",
+      "type": "component",
+      "title": "Neon Accent",
+      "description": "Multi-color neon glow accents with wiggle drift animation",
+      "tags": [
+        "captions",
+        "caption-style",
+        "neon",
+        "glow",
+        "accent"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-neon-accent/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-neon-accent.png"
+      }
+    },
+    {
+      "name": "caption-matrix-decode",
+      "type": "component",
+      "title": "Matrix Decode",
+      "description": "Character scramble animation before text reveal",
+      "tags": [
+        "captions",
+        "caption-style",
+        "matrix",
+        "scramble",
+        "decode"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-matrix-decode/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-matrix-decode.png"
+      }
+    },
+    {
+      "name": "caption-gradient-fill",
+      "type": "component",
+      "title": "Gradient Fill",
+      "description": "Gradient-clipped text with elastic bounce entrance",
+      "tags": [
+        "captions",
+        "caption-style",
+        "gradient",
+        "colorful"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-gradient-fill/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-gradient-fill.png"
+      }
+    },
+    {
+      "name": "caption-clip-wipe",
+      "type": "component",
+      "title": "Clip Wipe",
+      "description": "Left-to-right clip-path wipe reveal per word",
+      "tags": [
+        "captions",
+        "caption-style",
+        "wipe",
+        "clip-path",
+        "reveal"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-clip-wipe/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-clip-wipe.png"
+      }
+    },
+    {
+      "name": "caption-weight-shift",
+      "type": "component",
+      "title": "Weight Shift",
+      "description": "Elegant font-weight transition between caption lines",
+      "tags": [
+        "captions",
+        "caption-style",
+        "minimal",
+        "typography"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-weight-shift/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-weight-shift.png"
+      }
+    },
+    {
+      "name": "caption-highlight",
+      "type": "component",
+      "title": "Highlight",
+      "description": "Red background sweep behind each active word, TikTok-style",
+      "tags": [
+        "captions",
+        "caption-style",
+        "highlight",
+        "social",
+        "tiktok"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-highlight/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-highlight.png"
+      }
+    },
+    {
+      "name": "caption-glitch-rgb",
+      "type": "component",
+      "title": "Glitch RGB",
+      "description": "RGB chromatic aberration with CRT scanline overlay",
+      "tags": [
+        "captions",
+        "caption-style",
+        "glitch",
+        "cyber",
+        "tech"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-glitch-rgb/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-glitch-rgb.png"
+      }
+    },
+    {
+      "name": "caption-emoji-pop",
+      "type": "component",
+      "title": "Emoji Pop",
+      "description": "Emoji integration with stroked text and horizontal squeeze entrance",
+      "tags": [
+        "captions",
+        "caption-style",
+        "emoji",
+        "social"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-emoji-pop/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-emoji-pop.png"
+      }
+    },
+    {
+      "name": "caption-parallax-layers",
+      "type": "component",
+      "title": "Parallax Layers",
+      "description": "Behind-subject 3D text layering with vertical stretch effect",
+      "tags": [
+        "captions",
+        "caption-style",
+        "parallax",
+        "3d",
+        "depth"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-parallax-layers/preview.mp4?v=1779051692",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-parallax-layers.png"
+      }
+    },
+    {
+      "name": "caption-editorial-emphasis",
+      "type": "component",
+      "title": "Editorial Emphasis",
+      "description": "Dual-font system with dramatic size contrast for emphasis words",
+      "tags": [
+        "captions",
+        "caption-style",
+        "editorial",
+        "typography",
+        "emphasis"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-editorial-emphasis/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-editorial-emphasis.png"
+      }
+    },
+    {
+      "name": "lt-stack-bars",
+      "type": "block",
+      "title": "Lower Third — Stack Bars",
+      "description": "Two stacked bars: a dark name bar wipes from the left, an accent role bar wipes from the right",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "bold"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 4.8
+    },
+    {
+      "name": "caption-kinetic-slam",
+      "type": "component",
+      "title": "Kinetic Slam",
+      "description": "Full-screen single-word display with alternating entrance directions",
+      "tags": [
+        "captions",
+        "caption-style",
+        "kinetic",
+        "typography",
+        "slam"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-kinetic-slam/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-kinetic-slam.png"
+      }
+    },
+    {
+      "name": "bar-chart-race",
+      "type": "block",
+      "title": "Bar Chart Race",
+      "description": "Ranked bars grow and overtake each other as a time series advances, with the axis rescaling as values climb and the accent handing over to whoever leads",
+      "tags": [
+        "data",
+        "chart",
+        "statistics",
+        "ranking"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 12
+    },
+    {
+      "name": "caption-texture",
+      "type": "component",
+      "title": "Texture",
+      "description": "Flowing texture mask over large uppercase text — ships with 6 textures (lava, marble, metal, wood, concrete, rock), configurable via the texture variable",
+      "tags": [
+        "captions",
+        "caption-style",
+        "texture",
+        "mask"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-texture-lava/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-texture.png"
+      }
+    },
+    {
+      "name": "caption-blend-difference",
+      "type": "component",
+      "title": "Blend Difference",
+      "description": "Auto-inverting text using mix-blend-mode: difference — flips between white and black per-pixel against the background",
+      "tags": [
+        "text",
+        "text-effect",
+        "effect",
+        "blend-mode",
+        "contrast",
+        "inversion"
+      ]
+    },
+    {
+      "name": "inline-highlight",
+      "type": "component",
+      "title": "Inline Highlight",
+      "description": "A clean marker-style inline highlight that animates behind text using a CSS scale variable",
+      "tags": [
+        "motion-primitive",
+        "text",
+        "highlight",
+        "caption"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/inline-highlight.png"
+      }
+    },
+    {
+      "name": "caption-camera-follow",
+      "type": "component",
+      "title": "Camera Follow Captions",
+      "description": "One sentence written across a world far larger than the frame. Each word is sized against everything already written, so the block grows geometrically and the camera pulls back at a steady rate to keep landing the new word at the same size. Old words stay lit and simply become small.",
+      "tags": [
+        "captions",
+        "caption-style",
+        "camera",
+        "typography",
+        "motion-primitive",
+        "portrait"
+      ]
+    },
+    {
+      "name": "spotify-card",
+      "type": "block",
+      "title": "Spotify Now Playing",
+      "description": "Animated Spotify now-playing card with album art and progress bar",
+      "tags": [
+        "social",
+        "overlay",
+        "spotify"
+      ],
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "duration": 5,
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/spotify-card.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/spotify-card.png"
+      }
+    },
+    {
+      "name": "blur-out-up",
+      "type": "component",
+      "title": "Blur Out Up",
+      "description": "Words arrive clean and depart upward with increasing blur for airy exits.",
+      "tags": [
+        "motion-primitive",
+        "typography"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/blur-out-up.png"
+      }
+    },
+    {
+      "name": "data-chart",
+      "type": "block",
+      "title": "Data Chart",
+      "description": "Animated bar + line chart with staggered reveal, NYT-style typography, and value labels",
+      "tags": [
+        "data",
+        "chart",
+        "statistics"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 15,
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/data-chart.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/data-chart.png"
+      }
+    },
+    {
+      "name": "soft-blur-in",
+      "type": "component",
+      "title": "Soft Blur In",
+      "description": "A soft opacity, blur, and lift reveal for headlines, captions, and product UI callouts",
+      "tags": [
+        "motion-primitive",
+        "text",
+        "reveal",
+        "blur"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/soft-blur-in.png"
+      }
+    },
+    {
+      "name": "text-shimmer",
+      "type": "component",
+      "title": "Text Shimmer",
+      "description": "A static headline receives one clean specular gradient sweep through its glyphs, then returns to its ordinary text color.",
+      "tags": [
+        "motion-primitive",
+        "text-effects",
+        "shimmer",
+        "specular",
+        "emphasis"
+      ]
+    },
+    {
+      "name": "outline-draw",
+      "type": "component",
+      "title": "Outline Draw",
+      "description": "A rounded outline that proves a callout by drawing clockwise as a hollow conic-gradient border with a clean closure.",
+      "tags": [
+        "motion-primitive",
+        "effects",
+        "outline",
+        "border",
+        "mask",
+        "proof"
+      ]
+    },
+    {
+      "name": "testimonial-card",
+      "type": "component",
+      "title": "Testimonial Card",
+      "description": "Reveals a customer quote at reading pace, then settles its avatar, author name, and handle beneath as a clean proof beat.",
+      "tags": [
+        "prop",
+        "ui-props",
+        "testimonial",
+        "social-proof",
+        "quote",
+        "prove"
+      ]
+    },
+    {
+      "name": "particle-image-reveal",
+      "type": "component",
+      "title": "Particle Image Reveal",
+      "description": "A seeded deterministic particle field converges and settles while a slotted image reveals beneath it, the trail thinning until the image holds clean.",
+      "tags": [
+        "motion-primitive",
+        "intros-reveals",
+        "particles",
+        "reveal",
+        "canvas",
+        "deterministic"
+      ]
+    },
+    {
+      "name": "waveform",
+      "type": "block",
+      "title": "Waveform",
+      "description": "Equalizer bars in a blue to pink gradient pulse across the middle of the frame, like an audio visualizer. A WebGPU shader from the Shaders library (shaders.com, MIT).",
+      "tags": [
+        "webgpu",
+        "webgpu-shader",
+        "audio",
+        "music",
+        "visualizer",
+        "bars"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 2,
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/waveform.mp4"
+      }
+    },
+    {
+      "name": "scan-band",
+      "type": "component",
+      "title": "Scan Band",
+      "description": "A diagonal distortion band sweeps once across a clean wordmark, revealing clipped red and cyan offsets only inside the moving band.",
+      "tags": [
+        "motion-primitive",
+        "typography",
+        "scan",
+        "chromatic",
+        "distortion",
+        "wordmark"
+      ]
+    },
+    {
+      "name": "macos-tahoe-liquid-glass",
+      "type": "block",
+      "title": "macOS Tahoe Liquid Glass Desktop",
+      "description": "3D MacBook with a macOS Tahoe-style desktop, glass menu bar, Finder window, dock, and cinematic device camera move.",
+      "tags": [
+        "html-in-canvas",
+        "3d",
+        "macos",
+        "tahoe",
+        "gltf"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 15,
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/macos-tahoe-liquid-glass.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/macos-tahoe-liquid-glass.png"
+      }
+    },
+    {
+      "name": "lower-third-bild",
+      "type": "block",
+      "title": "Lower Third — BILD Style",
+      "description": "News-style lower third with tight-fit text boxes: white headline bar with red drop-shadow, red sub-line with white drop-shadow.",
+      "tags": [
+        "broadcast",
+        "lower-third",
+        "news",
+        "overlay"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 8
+    },
+    {
+      "name": "mk-callout-highlight",
+      "type": "block",
+      "title": "Word-Sweep Highlight",
+      "description": "A sentence whose word-by-word emphasis is driven by a single scalar — tween it to sync the highlight with a voiceover",
+      "tags": [
+        "typography",
+        "karaoke",
+        "captions",
+        "minimal"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 8
+    },
+    {
+      "name": "lt-side-rule",
+      "type": "block",
+      "title": "Lower Third — Side Rule",
+      "description": "Cardless lower third with a vertical accent bar; condensed display name + mono role, text-shadowed for footage",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "minimal"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 4.8
+    },
+    {
+      "name": "code-snippet-dark-2026",
+      "type": "block",
+      "title": "Code Snippet - Dark 2026",
+      "description": "VS Code workbench with per-character typing animation in the Dark 2026 theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 11
+    },
+    {
+      "name": "code-snippet-dark-modern",
+      "type": "block",
+      "title": "Code Snippet - Dark Modern",
+      "description": "VS Code workbench with per-character typing animation in the Dark Modern theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 11
+    },
+    {
+      "name": "mk-background",
+      "type": "block",
+      "title": "Minimal Gradient Background",
+      "description": "Procedural soft-blob gradient backdrop in a minimalist presentation style: two radial blobs drifting over a base color, with an animatable rounded-card bar mask and optional frosted-glass mode",
+      "tags": [
+        "background",
+        "gradient",
+        "minimal",
+        "professional",
+        "presentation"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 10
+    },
+    {
+      "name": "mk-progress-stat",
+      "type": "block",
+      "title": "Count-Up Stat Card",
+      "description": "Big-numeral statistic with count-up, label, thin progress track filling to value/max, and caption; light and dark schemes",
+      "tags": [
+        "data-viz",
+        "stat",
+        "minimal"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 7
+    },
+    {
+      "name": "marker-checklist-card",
+      "type": "component",
+      "title": "Marker Checklist Card",
+      "description": "A hand-lettered paper card: marker headline with an underline and a drawn ellipse around one word, then three checklist rows whose checks draw themselves on - typewriter labels, marker values. The paper-and-marker sibling of mk-specs-list's clean professional rows",
+      "tags": [
+        "motion-primitive",
+        "handwritten",
+        "checklist",
+        "paper",
+        "marker"
+      ]
+    },
+    {
+      "name": "hw-frame",
+      "type": "block",
+      "title": "Sketched Frame",
+      "description": "Media in a hand-drawn border with corner doodles and a handwritten caption; the unit tilts slightly and boils (images inside the block; keep live footage in the host)",
+      "tags": [
+        "handwritten",
+        "frame",
+        "media"
+      ],
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 8
+    },
+    {
+      "name": "colorama-wipe",
+      "type": "component",
+      "title": "Colorama Wipe",
+      "description": "Headline reveal through a feathered, leaning wipe front that is blurred and colour-mapped as it passes, then settles to clean type and wipes off again — the After Effects masked-text + Compound Blur + Colorama 'shiny wipe' as a deterministic canvas effect on any text element",
+      "tags": [
+        "text",
+        "reveal",
+        "wipe",
+        "colorama",
+        "gradient",
+        "blur",
+        "headline",
+        "saas"
+      ]
+    },
+    {
+      "name": "ordered-dither-pass",
+      "type": "component",
+      "title": "Ordered Dither Pass",
+      "description": "Bayer-matrix ordered dithering quantizes a slotted scene (rasterized once at mount): the image emerges from pure 2-tone noise to clean, or dissolves the reverse. Stateless per frame, never error diffusion.",
+      "tags": [
+        "motion-primitive",
+        "experiment",
+        "texture",
+        "dither",
+        "transition",
+        "quantize"
+      ]
+    },
+    {
+      "name": "sticky-mock-swap",
+      "type": "component",
+      "title": "Sticky Mock Swap",
+      "description": "A pinned product mock cross-fades through accent-tinted feature states while matching captions rise, hold, and exit beside it.",
+      "tags": [
+        "motion-primitive",
+        "product-demo",
+        "sticky",
+        "mock",
+        "crossfade",
+        "feature-tour"
+      ]
+    },
+    {
+      "name": "chart-story",
+      "type": "component",
+      "title": "Chart Story",
+      "description": "One chart builds from data in reading order and lands the exact supplied values: staggered bars, a left-to-right line with area fill, a sweeping donut, or filling progress bars, with an accented value callout on the emphasized datum.",
+      "tags": [
+        "motion-primitive",
+        "proof",
+        "stats",
+        "chart",
+        "bars",
+        "line",
+        "donut",
+        "progress",
+        "deterministic"
+      ]
+    },
+    {
+      "name": "segmentation-flood",
+      "type": "component",
+      "title": "Segmentation Flood",
+      "description": "Machine-vision read of a slotted subject: translucent accent segmentation masks flood on in quantized scanline steps, each region gets a thin bracket and mono label chip, a deterministic 2-frame HUD flicker rides the pass, then the labeled read settles clean.",
+      "tags": [
+        "motion-primitive",
+        "product-demo",
+        "ai",
+        "hud",
+        "canvas",
+        "deterministic",
+        "experiment"
+      ]
+    },
+    {
+      "name": "screen-flow-carousel",
+      "type": "component",
+      "title": "Screen Flow Carousel",
+      "description": "Two to five app screens ride a horizontal rail: one primary at center, neighbors receded, advancing on cues with a velocity-matched throw and a smooth long-tail catch while a mono caption swaps with each advance. Screens are slots with token skeleton defaults.",
+      "tags": [
+        "product-demo",
+        "feature-tour",
+        "carousel",
+        "rail",
+        "slot",
+        "screens"
+      ]
+    },
+    {
+      "name": "chat-thread",
+      "type": "component",
+      "title": "Chat Thread",
+      "description": "The measured conversation as one mountable scene at full fidelity: status bar, back badge, avatar and name pill, bubbles with real iMessage tails, a Delivered receipt, large emoji rows, a media placeholder, a link card, and typing dots holding the beat. Every message picks its type by prefix - recv:/sent: text, emoji: a large row, img media, card:Title~domain a link card - and heights are measured at mount so any thread fits",
+      "tags": [
+        "motion-primitive",
+        "chat",
+        "mock-ui",
+        "conversation",
+        "vertical"
+      ]
+    }
+  ]
+}

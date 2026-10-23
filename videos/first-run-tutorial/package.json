@@ -1,0 +1,15 @@
+{
+  "name": "first-run-tutorial",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.8.186 preview",
+    "check": "npx --yes hyperframes@0.8.186 check",
+    "render": "npx --yes hyperframes@0.8.186 render",
+    "publish": "npx --yes hyperframes@0.8.186 publish"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright-core": "1.64.1"
+  }
+}

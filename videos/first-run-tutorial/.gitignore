@@ -1,0 +1,13 @@
+# 로컬 편집 기록은 지우지 않으며 버전 관리에서만 제외한다.
+.hyperframes/
+.thumbnails/
+.waveform-cache/
+node_modules/
+# 배경음은 assets/audio/wallpaper-bed.wav 하나를 공유한다. 기존 사본은 로컬에 보존한다.
+.media/audio/bgm/bgm_001.wav
+# 재생성 가능한 실제 앱 HTML과 번들.
+source/screens.cjs
+source/*.html
+# 결과물은 로컬 전달용이다.
+renders/
+*.log

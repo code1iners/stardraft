@@ -1,0 +1,798 @@
+{
+  "ok": true,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 1,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "timeline_track_too_dense",
+        "severity": "warning",
+        "message": "Track 2 has 6 timed elements in this HTML file. Smaller sub-compositions keep timelines easier to read, iterate on, and diff.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/compositions/post.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move coherent scene groups into smaller .html files and mount them from the parent with data-composition-src so the timeline stays easier to inspect, revise, and validate."
+      }
+    ],
+    "filesScanned": 18
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "duration": 150,
+    "samples": [
+      8.333,
+      25,
+      41.667,
+      58.333,
+      75,
+      91.667,
+      108.333,
+      125,
+      141.667
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 0,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": true,
+    "samples": [
+      8.333,
+      41.667,
+      75,
+      108.333,
+      141.667
+    ],
+    "checked": 26,
+    "passed": 26
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 28,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 2 text elements stay under it for 0.5 s or more, the smallest \"가상 업무·저장소 예제\" at 25 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "가상 업무·저장소 예제",
+        "selector": "div.question-layout > p:nth-of-type(3)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/question.html",
+        "bbox": {
+          "x": 192,
+          "y": 774.66,
+          "width": 235.02,
+          "height": 36
+        },
+        "time": 0,
+        "times": [
+          0,
+          4.257
+        ],
+        "fontPx": 25,
+        "floorPx": 28,
+        "seconds": 10.016,
+        "elements": [
+          {
+            "selector": "div.question-layout > p:nth-of-type(3)",
+            "text": "가상 업무·저장소 예제",
+            "fontPx": 25,
+            "time": 0,
+            "seconds": 10.016
+          },
+          {
+            "selector": "span.answer-label",
+            "text": "Stardraft의 초안",
+            "fontPx": 26,
+            "time": 4.257,
+            "seconds": 5.759
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.51 s (0.50–4.01 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0.501,
+        "seconds": 3.506,
+        "floorSeconds": 3,
+        "until": 4.007
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 4.76 s (4.76–9.52 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 4.758,
+        "seconds": 4.758,
+        "floorSeconds": 3,
+        "until": 9.516
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"macOS 메뉴 막대 재현\" renders at 25 px for 8.01 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "macOS 메뉴 막대 재현",
+        "selector": "div.menu-note",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 160,
+          "y": 751,
+          "width": 242.45,
+          "height": 36
+        },
+        "time": 10.017,
+        "times": [
+          10.017
+        ],
+        "fontPx": 25,
+        "floorPx": 28,
+        "seconds": 8.013,
+        "elements": [
+          {
+            "selector": "div.menu-note",
+            "text": "macOS 메뉴 막대 재현",
+            "fontPx": 25,
+            "time": 10.017,
+            "seconds": 8.013
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.01 s (14.52–17.53 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 14.524,
+        "seconds": 3.005,
+        "floorSeconds": 3,
+        "until": 17.529
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.00 s (30.55–33.56 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 30.551,
+        "seconds": 3.005,
+        "floorSeconds": 3,
+        "until": 33.556
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"연결 확인은 실제 모델 사용량을 조금 씁니다.\" renders at 26 px for 8.01 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "연결 확인은 실제 모델 사용량을 조금 씁니다.",
+        "selector": "#agent > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 192,
+          "y": 828,
+          "width": 481.48,
+          "height": 37
+        },
+        "time": 34.057,
+        "times": [
+          34.057
+        ],
+        "fontPx": 26,
+        "floorPx": 28,
+        "seconds": 8.013,
+        "elements": [
+          {
+            "selector": "#agent > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
+            "text": "연결 확인은 실제 모델 사용량을 조금 씁니다.",
+            "fontPx": 26,
+            "time": 34.057,
+            "seconds": 8.013
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.26 s (34.56–37.81 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 34.558,
+        "seconds": 3.255,
+        "floorSeconds": 3,
+        "until": 37.813
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.26 s (38.31–41.57 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 38.314,
+        "seconds": 3.255,
+        "floorSeconds": 3,
+        "until": 41.569
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.00 s (46.58–49.58 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 46.578,
+        "seconds": 3.005,
+        "floorSeconds": 3,
+        "until": 49.583
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.76 s (55.34–59.10 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 55.342,
+        "seconds": 3.756,
+        "floorSeconds": 3,
+        "until": 59.098
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 3 text elements stay under it for 0.5 s or more, the smallest \"계정 서비스 / 비밀번호 재설정 안내\" at 24 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "계정 서비스 / 비밀번호 재설정 안내",
+        "selector": "#mention > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > small:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/mention.html",
+        "bbox": {
+          "x": 323,
+          "y": 408,
+          "width": 352.16,
+          "height": 35
+        },
+        "time": 60.1,
+        "times": [
+          60.1,
+          60.1,
+          60.1
+        ],
+        "fontPx": 24,
+        "floorPx": 28,
+        "seconds": 10.016,
+        "elements": [
+          {
+            "selector": "#mention > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > small:nth-of-type(1)",
+            "text": "계정 서비스 / 비밀번호 재설정 안내",
+            "fontPx": 24,
+            "time": 60.1,
+            "seconds": 10.016
+          },
+          {
+            "selector": "#mention > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1)",
+            "text": "Flow 업무 댓글 · 재현 예시",
+            "fontPx": 25,
+            "time": 60.1,
+            "seconds": 10.016
+          },
+          {
+            "selector": "#mention > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > p:nth-of-type(2)",
+            "text": "감지 시작 이후에 들어온 새 업무 멘션",
+            "fontPx": 25,
+            "time": 60.1,
+            "seconds": 10.016
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 4.76 s (64.36–69.11 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 64.357,
+        "seconds": 4.758,
+        "floorSeconds": 3,
+        "until": 69.115
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"예제에서는 작업 폴더에 저장소가 하나 있습니다. 생성 대기 시간은 압축했습니다.\" renders at 25 px for 5.26 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "예제에서는 작업 폴더에 저장소가 하나 있습니다. 생성 대기 시간은 압축했습니다.",
+        "selector": "p.example.map-note",
+        "dataAttributes": {},
+        "sourceFile": "compositions/generation.html",
+        "bbox": {
+          "x": 192,
+          "y": 728,
+          "width": 835.94,
+          "height": 36
+        },
+        "time": 70.117,
+        "times": [
+          70.117
+        ],
+        "fontPx": 25,
+        "floorPx": 28,
+        "seconds": 5.258,
+        "elements": [
+          {
+            "selector": "p.example.map-note",
+            "text": "예제에서는 작업 폴더에 저장소가 하나 있습니다. 생성 대기 시간은 압축했습니다.",
+            "fontPx": 25,
+            "time": 70.117,
+            "seconds": 5.258
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.00 s (71.87–74.88 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 71.87,
+        "seconds": 3.005,
+        "floorSeconds": 3,
+        "until": 74.875
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.76 s (75.88–79.63 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 75.876,
+        "seconds": 3.757,
+        "floorSeconds": 3,
+        "until": 79.633
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"비밀번호 재설정 안내\" renders at 25 px for 3.25 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "비밀번호 재설정 안내",
+        "selector": "div.notification > div:nth-of-type(1) > span:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/review.html",
+        "bbox": {
+          "x": 1504.56,
+          "y": 328,
+          "width": 221,
+          "height": 36
+        },
+        "time": 80.134,
+        "times": [
+          80.134
+        ],
+        "fontPx": 25,
+        "floorPx": 28,
+        "seconds": 3.255,
+        "elements": [
+          {
+            "selector": "div.notification > div:nth-of-type(1) > span:nth-of-type(1)",
+            "text": "비밀번호 재설정 안내",
+            "fontPx": 25,
+            "time": 80.134,
+            "seconds": 3.255
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 4.26 s (85.14–89.40 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 85.142,
+        "seconds": 4.257,
+        "floorSeconds": 3,
+        "until": 89.399
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"①의 설명과 파일 위치를 확인합니다. 30분은 가상 코드 예제의 값입니다.\" renders at 26 px for 12.02 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "①의 설명과 파일 위치를 확인합니다. 30분은 가상 코드 예제의 값입니다.",
+        "selector": "#evidence > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/evidence.html",
+        "bbox": {
+          "x": 192,
+          "y": 828,
+          "width": 780.73,
+          "height": 37
+        },
+        "time": 90.15,
+        "times": [
+          90.15
+        ],
+        "fontPx": 26,
+        "floorPx": 28,
+        "seconds": 12.02,
+        "elements": [
+          {
+            "selector": "#evidence > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
+            "text": "①의 설명과 파일 위치를 확인합니다. 30분은 가상 코드 예제의 값입니다.",
+            "fontPx": 26,
+            "time": 90.15,
+            "seconds": 12.02
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 4.26 s (95.91–100.17 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 95.91,
+        "seconds": 4.257,
+        "floorSeconds": 3,
+        "until": 100.167
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"직접 편집하면 근거 번호가 숨겨집니다. 받는 사람도 확인하세요.\" renders at 26 px for 12.02 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "직접 편집하면 근거 번호가 숨겨집니다. 받는 사람도 확인하세요.",
+        "selector": "#edit > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/edit.html",
+        "bbox": {
+          "x": 192,
+          "y": 828,
+          "width": 687.38,
+          "height": 37
+        },
+        "time": 102.17,
+        "times": [
+          102.17
+        ],
+        "fontPx": 26,
+        "floorPx": 28,
+        "seconds": 12.02,
+        "elements": [
+          {
+            "selector": "#edit > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
+            "text": "직접 편집하면 근거 번호가 숨겨집니다. 받는 사람도 확인하세요.",
+            "fontPx": 26,
+            "time": 102.17,
+            "seconds": 12.02
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 5.01 s (107.93–112.94 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 107.93,
+        "seconds": 5.008,
+        "floorSeconds": 3,
+        "until": 112.938
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 4.26 s (117.70–121.95 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 117.696,
+        "seconds": 4.257,
+        "floorSeconds": 3,
+        "until": 121.953
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 2 text elements stay under it for 0.5 s or more, the smallest \"내 명의의 답변\" at 24 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "내 명의의 답변",
+        "selector": "div.flow-message.result-message > div:nth-of-type(2) > div:nth-of-type(1) > small:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/posted.html",
+        "bbox": {
+          "x": 323,
+          "y": 408,
+          "width": 145.92,
+          "height": 35
+        },
+        "time": 125.209,
+        "times": [
+          125.209,
+          125.209
+        ],
+        "fontPx": 24,
+        "floorPx": 28,
+        "seconds": 5.008,
+        "elements": [
+          {
+            "selector": "div.flow-message.result-message > div:nth-of-type(2) > div:nth-of-type(1) > small:nth-of-type(1)",
+            "text": "내 명의의 답변",
+            "fontPx": 24,
+            "time": 125.209,
+            "seconds": 5.008
+          },
+          {
+            "selector": "div.flow-message.result-message > div:nth-of-type(1)",
+            "text": "Flow 게시 결과 · 재현 예시",
+            "fontPx": 25,
+            "time": 125.209,
+            "seconds": 5.008
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.76 s (125.71–129.47 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 125.71,
+        "seconds": 3.756,
+        "floorSeconds": 3,
+        "until": 129.466
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"시험도 실제 에이전트 사용량을 씁니다. Flow에는 게시되지 않습니다.\" renders at 26 px for 12.02 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "시험도 실제 에이전트 사용량을 씁니다. Flow에는 게시되지 않습니다.",
+        "selector": "#trial > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/trial.html",
+        "bbox": {
+          "x": 192,
+          "y": 828,
+          "width": 745.55,
+          "height": 37
+        },
+        "time": 130.217,
+        "times": [
+          130.217
+        ],
+        "fontPx": 26,
+        "floorPx": 28,
+        "seconds": 12.02,
+        "elements": [
+          {
+            "selector": "#trial > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
+            "text": "시험도 실제 에이전트 사용량을 씁니다. Flow에는 게시되지 않습니다.",
+            "fontPx": 26,
+            "time": 130.217,
+            "seconds": 12.02
+          }
+        ]
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 5.51 s (135.48–140.99 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 135.476,
+        "seconds": 5.509,
+        "floorSeconds": 3,
+        "until": 140.985
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"Music: “Wallpaper” — Kevin MacLeod (incompete...\" renders at 23 px for 7.76 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "Music: “Wallpaper” — Kevin MacLeod (incompetech.com)CC BY 4.0 · creativecommons.org/licenses/by/4.0/Excerpted, lowered beneath narration, faded in/out",
+        "selector": "div.credits",
+        "dataAttributes": {},
+        "sourceFile": "compositions/finish.html",
+        "bbox": {
+          "x": 192,
+          "y": 578,
+          "width": 615.5,
+          "height": 103
+        },
+        "time": 142.237,
+        "times": [
+          142.237
+        ],
+        "fontPx": 23,
+        "floorPx": 28,
+        "seconds": 7.763,
+        "elements": [
+          {
+            "selector": "div.credits",
+            "text": "Music: “Wallpaper” — Kevin MacLeod (incompetech.com)CC BY 4.0 · creativecommons.org/licenses/by/4.0/Excerpted, lowered beneath narration, faded in/out",
+            "fontPx": 23,
+            "time": 142.237,
+            "seconds": 7.763
+          }
+        ]
+      }
+    ],
+    "enabled": true,
+    "step": 0.25,
+    "samples": 599
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  },
+  "saved": {
+    "id": "16ffe58b-b956-4826-941a-addb0335cb4d",
+    "revision": "b52e515e-836c-4c44-9208-b8af954c4237",
+    "report": "/Users/wraith/workspace/work/stardraft/videos/first-run-tutorial/.hyperframes/artifacts/checks/16ffe58b-b956-4826-941a-addb0335cb4d.json",
+    "attribution": "recorded-revision"
+  },
+  "_meta": {
+    "version": "0.8.186",
+    "latestVersion": "0.8.186",
+    "updateAvailable": false
+  }
+}

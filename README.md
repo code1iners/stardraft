@@ -2,6 +2,19 @@
 
 Flow 멘션에 답할 초안을 내 PC의 CLI 에이전트로 만드는 트레이 앱이다. 받는 곳은 [stardraft.squadify.app](https://stardraft.squadify.app)이다.
 
+## 처음 사용하는 분을 위한 영상 가이드
+
+처음 설정부터 멘션 확인, 답변 초안 검토와 게시까지 2분 30초로 안내한다. 한국어 음성과 자막이 포함되어 있다.
+
+https://github.com/user-attachments/assets/f596ca02-cad0-4dcf-82fd-966c2a9185f9
+
+<details>
+<summary>영상·음원 출처</summary>
+
+앱 화면은 가상 데이터로 구성한 사용 예시다. 배경음: [“Wallpaper” — Kevin MacLeod (incompetech.com)](https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100843), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). 150초 발췌, 음량 조정, 페이드 적용.
+
+</details>
+
 | 폴더 | 내용 |
 | :- | :- |
 | `apps/desktop` | Electron 데스크톱 앱 |

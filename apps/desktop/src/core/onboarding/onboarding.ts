@@ -46,7 +46,7 @@ export type DetectionStart =
   | { status: 'starting' }
   | { status: 'failed'; reason: DetectionStartFailure };
 
-/** 온보딩 상태. 작은 창의 필수 설정 전 화면, 설정 창의 첫 설정 띠, 트레이 노란 점이 따른다. */
+/** 온보딩 상태. 작은 창의 필수 설정 전 화면, 설정 창의 첫 설정 띠, 트레이 설정 필요 아이콘이 따른다. */
 export interface OnboardingState {
   /** 감지를 시작했는지 여부. 시작한 뒤에는 첫 설정 띠와 필수 설정 전 화면이 다시 나오지 않는다. */
   detectionStarted: boolean;

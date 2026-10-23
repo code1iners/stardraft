@@ -18,7 +18,10 @@
     "preview": "electron-vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "icons:generate": "node scripts/generate-tray-icons.mts",
+    "icons:check": "node scripts/generate-tray-icons.mts --check",
+    "preview:tray": "node scripts/preview-tray.mts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -37,6 +40,7 @@
     "js-yaml": "4.3.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
+    "sharp": "0.35.5",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.2",
     "vite": "8.3.4",

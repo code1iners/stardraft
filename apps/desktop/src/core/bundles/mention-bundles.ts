@@ -216,7 +216,7 @@ export class MentionBundles {
     return this.bundles.find((bundle) => bundle.trial)?.id ?? null;
   }
 
-  /** 트레이 숫자. 검토 대기 가운데 준비됨과 저장소 확인 필요 묶음 수다. */
+  /** 트레이 검토 수. 검토 대기 가운데 준비됨과 저장소 확인 필요 묶음 수다. */
   reviewCount(): number {
     return this.bundles.filter((bundle) => countsForReview(bundle.status)).length;
   }
@@ -226,7 +226,7 @@ export class MentionBundles {
     return new Set(this.postedRanges().keys());
   }
 
-  /** 실패나 게시 실패 묶음이 있는지 본다. 트레이에 빨간 점을 띄운다. */
+  /** 실패나 게시 실패 묶음이 있는지 본다. 트레이 문제 아이콘의 대상이다. */
   hasFailure(): boolean {
     return this.bundles.some((bundle) => listGroupOf(bundle.status) === 'failed');
   }
@@ -713,7 +713,7 @@ export class MentionBundles {
   }
 
   /**
-   * 준비됨이나 게시 실패 묶음의 게시를 시작해 게시 중(카운트다운)으로 둔다. 게시 중 묶음은 검토 대기에 남지만 트레이 숫자에서는 빠진다.
+   * 준비됨이나 게시 실패 묶음의 게시를 시작해 게시 중(카운트다운)으로 둔다. 게시 중 묶음은 검토 대기에 남지만 트레이 검토 수에서는 빠진다.
    * 게시 실패의 직전 게시 기록은 지운다. 준비됨·게시 실패가 아니거나 게시할 수 없는 글(빈 편집기 텍스트, 상한을 넘는 게시 본문)이면 바꾸지 않는다. 시작했으면 참이다.
    * 시험 묶음은 Flow에 아무것도 올리지 않으므로 게시하지 않는다.
    */

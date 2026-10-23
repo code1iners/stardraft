@@ -518,6 +518,7 @@ function start(): void {
  * 게시 요청이 진행 중이면 응답을 최대 5초 기다린다. 마지막으로 편집기 내용 같은 묶음 저장이 끝나기를 기다려 state.db를 닫을 수 있게 한다.
  */
 async function prepareQuit(): Promise<void> {
+  tray?.destroy();
   // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
   detection?.stop();
   retention?.stop();

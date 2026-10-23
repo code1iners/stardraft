@@ -493,7 +493,7 @@ export interface ThreadEntrySnapshot {
   change: WritingChangeSnapshot | null;
 }
 
-/** 준비된 뒤의 변화 감시가 찾은 변화. 초안 위 알림 줄에 보인다. 트레이 숫자와 점은 바꾸지 않는다. */
+/** 준비된 뒤의 변화 감시가 찾은 변화. 초안 위 알림 줄에 보인다. 트레이 상태는 바꾸지 않는다. */
 export interface BundleChangesSnapshot {
   /** 초안을 만든 뒤 지켜볼 범위에 새로 달린 글 수. */
   newWritingCount: number;

@@ -83,7 +83,7 @@ Created: 2026-10-14
 - [앱 내 업데이트 방식 결정](issues/22-in-app-update-design.md): electron-updater `github` provider로 공개 Release에서 직접 받는다. 켜고 1분 뒤와 4시간마다 확인하고 묻지 않고 받되, 설치는 사용자가 [다시 시작]을 누를 때만 한다. macOS는 Keychain 안내를 담은 확인 화면을 먼저 띄우고, 에이전트 실행·게시 카운트다운·게시 요청이 끝날 때까지 다시 시작을 미룬다. 진위는 `latest*.yml`에 넣은 Ed25519 서명(버전·파일 이름·sha512)을 앱이 확인하고, 키는 `release` 환경 비밀값과 오프라인 사본에 둔다. CI는 최상위 DR과 서명을 검사해 틀리면 Release를 만들지 않는다. 앱이 자기 위치에 쓸 수 없으면 받지 않고 사이트로 안내한다. 표시는 트레이 아이콘 대신 메뉴·작은 창 띠·설정 "일반"에 한다. Release에는 dmg, mac zip, exe, yml 두 개만 올리고 `SHA256SUMS.txt`는 뺀다. 차등 다운로드는 끄고, 문제는 새 버전으로 덮어 고친다. 잘못 나간 버전은 사전 릴리스로 바꿔 멈춘다.
 - [비밀 파일 제외 실측](issues/13-secret-exclusion-check.md): macOS의 Codex를 허용한다. 권한 프로필(`--sandbox` 없이 `-c`로 인라인 정의)로 쓰기, 웹 접근, 넘긴 루트 밖 사용자 데이터, `/tmp`, 비밀 파일이 막혔고, 여러 루트도 넘길 수 있다. 명령 실행은 막을 수 없어서, 07의 기준을 목적(부작용 차단, 사용자 데이터와 비밀 차단)으로 읽었다. 막으려면 `features.apps=false`, `.git` deny, `/tmp` deny, 실제 바이너리 경로 실행이 필요했다. 비밀 파일 기본 목록에 `.git/**`을 더해 두 실행기에 함께 적용한다. Claude는 Grep·Glob이 deny 파일을 드러내지 않아 그대로 쓰되, deny 규칙을 `Read(//**/…)` 형식으로 쓰고 `--verbose`를 더한다. Codex 지침은 `-c developer_instructions`로 넣는다. 실제 모델(0.163.0)도 표지를 드러내지 않고 번들 `rg`로 저장소를 탐색했다. Codex 필수 플래그 묶음은 07의 "Codex 실행 방식"에 있다.
 
-- [트레이 아이콘 설계](issues/61-tray-icon-prototype.md): 2026-10-23 승인. 단색 A 윤곽으로 문제 취소선 > 검토 채움·2초 무한 pulse > 대기 빈 윤곽을 표시한다. 숫자는 툴팁에만 두며 창 열기로 상태를 지우지 않는다. 기존 숫자·색 배지 결정을 대체한다. [구현과 실제 환경의 남은 검증](issues/62-tray-status-icons.md)을 따로 추적한다.
+- [트레이 아이콘 설계](issues/61-tray-icon-prototype.md): 2026-10-23 승인. 단색 A 윤곽으로 문제 취소선 > 검토 채움·2초 무한 pulse > 대기 빈 윤곽을 표시한다. 숫자는 툴팁에만 두며 창 열기로 상태를 지우지 않는다. 기존 숫자·색 배지 결정을 대체한다. [구현·검증 결과](issues/62-tray-status-icons.md): 자동 검사 통과, macOS 세 상태·pulse는 사용자가 직접 확인했다. 사용자 결정으로 Windows 및 macOS 추가 변형 실기를 완료 조건에서 제외하고 62번을 종료했다.
 
 ## Not yet specified
 

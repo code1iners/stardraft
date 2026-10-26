@@ -106,7 +106,7 @@ export function isDraftTouched(bundle: Pick<MentionBundle, 'editedText' | 'fixed
   return bundle.editedText !== null || bundle.fixedRequirement !== null || bundle.directives.length > 0;
 }
 
-/** 트레이 숫자에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. 게시 중은 검토 대기에 남지만 세지 않는다. */
+/** 트레이 검토 수에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. 게시 중은 검토 대기에 남지만 세지 않는다. */
 export function countsForReview(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
 }
@@ -235,7 +235,7 @@ export type BundlePlace = Pick<MentionLocation, 'postId' | 'remarkId'>;
 
 /**
  * 멘션 묶음. 같은 댓글 스레드나 같은 게시물 본문에서 온, 아직 처리하지 않은 멘션의 모음이다.
- * 초안·상태·트레이 숫자·대기열 위치는 모두 묶음 단위다.
+ * 초안·상태·트레이 검토 수·대기열 위치는 모두 묶음 단위다.
  */
 export interface MentionBundle extends BundlePlace {
   /** 묶음 ID. 저장할 때 정해지고 다시 쓰지 않는다. */

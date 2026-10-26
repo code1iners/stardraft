@@ -26,7 +26,7 @@ const MIN_RETRY_DELAY_MS = 1_000;
 export interface MentionDetectionOptions {
   /** 기준점과 계정을 두는 상태 저장소. */
   stateStore: StateStore;
-  /** 감지한 멘션을 넣을 멘션 묶음. 묶음이 트레이 숫자와 OS 알림을 올린다. */
+  /** 감지한 멘션을 넣을 멘션 묶음. 묶음이 트레이 검토 수와 OS 알림을 올린다. */
   bundles: MentionBundles;
   /** 폴링 주기와 72시간 범위를 재는 시계. */
   clock: Clock;
@@ -248,7 +248,7 @@ export class MentionDetection {
 
   /**
    * 기준점이 없다(다른 계정의 키로 바꿔 기록을 비움). 첫 실행처럼 가장 최근 알림의 alarmId를 기준점으로 잡고,
-   * 과거 멘션은 가져오지 않는다. 기록을 비웠으므로 트레이 숫자도 다시 센다.
+   * 과거 멘션은 가져오지 않는다. 기록을 비웠으므로 트레이 검토 수도 다시 센다.
    */
   private async setFreshBaseline(flow: FlowConnection): Promise<NextPoll> {
     /** 가장 최근 쪽의 알림 목록. */
@@ -260,7 +260,7 @@ export class MentionDetection {
     return NEXT_INTERVAL;
   }
 
-  /** 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 묶음이 트레이 숫자를 바꾸고 OS 알림을 띄운다. */
+  /** 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 묶음이 트레이 검토 수를 바꾸고 OS 알림을 띄운다. */
   private async save(mentions: Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baseline: string, userId: string): Promise<void> {
     // 조회하는 사이에 다른 계정의 키로 바뀌어 기록을 비웠으면, 옛 계정의 결과를 남기지 않는다.
     /** 지금 계정. */

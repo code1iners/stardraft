@@ -1,11 +1,10 @@
-import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions, type NativeImage, type Rectangle } from 'electron';
-import trayIcon from '../../resources/tray.png?asset';
-import trayTemplateIcon from '../../resources/trayTemplate.png?asset';
+import { app, Menu, nativeTheme, powerMonitor, systemPreferences, Tray, type MenuItemConstructorOptions, type Rectangle } from 'electron';
 import type { TrayIndicator } from '../core/tray-indicator';
 import type { GlobalProblemText } from '../shared/global-problem-text';
 import type { SettingsSection } from '../shared/ipc';
 import type { UpdateMenuAction, UpdateMenuItem } from '../shared/update-text';
-import { countBadgeLabel, drawAlertBadge, drawCountBadge, drawFailureDot, drawGeneratingDots, drawSetupDot } from './tray-badge';
+import { TrayAnimation } from './tray-animation';
+import { TrayImages } from './tray-images';
 
 /** 트레이 아이콘과 메뉴가 부르는 동작. */
 export interface TrayActions {
@@ -23,42 +22,9 @@ export interface TrayActions {
   quit: () => void;
 }
 
-/** Windows 아이콘에 그려 넣는 표시. `key`가 같으면 같은 그림이라 그린 아이콘을 다시 쓴다. */
-interface WindowsBadge {
-  /** 그린 아이콘을 다시 쓸 때 찾는 이름. */
-  key: string;
-  /** 정사각형 아이콘 비트맵에 표시를 그린 사본을 돌려준다. */
-  draw: (bitmap: Uint8Array, size: number) => Uint8Array;
-}
-
-/** macOS 메뉴 막대 제목에 쓰는 노란 점. 제목 글자는 ANSI 색을 받는다. */
-const MAC_SETUP_DOT = '\x1b[33m●\x1b[0m';
-/** macOS 메뉴 막대 제목에 쓰는 빨간 점(실패 있음). */
-const MAC_FAILURE_DOT = '\x1b[31m●\x1b[0m';
-/** macOS 메뉴 막대 제목에 쓰는 점 세 개(생성 중). */
-const MAC_GENERATING_DOTS = '⋯';
-
-/** Windows 아이콘에 그려 넣을 표시. 덧붙일 표시가 없으면 `null`. */
-function windowsBadgeOf(indicator: TrayIndicator): WindowsBadge | null {
-  switch (indicator.kind) {
-    case 'alert':
-      return { key: 'alert', draw: drawAlertBadge };
-    case 'setup-needed':
-      return { key: 'setup-needed', draw: drawSetupDot };
-    case 'review-count':
-      return { key: `count-${countBadgeLabel(indicator.count)}`, draw: (bitmap, size) => drawCountBadge(bitmap, size, indicator.count) };
-    case 'failure':
-      return { key: 'failure', draw: drawFailureDot };
-    case 'generating':
-      return { key: 'generating', draw: drawGeneratingDots };
-    case 'none':
-      return null;
-  }
-}
-
 /** 트레이에 보일 앱 상태. */
 export interface TrayView {
-  /** 아이콘에 덧붙이는 표시. */
+  /** 아이콘의 형태와 알림 상태. */
   indicator: TrayIndicator;
   /** 오른쪽 클릭 메뉴 맨 위에 둘 전역 문제의 문구. 없으면 `null`. */
   problem: GlobalProblemText | null;
@@ -69,11 +35,9 @@ export interface TrayView {
 /** 표시마다 툴팁에 덧붙이는 말. */
 function tooltipNote({ indicator, problem }: TrayView): string | null {
   if (problem) return problem.title;
-  if (indicator.kind === 'setup-needed') return '설정 필요';
-  // Windows 숫자 배지는 10건부터 "9+"이므로 툴팁으로 정확한 수를 알린다.
-  if (indicator.kind === 'review-count') return `검토 대기 ${indicator.count}건`;
-  if (indicator.kind === 'failure') return '실패 있음';
-  if (indicator.kind === 'generating') return '초안 생성 중';
+  if (indicator.kind === 'problem') return indicator.reason === 'setup-needed' ? '설정 필요' : '실패 있음';
+  if (indicator.kind === 'review') return `검토 대기 ${indicator.count}건`;
+  if (indicator.generating) return '초안 생성 중';
   return null;
 }
 
@@ -85,19 +49,49 @@ export class AppTray {
   /** 트레이 아이콘. 이 객체가 붙잡고 있어야 가비지 컬렉션으로 사라지지 않는다. */
   private readonly tray: Tray;
   /** 지금 보이는 상태. 오른쪽 클릭할 때 메뉴를 이 상태로 만든다. */
-  private view: TrayView = { indicator: { kind: 'none' }, problem: null, canCheckNow: false };
+  private view: TrayView = { indicator: { kind: 'idle', generating: false }, problem: null, canCheckNow: false };
   /** 메뉴의 업데이트 항목. 없으면 `null`. 받는 동안 자주 바뀌므로 아이콘과 따로 두고 메뉴를 열 때 읽는다. */
   private updateItem: UpdateMenuItem | null = null;
-  /** Windows 배지 아이콘. 표시마다 처음 쓸 때 만든다. */
-  private readonly badgedIcons = new Map<string, NativeImage>();
+  /** 모든 상태와 배율의 미리 만든 이미지. */
+  private readonly images = new TrayImages();
+  /** pulse 예약과 동작 줄이기를 관리한다. */
+  private readonly animation: TrayAnimation;
+  /** 폐기 후의 상태 통지를 무시한다. */
+  private disposed = false;
+  /** 테마 변경 구독. 같은 함수를 제거할 수 있도록 보관한다. */
+  private readonly onTheme = (): void => this.animation.refresh();
+  /** 절전 시 예약을 멈춘다. */
+  private readonly onSuspend = (): void => this.animation.suspend();
+  /** 복귀 시 설정을 다시 읽고 주기를 시작한다. */
+  private readonly onResume = (): void => this.animation.resume();
 
   constructor(private readonly actions: TrayActions) {
-    // macOS는 메뉴 막대 색에 맞춰 칠해지는 템플릿 이미지, Windows는 색이 있는 이미지를 쓴다.
-    this.tray = new Tray(process.platform === 'darwin' ? trayTemplateIcon : trayIcon);
+    this.tray = new Tray(this.images.get('idle', 0, nativeTheme.shouldUseDarkColorsForSystemIntegratedUI));
+    this.animation = new TrayAnimation(
+      (kind, frame) => this.tray.setImage(this.images.get(kind, frame, nativeTheme.shouldUseDarkColorsForSystemIntegratedUI)),
+      () => systemPreferences.getAnimationSettings().prefersReducedMotion,
+    );
     this.tray.setToolTip(app.name);
-    this.tray.setIgnoreDoubleClickEvents(true);
+    if (process.platform === 'darwin') {
+      this.tray.setTitle('');
+      this.tray.setIgnoreDoubleClickEvents(true);
+    }
     this.tray.on('click', actions.togglePopover);
     this.tray.on('right-click', () => this.tray.popUpContextMenu(this.buildMenu()));
+    nativeTheme.on('updated', this.onTheme);
+    powerMonitor.on('suspend', this.onSuspend);
+    powerMonitor.on('resume', this.onResume);
+  }
+
+  /** 타이머와 운영체제 구독을 먼저 해제한 뒤 아이콘을 한 번만 없앤다. */
+  destroy(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.animation.destroy();
+    nativeTheme.removeListener('updated', this.onTheme);
+    powerMonitor.removeListener('suspend', this.onSuspend);
+    powerMonitor.removeListener('resume', this.onResume);
+    this.tray.destroy();
   }
 
   /** 트레이 아이콘의 화면 위치. 작은 창을 붙일 때 쓴다. */
@@ -107,48 +101,18 @@ export class AppTray {
 
   /** 아이콘 표시, 툴팁, 메뉴를 앱 상태에 맞춘다. */
   show(view: TrayView): void {
+    if (this.disposed) return;
     this.view = view;
     /** 툴팁에 덧붙이는 말. */
     const note = tooltipNote(view);
     this.tray.setToolTip(note ? `${app.name} · ${note}` : app.name);
-    this.applyIndicator(view.indicator);
+    this.animation.show(view.indicator.kind);
   }
 
   /** 메뉴의 업데이트 항목을 바꾼다. 업데이트 때문에 아이콘은 바꾸지 않는다. */
   setUpdateItem(item: UpdateMenuItem | null): void {
+    if (this.disposed) return;
     this.updateItem = item;
-  }
-
-  /** 아이콘에 표시를 덧붙인다. macOS는 아이콘 옆 글자, Windows는 아이콘에 그린 배지다. */
-  private applyIndicator(indicator: TrayIndicator): void {
-    if (process.platform === 'darwin') {
-      this.tray.setTitle(macTitle(indicator));
-      return;
-    }
-    /** 그려 넣을 표시. */
-    const badge = windowsBadgeOf(indicator);
-    this.tray.setImage(badge ? this.windowsBadgedIcon(badge) : trayIcon);
-  }
-
-  /** 색 아이콘의 오른쪽 아래에 빨간 "!" 배지, 노란 점, 숫자 배지, 빨간 점, 점 세 개를 그린 아이콘. 고해상도 화면용 2배 이미지에도 그린다. */
-  private windowsBadgedIcon({ key, draw }: WindowsBadge): NativeImage {
-    /** 이미 만든 아이콘. */
-    const cached = this.badgedIcons.get(key);
-    if (cached) return cached;
-
-    /** 배지를 그릴 원래 아이콘. `@2x` 파일도 함께 읽힌다. */
-    const base = nativeImage.createFromPath(trayIcon);
-    /** 배지를 그린 아이콘. */
-    const badged = nativeImage.createEmpty();
-    for (const scaleFactor of base.getScaleFactors()) {
-      /** 이 배율의 BGRA 비트맵. */
-      const bitmap = base.toBitmap({ scaleFactor });
-      /** 정사각형 아이콘의 한 변 픽셀 수. */
-      const size = Math.round(Math.sqrt(bitmap.length / 4));
-      badged.addRepresentation({ scaleFactor, width: size, height: size, buffer: Buffer.from(draw(bitmap, size)) });
-    }
-    this.badgedIcons.set(key, badged);
-    return badged;
   }
 
   /** 오른쪽 클릭 메뉴. 전역 문제가 있으면 맨 위에 그 항목을 두고, 업데이트 항목은 "설정…" 아래에 둔다. */
@@ -181,22 +145,4 @@ export class AppTray {
 /** 업데이트 항목의 메뉴 항목. 누를 일이 없으면 누를 수 없게 둔다. */
 function updateMenuEntry({ label, action }: UpdateMenuItem, actions: TrayActions): MenuItemConstructorOptions {
   return action ? { label, click: () => actions.runUpdateAction(action) } : { label, enabled: false };
-}
-
-/** macOS 메뉴 막대에서 아이콘 옆에 보일 글자. */
-function macTitle(indicator: TrayIndicator): string {
-  switch (indicator.kind) {
-    case 'alert':
-      return '!';
-    case 'review-count':
-      return String(indicator.count);
-    case 'setup-needed':
-      return MAC_SETUP_DOT;
-    case 'failure':
-      return MAC_FAILURE_DOT;
-    case 'generating':
-      return MAC_GENERATING_DOTS;
-    case 'none':
-      return '';
-  }
 }

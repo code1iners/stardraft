@@ -110,7 +110,7 @@ describe('작은 창: 필수 설정 전', () => {
     const text = textOf(<PopoverContent snapshot={snapshot(READY, { platform: 'win32' })} />);
 
     expect(text).toContain('Stardraft 아이콘은 작업 표시줄 오른쪽 ^ 안에 있습니다.');
-    expect(text).toContain('작업 표시줄 아이콘의 숫자로도 확인할 수 있습니다.');
+    expect(text).toContain('작업 표시줄 아이콘이 채워지면 검토할 초안이 있습니다.');
     expect(text).not.toContain('macOS');
   });
 

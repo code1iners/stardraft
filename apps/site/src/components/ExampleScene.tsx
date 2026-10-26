@@ -1,6 +1,7 @@
+import appIconUrl from '../../../desktop/build/icon.png?url';
 import { createContext, useContext, type ReactNode } from 'react';
 import { exampleTarget, type ExampleSceneId, type ExampleState } from '../lib/example-scenes';
-import { Star } from './TrayArt';
+import { TrayIcon } from './TrayArt';
 
 /** 장면 안의 버튼이 함께 쓰는 값. */
 type SceneControls = {
@@ -32,11 +33,7 @@ function Hot({ name, className, children }: { name: string; className: string; c
 
 /** Stardraft 앱 아이콘. */
 function AppIcon({ size }: { size: number }) {
-  return (
-    <span className="appicon" style={{ width: size, height: size }}>
-      <Star size={Math.round(size * 0.62)} />
-    </span>
-  );
+  return <img className="appicon" src={appIconUrl} width={size} height={size} alt="" />;
 }
 
 /** macOS 창의 닫기·최소화·확대 단추. */
@@ -50,7 +47,7 @@ function Lights() {
   );
 }
 
-/** macOS 메뉴 막대. 설치를 마친 모습이면 별 아이콘을 표시한다. */
+/** macOS 메뉴 막대. 설치를 마친 모습이면 Stardraft 아이콘을 표시한다. */
 function MacMenuBar({ found }: { found: boolean }) {
   return (
     <div className="m-bar">
@@ -62,7 +59,7 @@ function MacMenuBar({ found }: { found: boolean }) {
         <i className="ico" />
         <i className="ico" />
         <span className={found ? 'star ex-found' : 'star'}>
-          <Star size={13} />
+          <TrayIcon size={13} />
         </span>
         <span>금 오후 3:12</span>
       </span>
@@ -236,7 +233,7 @@ function MacDone({ phase }: { phase: string }) {
     <>
       <MacMenuBar found={allowed} />
       {allowed ? (
-        <span className="desk-note">오른쪽 위 별 아이콘이 Stardraft입니다.</span>
+        <span className="desk-note">오른쪽 위에 Stardraft 아이콘이 생겼습니다.</span>
       ) : (
         <div className="m-banner">
           <AppIcon size={30} />
@@ -370,7 +367,7 @@ function WinSmartScreen({ phase, reduced }: { phase: string; reduced: boolean })
   );
 }
 
-/** Windows ④: 작업 표시줄. ^를 누르면 숨겨진 아이콘 사이에 별 아이콘이 보인다. */
+/** Windows ④: 작업 표시줄. ^를 누르면 숨겨진 아이콘 사이에 Stardraft 아이콘이 보인다. */
 function WinDone({ phase }: { phase: string }) {
   /** 숨겨진 아이콘을 펼친 뒤인지. */
   const open = phase === 'open';
@@ -385,7 +382,7 @@ function WinDone({ phase }: { phase: string }) {
             <i className="g" />
           </span>
           <span className="ex-found">
-            <Star size={16} />
+            <TrayIcon size={16} />
           </span>
         </div>
       )}
@@ -519,7 +516,7 @@ export const SCENE_CAPTIONS: Record<ExampleSceneId, Record<string, ReactNode>> =
         알림을 허용할지 묻습니다. <b>허용</b>을 누르세요.
       </>
     ),
-    allowed: '메뉴 막대의 별 아이콘이 Stardraft입니다. 설치 끝입니다.',
+    allowed: '메뉴 막대에 Stardraft 아이콘이 보이면 설치가 끝났습니다.',
   },
   'win-sac': {
     start: (
@@ -560,6 +557,6 @@ export const SCENE_CAPTIONS: Record<ExampleSceneId, Record<string, ReactNode>> =
         <b>⌃</b>를 눌러 숨겨진 아이콘을 펼쳐 보세요.
       </>
     ),
-    open: '별 아이콘이 Stardraft입니다. 설치 끝입니다.',
+    open: '트레이에 Stardraft 아이콘이 보이면 설치가 끝났습니다.',
   },
 };

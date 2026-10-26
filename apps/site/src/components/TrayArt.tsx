@@ -1,37 +1,30 @@
+import traySource from '../../../desktop/resources/tray/idle.svg?raw';
 import type { InstallerOs } from '../lib/releases';
 
-/** 앱 아이콘의 별 모양. 색은 감싼 요소의 글자색(CSS)을 따른다. */
-export function Star({ size, className }: { size: number; className?: string }) {
+/** 앱의 트레이 SVG 내부를 그대로 사용하되 색은 안내 화면의 글자색을 따른다. */
+const trayContents = traySource.replace(/<svg[^>]*>/, '').replace('</svg>', '').trim();
+
+/** 설치된 앱과 같은 대기 상태 트레이 문양. */
+export function TrayIcon({ size, className }: { size: number; className?: string }) {
   return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 1.8l2.5 7.2 7.3 3-7.3 3L12 22.2 9.5 15 2.2 12l7.3-3z" fill="currentColor" />
-    </svg>
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      dangerouslySetInnerHTML={{ __html: trayContents }}
+    />
   );
 }
 
-/** 설치하면 아이콘이 생기는 자리(macOS 메뉴 막대, Windows 트레이) 그림. 별 반짝임은 장식 모션이다. */
+/** 설치하면 아이콘이 생기는 자리(macOS 메뉴 막대, Windows 트레이) 그림. 실제 앱의 대기 상태 문양을 사용한다. */
 export function TrayArt({ os }: { os: InstallerOs }) {
-  /** 메뉴 막대나 작업 표시줄의 별 아이콘과 반짝임. */
+  /** 메뉴 막대나 작업 표시줄의 아이콘과 강조 표시. */
   const star = (
     <span className="ha-star">
       <span className="ring" />
-      <Star size={22} className="main" />
-      <i className="spk k1">
-        <Star size={10} />
-      </i>
-      <i className="spk k2">
-        <Star size={8} />
-      </i>
-      {os === 'mac' && (
-        <>
-          <i className="spk k3">
-            <Star size={9} />
-          </i>
-          <i className="spk k4">
-            <Star size={7} />
-          </i>
-        </>
-      )}
+      <TrayIcon size={22} className="main" />
     </span>
   );
 
@@ -70,7 +63,7 @@ export function TrayArt({ os }: { os: InstallerOs }) {
         )}
         <span className="ha-label">설치하면 여기에 생깁니다</span>
       </div>
-      <figcaption className="ha-cap">설치를 마치면 {os === 'windows' ? '트레이' : '메뉴 막대'}에 이 별 아이콘이 생깁니다.</figcaption>
+      <figcaption className="ha-cap">설치를 마치면 {os === 'windows' ? '트레이' : '메뉴 막대'}에 이 아이콘이 생깁니다.</figcaption>
     </figure>
   );
 }

@@ -161,12 +161,12 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
       seen: '‘Stardraft’ 알림',
       body: (
         <p>
-          화면 오른쪽 위 메뉴 막대에 Stardraft 별 아이콘이 생깁니다. 처음 켜면 알림을 허용할지 묻습니다. 멘션이 오면 알려 드리도록 <b>허용</b>을
+          화면 오른쪽 위 메뉴 막대에 Stardraft 아이콘이 생깁니다. 처음 켜면 알림을 허용할지 묻습니다. 멘션이 오면 알려 드리도록 <b>허용</b>을
           누르세요.
         </p>
       ),
       scene: 'mac-done',
-      done: '메뉴 막대의 별 아이콘을 누르면 Stardraft 창이 열립니다.',
+      done: '메뉴 막대의 Stardraft 아이콘을 누르면 Stardraft 창이 열립니다.',
       stuck: [
         {
           question: '메뉴 막대에 아이콘이 안 보여요',
@@ -262,11 +262,11 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
       seen: '숨겨진 아이콘 표시',
       body: (
         <p>
-          작업 표시줄 오른쪽 알림 영역에 Stardraft 별 아이콘이 생깁니다. 처음에는 <b>^</b>(숨겨진 아이콘 표시) 안에 들어가 있을 수 있습니다.
+          작업 표시줄 오른쪽 알림 영역에 Stardraft 아이콘이 생깁니다. 처음에는 <b>^</b>(숨겨진 아이콘 표시) 안에 들어가 있을 수 있습니다.
         </p>
       ),
       scene: 'win-done',
-      done: '트레이의 별 아이콘을 누르면 Stardraft 창이 열립니다.',
+      done: '트레이의 Stardraft 아이콘을 누르면 Stardraft 창이 열립니다.',
       stuck: [
         {
           question: '트레이에 아이콘이 안 보여요',

@@ -1,4 +1,5 @@
 ---
+import appIconUrl from '../../../desktop/build/icon.png?url';
 import { VERCEL_GIT_REPO_OWNER } from 'astro:env/server';
 import Prerequisites from '../components/Prerequisites.astro';
 import Uninstall from '../components/Uninstall.astro';
@@ -37,12 +38,12 @@ const sections = [
     <title>Stardraft 다운로드</title>
     <meta name="description" content={intro} />
     <link rel="canonical" href={Astro.site} />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href={appIconUrl} />
   </head>
   <body>
     <header class="topbar">
       <div class="wrap">
-        <a class="brand" href="#download"><img src="/favicon.svg" width="26" height="26" alt="" />Stardraft</a>
+        <a class="brand" href="#download"><img src={appIconUrl} width="26" height="26" alt="" />Stardraft</a>
         <nav class="topnav" aria-label="바로 가기">
           <a href="#install">설치 안내</a>
           <a href="#changelog">변경 내역</a>

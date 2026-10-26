@@ -2,6 +2,7 @@
 import appIconUrl from '../../../desktop/build/icon.png?url';
 import { VERCEL_GIT_REPO_OWNER } from 'astro:env/server';
 import Prerequisites from '../components/Prerequisites.astro';
+import Tutorial from '../components/Tutorial.astro';
 import Uninstall from '../components/Uninstall.astro';
 import UpdateSection from '../components/UpdateSection.astro';
 import { Changelog } from '../components/Changelog';
@@ -59,6 +60,7 @@ const sections = [
       <main>
         <section id="download" class="first">
           <DownloadHero client:load intro={intro} />
+          <Tutorial />
           <p class="note">
             Stardraft는 유료 인증서로 서명하지 않은 오픈소스 앱이라, 설치할 때 macOS와 Windows가 경고를 띄웁니다.
             이 주소에서 받은 파일만 설치하세요.

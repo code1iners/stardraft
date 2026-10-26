@@ -1570,3 +1570,23 @@ table.states th {
     visibility: hidden;
   }
 }
+
+/* 첫 화면에서 사용 흐름을 보여 주는 영상. 재생 전에는 포스터만 받는다. */
+.tutorial {
+  margin: 32px 0 0;
+}
+.tutorial figcaption {
+  font-weight: 600;
+}
+.tutorial video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.tutorial details p {
+  margin-bottom: 0;
+}

@@ -1,7 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
 import { OUTPUT_DIR } from './build-config.mts';
 import { readAppPackageInfo } from './release-config.mts';
 
@@ -13,12 +16,21 @@ const contents = join(process.argv[2] ?? join(OUTPUT_DIR, 'mac-arm64', `${produc
 const iconName = execFileSync('plutil', ['-extract', 'CFBundleIconFile', 'raw', join(contents, 'Info.plist')], { encoding: 'utf8' }).trim();
 /** 설치본 아이콘 데이터. 파일 누락도 여기서 실패한다. */
 const icon = readFileSync(join(contents, 'Resources', iconName));
-/** 현재 빌드에 사용한 Electron 패키지 위치. */
-const require = createRequire(import.meta.url);
-/** 제품 아이콘 설정이 누락되었을 때 복사되는 Electron 기본 아이콘. */
-const defaultIcon = readFileSync(join(dirname(require.resolve('electron/package.json')), 'dist/Electron.app/Contents/Resources/electron.icns'));
-
-if (icon.subarray(0, 4).toString() !== 'icns' || icon.equals(defaultIcon)) {
+if (icon.subarray(0, 4).toString() !== 'icns' || iconName === 'electron.icns') {
   throw new Error('앱 번들에 제품 아이콘이 없습니다. Electron 기본 아이콘으로 배포할 수 없습니다.');
+}
+/** 개발용 Electron 설치 여부와 무관하게 배포 아이콘을 원본 PNG와 직접 비교한다. */
+const temporary = await mkdtemp(join(tmpdir(), 'stardraft-icon-'));
+try {
+  /** ICNS에서 추출한 배율별 이미지 디렉터리. */
+  const iconset = join(temporary, 'app.iconset');
+  execFileSync('iconutil', ['-c', 'iconset', join(contents, 'Resources', iconName), '-o', iconset]);
+  /** 승인된 1024px 원본의 픽셀. */
+  const expected = await sharp(fileURLToPath(new URL('../build/icon.png', import.meta.url))).ensureAlpha().raw().toBuffer();
+  /** 실제 배포 번들에 포함된 최대 배율의 픽셀. */
+  const actual = await sharp(join(iconset, 'icon_512x512@2x.png')).ensureAlpha().raw().toBuffer();
+  if (!actual.equals(expected)) throw new Error('앱 번들의 아이콘이 제품 아이콘 원본과 다릅니다.');
+} finally {
+  await rm(temporary, { recursive: true, force: true });
 }
 console.log(`✓ ${contents}: 제품 앱 아이콘 확인 (${iconName})`);

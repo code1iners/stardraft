@@ -116,34 +116,35 @@ export function SetupBand({ snapshot, section, onSelectSection }: SetupBandProps
     </span>
   );
 
-  if (!ready) {
-    /** 다음 항목. 지금 보는 칸이 아닌 첫 남은 항목이다. */
-    const next = remaining.find((requirement) => SETUP_REQUIREMENT_SECTIONS[requirement] !== section);
-    return (
-      <div className="setup-band">
-        {meter}
-        <strong>
-          필수 설정 {SETUP_REQUIREMENTS.length - remaining.length}/{SETUP_REQUIREMENTS.length}
-        </strong>
-        <span className="small muted">남은 항목: {remaining.map((requirement) => SETUP_REQUIREMENT_LABELS[requirement]).join(', ')}</span>
-        <span className="setup-band-space" />
-        {next && (
-          <button type="button" className="btn sm" onClick={() => onSelectSection(SETUP_REQUIREMENT_SECTIONS[next])}>
-            {SETUP_REQUIREMENT_LABELS[next]} 설정
-          </button>
-        )}
-      </div>
-    );
-  }
+  /** 다음 항목. 지금 보는 칸이 아닌 첫 남은 항목이다. */
+  const next = remaining.find((requirement) => SETUP_REQUIREMENT_SECTIONS[requirement] !== section);
 
   return (
-    <div className="setup-band ready">
-      {meter}
-      <div className="setup-band-space">
-        <strong>필수 설정을 마쳤습니다.</strong>
-        <DetectionStartNotes snapshot={snapshot} />
+    <div className="setup-band-stack">
+      {!ready && (
+        <div className="setup-band">
+          {meter}
+          <strong>
+            필수 설정 {SETUP_REQUIREMENTS.length - remaining.length}/{SETUP_REQUIREMENTS.length}
+          </strong>
+          <span className="small muted">남은 항목: {remaining.map((requirement) => SETUP_REQUIREMENT_LABELS[requirement]).join(', ')}</span>
+          <span className="setup-band-space" />
+          {next && (
+            <button type="button" className="btn sm" onClick={() => onSelectSection(SETUP_REQUIREMENT_SECTIONS[next])}>
+              {SETUP_REQUIREMENT_LABELS[next]} 설정
+            </button>
+          )}
+        </div>
+      )}
+      {/* 완료 안내의 줄바꿈 높이를 미리 확보하되, 완료 전에는 읽거나 조작할 수 없게 한다. */}
+      <div className={`setup-band ready${ready ? '' : ' setup-band-reserve'}`} aria-hidden={!ready || undefined} inert={!ready}>
+        {meter}
+        <div className="setup-band-space">
+          <strong>필수 설정을 마쳤습니다.</strong>
+          <DetectionStartNotes snapshot={snapshot} />
+        </div>
+        <StartDetectionButton start={start} />
       </div>
-      <StartDetectionButton start={start} />
     </div>
   );
 }

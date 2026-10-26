@@ -416,9 +416,21 @@ p.setup-tray-hint {
   height: 100%;
 }
 
+/* 두 상태를 같은 칸에 겹쳐 완료 안내가 나타나도 설정 본문을 밀지 않는다. */
+.setup-band-stack {
+  flex: none;
+  display: grid;
+}
+
+.setup-band-reserve {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* 설정 창 맨 위 첫 설정 띠. 감지를 시작하기 전에만 보인다. */
 .setup-band {
-  flex: none;
+  grid-area: 1 / 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;

@@ -41,8 +41,8 @@ beforeAll(async () => {
 });
 
 describe('다운로드 사이트 페이지', () => {
-  it('섹션과 목차가 다운로드 → 설치 전에 필요한 것 → 설치 안내 → 업데이트 → 변경 내역 → 이전 버전과 SHA256 → 삭제 순서다', () => {
-    const order = ['download', 'prerequisites', 'install', 'update', 'changelog', 'versions', 'uninstall'];
+  it('섹션과 목차가 Stardraft란? → 다운로드 → 설치 전에 필요한 것 → 설치 안내 → 업데이트 → 변경 내역 → 이전 버전과 SHA256 → 삭제 순서다', () => {
+    const order = ['about', 'download', 'prerequisites', 'install', 'update', 'changelog', 'versions', 'uninstall'];
 
     expect([...html.matchAll(/<section id="([a-z]+)"/g)].map(([, id]) => id)).toEqual(order);
     expect([...html.matchAll(/data-toc="([a-z]+)"/g)].map(([, id]) => id)).toEqual(order);
@@ -168,9 +168,9 @@ describe('다운로드 사이트 페이지', () => {
     const text = textOf(section('prerequisites'));
 
     expect(text).toContain('Flow 개인 API 키');
-    expect(text).toContain('Claude Code 또는 Codex 설치와 로그인');
-    expect(text).toContain('Windows에서는 Claude Code를 준비하세요.');
-    expect(text).toContain('Stardraft에서는 macOS만 지원');
+    expect(text).toContain('에이전트 준비');
+    expect(text).toContain('Claude Code Stardraft에서는 현재 macOS만 지원');
+    expect(text).toContain('Codex Stardraft에서는 현재 macOS만 지원');
     expect(section('prerequisites')).toContain('href="https://code.claude.com/docs/ko/quickstart"');
     expect(section('prerequisites')).toContain('href="https://learn.chatgpt.com/docs/codex/cli"');
     expect(section('prerequisites')).not.toContain('<code');

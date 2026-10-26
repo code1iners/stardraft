@@ -484,6 +484,41 @@ main section:last-child {
   }
 }
 
+/* 에이전트 준비와 서비스별 준비를 분리하고, 서비스가 늘면 같은 열에 이어 붙인다. */
+.pre-groups {
+  display: grid;
+}
+.pre-group {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 24px;
+  padding: 24px 0;
+}
+.pre-group + .pre-group {
+  border-top: 1px solid var(--border);
+}
+.pre-group h3 {
+  margin: 0;
+}
+.pre-services {
+  display: grid;
+  gap: 24px;
+}
+.pre-service h4 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+.pre-service + .pre-service {
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+}
+@media (max-width: 640px) {
+  .pre-group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+}
+
 /* 본문 섹션 */
 .pre-list {
   list-style: none;

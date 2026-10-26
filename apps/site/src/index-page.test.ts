@@ -164,12 +164,17 @@ describe('다운로드 사이트 페이지', () => {
     }
   });
 
-  it('설치 전에 필요한 것은 Flow 개인 API 키와 Claude Code 설치·로그인이다', () => {
+  it('에이전트 설치·로그인은 지원 운영체제와 공식 링크로 안내한다', () => {
     const text = textOf(section('prerequisites'));
 
     expect(text).toContain('Flow 개인 API 키');
-    expect(text).toContain('Claude Code 설치와 로그인');
-    expect(text).toContain('claude auth login');
+    expect(text).toContain('Claude Code 또는 Codex 설치와 로그인');
+    expect(text).toContain('Windows에서는 Claude Code를 준비하세요.');
+    expect(text).toContain('Stardraft에서는 macOS만 지원');
+    expect(section('prerequisites')).toContain('href="https://code.claude.com/docs/ko/quickstart"');
+    expect(section('prerequisites')).toContain('href="https://learn.chatgpt.com/docs/codex/cli"');
+    expect(section('prerequisites')).not.toContain('<code');
+    expect(section('prerequisites')).not.toContain('복사');
   });
 
   it('변경 내역과 이전 버전은 GitHub Release 목록으로 링크하고 다운그레이드 차단을 안내한다', () => {

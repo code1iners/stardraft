@@ -108,7 +108,7 @@ describe('다운로드 사이트 페이지', () => {
     expect(textOf(sac)).toContain('Windows 10에는 이 설정이 없으니 다음 단계로 바로 가세요.');
   });
 
-  it('"여기서 막히면"은 열 항목이고 손상됨은 스펙 문구 그대로다', () => {
+  it('"여기서 막히면"은 열한 항목이고 손상됨은 스펙 문구 그대로다', () => {
     /** 단계마다 "여기서 막히면"의 질문. */
     const questions = (os: 'mac' | 'windows') =>
       installSteps(os).map((step) => [...step.matchAll(/<dt>([\s\S]*?)<\/dt>/g)].map(([, question]) => textOf(question!)));
@@ -116,7 +116,7 @@ describe('다운로드 사이트 페이지', () => {
     expect(questions('mac')).toEqual([
       [],
       ['“손상되었기 때문에 열 수 없습니다”라고 떠요', '휴지통으로 이동을 눌렀어요', 'Intel Mac에서 열리지 않아요'],
-      ['그래도 열기 버튼이 안 보여요'],
+      ['보안 설정이 열리지 않아요', '그래도 열기 버튼이 안 보여요'],
       [],
       ['메뉴 막대에 아이콘이 안 보여요', '알림 허용을 놓쳤어요'],
     ]);

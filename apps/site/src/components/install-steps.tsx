@@ -69,7 +69,7 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
       seen: '‘Stardraft’을(를) 열지 않음',
       body: (
         <p>
-          응용 프로그램 폴더에서 Stardraft를 엽니다. 서명하지 않은 앱이라 macOS가 한 번 막고 이 창을 띄웁니다. <b>완료</b>를 눌러 닫으세요.{' '}
+          응용 프로그램 폴더에서 Stardraft를 엽니다. 현재 Mac 버전은 Apple 공증 전이라 첫 실행 시 차단될 수 있습니다. <b>완료</b>를 눌러 닫으세요.{' '}
           <b>휴지통으로 이동</b>은 누르지 않습니다.
         </p>
       ),
@@ -116,10 +116,17 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
       title: '시스템 설정에서 그래도 열기 누르기',
       seen: '‘Stardraft’이(가) Mac을 보호하기 위해 차단되었습니다.',
       body: (
-        <p>
-          <b>시스템 설정</b> &gt; <b>개인정보 보호 및 보안</b>을 엽니다. 아래쪽 <b>보안</b> 항목에 Stardraft가 차단되었다는 줄이 있습니다. 그 옆의{' '}
-          <b>그래도 열기</b>를 누릅니다.
-        </p>
+        <>
+          <p>
+            아래 <b>보안 설정 열기</b>를 누르고, 브라우저에서 <b>시스템 설정 열기</b> 또는 <b>허용</b>을 선택하세요.
+            설정 화면에서 Stardraft 옆의 <b>그래도 열기</b>를 누릅니다.
+          </p>
+          <p>
+            <a className="btn primary" href="x-apple.systempreferences:com.apple.preference.security?General">
+              보안 설정 열기
+            </a>
+          </p>
+        </>
       ),
       scene: 'mac-settings',
       shot: {
@@ -133,6 +140,15 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
       },
       done: '확인 창이 하나 더 뜨면 다음 단계로 갑니다.',
       stuck: [
+        {
+          question: '보안 설정이 열리지 않아요',
+          answer: (
+            <>
+              화면 왼쪽 위 <b>Apple 메뉴()</b> &gt; <b>시스템 설정</b> &gt; <b>개인정보 보호 및 보안</b>을 열고 아래쪽 <b>보안</b>으로
+              내려가세요. Stardraft 옆의 <b>그래도 열기</b>를 누릅니다.
+            </>
+          ),
+        },
         {
           question: '그래도 열기 버튼이 안 보여요',
           answer: (
@@ -161,12 +177,12 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
       seen: '‘Stardraft’ 알림',
       body: (
         <p>
-          화면 오른쪽 위 메뉴 막대에 Stardraft 별 아이콘이 생깁니다. 처음 켜면 알림을 허용할지 묻습니다. 멘션이 오면 알려 드리도록 <b>허용</b>을
+          화면 오른쪽 위 메뉴 막대에 Stardraft 아이콘이 생깁니다. 처음 켜면 알림을 허용할지 묻습니다. 멘션이 오면 알려 드리도록 <b>허용</b>을
           누르세요.
         </p>
       ),
       scene: 'mac-done',
-      done: '메뉴 막대의 별 아이콘을 누르면 Stardraft 창이 열립니다.',
+      done: '메뉴 막대의 Stardraft 아이콘을 누르면 Stardraft 창이 열립니다.',
       stuck: [
         {
           question: '메뉴 막대에 아이콘이 안 보여요',
@@ -262,11 +278,11 @@ export const INSTALL_STEPS: Record<InstallerOs, InstallStep[]> = {
       seen: '숨겨진 아이콘 표시',
       body: (
         <p>
-          작업 표시줄 오른쪽 알림 영역에 Stardraft 별 아이콘이 생깁니다. 처음에는 <b>^</b>(숨겨진 아이콘 표시) 안에 들어가 있을 수 있습니다.
+          작업 표시줄 오른쪽 알림 영역에 Stardraft 아이콘이 생깁니다. 처음에는 <b>^</b>(숨겨진 아이콘 표시) 안에 들어가 있을 수 있습니다.
         </p>
       ),
       scene: 'win-done',
-      done: '트레이의 별 아이콘을 누르면 Stardraft 창이 열립니다.',
+      done: '트레이의 Stardraft 아이콘을 누르면 Stardraft 창이 열립니다.',
       stuck: [
         {
           question: '트레이에 아이콘이 안 보여요',

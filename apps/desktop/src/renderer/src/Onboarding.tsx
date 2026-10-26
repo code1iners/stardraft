@@ -39,8 +39,7 @@ function sendOpenSettings(section?: SettingsSection): void {
 }
 
 /**
- * 작은 창의 필수 설정 전 화면. 안내 문장, 필수 세 줄과 상태, [설정 열기]를 보인다.
- * 셋이 다 되면 [감지 시작]과 안내 두 줄이 붙는다. Windows는 숨김 영역 안내를 더한다.
+ * 작은 창의 필수 설정 세 줄과 상태를 보인다. 셋이 다 되면 [감지 시작]을 보인다.
  */
 export function SetupChecklist({ snapshot }: OnboardingProps) {
   /** 온보딩 상태. */
@@ -48,7 +47,7 @@ export function SetupChecklist({ snapshot }: OnboardingProps) {
 
   return (
     <main className="popover-body">
-      <p className="setup-lead">{ready ? '필수 설정을 마쳤습니다.' : '멘션 감지를 시작하려면 세 가지를 설정해야 합니다.'}</p>
+      {!ready && <p className="setup-lead">멘션 감지를 시작하려면 세 가지를 설정해야 합니다.</p>}
       {SETUP_REQUIREMENTS.map((requirement) => {
         /** 이 줄의 상태 글자. */
         const status = STATUS_TEXT[requirements[requirement]];
@@ -70,14 +69,16 @@ export function SetupChecklist({ snapshot }: OnboardingProps) {
           </button>
         );
       })}
-      <div className="setup-actions">
-        <button type="button" className={ready ? 'btn' : 'btn primary'} onClick={() => sendOpenSettings()}>
-          설정 열기
-        </button>
-        {ready && <StartDetectionButton start={start} />}
-      </div>
-      {ready && <DetectionStartNotes snapshot={snapshot} />}
-      <WindowsTrayHint snapshot={snapshot} />
+      {ready && (
+        <div className="setup-actions">
+          <StartDetectionButton start={start} />
+        </div>
+      )}
+      {start.status === 'failed' && (
+        <p className="setup-error small danger-text" role="alert">
+          {DETECTION_START_FAILURE_MESSAGES[start.reason]}
+        </p>
+      )}
     </main>
   );
 }
@@ -205,7 +206,7 @@ function requirementDetail(requirement: SetupRequirement, snapshot: AppSnapshot)
       return '내 키를 붙여 넣으면 계정을 확인합니다';
     }
     case 'agent':
-      if (status === 'done') return `${AGENT_INFO[snapshot.agentPreferences.defaultAgent ?? 'claude-code'].name} 연결됨`;
+      if (status === 'done') return `${snapshot.agentPreferences.connectedAgents.map((agent) => AGENT_INFO[agent].name).join(' · ')} 연결됨`;
       if (status === 'checking') return '연결을 확인하는 중입니다';
       return '연결하지 못했습니다. 눌러서 원인을 확인합니다';
     case 'work-folders': {

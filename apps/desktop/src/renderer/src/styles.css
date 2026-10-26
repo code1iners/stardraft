@@ -296,6 +296,31 @@ html[data-platform='win32'] .popover {
   border-bottom: 1px solid var(--border);
 }
 
+.popover-logo {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background: currentColor;
+  mask: url('../../../resources/tray/review.svg') center / contain no-repeat;
+}
+
+.popover-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.popover-settings:hover {
+  color: var(--text);
+}
+
 /* 줄 안에서 남은 폭을 채워 뒤 요소를 오른쪽으로 민다. */
 .spacer {
   flex: 1;

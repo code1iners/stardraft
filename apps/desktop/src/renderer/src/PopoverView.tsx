@@ -1,7 +1,7 @@
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleMeta, BundleSections, StatusTag, ToastStack, TrialTag } from './BundleDetail';
-import { SetupChecklist, WindowsTrayHint } from './Onboarding';
+import { SetupChecklist } from './Onboarding';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
 import { TrialButton, TrialPickerSheet } from './TrialPicker';
@@ -58,7 +58,10 @@ export function PopoverContent({ snapshot, initialBundleId = null }: PopoverCont
       ) : (
         <>
           <header className="popover-head">
+            <span className="popover-logo" aria-hidden="true" />
             <strong>{snapshot.appName}</strong>
+            <span className="spacer" />
+            <SettingsButton />
           </header>
           <SetupChecklist snapshot={snapshot} />
         </>
@@ -117,6 +120,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
       ) : (
         <>
           <header className="popover-head">
+            <span className="popover-logo" aria-hidden="true" />
             <strong>{snapshot.appName}</strong>
             <span className="spacer" />
             {bundles.length > 0 && (
@@ -124,6 +128,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
                 펼쳐 보기
               </button>
             )}
+            <SettingsButton />
           </header>
           <EmptyDetection snapshot={snapshot} />
         </>
@@ -190,11 +195,6 @@ interface EmptyDetectionProps {
 
 /** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션으로 시험]을 누르면 이 창에 멘션 고르기 목록을 연다. */
 function EmptyDetection({ snapshot }: EmptyDetectionProps) {
-  /** 설정 창을 연다. 작은 창은 main이 닫는다. */
-  const handleOpenSettings = () => {
-    void window.stardraft.send({ type: 'open-settings' });
-  };
-
   return (
     <>
       <main className="popover-body popover-empty">
@@ -203,15 +203,26 @@ function EmptyDetection({ snapshot }: EmptyDetectionProps) {
         </p>
         <p className="small muted">새 멘션이 오면 초안을 만들어 여기에 보여 드립니다.</p>
         <TrialButton trial={snapshot.trial} window="popover" />
-        <p className="small muted">지난 멘션 하나로 앱이 동작하는지 확인합니다. Flow에는 아무것도 올리지 않습니다.</p>
-        <WindowsTrayHint snapshot={snapshot} />
       </main>
-      <footer className="popover-foot">
-        <button type="button" className="btn" onClick={handleOpenSettings}>
-          설정 열기
-        </button>
-      </footer>
     </>
+  );
+}
+
+/** 트레이 제목 오른쪽에서 설정 창을 여는 아이콘 버튼. */
+function SettingsButton() {
+  return (
+    <button
+      type="button"
+      className="popover-settings"
+      aria-label="설정 열기"
+      title="설정 열기"
+      onClick={() => void window.stardraft.send({ type: 'open-settings' })}
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9.7 4.3 10.3 2h3.4l.6 2.3 2 1.2 2.3-.6 1.7 2.9-1.7 1.7v2.4l1.7 1.7-1.7 2.9-2.3-.6-2 1.2-.6 2.3h-3.4l-.6-2.3-2-1.2-2.3.6-1.7-2.9 1.7-1.7V9.5L3.7 7.8l1.7-2.9 2.3.6Z" transform="translate(0 1.3)" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    </button>
   );
 }
 

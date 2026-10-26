@@ -73,13 +73,13 @@ function textOf(element: React.ReactElement): string {
 }
 
 describe('작은 창: 필수 설정 전', () => {
-  it('안내 문장과 필수 세 줄의 "필요", [설정 열기]를 보이고 [감지 시작]은 없다', () => {
+  it('안내 문장과 필수 세 줄, 머리의 설정 아이콘을 보이고 [감지 시작]은 없다', () => {
     const text = textOf(<PopoverContent snapshot={snapshot(FIRST_RUN)} />);
 
     expect(text).toContain('멘션 감지를 시작하려면 세 가지를 설정해야 합니다.');
     for (const label of ['Flow 개인 API 키', '에이전트', '작업 폴더']) expect(text).toContain(label);
     expect(text.match(/필요/g)).toHaveLength(3);
-    expect(text).toContain('설정 열기');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot(FIRST_RUN)} />)).toContain('aria-label="설정 열기"');
     expect(text).not.toContain('감지 시작');
   });
 
@@ -98,20 +98,35 @@ describe('작은 창: 필수 설정 전', () => {
     expect(text).toContain('확인 중');
   });
 
-  it('세 가지를 마치면 [감지 시작]과 안내 두 줄(자동 시작, macOS 알림 허용)을 보인다', () => {
+  it('세 가지를 마치면 완료 문장과 하단 안내 없이 [감지 시작]을 보인다', () => {
     const text = textOf(<PopoverContent snapshot={snapshot(READY)} />);
 
     expect(text).toContain('감지 시작');
-    expect(text).toContain('로그인할 때 Stardraft가 자동으로 켜집니다. 설정의 일반에서 끌 수 있습니다.');
-    expect(text).toContain('곧 macOS가 알림 허용을 묻습니다.');
+    expect(text).not.toContain('필수 설정을 마쳤습니다.');
+    expect(text).not.toContain('로그인할 때 Stardraft가 자동으로 켜집니다. 설정의 일반에서 끌 수 있습니다.');
+    expect(text).not.toContain('곧 macOS가 알림 허용을 묻습니다.');
   });
 
-  it('Windows는 숨김 영역 안내를 보이고, 알림 안내는 숫자로 확인하는 법만 적는다', () => {
+  it('Windows에서도 하단 보조 안내를 생략한다', () => {
     const text = textOf(<PopoverContent snapshot={snapshot(READY, { platform: 'win32' })} />);
 
-    expect(text).toContain('Stardraft 아이콘은 작업 표시줄 오른쪽 ^ 안에 있습니다.');
-    expect(text).toContain('작업 표시줄 아이콘이 채워지면 검토할 초안이 있습니다.');
+    expect(text).not.toContain('Stardraft 아이콘은 작업 표시줄 오른쪽 ^ 안에 있습니다.');
+    expect(text).not.toContain('작업 표시줄 아이콘이 채워지면 검토할 초안이 있습니다.');
     expect(text).not.toContain('macOS');
+  });
+
+  it.each([
+    { agents: ['claude-code'] as const, label: 'Claude Code 연결됨' },
+    { agents: ['codex'] as const, label: 'Codex 연결됨' },
+    { agents: ['claude-code', 'codex'] as const, label: 'Claude Code · Codex 연결됨' },
+  ])('연결된 에이전트를 모두 표시한다: $label', ({ agents, label }) => {
+    /** 연결된 에이전트와 기본 에이전트가 있는 완료 화면. */
+    const text = textOf(
+      <PopoverContent snapshot={snapshot(READY, {
+        agentPreferences: { connectedAgents: [...agents], defaultAgent: agents[0], models: {} },
+      })} />,
+    );
+    expect(text).toContain(label);
   });
 
   it('감지 시작이 실패하면 이유를 보인다', () => {
@@ -131,10 +146,10 @@ describe('작은 창: 감지를 시작한 뒤', () => {
     expect(text).not.toContain('감지 시작');
   });
 
-  it('Windows는 감지를 시작한 직후의 빈 화면에도 숨김 영역 안내를 보인다', () => {
+  it('Windows의 감지 시작 후 빈 화면에서도 하단 보조 안내를 생략한다', () => {
     const text = textOf(<PopoverContent snapshot={snapshot({ ...READY, detectionStarted: true }, { platform: 'win32' })} />);
 
-    expect(text).toContain('Stardraft 아이콘은 작업 표시줄 오른쪽 ^ 안에 있습니다.');
+    expect(text).not.toContain('Stardraft 아이콘은 작업 표시줄 오른쪽 ^ 안에 있습니다.');
   });
 });
 

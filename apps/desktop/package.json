@@ -1,7 +1,7 @@
 {
   "name": "@stardraft/desktop",
   "productName": "Stardraft",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Stardraft 데스크톱 앱",
   "license": "MIT",
@@ -10,7 +10,7 @@
     "dev": "node -e \"require('electron')\" && electron-vite dev",
     "build": "electron-vite build",
     "dist": "electron-vite build && electron-builder --publish never",
-    "verify:mac": "node scripts/verify-mac-build.mts",
+    "verify:mac": "node scripts/verify-mac-build.mts && node scripts/verify-app-icon.mts",
     "release:keygen": "node scripts/release-keygen.mts",
     "release:check": "node scripts/release-update-info.mts check",
     "release:sign": "node scripts/release-update-info.mts sign",
@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "icons:generate": "node scripts/generate-tray-icons.mts",
-    "icons:check": "node scripts/generate-tray-icons.mts --check",
+    "icons:check": "node scripts/generate-tray-icons.mts --check && node scripts/generate-app-icon.mts --check",
+    "app-icon:generate": "node scripts/generate-app-icon.mts",
     "preview:tray": "node scripts/preview-tray.mts"
   },
   "devDependencies": {

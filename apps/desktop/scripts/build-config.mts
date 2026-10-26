@@ -104,6 +104,7 @@ export function createBuildConfig(input: BuildEnvironment): Configuration {
       onlyLoadAppFromAsar: true,
     },
     mac: {
+      icon: 'build/icon.png',
       // Apple Silicon만 만든다. zip은 앱 내 업데이트(Squirrel.Mac)가, DMG는 사람이 처음 설치할 때 쓴다.
       target: [
         { target: 'dmg', arch: ['arm64'] },
@@ -121,6 +122,7 @@ export function createBuildConfig(input: BuildEnvironment): Configuration {
     // 앱은 DMG로 업데이트하지 않으므로 latest-mac.yml에 넣지 않고 blockmap도 만들지 않는다.
     dmg: { writeUpdateInfo: false },
     win: {
+      icon: 'build/icon.png',
       target: [{ target: 'nsis', arch: ['x64'] }],
       ...windowsSigning(input),
     },

@@ -32,6 +32,11 @@ describe('설치 파일 형태', () => {
   /** 주인을 정해 둔 빌드 설정. */
   const config = createBuildConfig({ env: { GITHUB_REPOSITORY_OWNER: 'example-owner' }, originUrl: null });
 
+  it('macOS와 Windows 설치 앱에 제품 아이콘을 지정한다', () => {
+    expect(config.mac?.icon).toBe('build/icon.png');
+    expect(config.win?.icon).toBe('build/icon.png');
+  });
+
   it('macOS는 arm64 DMG와 zip을 만들고, 번들 전체를 ad-hoc 서명한 뒤 afterSign 훅을 거친다', () => {
     expect(config.mac?.target).toEqual([
       { target: 'dmg', arch: ['arm64'] },

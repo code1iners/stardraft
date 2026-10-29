@@ -1,0 +1,429 @@
+{
+  "source": "2026-10-29 live GET responses; projected and masked, not complete raw responses",
+  "redaction": "각 조회 실행 안에서만 별칭이 일치한다. final/history는 같은 초기 조회 순서로 별칭이 일치하며 initial은 별도다. 본문·이름·주소를 제거하고 systemCode의 표시 이름을 별칭으로 치환했다. 표시 이름 별칭은 일반적으로 사용자 ID 식별을 보장하지 않는다.",
+  "currentUser": "id-1",
+  "post": {
+    "label": "post-A",
+    "observedAt": "2026-10-29T08:44:09.433Z",
+    "status": 200,
+    "durationMs": 84,
+    "body": {
+      "response": {
+        "success": true,
+        "code": 200,
+        "message": "[redacted]",
+        "data": {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "registerId": "id-9",
+          "registeredDateTime": "20260930163809",
+          "editedDateTime": "20260930164152",
+          "tasks": [
+            {
+              "TASK_SRNO": "id-23",
+              "STTS": "0",
+              "PROGRESS": "100",
+              "WORKER_REC": [
+                {
+                  "WORKER_ID": "id-4"
+                },
+                {
+                  "WORKER_ID": "id-5"
+                },
+                {
+                  "WORKER_ID": "id-1"
+                }
+              ],
+              "TASK_COLUMN_REC": [
+                {
+                  "COLUMN_TYPE": "STATUS",
+                  "DEFAULT_COLUMN_TYPE": "STATUS",
+                  "COLUMN_SRNO": "id-14",
+                  "COLUMN_DATA_REC": [
+                    {
+                      "OPTION_COLOR": "[redacted]",
+                      "OPTION_NAME": "[redacted]",
+                      "CUSTOM_COLUMN_DATA_SRNO": "id-15",
+                      "OPTION_CATEGORY": "2",
+                      "USER_NM": "",
+                      "PRFL_PHTG": "",
+                      "CUSTOM_COLUMN_DATA": "[redacted]",
+                      "COLUMN_TYPE": "STATUS"
+                    }
+                  ]
+                },
+                {
+                  "COLUMN_TYPE": "USER",
+                  "DEFAULT_COLUMN_TYPE": "WORKER_ID",
+                  "COLUMN_SRNO": "id-16",
+                  "COLUMN_DATA_REC": [
+                    {
+                      "OPTION_COLOR": null,
+                      "OPTION_NAME": null,
+                      "CUSTOM_COLUMN_DATA_SRNO": null,
+                      "OPTION_CATEGORY": null,
+                      "USER_NM": "[redacted]",
+                      "PRFL_PHTG": "[redacted]",
+                      "CUSTOM_COLUMN_DATA": "id-4",
+                      "COLUMN_TYPE": null
+                    },
+                    {
+                      "OPTION_COLOR": null,
+                      "OPTION_NAME": null,
+                      "CUSTOM_COLUMN_DATA_SRNO": null,
+                      "OPTION_CATEGORY": null,
+                      "USER_NM": "[redacted]",
+                      "PRFL_PHTG": "[redacted]",
+                      "CUSTOM_COLUMN_DATA": "id-5",
+                      "COLUMN_TYPE": null
+                    },
+                    {
+                      "OPTION_COLOR": null,
+                      "OPTION_NAME": null,
+                      "CUSTOM_COLUMN_DATA_SRNO": null,
+                      "OPTION_CATEGORY": null,
+                      "USER_NM": "[redacted]",
+                      "PRFL_PHTG": "[redacted]",
+                      "CUSTOM_COLUMN_DATA": "id-1",
+                      "COLUMN_TYPE": null
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "taskSearch": {
+    "label": "project-A-exact-title-search",
+    "observedAt": "2026-10-29T08:42:47.538Z",
+    "status": 200,
+    "durationMs": 56,
+    "body": {
+      "response": {
+        "success": true,
+        "code": 200,
+        "message": "[redacted]",
+        "data": {
+          "hasNext": false,
+          "lastCursor": -1,
+          "mode": "[redacted]",
+          "tasks": [
+            {
+              "taskId": "id-23",
+              "postId": "id-7",
+              "projectId": "id-6",
+              "columns": [
+                {
+                  "columnId": "id-14",
+                  "columnType": "STATUS",
+                  "defaultColumnType": "STATUS",
+                  "columnData": [
+                    {
+                      "optionName": "[redacted]",
+                      "optionColor": "[redacted]",
+                      "userName": "",
+                      "customColumnDataId": "id-15",
+                      "customColumnData": "[redacted]",
+                      "profilePhoto": "",
+                      "optionCategory": "2",
+                      "columnType": "STATUS"
+                    }
+                  ]
+                },
+                {
+                  "columnId": "id-16",
+                  "columnType": "USER",
+                  "defaultColumnType": "WORKER_ID",
+                  "columnData": [
+                    {
+                      "optionName": "",
+                      "optionColor": "",
+                      "userName": "[redacted]",
+                      "customColumnDataId": "",
+                      "customColumnData": "id-4",
+                      "profilePhoto": "[redacted]",
+                      "optionCategory": "",
+                      "columnType": ""
+                    },
+                    {
+                      "optionName": "",
+                      "optionColor": "",
+                      "userName": "[redacted]",
+                      "customColumnDataId": "",
+                      "customColumnData": "id-5",
+                      "profilePhoto": "[redacted]",
+                      "optionCategory": "",
+                      "columnType": ""
+                    },
+                    {
+                      "optionName": "",
+                      "optionColor": "",
+                      "userName": "[redacted]",
+                      "customColumnDataId": "",
+                      "customColumnData": "id-1",
+                      "profilePhoto": "[redacted]",
+                      "optionCategory": "",
+                      "columnType": ""
+                    }
+                  ]
+                },
+                {
+                  "columnId": "id-19",
+                  "columnType": "USER",
+                  "defaultColumnType": "RGSR_ID",
+                  "columnData": [
+                    {
+                      "optionName": "",
+                      "optionColor": "",
+                      "userName": "[redacted]",
+                      "customColumnDataId": "",
+                      "customColumnData": "id-9",
+                      "profilePhoto": "",
+                      "optionCategory": "",
+                      "columnType": "USER"
+                    }
+                  ]
+                },
+                {
+                  "columnId": "id-20",
+                  "columnType": "DATE",
+                  "defaultColumnType": "RGSN_DTTM",
+                  "columnData": [
+                    {
+                      "optionName": "[redacted]",
+                      "optionColor": "",
+                      "userName": "",
+                      "customColumnDataId": "",
+                      "customColumnData": "20260930163809",
+                      "profilePhoto": "",
+                      "optionCategory": "",
+                      "columnType": "DATE"
+                    }
+                  ]
+                },
+                {
+                  "columnId": "id-21",
+                  "columnType": "DATE",
+                  "defaultColumnType": "EDTR_DTTM",
+                  "columnData": [
+                    {
+                      "optionName": "[redacted]",
+                      "optionColor": "",
+                      "userName": "",
+                      "customColumnDataId": "",
+                      "customColumnData": "20261029122120",
+                      "profilePhoto": "",
+                      "optionCategory": "",
+                      "columnType": "DATE"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groupAggregates": []
+        }
+      }
+    }
+  },
+  "comments": {
+    "observedAt": "2026-10-29T08:44:09.519Z",
+    "status": 200,
+    "durationMs": 86,
+    "fixture": "apps/desktop/src/core/flow/fixtures/assignment-comments-2026-10-29.json"
+  },
+  "alarms": [
+    {
+      "label": "worker-first-page",
+      "observedAt": "2026-10-29T08:40:31.917Z",
+      "status": 200,
+      "durationMs": 21,
+      "aliasNamespace": "initial-run",
+      "hasNext": true,
+      "lastCursor": 20,
+      "receivedCount": 20,
+      "caseAAlarms": [
+        {
+          "alarmId": "id-13",
+          "postId": "id-14",
+          "remarkId": "id-15",
+          "replyId": "-1",
+          "registeredDateTime": "20261029122120",
+          "alarmType": null,
+          "mentionYn": "N",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-16",
+          "postId": "id-14",
+          "remarkId": "id-17",
+          "replyId": "id-18",
+          "registeredDateTime": "20261029122115",
+          "alarmType": null,
+          "mentionYn": "N",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-19",
+          "postId": "id-14",
+          "remarkId": "id-17",
+          "replyId": "-1",
+          "registeredDateTime": "20261029120234",
+          "alarmType": "E",
+          "mentionYn": "Y",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-21",
+          "postId": "id-14",
+          "remarkId": "id-22",
+          "replyId": "id-23",
+          "registeredDateTime": "20261029105140",
+          "alarmType": null,
+          "mentionYn": "Y",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-24",
+          "postId": "id-14",
+          "remarkId": "id-25",
+          "replyId": "-1",
+          "registeredDateTime": "20261029102448",
+          "alarmType": null,
+          "mentionYn": "N",
+          "workerYn": "Y",
+          "readYn": "Y"
+        }
+      ]
+    },
+    {
+      "label": "general-first-page",
+      "observedAt": "2026-10-29T08:40:31.943Z",
+      "status": 200,
+      "durationMs": 25,
+      "aliasNamespace": "initial-run",
+      "hasNext": true,
+      "lastCursor": 20,
+      "receivedCount": 20,
+      "caseAAlarms": [
+        {
+          "alarmId": "id-13",
+          "postId": "id-14",
+          "remarkId": "id-15",
+          "replyId": "-1",
+          "registeredDateTime": "20261029122120",
+          "alarmType": null,
+          "mentionYn": "N",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-16",
+          "postId": "id-14",
+          "remarkId": "id-17",
+          "replyId": "id-18",
+          "registeredDateTime": "20261029122115",
+          "alarmType": null,
+          "mentionYn": "N",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-19",
+          "postId": "id-14",
+          "remarkId": "id-17",
+          "replyId": "-1",
+          "registeredDateTime": "20261029120234",
+          "alarmType": "E",
+          "mentionYn": "Y",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-21",
+          "postId": "id-14",
+          "remarkId": "id-22",
+          "replyId": "id-23",
+          "registeredDateTime": "20261029105140",
+          "alarmType": null,
+          "mentionYn": "Y",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-24",
+          "postId": "id-14",
+          "remarkId": "id-25",
+          "replyId": "-1",
+          "registeredDateTime": "20261029102448",
+          "alarmType": null,
+          "mentionYn": "N",
+          "workerYn": "Y",
+          "readYn": "Y"
+        },
+        {
+          "alarmId": "id-59",
+          "postId": "id-14",
+          "remarkId": "id-22",
+          "replyId": "-1",
+          "registeredDateTime": "20261029102441",
+          "alarmType": null,
+          "mentionYn": "Y",
+          "workerYn": "N",
+          "readYn": "Y"
+        }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "label": "project-A-task-page-1",
+      "observedAt": "2026-10-29T08:40:32.188Z",
+      "status": 200,
+      "durationMs": 75,
+      "count": 50,
+      "hasNext": true,
+      "lastCursor": 1
+    },
+    {
+      "label": "project-A-task-page-2",
+      "observedAt": "2026-10-29T08:40:32.279Z",
+      "status": 200,
+      "durationMs": 87,
+      "count": 50,
+      "hasNext": true,
+      "lastCursor": 2
+    },
+    {
+      "label": "project-A-task-page-3",
+      "observedAt": "2026-10-29T08:40:32.349Z",
+      "status": 200,
+      "durationMs": 69,
+      "count": 50,
+      "hasNext": true,
+      "lastCursor": 3
+    }
+  ],
+  "workerFilter": {
+    "receivedCount": 50,
+    "containingMeCount": 50,
+    "hasNext": true,
+    "lastCursor": 1,
+    "limitations": "첫 페이지 한 프로젝트만 관측. 전체 계정 범위나 필터 일반성을 보장하지 않음."
+  },
+  "unconfirmed": [
+    "creation-time assignment to me",
+    "removal of me",
+    "completion category contract across projects",
+    "timezone contract",
+    "consistent initial snapshot",
+    "network/schema failure live examples"
+  ]
+}

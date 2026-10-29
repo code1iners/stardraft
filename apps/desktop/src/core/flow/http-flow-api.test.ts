@@ -2,6 +2,37 @@ import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeFlowServer, flowEnvelope } from '../fakes/fake-flow-server';
 import { HttpFlowApi } from './http-flow-api';
+import assignmentComments from './fixtures/assignment-comments-2026-10-29.json';
+
+describe('Flow 어댑터: 실제 담당 변경 기록의 보존', () => {
+  it('담당 변경 시스템 기록과 이후 본인 답글의 작성자·서버 시각을 별도로 보존한다', async () => {
+    /** 2026-10-29 실응답에서 개인정보와 본문을 제거한 외부 응답 대역. */
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: assignmentComments });
+
+    /** 기존 공개 댓글 조회 경계로 읽은 결과. */
+    const result = await connect(server).listComments('id-7', null);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('실응답 댓글을 읽지 못했습니다.');
+    expect(result.value.nextCursor).toBeNull();
+    expect(result.value.comments).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        commentId: 'id-40',
+        registerId: 'id-11',
+        registeredDateTime: '20261029102448',
+        systemCode: "S41^^'id-4', 'id-5'^^'id-4', 'id-5', 'id-1'",
+      }),
+      expect.objectContaining({
+        commentId: 'id-37',
+        systemCode: '',
+        replies: expect.arrayContaining([
+          expect.objectContaining({ replyId: 'id-38', registerId: 'id-1', registeredDateTime: '20261029105102', systemCode: '' }),
+        ]),
+      }),
+    ]));
+  });
+});
 
 /** 가짜 Flow 서버에 키 하나로 붙인 Flow 어댑터. */
 function connect(server: FakeFlowServer, apiKey = 'fake-key-1', clock = new FakeClock()): HttpFlowApi {

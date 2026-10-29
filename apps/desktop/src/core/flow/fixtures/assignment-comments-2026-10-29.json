@@ -1,0 +1,175 @@
+{
+  "response": {
+    "success": true,
+    "code": 200,
+    "data": {
+      "hasNext": false,
+      "lastCursor": 9,
+      "comments": [
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-29",
+          "registerId": "id-9",
+          "registeredDateTime": "20260930164152",
+          "editedDateTime": "20260930164152",
+          "systemCode": "S41^^'id-4','id-5'@$%",
+          "replyHasNext": false,
+          "replies": []
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-30",
+          "registerId": "id-5",
+          "registeredDateTime": "20260930164353",
+          "editedDateTime": "20260930164353",
+          "systemCode": "S45_2^^대기^^진행",
+          "replyHasNext": false,
+          "replies": []
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-31",
+          "registerId": "id-5",
+          "registeredDateTime": "20260930164433",
+          "editedDateTime": "20260930164441",
+          "systemCode": null,
+          "replyHasNext": false,
+          "replies": [
+            {
+              "projectId": "id-6",
+              "postId": "id-7",
+              "replyId": "id-32",
+              "parentCommentId": "id-31",
+              "registerId": "id-9",
+              "registeredDateTime": "20261001152803",
+              "editedDateTime": null,
+              "systemCode": ""
+            },
+            {
+              "projectId": "id-6",
+              "postId": "id-7",
+              "replyId": "id-33",
+              "parentCommentId": "id-31",
+              "registerId": "id-5",
+              "registeredDateTime": "20261001163808",
+              "editedDateTime": null,
+              "systemCode": ""
+            }
+          ]
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-34",
+          "registerId": "id-9",
+          "registeredDateTime": "20261001155538",
+          "editedDateTime": "20261001155538",
+          "systemCode": "",
+          "replyHasNext": false,
+          "replies": []
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-35",
+          "registerId": "id-5",
+          "registeredDateTime": "20261014164813",
+          "editedDateTime": "20261014164813",
+          "systemCode": "S45_2^^진행^^완료",
+          "replyHasNext": false,
+          "replies": []
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-36",
+          "registerId": "id-11",
+          "registeredDateTime": "20261029102420",
+          "editedDateTime": "20261029102420",
+          "systemCode": "S45_2^^완료^^확인 요청",
+          "replyHasNext": false,
+          "replies": []
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-37",
+          "registerId": "id-11",
+          "registeredDateTime": "20261029102441",
+          "editedDateTime": "20261029102441",
+          "systemCode": "",
+          "replyHasNext": false,
+          "replies": [
+            {
+              "projectId": "id-6",
+              "postId": "id-7",
+              "replyId": "id-38",
+              "parentCommentId": "id-37",
+              "registerId": "id-1",
+              "registeredDateTime": "20261029105102",
+              "editedDateTime": null,
+              "systemCode": ""
+            },
+            {
+              "projectId": "id-6",
+              "postId": "id-7",
+              "replyId": "id-39",
+              "parentCommentId": "id-37",
+              "registerId": "id-11",
+              "registeredDateTime": "20261029105140",
+              "editedDateTime": null,
+              "systemCode": ""
+            }
+          ]
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-40",
+          "registerId": "id-11",
+          "registeredDateTime": "20261029102448",
+          "editedDateTime": "20261029102448",
+          "systemCode": "S41^^'id-4', 'id-5'^^'id-4', 'id-5', 'id-1'",
+          "replyHasNext": false,
+          "replies": []
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-10",
+          "registerId": "id-1",
+          "registeredDateTime": "20261029115829",
+          "editedDateTime": "20261029115829",
+          "systemCode": "",
+          "replyHasNext": false,
+          "replies": [
+            {
+              "projectId": "id-6",
+              "postId": "id-7",
+              "replyId": "id-41",
+              "parentCommentId": "id-10",
+              "registerId": "id-11",
+              "registeredDateTime": "20261029122115",
+              "editedDateTime": null,
+              "systemCode": ""
+            }
+          ]
+        },
+        {
+          "projectId": "id-6",
+          "postId": "id-7",
+          "commentId": "id-12",
+          "registerId": "id-11",
+          "registeredDateTime": "20261029122120",
+          "editedDateTime": "20261029122120",
+          "systemCode": "S45_2^^확인 요청^^완료",
+          "replyHasNext": false,
+          "replies": []
+        }
+      ]
+    }
+  }
+}

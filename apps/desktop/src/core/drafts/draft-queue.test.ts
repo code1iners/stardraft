@@ -20,6 +20,10 @@ import { MemorySettingsStore } from '../fakes/memory-settings-store';
 import { MemoryStateStore } from '../fakes/memory-state-store';
 import { RecordingNotifier } from '../fakes/recording-notifier';
 import { collectBundleContext } from '../flow/bundle-context';
+import assignmentComments from '../flow/fixtures/assignment-comments-2026-10-29.json';
+import assignmentPost from '../flow/fixtures/assignment-post-2026-10-29.json';
+import { HttpFlowApi } from '../flow/http-flow-api';
+import { FakeFlowServer, flowEnvelope } from '../fakes/fake-flow-server';
 import { MentionJudge } from '../flow/mention-judgement';
 import { createLogger } from '../logging/logger';
 import type { ExecutorOutcome, ExecutorRunRequest } from '../ports/executor';
@@ -2973,6 +2977,34 @@ it.each(['existing', 'self', 'completed', 'unknown', 'unassigned', 'comment'] as
   expect(executor.requests).toEqual([]);
 });
 
+it.each([
+  ['담당자 이름이 오면 생성 때 담당 기록의 시각으로 초안을 만든다', true],
+  ['담당자 이름이 없으면 기록을 내 것으로 확정하지 못해 만들지 않는다', false],
+] as const)('생성 시 지정 업무가 처음 발견되기 전에 수정됐을 때: %s', async (_, named) => {
+  /** 서비스 검증 환경. */
+  const { flow, clock, stateStore, bundles, executor, repos } = await setup();
+  /** 감지 서비스. */
+  const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+  await detection.checkNow();
+  clock.advance(60_000);
+  // 수정 시각이 생성 시각과 달라 생성 시 지정으로 바로 보지 않고, 생성 때의 담당 기록(`@$%` 형식)을 배정 근거로 쓴다.
+  flow.addPost({ postId: 'edited', title: '수정한 업무', registerId: SENDER, registerName: '업무 작성자',
+    registeredDateTime: '20261020090100', editedDateTime: '20261020090500', textComponents: [{ contents: '수정한 본문', mentions: [] }],
+    tasks: [{ taskId: 'edited-task', workerIds: [ME], completion: 'active', ...(named ? { workerNames: [{ userId: ME, name: FAKE_ME.name }] } : {}) }] });
+  flow.addComment('edited', { commentId: '830', contents: '', registerId: SENDER, registeredDateTime: '20261020090100', systemCode: `S41^^'${FAKE_ME.name}'@$%` });
+  flow.addWorkerAlarm(alarm('201', { postId: 'edited', remarkId: '-1', registeredDateTime: '20261020090100' }));
+  executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+  await detection.checkNow();
+  await settle();
+  if (named) {
+    expect(bundles.state()).toMatchObject([{ status: 'ready', assignment: { taskId: 'edited-task', assignedAt: '20261020090100' } }]);
+    expect(executor.requests[0]?.input).toContain('수정한 본문');
+  } else {
+    expect(bundles.state()).toEqual([]);
+    expect(executor.requests).toEqual([]);
+  }
+});
+
 it('첫 담당 업무 조회가 한 주기 상한을 넘으면 다음 주기에 이어 받고 불완전한 기준을 확정하지 않는다', async () => {
   /** 서비스 검증 환경. */
   const { flow, clock, stateStore, bundles } = await setup();
@@ -3245,6 +3277,92 @@ describe('기존 업무의 신규 배정과 이미 답함', () => {
     await settle();
     expect(bundles.state().map((item) => item.status)).toEqual(['already-answered']);
     expect(executor.requests).toEqual([]);
+  });
+});
+
+describe('마스킹한 실응답 사례 A의 최종 판정', () => {
+  /** 2026-10-29 실응답 사례 A의 본인 별칭. 담당 변경 기록의 이름도 같은 별칭으로 가렸다. */
+  const CASE_ME = 'id-1';
+
+  /**
+   * 상세 응답. 실응답은 담당자 컬럼 이름(`USER_NM`)을 `[redacted]`로, 담당 변경 기록의 이름을 사용자 별칭으로 따로 가렸다.
+   * 같은 사람을 같은 이름으로 맞추려고 이름을 그 사람의 별칭으로 바꾼다. `category`를 주면 실응답에 없는 상태를 가정한 변형이다.
+   */
+  function casePost(category?: string) {
+    /** 고칠 사본. */
+    const post = structuredClone(assignmentPost);
+    for (const column of post.tasks[0]!.TASK_COLUMN_REC) {
+      for (const data of column.COLUMN_DATA_REC) {
+        if (column.DEFAULT_COLUMN_TYPE === 'WORKER_ID') data.USER_NM = data.CUSTOM_COLUMN_DATA;
+        if (column.DEFAULT_COLUMN_TYPE === 'STATUS' && category !== undefined) data.OPTION_CATEGORY = category;
+      }
+    }
+    return flowEnvelope(post);
+  }
+
+  /** 담당 변경 기록(`id-40`)의 `WORKER` 알림 한 쪽. 2026-10-29 관측한 알림 필드를 위 fixture와 같은 별칭으로 옮겼다. */
+  const caseAlarms = flowEnvelope({ alarms: { hasNext: false, lastCursor: 1, alarms: [{ alarmId: 'id-41', projectId: 'id-6', postId: 'id-7',
+    remarkId: 'id-40', replyId: '-1', registerId: 'id-11', registeredDateTime: '20261029102448' }] } });
+
+  /** 빈 알림 목록으로 기준을 만든 뒤, 실제 HTTP 어댑터로 사례 A를 받는 감지. */
+  async function caseDetection(env: Awaited<ReturnType<typeof setup>>, server: FakeFlowServer) {
+    env.stateStore.account = { ...FAKE_ME, userId: CASE_ME, name: CASE_ME };
+    /** 실응답을 읽는 어댑터로 연결한 감지. */
+    const detection = new AssignmentDetection({ stateStore: env.stateStore, bundles: env.bundles, clock: env.clock,
+      connectFlow: () => ({ api: new HttpFlowApi({ apiKey: 'fake-key-1', fetch: server.fetch, clock: env.clock }), reportKeyRejected: () => {} }) });
+    server.replyNext({ status: 200, body: flowEnvelope({ alarms: { hasNext: false, lastCursor: -1, alarms: [] } }) });
+    await detection.checkNow();
+    env.clock.advance(60_000);
+    return detection;
+  }
+
+  /** 받은 요청의 경로. */
+  const paths = (server: FakeFlowServer) => server.requests.map((request) => new URL(request.url).pathname);
+
+  it('관측 그대로인 완료 범주(2)의 업무는 댓글을 받지 않고 제외한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    /** 실응답 대역. */
+    const server = new FakeFlowServer();
+    /** 기준을 만든 감지. */
+    const detection = await caseDetection(env, server);
+    server.replyNext({ status: 200, body: caseAlarms }, { status: 200, body: casePost() });
+    await detection.checkNow();
+    await settle();
+    expect(env.bundles.state()).toEqual([]);
+    expect((await env.stateStore.getAssignmentState())?.pending).toEqual([]);
+    expect(paths(server)).toEqual(['/user/alarms', '/user/alarms', '/user/posts/id-7']);
+  });
+
+  it('변형: 미완료 범주(0)였다면 담당 변경 기록 뒤의 내 답글로 이미 답함 처리한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    /** 실응답 대역. */
+    const server = new FakeFlowServer();
+    /** 기준을 만든 감지. */
+    const detection = await caseDetection(env, server);
+    server.replyNext({ status: 200, body: caseAlarms }, { status: 200, body: casePost('0') }, { status: 200, body: assignmentComments });
+    await detection.checkNow();
+    await settle();
+    expect(env.bundles.state()).toMatchObject([{ status: 'already-answered', assignment: { taskId: 'id-23', assignedAt: '20261029102448' } }]);
+    expect(env.executor.requests).toEqual([]);
+  });
+
+  it('변형: 진행·피드백 범주(1)였다면 미확인으로 보류하고 주기마다 상세를 다시 받는다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    /** 실응답 대역. */
+    const server = new FakeFlowServer();
+    /** 기준을 만든 감지. */
+    const detection = await caseDetection(env, server);
+    server.replyNext({ status: 200, body: caseAlarms }, { status: 200, body: casePost('1') },
+      { status: 200, body: caseAlarms }, { status: 200, body: casePost('1') });
+    await detection.checkNow();
+    await detection.checkNow();
+    await settle();
+    expect(env.bundles.state()).toEqual([]);
+    expect((await env.stateStore.getAssignmentState())?.pending.map((item) => item.postId)).toEqual(['id-7']);
+    expect(paths(server)).toEqual(['/user/alarms', '/user/alarms', '/user/posts/id-7', '/user/alarms', '/user/posts/id-7']);
   });
 });
 

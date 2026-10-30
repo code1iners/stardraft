@@ -1,3 +1,5 @@
+import { AssignmentDetection } from '../detection/assignment-detection';
+import { bundleRecipients } from './post-body';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -2874,4 +2876,142 @@ describe('설정: 비밀 파일 패턴 추가의 반영', () => {
 
     expect(bundles.get(bundle!.id)).toMatchObject({ status: 'failed', failure: { reason: 'secret-evidence' }, draft: null });
   });
+});
+
+
+describe('담당 업무 최초 초안', () => {
+  it('기준 이후 생성 시 배정된 업무 본문을 검토하고 작성자 멘션을 뺀 편집본을 승인 후 게시한다', async () => {
+    /** 실제 서비스와 가짜 외부 포트를 연결한 검증 환경. */
+    const { flow, clock, stateStore, bundles, executor, repos, notifier } = await setup();
+    /** 담당 업무 감지. */
+    const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+    await detection.checkNow();
+    clock.advance(60_000);
+    flow.addPost({ postId: 'assignment-post', title: '최신 업무 제목', registerId: SENDER, registerName: '업무 작성자',
+      registeredDateTime: '20261020090100', editedDateTime: '20261020090100',
+      textComponents: [{ contents: '운영 재시도 횟수를 확인해주세요.', mentions: [] }],
+      tasks: [{ taskId: 'task-1', workerIds: [ME, 'other@example.test'], completion: 'active' }] });
+    flow.addWorkerAlarm(alarm('201', { postId: 'assignment-post', remarkId: '-1', registeredDateTime: '20261020090100' }));
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await detection.checkNow();
+    await settle();
+    /** 생성된 담당 업무 초안. */
+    const bundle = bundles.state()[0]!;
+    expect(bundle.status).toBe('ready');
+    expect(notifier.sent.at(-1)?.body).toBe('담당 업무 초안이 준비됐습니다.');
+    expect(bundle.mentions).toEqual([]);
+    expect(bundle.assignment?.taskId).toBe('task-1');
+    expect(executor.requests[0]?.input).toContain('담당 업무');
+    expect(executor.requests[0]?.input).toContain('최신 업무 제목');
+    expect(executor.requests[0]?.input).toContain('운영 재시도 횟수를 확인해주세요.');
+    expect(bundleRecipients(bundle)).toEqual([{ id: SENDER, name: '업무 작성자' }]);
+    expect(flow.writes).toEqual([]);
+    await bundles.editDraft(bundle.id, '확인한 결과입니다.');
+    await bundles.removeRecipient(bundle.id, 0, '업무 작성자');
+    /** 승인 후 게시 서비스. */
+    const posting = new Posting({ bundles, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }), myUserId: () => ME,
+      clock, logger: createLogger([{ write: () => {} }], clock) });
+    await posting.post(bundle.id);
+    await settle();
+    clock.advance(5_000);
+    await settle();
+    expect(flow.writes).toEqual([{ request: 'POST /user/comments/assignment-post', contents: '확인한 결과입니다.' }]);
+    await detection.checkNow();
+    expect(bundles.state()).toHaveLength(1);
+  });
+});
+
+it('담당 업무의 조회 실패와 담당자 누락을 보류하고 회복하면 한 번만 초안을 만든다', async () => {
+  /** 서비스 검증 환경. */
+  const { flow, clock, stateStore, bundles, executor, repos } = await setup();
+  /** 감지 서비스. */
+  const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+  flow.failOn('GET /user/alarms/worker', { kind: 'network' }, 1);
+  await detection.checkNow();
+  expect((await stateStore.getAssignmentState())?.baselineReady).toBe(false);
+  clock.advance(60_000);
+  flow.addWorkerAlarm(alarm('201', { postId: 'recover', remarkId: '-1', registeredDateTime: '20261020090100' }));
+  /** 나중에 담당자 필드가 회복될 업무. */
+  const post = { postId: 'recover', title: '복구할 업무', registerId: SENDER, registerName: '작성자', registeredDateTime: '20261020090100', editedDateTime: '20261020090100', textComponents: [{ contents: '확인해주세요.', mentions: [] }] };
+  flow.addPost({ ...post, tasks: [{ taskId: 'recover-task', workerIds: null, completion: 'active' }] });
+  flow.failOn('GET /user/posts/recover', { kind: 'http', status: 500 }, 1);
+  await detection.checkNow();
+  await detection.checkNow();
+  expect(bundles.state()).toEqual([]);
+  flow.addPost({ ...post, tasks: [{ taskId: 'recover-task', workerIds: [ME], completion: 'active' }] });
+  executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+  await detection.checkNow();
+  await settle();
+  expect(bundles.state().map((item) => item.status)).toEqual(['ready']);
+  /** 앱 재시작 뒤 반복 후보도 기존 묶음을 재사용한다. */
+  const restarted = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+  flow.addWorkerAlarm(alarm('202', { postId: 'recover', remarkId: '-1', registeredDateTime: '20261020090100' }));
+  await restarted.checkNow();
+  expect(bundles.state()).toHaveLength(1);
+});
+
+it.each(['existing', 'self', 'completed', 'unknown', 'unassigned', 'comment'] as const)('담당 업무 제외 또는 보류: %s', async (kind) => {
+  /** 서비스 검증 환경. */
+  const { flow, clock, stateStore, bundles, executor } = await setup();
+  /** 감지 서비스. */
+  const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+  await detection.checkNow();
+  clock.advance(60_000);
+  /** 기존 업무에는 새 댓글이 와도 초안을 만들지 않는다. */
+  const time = kind === 'existing' ? '20261019090100' : '20261020090100';
+  flow.addPost({ postId: 'excluded', title: '처리하지 않을 업무', registerId: kind === 'self' ? ME : SENDER,
+    registeredDateTime: time, editedDateTime: time, textComponents: [{ contents: '본문', mentions: [] }],
+    tasks: [{ taskId: 'excluded-task', workerIds: kind === 'unassigned' ? [] : [ME],
+      completion: kind === 'completed' ? 'completed' : kind === 'unknown' ? 'unknown' : 'active' }] });
+  flow.addWorkerAlarm(alarm('201', { postId: 'excluded', remarkId: kind === 'comment' ? '700' : '-1', registeredDateTime: time }));
+  await detection.checkNow();
+  await settle();
+  expect(bundles.state()).toEqual([]);
+  expect(executor.requests).toEqual([]);
+});
+
+it('첫 담당 업무 조회가 한 주기 상한을 넘으면 다음 주기에 이어 받고 불완전한 기준을 확정하지 않는다', async () => {
+  /** 서비스 검증 환경. */
+  const { flow, clock, stateStore, bundles } = await setup();
+  flow.alarmPageSize = 1;
+  for (let index = 0; index < 51; index += 1) flow.addWorkerAlarm(alarm(String(200 + index)));
+  /** 감지 서비스. */
+  const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+  await detection.checkNow();
+  expect((await stateStore.getAssignmentState())?.baselineReady).toBe(false);
+  await detection.checkNow();
+  expect((await stateStore.getAssignmentState())?.baselineReady).toBe(true);
+  expect(bundles.state()).toEqual([]);
+});
+
+it('담당 업무 초안 실패는 재시도할 수 있고 수정된 최신 제목과 본문을 사용한다', async () => {
+  /** 서비스 검증 환경. */
+  const { flow, clock, stateStore, bundles, executor, repos } = await setup();
+  /** 담당 업무 감지. */
+  const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+  await detection.checkNow();
+  clock.advance(60_000);
+  /** 최초 생성 시 확인한 업무. */
+  const post = { postId: 'retry-task-post', title: '처음 제목', registerId: SENDER, registerName: '작성자',
+    registeredDateTime: '20261020090100', editedDateTime: '20261020090100',
+    textComponents: [{ contents: '처음 본문', mentions: [] }],
+    tasks: [{ taskId: 'retry-task', workerIds: [ME], completion: 'active' as const }] };
+  flow.addPost(post);
+  flow.addWorkerAlarm(alarm('201', { postId: post.postId, remarkId: '-1', registeredDateTime: post.registeredDateTime }));
+  executor.script({ outcome: { type: 'timed-out' } });
+  await detection.checkNow();
+  await settle();
+  /** 실패 기록을 가진 기존 초안 묶음. */
+  const failed = bundles.state()[0]!;
+  expect(failed.status).toBe('failed');
+  flow.addPost({ ...post, title: '수정한 최신 제목', editedDateTime: '20261020090200', textComponents: [{ contents: '수정한 최신 본문', mentions: [] }] });
+  executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+  await bundles.retry(failed.id);
+  await settle();
+  expect(bundles.get(failed.id)?.status).toBe('ready');
+  expect(executor.requests.at(-1)?.input).toContain('수정한 최신 제목');
+  expect(executor.requests.at(-1)?.input).toContain('수정한 최신 본문');
+  flow.addWorkerAlarm(alarm('202', { postId: post.postId, remarkId: '700', registeredDateTime: '20261020090200' }));
+  await detection.checkNow();
+  expect(bundles.state()).toHaveLength(1);
 });

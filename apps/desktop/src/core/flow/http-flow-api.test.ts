@@ -1,3 +1,4 @@
+import assignmentPost from './fixtures/assignment-post-2026-10-29.json';
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeFlowServer, flowEnvelope } from '../fakes/fake-flow-server';
@@ -773,4 +774,38 @@ describe('Flow 어댑터: 게시(댓글·대댓글 쓰기)', () => {
     await expect(api.createComment('90000011', '답')).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
     await expect(api.createReply('90000011', '700', '답')).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
   });
+});
+
+it('담당 업무 목록의 잘못된 다음 쪽 정보를 완료한 조회로 해석하지 않는다', async () => {
+  /** 성공 봉투지만 다음 커서가 빠진 응답. */
+  const server = new FakeFlowServer();
+  server.replyNext({ status: 200, body: flowEnvelope({ alarms: { alarms: [], hasNext: true } }) });
+  expect(await connect(server).listWorkerAlarms(null)).toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+});
+
+it('실제 상세 응답 구조에서 업무 ID와 담당자, 완료 범주를 읽고 누락은 미확인으로 유지한다', async () => {
+  /** 관측한 TASK_COLUMN_REC 구조의 값만 가린 응답. */
+  const server = new FakeFlowServer();
+  server.replyNext({ status: 200, body: flowEnvelope({ postId: 'post-id', content: '본문', tasks: [
+    { TASK_SRNO: 'task-id', WORKER_REC: [{ WORKER_ID: 'me@example.test' }, { WORKER_ID: 'other@example.test' }],
+      STTS: '0', PROGRESS: '100', TASK_COLUMN_REC: [{ DEFAULT_COLUMN_TYPE: 'STATUS', COLUMN_DATA_REC: [{ OPTION_CATEGORY: '2' }] }] },
+    { TASK_SRNO: 'missing-workers' },
+    { TASK_SRNO: 'empty-workers', WORKER_REC: [] },
+  ] }) });
+  expect(await connect(server).getPost('post-id')).toMatchObject({ ok: true, value: { postId: 'post-id', tasks: [
+    { taskId: 'task-id', workerIds: ['me@example.test', 'other@example.test'], completion: 'completed' },
+    { taskId: 'missing-workers', workerIds: null, completion: 'unknown' },
+    { taskId: 'empty-workers', workerIds: [], completion: 'unknown' },
+  ] } });
+});
+
+
+it('마스킹한 실제 상세 응답을 담당 업무 구조로 읽는다', async () => {
+  /** 2026-10-29 읽기 전용 실응답의 최소 투영본. */
+  const server = new FakeFlowServer();
+  server.replyNext({ status: 200, body: flowEnvelope(assignmentPost) });
+  expect(await connect(server).getPost(assignmentPost.postId)).toMatchObject({ ok: true, value: {
+    postId: assignmentPost.postId,
+    tasks: [{ taskId: 'id-23', workerIds: ['id-4', 'id-5', 'id-1'], completion: 'completed' }],
+  } });
 });

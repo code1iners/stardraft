@@ -691,6 +691,8 @@ export type RepoCheckSnapshot =
 
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
+  /** 담당 업무 초안의 원문. 직접 멘션과 별도 표시한다. */
+  assignment?: { text: BundleMentionSnapshot['text'] };
   /** 묶음 ID. 명령에 실어 보낸다. */
   id: number;
   /** 상태. */

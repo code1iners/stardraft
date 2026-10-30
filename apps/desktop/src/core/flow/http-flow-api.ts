@@ -86,6 +86,21 @@ export class HttpFlowApi implements FlowApi {
     return { ok: true, value: [...projects.values()] };
   }
 
+  /** 읽은 알림도 포함해 담당 업무 후보를 조회한다. */
+  async listWorkerAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>> {
+    /** 기존 알림과 같은 응답 구조를 쓰는 별도 필터. */
+    const result = await this.get(`/user/alarms?filters=WORKER&size=${ALARM_PAGE_SIZE}${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`);
+    if (!result.ok) return result;
+    /** 담당 업무 기준은 불완전한 목록을 성공으로 기록하면 안 된다. */
+    const list = isRecord(result.value) ? result.value.alarms : null;
+    if (!isRecord(list) || typeof list.hasNext !== 'boolean' || !Array.isArray(list.alarms)
+      || (list.hasNext && (!idString(list.lastCursor) || idString(list.lastCursor) === '-1'))
+      || !list.alarms.every((item) => isRecord(item) && idString(item.alarmId) && idString(item.postId) && idString(item.projectId))) return UNEXPECTED_RESPONSE;
+    /** 해석한 후보 목록. */
+    const page = readAlarmPage(result.value);
+    return page ? { ok: true, value: page } : UNEXPECTED_RESPONSE;
+  }
+
   /**
    * `GET /user/alarms?filters=MENTION&size=20`으로 멘션 알림 한 쪽을 받는다.
    * 모바일에서 먼저 읽은 멘션도 놓치지 않게 `readYn`은 보내지 않는다. 응답은 `data.alarms` 아래의 `hasNext`·`lastCursor`·`alarms[]`다.
@@ -329,6 +344,19 @@ function readPost(data: unknown, requestedPostId: string): FlowPost | null {
   const postId = idString(data.postId) || requestedPostId;
   /** 제목, "Flow에서 열기" 주소, 작성자. */
   const heading = {
+    ...(Array.isArray(data.tasks) && data.tasks.every(isRecord) ? { tasks: data.tasks.filter(isRecord).map((task) => {
+      /** 실응답의 상태 컬럼 범주. 진척도나 표시 이름으로 대체하지 않는다. */
+      const categories = Array.isArray(task.TASK_COLUMN_REC) ? task.TASK_COLUMN_REC.filter(isRecord)
+        .filter((column) => column.DEFAULT_COLUMN_TYPE === 'STATUS')
+        .flatMap((column) => Array.isArray(column.COLUMN_DATA_REC) ? column.COLUMN_DATA_REC.filter(isRecord).map((item) => idString(item.OPTION_CATEGORY)) : []) : [];
+      /** 누락되거나 깨진 담당자 배열은 빈 배열로 바꾸지 않는다. */
+      const workers = Array.isArray(task.WORKER_REC) && task.WORKER_REC.every((worker) => isRecord(worker) && trimmedString(worker.WORKER_ID))
+        ? task.WORKER_REC.filter(isRecord).map((worker) => trimmedString(worker.WORKER_ID)) : null;
+      return { taskId: idString(task.TASK_SRNO), workerIds: workers,
+        completion: categories.length === 1 && categories[0] === '0' ? 'active' as const
+          : categories.length === 1 && categories[0] === '2' ? 'completed' as const : 'unknown' as const };
+    }) } : {}),
+    ...(idString(data.editedDateTime) ? { editedDateTime: idString(data.editedDateTime) } : {}),
     title: trimmedString(data.title),
     connectUrl: trimmedString(data.connectUrl) || null,
     registerId: trimmedString(data.registerId),

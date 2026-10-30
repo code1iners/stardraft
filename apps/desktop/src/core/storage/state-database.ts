@@ -1,3 +1,4 @@
+import type { AssignmentState } from '../detection/assignment-detection';
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import {
@@ -249,6 +250,13 @@ export const STATE_MIGRATIONS: readonly string[] = [
     rejected INTEGER NOT NULL CHECK (rejected IN (0, 1))
   ) STRICT;
   `,
+  // 담당 업무의 감지 기준과 최초 묶음 기록은 멘션 기준점과 분리한다.
+  `
+  ALTER TABLE mention_bundle ADD COLUMN assignment TEXT;
+  CREATE TABLE assignment_detection (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL) STRICT;
+  CREATE TABLE assignment_record (project_id TEXT NOT NULL, task_id TEXT NOT NULL, bundle_id INTEGER NOT NULL,
+    PRIMARY KEY (project_id, task_id)) STRICT;
+  `,
 ];
 
 /**
@@ -480,7 +488,30 @@ export class SqliteStateStore implements StateStore {
       posting: postingRecordOf(readJson<PostingRecord>(row.posting), mentions.get(row.id) ?? []),
       quitDuringCountdown: row.quit_during_countdown === 1,
       trial: row.trial === 1,
+      ...(row.assignment ? { assignment: JSON.parse(row.assignment) as NonNullable<MentionBundle['assignment']> } : {}),
     }));
+  }
+
+  async getAssignmentState(): Promise<AssignmentState | null> {
+    /** 계정 초기화와 함께 지워지는 감지 기록. */
+    const row = this.db.prepare('SELECT state FROM assignment_detection WHERE id = 1').get() as { state: string } | undefined;
+    return row ? JSON.parse(row.state) as AssignmentState : null;
+  }
+
+  async setAssignmentState(state: AssignmentState): Promise<void> {
+    if ((await this.getAccount())?.userId !== state.accountId) return;
+    this.db.prepare('INSERT OR REPLACE INTO assignment_detection (id, state) VALUES (1, ?)').run(JSON.stringify(state));
+  }
+
+  async addAssignmentBundle(bundle: UnsavedBundle, accountId: string): Promise<MentionBundle | null> {
+    if ((await this.getAccount())?.userId !== accountId || !bundle.assignment) return null;
+    return this.db.transaction(() => {
+      if (this.db.prepare('SELECT 1 FROM assignment_record WHERE project_id = ? AND task_id = ?').get(bundle.projectId, bundle.assignment!.taskId)) return null;
+      /** 초안 성공이 아니라 묶음 발견 기록이다. 실패는 같은 묶음에서 재시도한다. */
+      const saved = this.writeBundle(bundle);
+      this.db.prepare('INSERT INTO assignment_record VALUES (?, ?, ?)').run(bundle.projectId, bundle.assignment!.taskId, saved.id);
+      return saved;
+    })();
   }
 
   async saveDetectedBundles(bundles: readonly UnsavedBundle[], baselineAlarmId: string): Promise<MentionBundle[]> {
@@ -531,6 +562,7 @@ export class SqliteStateStore implements StateStore {
       posting: jsonOrNull(bundle.posting),
       quitDuringCountdown: bundle.quitDuringCountdown ? 1 : 0,
       trial: bundle.trial ? 1 : 0,
+      assignment: jsonOrNull(bundle.assignment ?? null),
     };
     /** 묶음 ID. */
     let id = bundle.id;
@@ -540,10 +572,10 @@ export class SqliteStateStore implements StateStore {
           .prepare(
             `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
                context, watched_context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting,
-               quit_during_countdown, trial)
+               quit_during_countdown, trial, assignment)
              VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
                @context, @watchedContext, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting,
-               @quitDuringCountdown, @trial)`,
+               @quitDuringCountdown, @trial, @assignment)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -556,7 +588,7 @@ export class SqliteStateStore implements StateStore {
              context = @context, watched_context = @watchedContext, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, edited_text = @editedText,
              removed_recipients = @removedRecipients, directives = @directives, fixed_requirement = @fixedRequirement,
              regeneration = @regeneration, failure = @failure, runs = @runs, posting = @posting,
-             quit_during_countdown = @quitDuringCountdown, trial = @trial
+             quit_during_countdown = @quitDuringCountdown, trial = @trial, assignment = @assignment
            WHERE id = @id`,
         )
         .run({ ...values, id });
@@ -847,6 +879,8 @@ interface BundleRow {
   quit_during_countdown: number;
   /** 시험 묶음이면 1. */
   trial: number;
+  /** 별도 감지 사유인 담당 업무 자료. */
+  assignment: string | null;
 }
 
 /** `bundle_answer` 표의 한 줄. */

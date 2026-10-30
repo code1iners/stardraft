@@ -19,6 +19,8 @@ const OTHER_REPLY_LIMIT = 10;
 
 /** 맥락의 글 하나가 갖는 값. 게시물 본문, 댓글, 대댓글이 함께 갖는다. 쓴 사람의 사용자 ID는 받는 사람에만 쓰고 맥락 문서와 화면에는 넣지 않는다. */
 export interface ContextWriting {
+  /** 담당 업무 본문의 답변 대상 표시. 직접 멘션 표기와 구별한다. */
+  assignment?: boolean;
   /** 쓴 사람의 사용자 ID(`registerId`). Flow가 주지 않았으면 빈 문자열이다. 받는 사람이 생기기 전에 저장한 맥락에는 이 값이 없다. */
   authorId?: string;
   /** 쓴 사람 이름. 비어 있을 수 있다. */
@@ -106,7 +108,7 @@ export type BundleContextResult =
   | { ok: false; failure: BundleContextFailure };
 
 /** 맥락을 모을 묶음. 자리와 멘션만 본다. */
-export type ContextTarget = Pick<MentionBundle, 'postId' | 'remarkId' | 'mentions'>;
+export type ContextTarget = Pick<MentionBundle, 'postId' | 'remarkId' | 'mentions' | 'assignment'>;
 
 /**
  * 묶음의 맥락을 Flow에서 새로 조회해 모은다. 게시물, 댓글 전부, 대상 댓글 스레드의 대댓글 전부를 받는다.
@@ -227,7 +229,7 @@ export function markContextMentions(context: BundleContext, bundle: ContextTarge
   const thread = context.targetThread;
   return {
     ...context,
-    post: { ...context.post, mention: isPostBody(bundle) },
+    post: { ...context.post, mention: isPostBody(bundle), ...(bundle.assignment ? { assignment: true } : {}) },
     targetThread: thread && {
       ...thread,
       mention: active.some((mention) => mentionPlaceOf(mention) === 'comment'),
@@ -421,10 +423,10 @@ function remarkLines(remark: ContextRemark, indent: string): string[] {
 }
 
 /** 쓴 사람·시각 줄. 묶음의 멘션이면 "[멘션]"을 붙인다. */
-function byline({ authorName, registeredDateTime, mention }: ContextWriting): string {
+function byline({ authorName, registeredDateTime, mention, assignment }: ContextWriting): string {
   /** 읽을 수 있게 바꾼 시각. */
   const time = readableFlowTime(registeredDateTime);
-  return `${authorName || '이름 없음'}${time ? ` · ${time}` : ''}${mention ? ' [멘션]' : ''}`;
+  return `${authorName || '이름 없음'}${time ? ` · ${time}` : ''}${assignment ? ' [담당 업무]' : mention ? ' [멘션]' : ''}`;
 }
 
 /** 첨부 줄. 파일 이름만 쓴다. 첨부가 없으면 줄이 없다. */

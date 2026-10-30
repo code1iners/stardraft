@@ -728,6 +728,7 @@ export class DraftQueue {
     const document = contextDocument(prepared.context);
     return {
       data: {
+        assignment: !!prepared.bundle.assignment,
         mentions: activeMentions(prepared.bundle),
         context: prepared.context,
         contextText: document.text,

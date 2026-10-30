@@ -233,11 +233,23 @@ export type PostedAnswerRanges = ReadonlyMap<string, ReadonlySet<string>>;
 /** 멘션 묶음 자리. 같은 댓글 스레드(`remarkId`가 댓글)나 같은 게시물 본문(`remarkId`가 `"-1"`)이다. */
 export type BundlePlace = Pick<MentionLocation, 'postId' | 'remarkId'>;
 
+/** 담당 업무 초안의 감지 근거. 직접 멘션과 별도로 보존한다. */
+export interface TaskAssignment {
+  /** 계정별로 구별하는 업무 ID. */
+  taskId: string;
+  /** 업무 작성자. 기본 받는 사람이다. */
+  authorId: string;
+  /** 작성자 표시 이름. */
+  authorName: string;
+}
+
 /**
  * 멘션 묶음. 같은 댓글 스레드나 같은 게시물 본문에서 온, 아직 처리하지 않은 멘션의 모음이다.
  * 초안·상태·트레이 검토 수·대기열 위치는 모두 묶음 단위다.
  */
 export interface MentionBundle extends BundlePlace {
+  /** 담당 업무 초안이면 배정 자료. 기존 멘션 묶음에는 없다. */
+  assignment?: TaskAssignment;
   /** 묶음 ID. 저장할 때 정해지고 다시 쓰지 않는다. */
   id: number;
   /** 멘션이 온 Flow 프로젝트 ID. */

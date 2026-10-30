@@ -1,0 +1,81 @@
+{
+  "projectId": "id-6",
+  "postId": "id-7",
+  "registerId": "id-9",
+  "registeredDateTime": "20260930163809",
+  "editedDateTime": "20260930164152",
+  "tasks": [
+    {
+      "TASK_SRNO": "id-23",
+      "STTS": "0",
+      "PROGRESS": "100",
+      "WORKER_REC": [
+        {
+          "WORKER_ID": "id-4"
+        },
+        {
+          "WORKER_ID": "id-5"
+        },
+        {
+          "WORKER_ID": "id-1"
+        }
+      ],
+      "TASK_COLUMN_REC": [
+        {
+          "COLUMN_TYPE": "STATUS",
+          "DEFAULT_COLUMN_TYPE": "STATUS",
+          "COLUMN_SRNO": "id-14",
+          "COLUMN_DATA_REC": [
+            {
+              "OPTION_COLOR": "[redacted]",
+              "OPTION_NAME": "[redacted]",
+              "CUSTOM_COLUMN_DATA_SRNO": "id-15",
+              "OPTION_CATEGORY": "2",
+              "USER_NM": "",
+              "PRFL_PHTG": "",
+              "CUSTOM_COLUMN_DATA": "[redacted]",
+              "COLUMN_TYPE": "STATUS"
+            }
+          ]
+        },
+        {
+          "COLUMN_TYPE": "USER",
+          "DEFAULT_COLUMN_TYPE": "WORKER_ID",
+          "COLUMN_SRNO": "id-16",
+          "COLUMN_DATA_REC": [
+            {
+              "OPTION_COLOR": null,
+              "OPTION_NAME": null,
+              "CUSTOM_COLUMN_DATA_SRNO": null,
+              "OPTION_CATEGORY": null,
+              "USER_NM": "[redacted]",
+              "PRFL_PHTG": "[redacted]",
+              "CUSTOM_COLUMN_DATA": "id-4",
+              "COLUMN_TYPE": null
+            },
+            {
+              "OPTION_COLOR": null,
+              "OPTION_NAME": null,
+              "CUSTOM_COLUMN_DATA_SRNO": null,
+              "OPTION_CATEGORY": null,
+              "USER_NM": "[redacted]",
+              "PRFL_PHTG": "[redacted]",
+              "CUSTOM_COLUMN_DATA": "id-5",
+              "COLUMN_TYPE": null
+            },
+            {
+              "OPTION_COLOR": null,
+              "OPTION_NAME": null,
+              "CUSTOM_COLUMN_DATA_SRNO": null,
+              "OPTION_CATEGORY": null,
+              "USER_NM": "[redacted]",
+              "PRFL_PHTG": "[redacted]",
+              "CUSTOM_COLUMN_DATA": "id-1",
+              "COLUMN_TYPE": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

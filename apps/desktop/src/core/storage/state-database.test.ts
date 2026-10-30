@@ -1083,3 +1083,32 @@ describe('앱 내 업데이트', () => {
     await expect(store.getUpdateAttempt()).resolves.toBeNull();
   });
 });
+
+it('담당 업무 기준과 별도 감지 사유를 재시작 후 복원하고 계정 전환 때 격리한다', async () => {
+  /** 실제 데이터베이스 파일. */
+  const path = join(dir, 'assignment.db');
+  /** 첫 연결과 저장소. */
+  const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+  const store = new SqliteStateStore(db);
+  await store.setAccount(OLD_ACCOUNT);
+  await store.setBaselineAlarmId('77');
+  await store.setAssignmentState({ accountId: OLD_ACCOUNT.userId, enabledAt: 1000, baselineReady: false, baselineAlarmId: null, initialPostIds: ['old-post'], pending: [] });
+  /** 멘션을 만들지 않은 담당 업무 묶음. */
+  const assigned = bundle([], { assignment: { taskId: 'different-task-id', authorId: 'author@example.test', authorName: '작성자' } });
+  expect(await store.addAssignmentBundle(assigned, OLD_ACCOUNT.userId)).not.toBeNull();
+  db.close();
+  /** 다시 연 저장소. */
+  const reopenedDb = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+  const reopened = new SqliteStateStore(reopenedDb);
+  try {
+    expect(await reopened.getAssignmentState()).toMatchObject({ enabledAt: 1000, baselineReady: false });
+    expect((await reopened.listBundles())[0]).toMatchObject({ assignment: assigned.assignment, mentions: [] });
+    expect(await reopened.addAssignmentBundle(assigned, OLD_ACCOUNT.userId)).toBeNull();
+    expect(await reopened.getBaselineAlarmId()).toBe('77');
+    await reopened.resetForAccount(NEW_ACCOUNT);
+    expect(await reopened.getAssignmentState()).toBeNull();
+    expect(await reopened.listBundles()).toEqual([]);
+    expect(await reopened.addAssignmentBundle(assigned, OLD_ACCOUNT.userId)).toBeNull();
+    expect(await reopened.addAssignmentBundle(assigned, NEW_ACCOUNT.userId)).not.toBeNull();
+  } finally { reopenedDb.close(); }
+});

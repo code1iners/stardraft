@@ -28,7 +28,7 @@ const REPLIES_WITH_COMMENT = 10;
 
 /** 가짜 Flow API가 들고 있는 게시물. 제목·"Flow에서 열기" 주소·작성자·첨부는 주지 않으면 비어 있다. */
 export type FakeFlowPost = Pick<FlowPost, 'postId' | 'textComponents'> &
-  Partial<Pick<FlowPost, 'title' | 'connectUrl' | 'registerId' | 'registerName' | 'registeredDateTime' | 'attachments'>>;
+  Partial<Pick<FlowPost, 'title' | 'connectUrl' | 'registerId' | 'registerName' | 'registeredDateTime' | 'attachments' | 'tasks' | 'editedDateTime'>>;
 
 /** 가짜 Flow API가 들고 있는 대댓글. 쓴 사람·시각·시스템 댓글 종류·첨부는 주지 않으면 비어 있다. */
 export type FakeFlowCommentReply = Pick<FlowReply, 'replyId' | 'contents'> & Partial<FlowRemarkAuthorship> & { attachments?: string[] };
@@ -231,6 +231,20 @@ export class FakeFlowApi implements FlowApi {
   async listParticipantProjects(): Promise<FlowApiResult<FlowProject[]>> {
     this.requests.push('GET /user/projects/participants');
     return this.projectsResult;
+  }
+
+  /** 직접 멘션과 독립적인 담당 업무 후보. */
+  private workerAlarms: FlowAlarm[] = [];
+
+  /** 담당 업무 후보를 최신순으로 더한다. */
+  addWorkerAlarm(alarm: FlowAlarm): void { this.workerAlarms.unshift(structuredClone(alarm)); }
+
+  async listWorkerAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>> {
+    return this.answer('GET /user/alarms/worker', cursor, () => {
+      /** 이번 쪽. */
+      const page = pageOf(this.workerAlarms, cursor, this.alarmPageSize);
+      return { alarms: page.items, nextCursor: page.nextCursor };
+    });
   }
 
   async listMentionAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>> {

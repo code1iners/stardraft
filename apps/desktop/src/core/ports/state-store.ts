@@ -1,3 +1,4 @@
+import type { AssignmentState } from '../detection/assignment-detection';
 import type { MentionBundle, MinimalRecord, UnsavedBundle } from '../bundles/mention-bundle';
 import type { MentionLocation } from '../detection/mention';
 import type { QueuedDraft } from '../drafts/draft';
@@ -9,6 +10,12 @@ import type { FlowEmployee } from './flow-api';
  * 계정과 기준점, 멘션 묶음부터 시작해, 초안·게시 기록 같은 상태를 다루는 메서드를 차례로 더한다.
  */
 export interface StateStore {
+  /** 계정의 담당 업무 감지 기준과 보류 후보. */
+  getAssignmentState(): Promise<AssignmentState | null>;
+  /** 기준과 보류 후보를 저장한다. 계정이 바뀌었으면 저장하지 않는다. */
+  setAssignmentState(state: AssignmentState): Promise<void>;
+  /** 업무별 최초 묶음을 한 번만 만든다. 처리 기록과 묶음은 원자적으로 저장한다. */
+  addAssignmentBundle(bundle: UnsavedBundle, accountId: string): Promise<MentionBundle | null>;
   /** 키 확인에 성공한 계정. 없으면 `null`. */
   getAccount(): Promise<FlowEmployee | null>;
   /** 키 확인에 성공한 계정을 저장한다. 같은 계정의 이름·소속·이메일이 바뀌었을 때도 쓴다. */

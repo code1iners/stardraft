@@ -1,3 +1,4 @@
+import type { AssignmentState } from '../detection/assignment-detection';
 import { compareMentions, type MentionBundle, type MinimalRecord, type UnsavedBundle } from '../bundles/mention-bundle';
 import { mentionLocationKey, type MentionLocation } from '../detection/mention';
 import type { QueuedDraft } from '../drafts/draft';
@@ -7,6 +8,25 @@ import type { UpdateAttempt } from '../update/update-restart';
 
 /** 메모리에만 두는 상태 저장소. */
 export class MemoryStateStore implements StateStore {
+  /** 계정별 감지 상태. */
+  private assignmentState: AssignmentState | null = null;
+  /** 이미 묶음을 만든 업무. 묶음 보관 기간과 독립적이다. */
+  private assignmentTasks = new Set<string>();
+  async getAssignmentState(): Promise<AssignmentState | null> { return structuredClone(this.assignmentState); }
+  async setAssignmentState(state: AssignmentState): Promise<void> {
+    if (this.account?.userId === state.accountId) this.assignmentState = structuredClone(state);
+  }
+  async addAssignmentBundle(bundle: UnsavedBundle, accountId: string): Promise<MentionBundle | null> {
+    if (this.account?.userId !== accountId || !bundle.assignment) return null;
+    /** 계정 초기화 때 함께 지워지는 업무 키. */
+    const key = JSON.stringify([bundle.projectId, bundle.assignment.taskId]);
+    if (this.assignmentTasks.has(key)) return null;
+    /** 멘션 기준점을 바꾸지 않는 저장. */
+    const saved = { ...structuredClone(bundle), id: this.nextBundleId++ };
+    this.bundles.set(saved.id, sortedMentions(saved));
+    this.assignmentTasks.add(key);
+    return saved;
+  }
   /** 저장한 계정. */
   account: FlowEmployee | null = null;
   /** 저장한 기준점. */
@@ -33,6 +53,8 @@ export class MemoryStateStore implements StateStore {
   }
 
   async resetForAccount(account: FlowEmployee): Promise<void> {
+    this.assignmentState = null;
+    this.assignmentTasks.clear();
     this.baselineAlarmId = null;
     this.bundles.clear();
     this.records.clear();

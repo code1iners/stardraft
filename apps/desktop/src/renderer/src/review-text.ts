@@ -126,7 +126,7 @@ export function postLine(bundle: BundleSnapshot): string {
 
 /** 무시 토스트 문구. */
 export function ignoredText(bundle: BundleSnapshot): string {
-  return `무시했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
+  return `무시했습니다: ${bundle.assignment ? '담당 업무 초안' : `${senderLine(bundle.senderNames)}님 멘션`}`;
 }
 
 /** 카운트다운의 남은 초를 알리는 말. 예: 5초 뒤 게시합니다 */
@@ -141,7 +141,7 @@ export function postingFooterText(secondsLeft: number): string {
 
 /** 카운트다운 토스트 문구. 예: 5초 뒤 게시합니다: 김철수님 멘션 */
 export function countdownToastText(bundle: BundleSnapshot, secondsLeft: number): string {
-  return `${countdownText(secondsLeft)}: ${senderLine(bundle.senderNames)}님 멘션`;
+  return `${countdownText(secondsLeft)}: ${bundle.assignment ? '담당 업무 초안' : `${senderLine(bundle.senderNames)}님 멘션`}`;
 }
 
 /** 게시 실패의 사유마다 상세 머리에 보일 쉬운 말 한 줄. */
@@ -165,7 +165,7 @@ export const TRIAL_NOTE = 'Flow에는 아무것도 올라가지 않습니다';
 
 /** 게시 실패 토스트 문구. 예: 게시하지 못했습니다: 김철수님 멘션 */
 export function postFailedToastText(bundle: BundleSnapshot): string {
-  return `게시하지 못했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
+  return `게시하지 못했습니다: ${bundle.assignment ? '담당 업무 초안' : `${senderLine(bundle.senderNames)}님 멘션`}`;
 }
 
 /**

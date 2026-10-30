@@ -123,7 +123,7 @@ export function BundleMeta({ bundle }: BundleProps) {
     <div className="bundle-meta">
       <p className="review-meta">
         <strong>{senderLine(bundle.senderNames)}</strong>
-        <span>{BUNDLE_PLACE_LABELS[bundle.place]}</span>
+        <span>{bundle.assignment ? '담당 업무 초안' : BUNDLE_PLACE_LABELS[bundle.place]}</span>
         <span>{formatTime(bundle.lastMentionAt)}</span>
       </p>
       <p className="post-line">
@@ -219,6 +219,7 @@ function MentionList({ bundle }: BundleProps) {
   const newEntries = bundle.thread.filter((entry) => entry.change === 'new');
   return (
     <ol className="mention-list">
+      {bundle.assignment && <li className="mention-item"><PartsText parts={bundle.assignment.text} /></li>}
       {bundle.mentions.map((mention, index) => (
         <li key={index} className="mention-item">
           <div className="mention-meta">
@@ -813,7 +814,7 @@ export function BundleSections({ bundle, windowKind, sections, movedWhileViewing
   return (
     <>
       <BundleNotice bundle={bundle} movedWhileViewing={movedWhileViewing} />
-      <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={`멘션 ${bundle.mentions.length}건`}>
+      <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={bundle.assignment ? '담당 업무 본문' : `멘션 ${bundle.mentions.length}건`}>
         <OriginalBody bundle={bundle} threadOpen={threadBundleId === bundle.id} onToggleThread={handleToggleThread} />
       </ReviewSectionBlock>
       {bundle.generation && (

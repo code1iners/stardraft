@@ -1,3 +1,4 @@
+import { AssignmentDetection } from '../core/detection/assignment-detection';
 import { app, dialog, Menu, net, powerMonitor, safeStorage } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { userInfo } from 'node:os';
@@ -397,11 +398,15 @@ function start(): void {
       inAppUpdate,
       updateRestart,
     });
+    /** 담당 업무 후보를 직접 멘션과 별도로 판정한다. */
+    const assignmentDetection = new AssignmentDetection({ stateStore: appData.stateStore, bundles: mentionBundles,
+      clock: systemClock, connectFlow: connectCurrentFlow });
     /**
      * 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣고,
      * 폴링마다 사용자 행동을 기다리는 묶음의 Flow 내용을 다시 조회한다(준비된 뒤의 변화 감시).
      */
     const mentionDetection = new MentionDetection({
+      assignments: assignmentDetection,
       stateStore: appData.stateStore,
       bundles: mentionBundles,
       clock: systemClock,

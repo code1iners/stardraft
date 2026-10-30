@@ -63,7 +63,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                     <p className="review-meta">
                       {selected.projectTitle && <span>{selected.projectTitle}</span>}
                       <span>
-                        {senderLine(selected.senderNames)}님이 {BUNDLE_PLACE_LABELS[selected.place]}에서 멘션
+                        {selected.assignment ? `담당 업무 초안 · ${senderLine(selected.senderNames)}` : `${senderLine(selected.senderNames)}님이 ${BUNDLE_PLACE_LABELS[selected.place]}에서 멘션`}
                       </span>
                       <span>{formatTime(selected.lastMentionAt)}</span>
                     </p>
@@ -101,7 +101,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                   접어 보기
                 </button>
               </header>
-              <p className="detail-empty muted">아직 멘션이 없습니다.</p>
+              <p className="detail-empty muted">{snapshot.review.bundles.some((bundle) => bundle.assignment) ? '검토할 초안이 없습니다.' : '아직 멘션이 없습니다.'}</p>
             </>
           )}
         </section>
@@ -161,6 +161,7 @@ function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
                 </span>
                 <span className="list-row-sub">{bundle.draft?.requirement.summary || postLine(bundle)}</span>
                 <span className="list-row-tags">
+                  {bundle.assignment && <span className="tag">담당 업무 초안</span>}
                   <TrialTag bundle={bundle} />
                   <StatusTag status={bundle.status} />
                 </span>

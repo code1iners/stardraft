@@ -1399,3 +1399,23 @@ describe('최근 멘션으로 시험', () => {
     ).toContain('시험할 멘션 고르기');
   });
 });
+
+it('담당 업무 초안의 출처와 업무 본문을 기존 검토 화면에 표시한다', () => {
+  /** 직접 멘션이 없는 담당 업무 초안. */
+  const item = bundle(91, { ...READY, id: 91, mentions: [], assignment: { text: [{ text: '업무 본문 요청', mention: false }] }, senderNames: ['업무 작성자'] });
+  /** 펼친 검토 화면. */
+  const html = renderToStaticMarkup(<ReviewContent snapshot={snapshot([item])} initialBundleId={91} />);
+  expect(html).toContain('담당 업무 초안');
+  expect(html).toContain('업무 본문 요청');
+  expect(html).not.toContain('멘션 0건');
+});
+
+it('담당 업무 게시 카운트다운을 직접 멘션으로 표시하지 않는다', () => {
+  /** 받는 사람을 제거한 담당 업무 게시 대기. */
+  const item = bundle(91, { ...READY, id: 91, assignment: { text: [] }, mentions: [], status: 'posting',
+    posting: { phase: 'countdown', endsAt: Date.now() + 5000 }, draft: { ...READY.draft!, recipients: [], canEdit: false, canPost: false } });
+  /** 실제 검토 화면의 카운트다운 문구. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={91} />);
+  expect(text).toContain('뒤 게시합니다: 담당 업무 초안');
+  expect(text).not.toContain('님 멘션');
+});

@@ -247,6 +247,28 @@ export class MentionBundles {
     };
   }
 
+  /** 확정된 담당 업무를 별도 감지 사유로 기존 대기열에 넣는다. */
+  async addAssignment(post: import('../ports/flow-api').FlowPost, projectId: string, taskId: string, accountId: string): Promise<void> {
+    /** 기존 저장소 매핑과 자동 선택 정책. */
+    const resolutions = await this.resolveProjects([projectId]);
+    /** 저장소 확인을 기다리는 새 묶음은 원문도 바로 조회한다. */
+    const created = await this.lane.run(async () => {
+      /** 직접 멘션 없이 업무 본문을 대상으로 하는 묶음. */
+      const bundle = newBundle({ postId: post.postId, remarkId: '-1', projectId }, this.options.clock.now(), resolutions.get(projectId));
+      bundle.assignment = { taskId, authorId: post.registerId, authorName: post.registerName };
+      bundle.postTitle = post.title;
+      bundle.connectUrl = post.connectUrl;
+      /** 최초 처리 기록과 묶음은 함께 저장하므로 재시작해도 중복되지 않는다. */
+      const saved = await this.options.stateStore.addAssignmentBundle(bundle, accountId);
+      if (!saved) return;
+      this.bundles.push(saved);
+      this.emit();
+      return saved;
+    });
+    if (created && countsForReview(created.status)) this.options.notifier.notify(repoCheckNotification([created]));
+    if (created && showsContextWithoutDraft(created)) await this.refreshContexts([created.id]);
+  }
+
   /**
    * 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 둘은 함께 저장한다.
    * 같은 자리에 처리되지 않은 묶음이 있으면 합치고, 없거나 처리됨뿐이면 새 묶음을 만든다.
@@ -512,7 +534,7 @@ export class MentionBundles {
       /** 다시 판정한 멘션. */
       const mentions = latest.trial ? latest.mentions : judgeAnswered(latest.mentions, answers, this.postedRanges());
       /** 모든 멘션이 빠졌는지 여부. */
-      const answered = activeMentions({ mentions }).length === 0;
+      const answered = !latest.assignment && activeMentions({ mentions }).length === 0;
       /** 맥락과 판정을 반영한 묶음. 맥락의 멘션 표시는 묶음에 남은 멘션으로 다시 한다. */
       const next: MentionBundle = {
         ...latest,
@@ -1144,7 +1166,7 @@ export class MentionBundles {
 }
 
 /** 멘션 하나로 시작하는 새 묶음. 저장소 매핑을 확인한 결과로 생성 중이나 저장소 확인 필요로 올라온다. */
-function newBundle(mention: Mention, now: number, resolution: RepoResolution | undefined): UnsavedBundle {
+function newBundle(mention: Pick<Mention, 'postId' | 'remarkId' | 'projectId'>, now: number, resolution: RepoResolution | undefined): UnsavedBundle {
   return {
     id: null,
     postId: mention.postId,
@@ -1294,7 +1316,7 @@ function applyDetection(
   // 뺄 때는 이 새 요청이 없었으므로, 새 멘션의 송신자는 전에 받는 사람에서 뺐더라도 다시 더한다.
   next.removedRecipients = next.removedRecipients.filter((id) => !addedActive.some((mention) => isSameFlowUser(mention.senderId, id)));
   if (bundle.id !== null && addedActive.length > 0) next = { ...next, ...mergedNewMentions(next, addedActive.length) };
-  if (activeMentions(next).length === 0) {
+  if (!next.assignment && activeMentions(next).length === 0) {
     next.status = 'already-answered';
     next.processedAt = now;
   }
@@ -1344,7 +1366,7 @@ function applyWatch(bundle: MentionBundle, observed: WatchObservation, now: numb
 
   /** 감시하기 전에 묶음에 남아 있던 멘션의 위치. */
   const wasActive = new Set(activeMentions(bundle).map(mentionLocationKey));
-  if (wasActive.size > 0 && activeMentions(next).length === 0) {
+  if (!next.assignment && wasActive.size > 0 && activeMentions(next).length === 0) {
     /** 이번에 내 답으로 빠진 멘션이 있는지 여부. */
     const answered = mentions.some((mention) => mention.answered && wasActive.has(mentionLocationKey(mention)));
     next = { ...next, status: answered ? 'already-answered' : 'source-gone', processedAt: now };
@@ -1444,7 +1466,7 @@ function repoCheckNotification(waiting: readonly MentionBundle[]): AppNotificati
   if (waiting.length === 1) {
     return {
       title: notificationTitle(first, '저장소 확인 필요'),
-      body: sender ? `${sender}님이 나를 멘션했습니다.` : '나를 지목한 멘션이 왔습니다.',
+      body: first.assignment ? '담당 업무 초안에 사용할 저장소를 확인해주세요.' : sender ? `${sender}님이 나를 멘션했습니다.` : '나를 지목한 멘션이 왔습니다.',
       bundleId: first.id,
     };
   }
@@ -1461,7 +1483,7 @@ function draftReadyNotification(bundle: MentionBundle): AppNotification {
   const sender = latestSenderName(bundle);
   return {
     title: notificationTitle(bundle, '초안 준비됨'),
-    body: sender ? `${sender}님 멘션에 답할 초안이 준비됐습니다.` : '나를 지목한 멘션에 답할 초안이 준비됐습니다.',
+    body: bundle.assignment ? '담당 업무 초안이 준비됐습니다.' : sender ? `${sender}님 멘션에 답할 초안이 준비됐습니다.` : '나를 지목한 멘션에 답할 초안이 준비됐습니다.',
     bundleId: bundle.id,
   };
 }

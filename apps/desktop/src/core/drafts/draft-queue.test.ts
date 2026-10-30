@@ -25,6 +25,8 @@ import { createLogger } from '../logging/logger';
 import type { ExecutorOutcome, ExecutorRunRequest } from '../ports/executor';
 import type { FlowAlarm, FlowEmployee } from '../ports/flow-api';
 import { GlobalProblems } from '../problems/global-problems';
+import { FlowAccount } from '../account/flow-account';
+import { MemorySecretStore } from '../fakes/memory-secret-store';
 import { RepoMappings } from '../repos/repo-mappings';
 import { DRAFT_INSTRUCTIONS } from './draft-input';
 import { draftAgentFrom, DraftQueue, type DraftQueueOptions } from './draft-queue';
@@ -3779,17 +3781,17 @@ describe('재시작·재시도·재지정 복구', () => {
     return { repos, clock, flow, executor, settingsStore, dbPath: join(workDir, 'state.db') };
   }
 
-  /** 실제 `state.db`를 열고 앱 시작과 같은 순서로 서비스를 연결한다. 감지는 켜지 않는다. `account`는 저장된 계정이 없을 때 남길 계정이다. */
-  async function openApp({ clock, flow, executor, settingsStore, dbPath }: ReturnType<typeof createWorld>, account: FlowEmployee = FAKE_ME) {
+  /** 실제 `state.db`를 열고 앱 시작과 같은 순서로 서비스를 연결한다. 감지는 켜지 않는다. 처음 열면 나(`FAKE_ME`)로 연결된 기록을 만든다. */
+  async function openApp({ clock, flow, executor, settingsStore, dbPath }: ReturnType<typeof createWorld>) {
     /** 다시 열 때 이전 기록을 그대로 읽는 실제 SQLite 연결. */
     const db = openStateDatabase(dbPath, STATE_MIGRATIONS, '0.1.0');
     const stateStore = new SqliteStateStore(db);
     if (!(await stateStore.getAccount())) {
-      await stateStore.setAccount({ ...account });
+      await stateStore.setAccount({ ...FAKE_ME });
       await stateStore.setBaselineAlarmId('100');
     }
-    /** 이 앱이 연결된 계정. */
-    const me = (await stateStore.getAccount())!;
+    /** 이 앱이 연결된 계정. 키 확인으로 다른 계정이 되면 바뀐다. */
+    let me = (await stateStore.getAccount())!;
     const logger = createLogger([{ write: () => {} }], clock);
     /** 지금 키로 부르는 가짜 Flow. */
     const connectFlow = () => ({ api: flow, reportKeyRejected: () => {} });
@@ -3806,6 +3808,15 @@ describe('재시작·재시도·재지정 복구', () => {
     });
     await bundles.load();
     await bundles.recoverAfterRestart();
+    /** 설정 창의 Flow 계정. 앱처럼 다른 계정이 연결되면 묶음을 새 기록으로 다시 읽는다. */
+    const flowAccount = new FlowAccount({ connectFlow: () => flow, secretStore: new MemorySecretStore(), stateStore, clock, logger,
+      problems: new GlobalProblems({ notifier: new RecordingNotifier(), clock, logger, notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }) }) });
+    await flowAccount.load();
+    flowAccount.onChange(({ account: connected }) => {
+      if (!connected || connected.userId === me.userId) return;
+      me = connected;
+      void bundles.load();
+    });
     const drafts = new DraftQueue({
       bundles,
       agent: () => ({ executor, model: null, confirmForRun: async () => true }),
@@ -3829,7 +3840,7 @@ describe('재시작·재시도·재지정 복구', () => {
       await drafts.stop();
       db.close();
     };
-    return { stateStore, bundles, drafts, detection, posting, quit };
+    return { stateStore, bundles, drafts, detection, posting, flowAccount, quit };
   }
 
   /** 생성 시 나와 다른 담당자를 지정한 업무를 둔다. `workerIds`로 지금 담당자를 바꾼다. */
@@ -3919,6 +3930,50 @@ describe('재시작·재시도·재지정 복구', () => {
     await third.quit();
   });
 
+  it('생성 중 담당 해제로 멈춘 묶음은 재시작 뒤에도 담당 해제로 남아 재지정 알림으로 다시 만들지 않고, 되돌리면 담당 여부를 다시 확인해 만든다', async () => {
+    /** 재시작 사이에 그대로인 바깥. */
+    const world = createWorld();
+    const { clock, flow, executor, repos } = world;
+    /** 처음 켠 앱. */
+    const first = await openApp(world);
+    await first.detection.start();
+    await settle();
+    setTask(flow, [ME, CO_WORKER]);
+    flow.addWorkerAlarm(alarm('201', { postId: TASK_POST, remarkId: '-1', registeredDateTime: CREATED_AT }));
+    executor.script({ outcome: 'wait-for-abort' });
+    await nextPoll(clock);
+    setTask(flow, [CO_WORKER]);
+    flow.addComment(TASK_POST, { commentId: '902', contents: '', registerId: SENDER, registeredDateTime: '20261020091500',
+      systemCode: `S41^^'${FAKE_ME.name}', '다른 담당자'^^'다른 담당자'` });
+    await nextPoll(clock);
+    /** 담당 해제로 멈춘 묶음. */
+    const stopped = first.bundles.state()[0]!;
+    expect(stopped).toMatchObject({ status: 'unassigned', draft: null });
+    expect(executor.requests[0]?.signal.aborted).toBe(true);
+    await first.quit();
+
+    /** 다시 켠 앱. */
+    const second = await openApp(world);
+    expect(second.bundles.state()).toMatchObject([{ id: stopped.id, status: 'unassigned', assignment: { unassignedAt: expect.any(Number) } }]);
+    await second.detection.start();
+    await settle();
+    setTask(flow, [ME, CO_WORKER]);
+    flow.addComment(TASK_POST, { commentId: '903', contents: '', registerId: SENDER, registeredDateTime: '20261020092000',
+      systemCode: `S41^^'다른 담당자'^^'다른 담당자', '${FAKE_ME.name}'` });
+    flow.addWorkerAlarm(alarm('202', { postId: TASK_POST, remarkId: '903', registeredDateTime: '20261020092000' }));
+    await nextPoll(clock);
+    expect(second.bundles.state()).toMatchObject([{ id: stopped.id, status: 'unassigned' }]);
+    expect(executor.requests).toHaveLength(1);
+
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await second.bundles.restore(stopped.id);
+    await settle();
+    expect(second.bundles.get(stopped.id)?.status).toBe('ready');
+    expect(second.bundles.get(stopped.id)?.assignment?.unassignedAt).toBeUndefined();
+    expect(second.bundles.state()).toHaveLength(1);
+    await second.quit();
+  });
+
   it('실패한 담당 업무 초안은 재시작 뒤에도 실패로 남아 저절로 다시 돌지 않고, 다시 시도와 지시를 덧붙인 재생성은 같은 묶음에서 이어진다', async () => {
     /** 재시작 사이에 그대로인 바깥. */
     const world = createWorld();
@@ -3987,16 +4042,25 @@ describe('재시작·재시도·재지정 복구', () => {
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     await nextPoll(clock);
     expect(first.bundles.state()).toMatchObject([{ status: 'ready', assignment: { taskId: 'recovery-task-id' } }]);
-    // 키 확인이 다른 사람의 키를 받으면 기록을 지우고 새 계정으로 시작한다. 앱은 다시 켠 것처럼 새 기록을 읽는다.
-    await first.stateStore.resetForAccount(next);
+    // 켜 둔 앱에서 다른 사람의 키를 확인하고 계정 바꾸기를 승인하면 기록을 지우고 새 계정으로 시작한다.
+    flow.respondToGetMe({ ok: true, value: next });
+    expect(await first.flowAccount.checkKey('next-key')).toMatchObject({ kind: 'needs-confirmation' });
+    await first.flowAccount.confirmSwitch();
+    await settle();
+    expect(first.bundles.state()).toEqual([]);
+    await nextPoll(clock);
+    expect(first.bundles.state()).toEqual([]);
+    /** 새 계정이 전환 뒤 첫 조회에서 정한 기능 시작 시각. */
+    const nextEnabledAt = (await first.stateStore.getAssignmentState())?.enabledAt;
+    expect(await first.stateStore.getAssignmentState()).toMatchObject({ accountId: next.userId, enabledAt: clock.now(), initialPostIds: [TASK_POST] });
     await first.quit();
 
     /** 새 계정으로 다시 켠 앱. */
-    const second = await openApp(world, next);
+    const second = await openApp(world);
     await second.detection.start();
     await settle();
     expect(second.bundles.state()).toEqual([]);
-    expect(await second.stateStore.getAssignmentState()).toMatchObject({ accountId: next.userId, enabledAt: clock.now(), initialPostIds: [TASK_POST] });
+    expect(await second.stateStore.getAssignmentState()).toMatchObject({ accountId: next.userId, enabledAt: nextEnabledAt });
 
     clock.advance(30 * 60_000);
     flow.addPost({ postId: 'next-task', title: '새 계정의 업무', registerId: SENDER, registerName: '업무 작성자',

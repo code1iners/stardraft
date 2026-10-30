@@ -1186,3 +1186,42 @@ it('형식 19에서 올리면 이미 있던 최소 기록과 그 멘션 위치·
   await store.resetForAccount(NEW_ACCOUNT);
   await expect(store.listMinimalRecords()).resolves.toEqual([]);
 });
+
+it('형식 18에서 올리면 이미 있던 묶음은 담당 업무 사유 없이 남고 감지 기준 없이 시작하며, 그 본문에 더한 배정은 재시작 뒤에도 한 번만 기록된다', async () => {
+  /** `state.db` 경로. */
+  const path = join(dir, 'state.db');
+  /** 담당 업무 저장 구조가 생기기 전 형식 18로 만든 DB. */
+  const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 18), '0.1.4');
+  await new SqliteStateStore(old).setAccount(OLD_ACCOUNT);
+  // 담당 업무 기능 전에 감지한 본문 묶음. 지금 저장소는 새 열까지 쓰므로 그 형식의 열만 직접 넣는다.
+  old
+    .prepare(
+      `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+       VALUES ('90000011', '-1', '900001', 'ready', '가짜 게시물', NULL, 0, 1000, NULL)`,
+    )
+    .run();
+  old.close();
+
+  /** 마지막 형식으로 올린 저장소. */
+  const upgradedDb = openStateDatabase(path, STATE_MIGRATIONS, '0.1.5');
+  const upgraded = new SqliteStateStore(upgradedDb);
+  /** 같은 본문에 나중에 더한 배정 자료. */
+  const assignment = { taskId: 'upgraded-task', authorId: 'author@example.test', authorName: '작성자', assignedAt: '20261020090100' };
+  try {
+    expect(await upgraded.getAssignmentState()).toBeNull();
+    /** 올린 뒤 읽은 묶음. */
+    const [loaded] = await upgraded.listBundles();
+    expect(loaded).toMatchObject({ status: 'ready', postTitle: '가짜 게시물' });
+    expect(loaded?.assignment).toBeUndefined();
+    expect(await upgraded.addAssignmentBundle({ ...loaded!, assignment }, OLD_ACCOUNT.userId)).toMatchObject({ id: loaded!.id, assignment });
+  } finally { upgradedDb.close(); }
+
+  /** 다시 연 저장소. */
+  const reopenedDb = openStateDatabase(path, STATE_MIGRATIONS, '0.1.5');
+  const reopened = new SqliteStateStore(reopenedDb);
+  try {
+    expect(await reopened.listBundles()).toMatchObject([{ status: 'ready', assignment }]);
+    expect(await reopened.addAssignmentBundle(bundle([], { assignment }), OLD_ACCOUNT.userId)).toBeNull();
+    expect(await reopened.listBundles()).toHaveLength(1);
+  } finally { reopenedDb.close(); }
+});

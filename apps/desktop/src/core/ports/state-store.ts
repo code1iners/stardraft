@@ -14,7 +14,10 @@ export interface StateStore {
   getAssignmentState(): Promise<AssignmentState | null>;
   /** 기준과 보류 후보를 저장한다. 계정이 바뀌었으면 저장하지 않는다. */
   setAssignmentState(state: AssignmentState): Promise<void>;
-  /** 업무별 최초 묶음을 한 번만 만든다. 처리 기록과 묶음은 원자적으로 저장한다. */
+  /**
+   * 업무별 최초 묶음을 한 번만 만든다. 처리 기록과 묶음은 원자적으로 저장한다.
+   * ID가 있는 묶음을 주면 같은 본문의 기존 묶음에 배정 자료를 더해 저장하고 처리 기록은 그 묶음을 가리킨다.
+   */
   addAssignmentBundle(bundle: UnsavedBundle, accountId: string): Promise<MentionBundle | null>;
   /** 키 확인에 성공한 계정. 없으면 `null`. */
   getAccount(): Promise<FlowEmployee | null>;

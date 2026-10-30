@@ -1430,3 +1430,16 @@ it('배정 후 이미 답한 담당 업무를 처리됨에서 담당 업무의 �
   expect(text).toContain('배정 이후 Flow에 내 답이 있어 초안 없이 처리했습니다.');
   expect(text).toContain('되돌리기');
 });
+
+it('본문 멘션과 합쳐진 담당 업무 초안은 검토 대상 하나로 두 감지 사유를 보이고 본문을 한 번만 보인다', () => {
+  /** 같은 본문의 멘션과 담당자 지정을 합친 초안. */
+  const item = bundle(93, { ...READY, id: 93, place: 'post', assignment: { text: [{ text: '업무 본문 요청', mention: false }] }, senderNames: ['업무 작성자'],
+    mentions: [{ senderName: '업무 작성자', place: 'post', at: 0, text: [{ text: '업무 본문 요청', mention: false }], edited: false }] });
+  /** 펼친 검토 화면의 글. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={93} />);
+  expect(text).toContain('담당 업무 초안 · 본문 멘션');
+  expect(text.split('업무 본문 요청')).toHaveLength(2);
+  /** 작은 창의 글. */
+  const popover = textOf(<PopoverContent snapshot={snapshot([item])} />);
+  expect(popover).toContain('담당 업무 초안 · 본문 멘션');
+});

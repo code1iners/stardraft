@@ -22,7 +22,7 @@ export class MemoryStateStore implements StateStore {
     const key = JSON.stringify([bundle.projectId, bundle.assignment.taskId]);
     if (this.assignmentTasks.has(key)) return null;
     /** 멘션 기준점을 바꾸지 않는 저장. */
-    const saved = { ...structuredClone(bundle), id: this.nextBundleId++ };
+    const saved = { ...structuredClone(bundle), id: bundle.id ?? this.nextBundleId++ };
     this.bundles.set(saved.id, sortedMentions(saved));
     this.assignmentTasks.add(key);
     return saved;

@@ -1113,3 +1113,26 @@ it('담당 업무 기준과 별도 감지 사유를 재시작 후 복원하고 �
     expect(await reopened.addAssignmentBundle(assigned, NEW_ACCOUNT.userId)).not.toBeNull();
   } finally { reopenedDb.close(); }
 });
+
+it('같은 본문의 기존 멘션 묶음에 담당 업무 사유를 더해 저장하고 재시작 뒤에도 한 묶음으로 두 사유를 복원한다', async () => {
+  /** 실제 데이터베이스 파일. */
+  const path = join(dir, 'assignment-merge.db');
+  /** 첫 연결과 저장소. */
+  const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+  const store = new SqliteStateStore(db);
+  await store.setAccount(OLD_ACCOUNT);
+  /** 먼저 감지한 본문 멘션 묶음. */
+  const [saved] = await store.saveDetectedBundles([bundle([mention('101')], { status: 'ready' })], '101');
+  /** 같은 묶음에 더한 배정 자료. */
+  const assignment = { taskId: 'merged-task', authorId: 'author@example.test', authorName: '작성자', assignedAt: '20261020090100' };
+  expect(await store.addAssignmentBundle({ ...saved!, assignment }, OLD_ACCOUNT.userId)).toMatchObject({ id: saved!.id, assignment });
+  db.close();
+  /** 다시 연 저장소. */
+  const reopenedDb = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+  const reopened = new SqliteStateStore(reopenedDb);
+  try {
+    expect(await reopened.listBundles()).toMatchObject([{ id: saved!.id, status: 'ready', assignment, mentions: [{ alarmId: '101', remarkId: '-1' }] }]);
+    expect(await reopened.addAssignmentBundle(bundle([], { assignment }), OLD_ACCOUNT.userId)).toBeNull();
+    expect(await reopened.listBundles()).toHaveLength(1);
+  } finally { reopenedDb.close(); }
+});

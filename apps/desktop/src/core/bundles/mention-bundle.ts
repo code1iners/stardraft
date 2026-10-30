@@ -3,6 +3,7 @@ import { mentionLocationKey, type Mention, type MentionLocation } from '../detec
 import type { Draft, DraftFailure, Regeneration, RunRecord } from '../drafts/draft';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
+import { isPostBody } from '../flow/mention-place';
 import type { MyAnswer } from '../flow/mention-judgement';
 import type { RepoCandidate } from '../repos/repo-candidates';
 
@@ -361,9 +362,10 @@ export function bundlePlaceKey({ postId, remarkId }: BundlePlace): string {
 /**
  * 묶음에 든 멘션 위치 전부를 한 문자열로 나타낸다. 이미 답함으로 빠진 멘션도 넣어, 판정이 바뀌어도 같은 값이다.
  * 초안 실행을 시작한 뒤 새 멘션이 합쳐졌는지 가려낼 때 쓴다.
+ * 본문 멘션은 넣지 않는다. 본문 자리에는 그 하나뿐이라 새 요청이 아니고, 담당 업무 묶음에 늦게 합쳐져도 같은 본문에 답하는 실행을 다시 하지 않는다.
  */
 export function mentionSetKey(bundle: Pick<MentionBundle, 'mentions'>): string {
-  return bundle.mentions.map(mentionLocationKey).sort().join('\n');
+  return bundle.mentions.filter((mention) => !isPostBody(mention)).map(mentionLocationKey).sort().join('\n');
 }
 
 /** 두 멘션을 알림 시각, 같으면 `alarmId` 크기로 비교한다. */

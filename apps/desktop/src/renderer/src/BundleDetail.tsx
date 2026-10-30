@@ -16,6 +16,7 @@ import type {
 } from '../../shared/ipc';
 import {
   ANSWERED_NOTICE,
+  assignmentSourceText,
   BUNDLE_PLACE_LABELS,
   BUNDLE_STATUS_TAGS,
   circledNumber,
@@ -123,7 +124,7 @@ export function BundleMeta({ bundle }: BundleProps) {
     <div className="bundle-meta">
       <p className="review-meta">
         <strong>{senderLine(bundle.senderNames)}</strong>
-        <span>{bundle.assignment ? '담당 업무 초안' : BUNDLE_PLACE_LABELS[bundle.place]}</span>
+        <span>{bundle.assignment ? assignmentSourceText(bundle) : BUNDLE_PLACE_LABELS[bundle.place]}</span>
         <span>{formatTime(bundle.lastMentionAt)}</span>
       </p>
       <p className="post-line">
@@ -212,7 +213,7 @@ function ChangeTag({ change }: ChangeTagProps) {
 
 /**
  * 원문 영역 내용. 묶인 멘션 전부를 시간순으로 보이고, 수정된 멘션에는 "수정됨"을 붙인다.
- * 초안을 만든 뒤 새로 달린 글은 멘션 뒤에 "새 글"로 보인다.
+ * 초안을 만든 뒤 새로 달린 글은 멘션 뒤에 "새 글"로 보인다. 담당 업무 초안은 업무 본문을 보이고, 합쳐진 본문 멘션은 같은 글이라 다시 보이지 않는다.
  */
 function MentionList({ bundle }: BundleProps) {
   /** 초안을 만든 뒤 새로 달린 글. */
@@ -220,7 +221,7 @@ function MentionList({ bundle }: BundleProps) {
   return (
     <ol className="mention-list">
       {bundle.assignment && <li className="mention-item"><PartsText parts={bundle.assignment.text} /></li>}
-      {bundle.mentions.map((mention, index) => (
+      {!bundle.assignment && bundle.mentions.map((mention, index) => (
         <li key={index} className="mention-item">
           <div className="mention-meta">
             <strong>{mention.senderName || '이름 없음'}</strong>

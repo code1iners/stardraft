@@ -115,6 +115,11 @@ export function formatTime(at: number, now = Date.now()): string {
   return (sameDay ? TIME_FORMAT : DATE_TIME_FORMAT).format(when);
 }
 
+/** 담당 업무 초안의 출처. 같은 본문의 멘션과 합쳐졌으면 두 감지 사유를 함께 보인다. */
+export function assignmentSourceText(bundle: Pick<BundleSnapshot, 'mentions'>): string {
+  return bundle.mentions.length > 0 ? '담당 업무 초안 · 본문 멘션' : '담당 업무 초안';
+}
+
 /** 송신자 이름들을 한 줄로 보인다. 이름을 모르면 "이름 없음"이다. */
 export function senderLine(senderNames: readonly string[]): string {
   return senderNames.length > 0 ? senderNames.join(', ') : '이름 없음';

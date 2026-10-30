@@ -1,5 +1,6 @@
 import { isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
 import { mentionLocationKey, mentionLocationOf, type Mention, type MentionLocation } from '../detection/mention';
+import { isPostBody } from '../flow/mention-place';
 import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
 import { findSecretEvidence } from '../drafts/draft-check';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
@@ -251,6 +252,8 @@ export class MentionBundles {
   /**
    * 확정된 담당 업무를 별도 감지 사유로 기존 대기열에 넣는다. `answers`는 같은 조회에서 찾은 업무의 내 글이다.
    * 배정 시점보다 뒤의 내 글이 있으면 생성하지 않고 처리됨의 "이미 답함"으로 같은 업무 처리 기록에 남긴다.
+   * 같은 본문의 멘션 묶음이 이미 있으면 상태와 상관없이 그 묶음에 배정 자료만 더하고 새 초안을 만들지 않는다.
+   * 그 멘션 묶음이 처리됨 목록에서 빠져 최소 기록만 남았어도 이미 처리한 본문이므로 새 묶음을 만들지 않는다.
    */
   async addAssignment(post: import('../ports/flow-api').FlowPost, projectId: string, accountId: string,
     { taskId, assignedAt }: Required<Pick<TaskAssignment, 'taskId' | 'assignedAt'>>, answers: readonly MyAnswer[]): Promise<void> {
@@ -258,6 +261,29 @@ export class MentionBundles {
     const resolutions = await this.resolveProjects([projectId]);
     /** 저장소 확인을 기다리는 새 묶음은 원문도 바로 조회한다. */
     const created = await this.lane.run(async () => {
+      /** 업무 본문 자리. 게시물 ID로 정하고 업무 ID와 같다고 보지 않는다. */
+      const place = bundlePlaceKey({ postId: post.postId, remarkId: '-1' });
+      /** 같은 본문의 기존 묶음. 시험 묶음은 끝나면 지워지므로 보지 않는다. */
+      const sameBodyBundle = this.latestBundleAt(place);
+      if (sameBodyBundle) {
+        // 상태는 그대로 둔다. 생성 직전 판정과 게시 흐름이 배정 자료까지 보고 이어 간다.
+        /** 배정 자료를 더한 기존 묶음. */
+        const merged: MentionBundle = { ...structuredClone(sameBodyBundle), answers: mergeAnswers(sameBodyBundle.answers, answers),
+          assignment: { taskId, authorId: post.registerId, authorName: post.registerName, assignedAt } };
+        /** 처리 기록과 함께 저장한 묶음. 이미 기록한 업무면 `null`. */
+        const saved = await this.options.stateStore.addAssignmentBundle(merged, accountId);
+        if (!saved) return;
+        this.bundles = this.bundles.map((item) => (item.id === saved.id ? saved : item));
+        this.options.logger.info('bundle.assignment-merged', { bundleId: saved.id, status: saved.status });
+        this.emit();
+        return;
+      }
+      /** 같은 본문의 멘션을 처리하고 최소 기록만 남은 묶음. */
+      const archived = this.minimalRecords.find((record) => bundlePlaceKey(record) === place && record.mentions.length > 0);
+      if (archived) {
+        this.options.logger.info('bundle.assignment-already-processed', { bundleId: archived.bundleId });
+        return;
+      }
       /** 직접 멘션 없이 업무 본문을 대상으로 하는 묶음. */
       const bundle = newBundle({ postId: post.postId, remarkId: '-1', projectId }, this.options.clock.now(), resolutions.get(projectId));
       bundle.assignment = { taskId, authorId: post.registerId, authorName: post.registerName, assignedAt };
@@ -303,20 +329,25 @@ export class MentionBundles {
       const known = new Set(
         [...this.bundles.filter((bundle) => !bundle.trial), ...this.minimalRecords].flatMap((item) => item.mentions.map(mentionLocationKey)),
       );
+      /**
+       * 담당 업무 묶음을 처리하고 최소 기록만 남은 본문 자리. 멘션 없이 남은 본문 자리 기록은 담당 업무 묶음에서만 생긴다.
+       * 같은 본문의 멘션은 이미 처리한 요청이라 새 묶음을 만들지 않는다.
+       */
+      const archivedAssignments = new Set(this.minimalRecords.filter((record) => isPostBody(record) && record.mentions.length === 0).map(bundlePlaceKey));
 
       for (const mention of [...mentions].sort(compareMentions)) {
         /** 멘션 위치. */
         const location = mentionLocationKey(mention);
-        if (known.has(location)) continue;
-        known.add(location);
-
         /** 묶음 자리. */
         const place = bundlePlaceKey(mention);
+        if (known.has(location) || archivedAssignments.has(place)) continue;
+        known.add(location);
+
         /** 이 자리에서 이번에 바뀌는 묶음. */
         let entry = touched.get(place);
         if (!entry) {
-          /** 이 자리의 처리되지 않은 묶음. */
-          const open = this.openBundleAt(place);
+          /** 이 자리의 처리되지 않은 묶음. 없으면 같은 본문의 담당 업무 묶음이다. 처리됨이어도 이미 답한 본문이라 새 묶음을 만들지 않는다. */
+          const open = this.openBundleAt(place) ?? this.assignmentBundleAt(place);
           entry = { bundle: open ? structuredClone(open) : newBundle(mention, now, resolutions.get(mention.projectId)), added: new Set() };
           touched.set(place, entry);
         }
@@ -1165,6 +1196,18 @@ export class MentionBundles {
       .sort((a, b) => b.id - a.id)[0];
   }
 
+  /** 이 자리의 가장 최근 실제 묶음. 처리됨과 게시 중도 넣는다. 본문 자리의 멘션과 담당자 지정을 한 묶음으로 합칠 때 쓴다. */
+  private latestBundleAt(place: string): MentionBundle | undefined {
+    return this.bundles.filter((bundle) => !bundle.trial && bundlePlaceKey(bundle) === place).sort((a, b) => b.id - a.id)[0];
+  }
+
+  /** 이 자리의 담당 업무 묶음. 처리됨과 게시 중도 넣는다. */
+  private assignmentBundleAt(place: string): MentionBundle | undefined {
+    /** 이 자리의 가장 최근 실제 묶음. */
+    const latest = this.latestBundleAt(place);
+    return latest?.assignment ? latest : undefined;
+  }
+
   /** 게시 중 묶음이 아직 게시 요청을 보내지 않았고 게시를 누를 때의 확인이 끝나지 않았는지 본다. */
   private isCheckingPost(bundle: MentionBundle): boolean {
     return bundle.status === 'posting' && bundle.posting === null && this.postChecks.get(bundle.id)?.finished === false;
@@ -1322,8 +1365,8 @@ function applyDetection(
   if (lookup?.myAnswers) next.answers = mergeAnswers(next.answers, lookup.myAnswers);
   next.mentions = judgeAnswered(next.mentions, next.answers, postedRanges);
 
-  /** 이번에 넣은 멘션 가운데 묶음에 남은 것. */
-  const addedActive = next.mentions.filter((mention) => !mention.answered && added.has(mentionLocationKey(mention)));
+  /** 이번에 넣은 멘션 가운데 묶음에 남은 것. 담당 업무 묶음에 합친 본문 멘션은 이미 답할 대상인 본문이라 새 요청으로 세지 않는다. */
+  const addedActive = next.assignment ? [] : next.mentions.filter((mention) => !mention.answered && added.has(mentionLocationKey(mention)));
   // 뺄 때는 이 새 요청이 없었으므로, 새 멘션의 송신자는 전에 받는 사람에서 뺐더라도 다시 더한다.
   next.removedRecipients = next.removedRecipients.filter((id) => !addedActive.some((mention) => isSameFlowUser(mention.senderId, id)));
   if (bundle.id !== null && addedActive.length > 0) next = { ...next, ...mergedNewMentions(next, addedActive.length) };

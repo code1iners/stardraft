@@ -37,7 +37,7 @@ import {
   postStoppedToastText,
   postLine,
   postingFooterText,
-  PROCESSED_NOTES,
+  processedNote,
   QUIT_DURING_COUNTDOWN_TEXT,
   reasonText,
   repoCheckText,
@@ -942,7 +942,7 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
   if (bundle.group === 'processed') {
     return (
       <footer className="review-foot">
-        <span className="small muted">{PROCESSED_NOTES[bundle.status] ?? ''}</span>
+        <span className="small muted">{processedNote(bundle)}</span>
         <span className="spacer" />
         {bundle.canRestore && (
           <button type="button" className="btn" onClick={onRestore}>

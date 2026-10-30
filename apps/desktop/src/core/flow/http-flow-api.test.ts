@@ -2,6 +2,7 @@ import assignmentPost from './fixtures/assignment-post-2026-10-29.json';
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeFlowServer, flowEnvelope } from '../fakes/fake-flow-server';
+import { parseWorkerChange } from './worker-change';
 import { HttpFlowApi } from './http-flow-api';
 import assignmentComments from './fixtures/assignment-comments-2026-10-29.json';
 
@@ -32,6 +33,18 @@ describe('Flow 어댑터: 실제 담당 변경 기록의 보존', () => {
         ]),
       }),
     ]));
+  });
+
+  it('실응답에서 관측한 담당 변경 기록 두 형식의 이전·이후 이름을 읽고 다른 형식은 해석하지 않는다', () => {
+    /** 실응답 댓글의 담당 변경 기록. 이름은 별칭으로 가렸다. */
+    const changes = assignmentComments.response.data.comments.map((comment) => comment.systemCode).filter((code) => code?.startsWith('S41'));
+    expect(changes.map((code) => parseWorkerChange(code!))).toEqual([
+      { before: [], after: ['id-4', 'id-5'] },
+      { before: ['id-4', 'id-5'], after: ['id-4', 'id-5', 'id-1'] },
+    ]);
+    expect(parseWorkerChange("S41^^'id-1'")).toBeNull();
+    expect(parseWorkerChange("S41^^id-1^^'id-1'")).toBeNull();
+    expect(parseWorkerChange("S45_2^^'id-1'^^'id-2'")).toBeNull();
   });
 });
 
@@ -788,12 +801,15 @@ it('실제 상세 응답 구조에서 업무 ID와 담당자, 완료 범주를 �
   const server = new FakeFlowServer();
   server.replyNext({ status: 200, body: flowEnvelope({ postId: 'post-id', content: '본문', tasks: [
     { TASK_SRNO: 'task-id', WORKER_REC: [{ WORKER_ID: 'me@example.test' }, { WORKER_ID: 'other@example.test' }],
-      STTS: '0', PROGRESS: '100', TASK_COLUMN_REC: [{ DEFAULT_COLUMN_TYPE: 'STATUS', COLUMN_DATA_REC: [{ OPTION_CATEGORY: '2' }] }] },
+      STTS: '0', PROGRESS: '100', TASK_COLUMN_REC: [{ DEFAULT_COLUMN_TYPE: 'STATUS', COLUMN_DATA_REC: [{ OPTION_CATEGORY: '2' }] },
+        { DEFAULT_COLUMN_TYPE: 'WORKER_ID', COLUMN_DATA_REC: [{ CUSTOM_COLUMN_DATA: 'me@example.test', USER_NM: '테스트 사용자' },
+          { CUSTOM_COLUMN_DATA: 'other@example.test', USER_NM: '다른 사람' }] }] },
     { TASK_SRNO: 'missing-workers' },
     { TASK_SRNO: 'empty-workers', WORKER_REC: [] },
   ] }) });
   expect(await connect(server).getPost('post-id')).toMatchObject({ ok: true, value: { postId: 'post-id', tasks: [
-    { taskId: 'task-id', workerIds: ['me@example.test', 'other@example.test'], completion: 'completed' },
+    { taskId: 'task-id', workerIds: ['me@example.test', 'other@example.test'], completion: 'completed',
+      workerNames: [{ userId: 'me@example.test', name: '테스트 사용자' }, { userId: 'other@example.test', name: '다른 사람' }] },
     { taskId: 'missing-workers', workerIds: null, completion: 'unknown' },
     { taskId: 'empty-workers', workerIds: [], completion: 'unknown' },
   ] } });
@@ -806,6 +822,7 @@ it('마스킹한 실제 상세 응답을 담당 업무 구조로 읽는다', asy
   server.replyNext({ status: 200, body: flowEnvelope(assignmentPost) });
   expect(await connect(server).getPost(assignmentPost.postId)).toMatchObject({ ok: true, value: {
     postId: assignmentPost.postId,
-    tasks: [{ taskId: 'id-23', workerIds: ['id-4', 'id-5', 'id-1'], completion: 'completed' }],
+    tasks: [{ taskId: 'id-23', workerIds: ['id-4', 'id-5', 'id-1'], completion: 'completed',
+      workerNames: ['id-4', 'id-5', 'id-1'].map((userId) => ({ userId, name: '[redacted]' })) }],
   } });
 });

@@ -1419,3 +1419,14 @@ it('담당 업무 게시 카운트다운을 직접 멘션으로 표시하지 않
   expect(text).toContain('뒤 게시합니다: 담당 업무 초안');
   expect(text).not.toContain('님 멘션');
 });
+
+it('배정 후 이미 답한 담당 업무를 처리됨에서 담당 업무의 이미 답함으로 표시한다', () => {
+  /** 초안 없이 처리한 담당 업무. */
+  const item = bundle(92, { ...READY, id: 92, mentions: [], assignment: { text: [{ text: '업무 본문 요청', mention: false }] }, senderNames: ['업무 작성자'],
+    status: 'already-answered', group: 'processed', canRestore: true, draft: null });
+  /** 펼친 검토 화면의 글. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={92} />);
+  expect(text).toContain('이미 답함');
+  expect(text).toContain('배정 이후 Flow에 내 답이 있어 초안 없이 처리했습니다.');
+  expect(text).toContain('되돌리기');
+});

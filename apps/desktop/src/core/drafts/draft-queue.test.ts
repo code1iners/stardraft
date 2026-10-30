@@ -3015,3 +3015,232 @@ it('담당 업무 초안 실패는 재시도할 수 있고 수정된 최신 제�
   await detection.checkNow();
   expect(bundles.state()).toHaveLength(1);
 });
+
+describe('기존 업무의 신규 배정과 이미 답함', () => {
+  /** 다른 담당자. 실제 사람이 아니다. */
+  const CO_WORKER = 'co-worker@example.test';
+  /** 기능 시작 후 나를 추가한 담당 변경 기록의 서버 시각. */
+  const ASSIGNED_AT = '20261020090100';
+
+  /**
+   * 기능 시작 전에 작성된 업무에 나중에 나를 추가한 상황을 둔다.
+   * 최초 담당 기록, 배정 전 내 댓글, 나를 추가한 기록, 배정 후 내가 바꾼 상태 기록과 그 담당 변경 알림이다. `workerNames`가 `null`이면 담당자 이름이 오지 않는다.
+   */
+  function addLaterAssignedTask(flow: FakeFlowApi, postId: string, overrides: { workerNames?: readonly { userId: string; name: string }[] | null; change?: string } = {}) {
+    /** 상세 응답의 담당자 이름. */
+    const workerNames = overrides.workerNames === undefined ? [{ userId: CO_WORKER, name: '다른 담당자' }, { userId: ME, name: FAKE_ME.name }] : overrides.workerNames;
+    flow.addPost({ postId, title: '오래된 업무', registerId: SENDER, registerName: '업무 작성자',
+      registeredDateTime: '20260930163809', editedDateTime: '20260930164152',
+      textComponents: [{ contents: '배포 순서를 정리해주세요.', mentions: [] }],
+      tasks: [{ taskId: `${postId}-task`, workerIds: [CO_WORKER, ME], completion: 'active', ...(workerNames ? { workerNames: [...workerNames] } : {}) }] });
+    flow.addComment(postId, { commentId: '801', contents: '', registerId: SENDER, registeredDateTime: '20260930164152', systemCode: "S41^^'다른 담당자'@$%" });
+    flow.addComment(postId, { commentId: '802', contents: '예전 논의입니다.', registerId: ME, registeredDateTime: '20261001100000' });
+    flow.addComment(postId, { commentId: '803', contents: '', registerId: CO_WORKER, registeredDateTime: ASSIGNED_AT,
+      systemCode: overrides.change ?? `S41^^'다른 담당자'^^'다른 담당자', '${FAKE_ME.name}'` });
+    flow.addComment(postId, { commentId: '804', contents: '', registerId: ME, registeredDateTime: '20261020090130', systemCode: 'S45_2^^대기^^진행' });
+    flow.addWorkerAlarm(alarm('201', { postId, remarkId: '803', registerId: CO_WORKER, registeredDateTime: ASSIGNED_AT }));
+  }
+
+  /** 기능을 시작해 기준을 만든 감지 서비스. */
+  async function startedDetection({ flow, clock, stateStore, bundles }: Awaited<ReturnType<typeof setup>>) {
+    /** 담당 업무 감지. */
+    const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+    await detection.checkNow();
+    clock.advance(60_000);
+    return detection;
+  }
+
+  it('작성일이 기능 시작 전인 업무에 나중에 배정되면 배정 전 내 댓글·시스템 기록과 무관하게 초안을 만들고 승인 후 게시한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, clock, bundles, executor, repos } = env;
+    /** 기준을 만든 감지. */
+    const detection = await startedDetection(env);
+    addLaterAssignedTask(flow, 'old-task');
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await detection.checkNow();
+    await settle();
+    /** 생성된 담당 업무 초안. */
+    const bundle = bundles.state()[0]!;
+    expect(bundle).toMatchObject({ status: 'ready', assignment: { taskId: 'old-task-task', assignedAt: ASSIGNED_AT } });
+    expect(bundleRecipients(bundle)).toEqual([{ id: SENDER, name: '업무 작성자' }]);
+    expect(executor.requests[0]?.input).toContain('배포 순서를 정리해주세요.');
+    expect(executor.requests[0]?.input).not.toContain('S41');
+    /** 승인 후 게시 서비스. */
+    const posting = new Posting({ bundles, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }), myUserId: () => ME,
+      clock, logger: createLogger([{ write: () => {} }], clock) });
+    await posting.post(bundle.id);
+    await settle();
+    clock.advance(5_000);
+    await settle();
+    expect(flow.writes).toEqual([{ request: 'POST /user/comments/old-task', contents: expect.stringContaining('업무 작성자') }]);
+    expect(bundles.get(bundle.id)?.status).toBe('posted');
+  });
+
+  it.each(['comment', 'reply'] as const)('배정 후 이미 쓴 내 %s이 있으면 생성 없이 이미 답함으로 처리하고 반복 조회에도 다시 만들지 않는다', async (kind) => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor } = env;
+    /** 기준을 만든 감지. */
+    const detection = await startedDetection(env);
+    addLaterAssignedTask(flow, 'answered-task');
+    if (kind === 'comment') flow.addComment('answered-task', { commentId: '805', contents: '확인했습니다.', registerId: ME, registeredDateTime: '20261020090200' });
+    else {
+      flow.addComment('answered-task', { commentId: '805', contents: '질문 있습니다.', registerId: SENDER, registeredDateTime: '20260930170000',
+        replies: [...Array.from({ length: 10 }, (_, index) => ({ replyId: `9${index}`, contents: '이전 답글', registerId: SENDER, registeredDateTime: '20260930170100' })),
+          { replyId: '99', contents: '배정 후 답했습니다.', registerId: ME, registeredDateTime: '20261020090200' }] });
+    }
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state()).toMatchObject([{ status: 'already-answered', assignment: { assignedAt: ASSIGNED_AT } }]);
+    expect(executor.requests).toEqual([]);
+    flow.addWorkerAlarm(alarm('202', { postId: 'answered-task', remarkId: '805', registeredDateTime: '20261020090300' }));
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state()).toHaveLength(1);
+    expect(executor.requests).toEqual([]);
+  });
+
+  it('생성 시 배정된 업무도 생성 이후 내 댓글이 있으면 이미 답함으로 처리한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor } = env;
+    /** 기준을 만든 감지. */
+    const detection = await startedDetection(env);
+    flow.addPost({ postId: 'created-answered', title: '새 업무', registerId: SENDER, registerName: '업무 작성자',
+      registeredDateTime: '20261020090100', editedDateTime: '20261020090100', textComponents: [{ contents: '확인해주세요.', mentions: [] }],
+      tasks: [{ taskId: 'created-answered-task', workerIds: [ME], completion: 'active' }] });
+    flow.addComment('created-answered', { commentId: '810', contents: '보고 있습니다.', registerId: ME, registeredDateTime: '20261020090200' });
+    flow.addWorkerAlarm(alarm('201', { postId: 'created-answered', remarkId: '-1', registeredDateTime: '20261020090100' }));
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state()).toMatchObject([{ status: 'already-answered', assignment: { assignedAt: '20261020090100' } }]);
+    expect(executor.requests).toEqual([]);
+  });
+
+  it('배정 후 초안 생성 직전에 쓴 내 댓글도 이미 답함으로 처리하고 되돌리면 그 답을 빼고 다시 만든다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, setConnected } = env;
+    /** 기준을 만든 감지. */
+    const detection = await startedDetection(env);
+    setConnected(false);
+    addLaterAssignedTask(flow, 'late-answer');
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state().map((item) => item.status)).toEqual(['generating']);
+    flow.addComment('late-answer', { commentId: '805', contents: '먼저 답했습니다.', registerId: SENDER, registeredDateTime: '20261020090200',
+      replies: [{ replyId: '901', contents: '제가 볼게요.', registerId: ME, registeredDateTime: '20261020090300' }] });
+    setConnected(true);
+    await settle();
+    /** 생성 직전 판정으로 처리한 묶음. */
+    const [bundle] = bundles.state();
+    expect(bundle?.status).toBe('already-answered');
+    expect(executor.requests).toEqual([]);
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await bundles.restore(bundle!.id);
+    await settle();
+    expect(bundles.get(bundle!.id)?.status).toBe('ready');
+  });
+
+  it('생성 직전 판정도 담당 변경 기록 스레드에 단 내 답글을 답으로 센다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, setConnected } = env;
+    /** 기준을 만든 감지. */
+    const detection = await startedDetection(env);
+    setConnected(false);
+    addLaterAssignedTask(flow, 'system-thread');
+    await detection.checkNow();
+    await settle();
+    flow.addReply('system-thread', '803', { replyId: '902', contents: '제가 맡겠습니다.', registerId: ME, registeredDateTime: '20261020090300' });
+    setConnected(true);
+    await settle();
+    expect(bundles.state().map((item) => item.status)).toEqual(['already-answered']);
+    expect(executor.requests).toEqual([]);
+  });
+
+  it('댓글을 쪽 상한까지 받아도 끝나지 않으면 답이 없다고 단정하지 않고 보류한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, stateStore } = env;
+    /** 기준을 만든 감지. */
+    const detection = await startedDetection(env);
+    addLaterAssignedTask(flow, 'long-thread');
+    for (let index = 0; index < 50; index += 1) {
+      flow.addComment('long-thread', { commentId: String(1000 + index), contents: '긴 논의', registerId: SENDER, registeredDateTime: '20261020090150' });
+    }
+    flow.commentPageSize = 1;
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state()).toEqual([]);
+    expect(executor.requests).toEqual([]);
+    expect((await stateStore.getAssignmentState())?.pending.map((item) => item.postId)).toEqual(['long-thread']);
+  });
+
+  it('기능 시작 전부터 맡던 업무의 일반 댓글·상태 변경 알림을 신규 배정으로 보지 않는다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, clock, stateStore, bundles, executor } = env;
+    // 기능 시작 전 알림에 나타난 업무와, 알림은 없지만 시작 전에 나를 추가한 기록이 있는 업무다.
+    flow.addWorkerAlarm(alarm('150', { postId: 'initial-alarm', remarkId: '-1', registeredDateTime: '20261019090000' }));
+    /** 담당 업무 감지. */
+    const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+    await detection.checkNow();
+    clock.advance(60_000);
+    for (const postId of ['initial-alarm', 'initial-record']) {
+      flow.addPost({ postId, title: '기존 업무', registerId: SENDER, registeredDateTime: '20261001090000', editedDateTime: '20261001090500',
+        textComponents: [{ contents: '기존 본문', mentions: [] }],
+        tasks: [{ taskId: `${postId}-task`, workerIds: [ME], completion: 'active', workerNames: [{ userId: ME, name: FAKE_ME.name }] }] });
+      flow.addComment(postId, { commentId: '820', contents: '', registerId: SENDER, registeredDateTime: '20261001090500', systemCode: `S41^^'${FAKE_ME.name}'@$%` });
+      flow.addComment(postId, { commentId: '821', contents: '', registerId: SENDER, registeredDateTime: '20261020090100', systemCode: 'S45_2^^진행^^확인 요청' });
+      flow.addComment(postId, { commentId: '822', contents: '진행 상황 공유합니다.', registerId: SENDER, registeredDateTime: '20261020090200' });
+    }
+    flow.addWorkerAlarm(alarm('201', { postId: 'initial-alarm', remarkId: '821', registeredDateTime: '20261020090100' }));
+    flow.addWorkerAlarm(alarm('202', { postId: 'initial-record', remarkId: '821', registeredDateTime: '20261020090100' }));
+    flow.addWorkerAlarm(alarm('203', { postId: 'initial-record', remarkId: '822', registeredDateTime: '20261020090200' }));
+    await detection.checkNow();
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state()).toEqual([]);
+    expect(executor.requests).toEqual([]);
+  });
+
+  it.each([
+    ['동명이인 담당자', { workerNames: [{ userId: 'same-name@example.test', name: FAKE_ME.name }, { userId: ME, name: FAKE_ME.name }] }],
+    ['담당자 이름 누락', { workerNames: null }],
+    ['기록의 이름 불일치', { change: "S41^^'다른 담당자'^^'다른 담당자', '예전 이름'" }],
+    ['해석할 수 없는 기록', { change: 'S41^^알 수 없는 형식' }],
+  ] as const)('배정 근거가 불명확하면 이미 답함이나 생성을 확정하지 않는다: %s', async (_, overrides) => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor } = env;
+    /** 기준을 만든 감지. */
+    const detection = await startedDetection(env);
+    addLaterAssignedTask(flow, 'unclear', overrides);
+    flow.addComment('unclear', { commentId: '805', contents: '확인했습니다.', registerId: ME, registeredDateTime: '20261020090200' });
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state()).toEqual([]);
+    expect(executor.requests).toEqual([]);
+  });
+
+  it('댓글 조회가 실패하면 보류하고 다음 조회에서 배정 후 답변을 판정한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, stateStore } = env;
+    /** 기준을 만든 감지. */
+    const detection = await startedDetection(env);
+    addLaterAssignedTask(flow, 'retry-comments');
+    flow.addComment('retry-comments', { commentId: '805', contents: '확인했습니다.', registerId: ME, registeredDateTime: '20261020090200' });
+    flow.failOn('GET /user/comments/retry-comments', { kind: 'network' }, 1);
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state()).toEqual([]);
+    expect((await stateStore.getAssignmentState())?.pending.map((item) => item.postId)).toEqual(['retry-comments']);
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state().map((item) => item.status)).toEqual(['already-answered']);
+    expect(executor.requests).toEqual([]);
+  });
+});

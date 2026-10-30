@@ -4,6 +4,7 @@ import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowRemarkAut
 import { compareAlarmIds } from './alarm-id';
 import { readableFlowTime } from './flow-time';
 import { myAnswersAmong, type MyAnswer } from './mention-judgement';
+import { taskAnswers, taskRemarks } from './task-remarks';
 import { hasMentionMarkupFor, namedMentionText, postBodyMentions } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
@@ -69,7 +70,11 @@ export interface BundleContext {
 }
 
 /** 맥락을 모으지 못한 이유. Flow API 실패이거나, 대상 댓글 스레드의 머리 댓글이 목록에 없다. */
-export type BundleContextFailure = FlowApiFailure | { kind: 'thread-gone' };
+export type BundleContextFailure =
+  | FlowApiFailure
+  | { kind: 'thread-gone' }
+  /** 담당 업무의 댓글을 쪽 수 상한까지 받아도 끝나지 않았다. 내 답이 없다고 단정하지 않는다. */
+  | { kind: 'remarks-incomplete' };
 
 /**
  * 맥락을 모으지 못한 이유가 원문이 사라진 것인지 본다. 글이 지워졌거나(`404`), 볼 권한이 없거나(`403`),
@@ -139,8 +144,16 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
 
   /** 대상 댓글 스레드. */
   let targetThread: ContextComment | null = null;
-  /** 묶음 자리의 내 답. 본문 묶음이면 게시물에 쓴 내 댓글이다. */
+  /** 묶음 자리의 내 답. 본문 묶음이면 게시물에 쓴 내 댓글이고, 담당 업무면 모든 스레드의 내 대댓글도 든다. */
   let myAnswers = myAnswersAmong(comments, myIds);
+  if (bundle.assignment) {
+    // 시스템 기록 스레드의 답글도 들도록 댓글을 걸러내기 전의 전체 기록으로 다시 본다.
+    /** 업무의 댓글·대댓글 전부. */
+    const remarks = await taskRemarks(api, bundle.postId);
+    if (!remarks.ok) return remarks;
+    if (!remarks.value.complete) return { ok: false, failure: { kind: 'remarks-incomplete' } };
+    myAnswers = taskAnswers(remarks.value, myIds);
+  }
   /** 멘션이 일어난 글이 지금도 나를 지목하는지 보는 함수. 본문 묶음이면 게시물 본문이다. */
   let stillMentions = (mention: MentionLocation): boolean =>
     mentionPlaceOf(mention) === 'post' && myIds.some((id) => postBodyMentions(post.value.textComponents, id));

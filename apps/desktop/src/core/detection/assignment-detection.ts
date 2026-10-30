@@ -1,9 +1,12 @@
 import type { MentionBundles } from '../bundles/mention-bundles';
 import { compareAlarmIds } from '../flow/alarm-id';
+import { compareRemarks } from '../flow/bundle-context';
 import { flowTimeToEpochMs } from '../flow/flow-time';
+import { taskAnswers, taskRemarks } from '../flow/task-remarks';
+import { parseWorkerChange, WORKER_CHANGE_CODE } from '../flow/worker-change';
 import { isSameFlowUser } from '../flow/user-id';
 import type { Clock } from '../ports/clock';
-import type { FlowAlarm, FlowConnection } from '../ports/flow-api';
+import type { FlowAlarm, FlowComment, FlowConnection, FlowEmployee, FlowPost, FlowTask } from '../ports/flow-api';
 import type { StateStore } from '../ports/state-store';
 
 /** 계정별 담당 업무 감지 상태. 보류는 성공이나 제외로 기록하지 않는다. */
@@ -51,7 +54,7 @@ export class AssignmentDetection {
   private running: Promise<void> | null = null;
   constructor(private readonly options: AssignmentDetectionOptions) {}
 
-  /** 현재 후보를 조회하고 확정된 생성 시 지정만 대기열에 넣는다. */
+  /** 현재 후보를 조회하고 배정 시점 근거가 확인된 업무만 대기열에 넣는다. */
   checkNow(): Promise<void> {
     this.running ??= this.poll().finally(() => { this.running = null; });
     return this.running;
@@ -148,20 +151,77 @@ export class AssignmentDetection {
       /** 게시글에 업무가 여럿이면 어떤 배정인지 확정하지 않는다. */
       const task = post.tasks?.length === 1 ? post.tasks[0] : undefined;
       if (!post.registerId || createdAt === null || !task?.taskId || task.workerIds === null) continue;
-      /** 기존 업무의 신규 배정은 후속 티켓 대상이므로 보류한다. */
-      if (createdAt <= state.enabledAt || state.initialPostIds.includes(post.postId)) continue;
-      if (isSameFlowUser(post.registerId, account.userId)) {
-        state.pending = state.pending.filter((item) => item.postId !== post.postId);
+      /** 후보에서 빼고 다음 새 알림 때 다시 본다. 조회 실패처럼 다시 조회하면 달라질 수 있는 보류는 빼지 않는다. */
+      const dropCandidate = () => { state.pending = state.pending.filter((item) => item.postId !== post.postId); };
+      // 기능 시작 전 알림에 나타난 업무와 자기 작성 업무는 자동 초안 대상이 아니다.
+      if (state.initialPostIds.includes(post.postId) || isSameFlowUser(post.registerId, account.userId)) {
+        dropCandidate();
         continue;
       }
-      // 본문 생성 알림과 서버 시각이 같고 생성 후 수정이 없는 후보만 처리한다.
-      // 일반 댓글이나 담당 변경 알림의 시각을 배정 시각으로 대체하지 않는다.
-      if (alarm.remarkId !== '-1' || alarm.replyId !== '-1' || alarm.registeredDateTime !== post.registeredDateTime
-        || post.editedDateTime !== post.registeredDateTime || !task.workerIds.some((id) => isSameFlowUser(id, account.userId))
-        || task.completion === 'unknown') continue;
-      if (task.completion === 'active' && await current()) await this.options.bundles.addAssignment(post, alarm.projectId, task.taskId, account.userId);
-      state.pending = state.pending.filter((item) => item.postId !== post.postId);
+      if (!task.workerIds.some((id) => isSameFlowUser(id, account.userId)) || task.completion === 'unknown') continue;
+      if (task.completion === 'completed') {
+        dropCandidate();
+        continue;
+      }
+      /** 배정 근거와 "이미 답함"을 판정할 업무의 댓글·대댓글 전부. */
+      const remarks = await taskRemarks(flow.api, post.postId);
+      if (!remarks.ok) {
+        if (remarks.failure.kind === 'unauthorized') { flow.reportKeyRejected(); return; }
+        continue;
+      }
+      if (!remarks.value.complete) continue;
+      // 생성 시 지정이 아니면 나를 추가한 담당 변경 기록의 서버 시각을 쓰며, 알림·관측·작성 시각으로 대체하지 않는다.
+      /** 배정 시점 근거. */
+      const assignedAt = isAssignedAtCreation(alarm, post, createdAt, state.enabledAt)
+        ? post.registeredDateTime : laterAssignmentTime(remarks.value.comments, task, account);
+      /** 배정 시점을 기능 시작 시각과 견줄 값. */
+      const assignedAtMs = assignedAt === null ? null : flowTimeToEpochMs(assignedAt);
+      // 끝까지 받은 기록에 근거가 없거나 기능 시작 전 배정이면 다시 조회해도 같으므로, 새 알림이 올 때까지 후보에서 뺀다.
+      if (assignedAt === null || assignedAtMs === null || assignedAtMs <= state.enabledAt) {
+        dropCandidate();
+        continue;
+      }
+      if (await current()) {
+        await this.options.bundles.addAssignment(post, alarm.projectId, account.userId,
+          { taskId: task.taskId, assignedAt }, taskAnswers(remarks.value, [account.userId]));
+      }
+      dropCandidate();
     }
     await this.options.stateStore.setAssignmentState(state);
   }
+}
+
+/** 본문 생성 알림과 서버 시각이 같고 생성 후 수정이 없는, 기능 시작 뒤의 생성 시 지정인지 본다. */
+function isAssignedAtCreation(alarm: FlowAlarm, post: FlowPost, createdAt: number, enabledAt: number): boolean {
+  return createdAt > enabledAt && alarm.remarkId === '-1' && alarm.replyId === '-1'
+    && alarm.registeredDateTime === post.registeredDateTime && post.editedDateTime === post.registeredDateTime;
+}
+
+/**
+ * 생성 후 지정의 배정 시각. 담당 변경 기록은 표시 이름만 주므로 현재 사용자 ID와 교차 확인한다.
+ * 마지막 담당 변경까지 내 이름이 이어져 있고, 내 이름이 처음 들어간 기록이 하나로 정해지며,
+ * 현재 담당자 가운데 내 이름이 나 하나뿐일 때만 그 기록의 서버 시각을 돌려준다. 형식 이상·동명이인·이름 불일치는 `null`이다.
+ * 과거에 내가 이름을 바꾼 경우는 구별하지 못한다.
+ */
+function laterAssignmentTime(comments: readonly FlowComment[], task: FlowTask, account: FlowEmployee): string | null {
+  /** 내 현재 표시 이름. */
+  const myName = account.name.trim();
+  /** 현재 담당자 가운데 내 이름을 쓰는 사람. */
+  const sameName = task.workerNames?.filter((worker) => worker.name === myName) ?? [];
+  if (!myName || sameName.length !== 1 || !isSameFlowUser(sameName[0]!.userId, account.userId)) return null;
+  /** 담당 변경 기록. 오래된 것부터다. */
+  const changes = comments.filter((comment) => comment.systemCode.split('^^')[0] === WORKER_CHANGE_CODE)
+    .sort(compareRemarks((comment) => comment.commentId));
+  for (let index = changes.length - 1; index >= 0; index -= 1) {
+    /** 해석한 기록. */
+    const change = parseWorkerChange(changes[index]!.systemCode);
+    // 최신 기록부터 거슬러 오르며, 내 이름이 이후 담당자에 정확히 한 번 이어지는지 본다.
+    if (!change || change.after.filter((name) => name === myName).length !== 1) return null;
+    /** 이전 담당자 가운데 내 이름 수. */
+    const before = change.before.filter((name) => name === myName).length;
+    // 이전에 없던 기록이 나를 추가한 기록이다. 이전에도 여럿이면 누구인지 정할 수 없다.
+    if (before === 0) return changes[index]!.registeredDateTime || null;
+    if (before > 1) return null;
+  }
+  return null;
 }

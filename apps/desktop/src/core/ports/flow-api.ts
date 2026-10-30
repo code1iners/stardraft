@@ -175,6 +175,8 @@ export interface FlowTask {
   workerIds: string[] | null;
   /** 검증 가능한 상태 범주만 해석한다. */
   completion: 'active' | 'completed' | 'unknown';
+  /** 담당자 컬럼의 현재 사용자 ID와 표시 이름. 이름만 남는 담당 변경 기록의 동명이인 확인에 쓴다. 컬럼이 없거나 깨졌으면 없다. */
+  workerNames?: { userId: string; name: string }[];
 }
 
 /**

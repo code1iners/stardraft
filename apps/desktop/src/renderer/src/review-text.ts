@@ -61,6 +61,12 @@ export const PROCESSED_NOTES: Partial<Record<BundleStatusSnapshot, string>> = {
   'source-gone': 'Flow에서 멘션이 모두 사라져 처리했습니다.',
 };
 
+/** 처리됨 묶음의 바닥 줄 안내. 담당 업무는 배정 이후의 내 답으로 처리했음을 직접 멘션과 구별해 알린다. */
+export function processedNote(bundle: Pick<BundleSnapshot, 'status' | 'assignment'>): string {
+  if (bundle.assignment && bundle.status === 'already-answered') return '배정 이후 Flow에 내 답이 있어 초안 없이 처리했습니다.';
+  return PROCESSED_NOTES[bundle.status] ?? '';
+}
+
 /** 원문 영역에서 초안을 만든 뒤 바뀐 글에 붙이는 태그 이름. */
 export const WRITING_CHANGE_LABELS: Record<WritingChangeSnapshot, string> = {
   new: '새 글',

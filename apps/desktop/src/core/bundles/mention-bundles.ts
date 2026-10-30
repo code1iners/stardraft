@@ -16,6 +16,7 @@ import { unseenChanges } from './bundle-changes';
 import { isExpired, minimalRecordOf } from './retention';
 import {
   activeMentions,
+  answeredSinceAssignment,
   bundlePlaceKey,
   canEditDraft,
   canPickRepos,
@@ -34,7 +35,6 @@ import {
   listGroupOf,
   mentionSetKey,
   type BundledMention,
-  type BundlePlace,
   type BundleStatus,
   type MentionBundle,
   type MinimalRecord,
@@ -42,6 +42,7 @@ import {
   type PostFailureReason,
   type PostStop,
   type RecordedAnswer,
+  type TaskAssignment,
   type RepoCheck,
   type UnsavedBundle,
 } from './mention-bundle';
@@ -57,7 +58,7 @@ export interface MentionBundlesOptions {
   /** 진단 로그. ID와 개수만 남긴다. */
   logger: Logger;
   /** 지금 키로 묶음 자리의 내 답을 Flow에서 조회한다. 쓸 키가 없거나 조회하지 못하면 `null`. 이미 답함에서 되돌릴 때 쓴다. */
-  findMyAnswers: (place: BundlePlace) => Promise<MyAnswer[] | null>;
+  findMyAnswers: (place: Pick<MentionBundle, 'postId' | 'remarkId' | 'assignment'>) => Promise<MyAnswer[] | null>;
   /** 지금 키로 묶음의 맥락과 묶음 자리의 내 답을 Flow에서 새로 조회한다. 쓸 키가 없으면 `null`. */
   collectContext: (bundle: MentionBundle) => Promise<BundleContextResult | null>;
   /** Flow 프로젝트의 저장소 매핑을 지금 폴더 상태로 확인한다. 초안 없는 묶음을 생성 중으로 올릴지 정하고, 초안 실행 직전에 다시 확인한다. */
@@ -247,15 +248,25 @@ export class MentionBundles {
     };
   }
 
-  /** 확정된 담당 업무를 별도 감지 사유로 기존 대기열에 넣는다. */
-  async addAssignment(post: import('../ports/flow-api').FlowPost, projectId: string, taskId: string, accountId: string): Promise<void> {
+  /**
+   * 확정된 담당 업무를 별도 감지 사유로 기존 대기열에 넣는다. `answers`는 같은 조회에서 찾은 업무의 내 글이다.
+   * 배정 시점보다 뒤의 내 글이 있으면 생성하지 않고 처리됨의 "이미 답함"으로 같은 업무 처리 기록에 남긴다.
+   */
+  async addAssignment(post: import('../ports/flow-api').FlowPost, projectId: string, accountId: string,
+    { taskId, assignedAt }: Required<Pick<TaskAssignment, 'taskId' | 'assignedAt'>>, answers: readonly MyAnswer[]): Promise<void> {
     /** 기존 저장소 매핑과 자동 선택 정책. */
     const resolutions = await this.resolveProjects([projectId]);
     /** 저장소 확인을 기다리는 새 묶음은 원문도 바로 조회한다. */
     const created = await this.lane.run(async () => {
       /** 직접 멘션 없이 업무 본문을 대상으로 하는 묶음. */
       const bundle = newBundle({ postId: post.postId, remarkId: '-1', projectId }, this.options.clock.now(), resolutions.get(projectId));
-      bundle.assignment = { taskId, authorId: post.registerId, authorName: post.registerName };
+      bundle.assignment = { taskId, authorId: post.registerId, authorName: post.registerName, assignedAt };
+      bundle.answers = mergeAnswers([], answers);
+      if (answeredSinceAssignment(bundle.assignment, bundle.answers)) {
+        bundle.status = 'already-answered';
+        bundle.repoCheck = null;
+        bundle.processedAt = this.options.clock.now();
+      }
       bundle.postTitle = post.title;
       bundle.connectUrl = post.connectUrl;
       /** 최초 처리 기록과 묶음은 함께 저장하므로 재시작해도 중복되지 않는다. */
@@ -534,7 +545,7 @@ export class MentionBundles {
       /** 다시 판정한 멘션. */
       const mentions = latest.trial ? latest.mentions : judgeAnswered(latest.mentions, answers, this.postedRanges());
       /** 모든 멘션이 빠졌는지 여부. */
-      const answered = !latest.assignment && activeMentions({ mentions }).length === 0;
+      const answered = latest.assignment ? !latest.trial && answeredSinceAssignment(latest.assignment, answers) : activeMentions({ mentions }).length === 0;
       /** 맥락과 판정을 반영한 묶음. 맥락의 멘션 표시는 묶음에 남은 멘션으로 다시 한다. */
       const next: MentionBundle = {
         ...latest,

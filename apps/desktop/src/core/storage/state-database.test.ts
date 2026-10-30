@@ -1094,7 +1094,8 @@ it('담당 업무 기준과 별도 감지 사유를 재시작 후 복원하고 �
   await store.setBaselineAlarmId('77');
   await store.setAssignmentState({ accountId: OLD_ACCOUNT.userId, enabledAt: 1000, baselineReady: false, baselineAlarmId: null, initialPostIds: ['old-post'], pending: [] });
   /** 멘션을 만들지 않은 담당 업무 묶음. */
-  const assigned = bundle([], { assignment: { taskId: 'different-task-id', authorId: 'author@example.test', authorName: '작성자' } });
+  const assigned = bundle([], { assignment: { taskId: 'different-task-id', authorId: 'author@example.test', authorName: '작성자', assignedAt: '20261020090100' },
+    status: 'already-answered', answers: [{ answerId: '805', registeredDateTime: '20261020090200', excluded: false }] });
   expect(await store.addAssignmentBundle(assigned, OLD_ACCOUNT.userId)).not.toBeNull();
   db.close();
   /** 다시 연 저장소. */
@@ -1102,7 +1103,7 @@ it('담당 업무 기준과 별도 감지 사유를 재시작 후 복원하고 �
   const reopened = new SqliteStateStore(reopenedDb);
   try {
     expect(await reopened.getAssignmentState()).toMatchObject({ enabledAt: 1000, baselineReady: false });
-    expect((await reopened.listBundles())[0]).toMatchObject({ assignment: assigned.assignment, mentions: [] });
+    expect((await reopened.listBundles())[0]).toMatchObject({ assignment: assigned.assignment, mentions: [], status: 'already-answered', answers: assigned.answers });
     expect(await reopened.addAssignmentBundle(assigned, OLD_ACCOUNT.userId)).toBeNull();
     expect(await reopened.getBaselineAlarmId()).toBe('77');
     await reopened.resetForAccount(NEW_ACCOUNT);

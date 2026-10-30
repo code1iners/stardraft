@@ -352,9 +352,18 @@ function readPost(data: unknown, requestedPostId: string): FlowPost | null {
       /** 누락되거나 깨진 담당자 배열은 빈 배열로 바꾸지 않는다. */
       const workers = Array.isArray(task.WORKER_REC) && task.WORKER_REC.every((worker) => isRecord(worker) && trimmedString(worker.WORKER_ID))
         ? task.WORKER_REC.filter(isRecord).map((worker) => trimmedString(worker.WORKER_ID)) : null;
+      /** 담당자 컬럼의 ID·이름. 컬럼이 하나가 아니거나 빈 값이 있으면 확인 근거로 쓰지 않는다. */
+      const workerColumns = Array.isArray(task.TASK_COLUMN_REC) ? task.TASK_COLUMN_REC.filter(isRecord)
+        .filter((column) => column.DEFAULT_COLUMN_TYPE === 'WORKER_ID') : [];
+      /** 담당자 컬럼의 값 목록. */
+      const workerData = workerColumns.length === 1 && Array.isArray(workerColumns[0]!.COLUMN_DATA_REC) ? workerColumns[0]!.COLUMN_DATA_REC : null;
+      /** 빈 이름을 빈 문자열로 맞추지 않은 담당자 이름. */
+      const workerNames = workerData?.every((item) => isRecord(item) && trimmedString(item.CUSTOM_COLUMN_DATA) && trimmedString(item.USER_NM))
+        ? workerData.filter(isRecord).map((item) => ({ userId: trimmedString(item.CUSTOM_COLUMN_DATA), name: trimmedString(item.USER_NM) })) : null;
       return { taskId: idString(task.TASK_SRNO), workerIds: workers,
         completion: categories.length === 1 && categories[0] === '0' ? 'active' as const
-          : categories.length === 1 && categories[0] === '2' ? 'completed' as const : 'unknown' as const };
+          : categories.length === 1 && categories[0] === '2' ? 'completed' as const : 'unknown' as const,
+        ...(workerNames ? { workerNames } : {}) };
     }) } : {}),
     ...(idString(data.editedDateTime) ? { editedDateTime: idString(data.editedDateTime) } : {}),
     title: trimmedString(data.title),

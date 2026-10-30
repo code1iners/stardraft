@@ -241,6 +241,11 @@ export interface TaskAssignment {
   authorId: string;
   /** 작성자 표시 이름. */
   authorName: string;
+  /**
+   * 배정 시점 근거의 서버 시각(Flow 형식). 생성 시 지정은 업무 작성 시각, 생성 후 지정은 나를 추가한 담당 변경 기록의 시각이다.
+   * 이 시각보다 뒤에 쓴 내 글만 "이미 답함"의 근거다. 근거 없이 만든 예전 묶음에는 없고, 그때는 판정하지 않는다.
+   */
+  assignedAt?: string;
 }
 
 /**
@@ -402,6 +407,18 @@ export function judgeAnswered(
     /** 이 PC가 게시한 글이 답한 범위에 드는지 여부. */
     const inPostedRange = counted.some((answer) => postedRanges.get(answer.answerId)?.has(location) === true);
     return { ...mention, answered: inPostedRange || (latestAnswerAt !== null && at !== null && latestAnswerAt > at) };
+  });
+}
+
+/** 담당 업무 묶음에 배정 시점보다 뒤에 쓴 내 답이 있는지 본다. 되돌릴 때 뺀 답과 배정 시점 근거가 없는 묶음은 세지 않는다. */
+export function answeredSinceAssignment(assignment: TaskAssignment | undefined, answers: readonly RecordedAnswer[]): boolean {
+  /** 배정 시점. */
+  const assignedAt = assignment?.assignedAt ? flowTimeToEpochMs(assignment.assignedAt) : null;
+  if (assignedAt === null) return false;
+  return answers.some((answer) => {
+    /** 답을 쓴 시각. */
+    const at = flowTimeToEpochMs(answer.registeredDateTime);
+    return !answer.excluded && at !== null && at > assignedAt;
   });
 }
 

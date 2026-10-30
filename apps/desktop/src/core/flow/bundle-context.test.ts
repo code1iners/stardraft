@@ -453,3 +453,32 @@ describe('맥락 문서', () => {
     }
   });
 });
+
+describe('담당 업무의 지금 담당 여부', () => {
+  /** 담당 업무 묶음. */
+  const target = { postId: POST_ID, remarkId: '-1', mentions: [],
+    assignment: { taskId: 'task-1', authorId: SENDER, authorName: '작성자', assignedAt: '20261020090100' } };
+
+  it.each([
+    ['나를 포함', [{ taskId: 'task-1', workerIds: ['co@example.test', ME], completion: 'active' as const }], true],
+    ['다른 담당자만 남음', [{ taskId: 'task-1', workerIds: ['co@example.test'], completion: 'active' as const }], false],
+    ['빈 담당자 목록', [{ taskId: 'task-1', workerIds: [], completion: 'active' as const }], false],
+    ['담당자 누락', [{ taskId: 'task-1', workerIds: null, completion: 'active' as const }], null],
+    ['업무를 찾지 못함', [{ taskId: 'other-task', workerIds: [], completion: 'active' as const }], null],
+    ['업무 자료 없음', undefined, null],
+  ])('%s', async (_, tasks, expected) => {
+    const flow = new FakeFlowApi();
+    flow.addPost({ postId: POST_ID, textComponents: [{ contents: '본문', mentions: [] }], ...(tasks ? { tasks } : {}) });
+    /** 조회 결과. */
+    const result = await collectBundleContext(flow, target, NOW, [ME]);
+    expect(result).toMatchObject({ ok: true, assigned: expected });
+  });
+
+  it('담당 업무가 아니면 담당 여부를 보지 않는다', async () => {
+    const flow = new FakeFlowApi();
+    flow.addPost({ postId: POST_ID, textComponents: [{ contents: `${MY_MARKUP} 본문`, mentions: [ME] }], tasks: [{ taskId: 'task-1', workerIds: [], completion: 'active' }] });
+    /** 조회 결과. */
+    const result = await collectBundleContext(flow, bundle('-1', []), NOW, [ME]);
+    expect(result).toMatchObject({ ok: true, assigned: null });
+  });
+});

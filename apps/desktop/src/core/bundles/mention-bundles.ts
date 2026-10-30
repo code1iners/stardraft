@@ -31,6 +31,7 @@ import {
   isAutoProcessed,
   isDraftTouched,
   isRestorable,
+  isUnassignedBlocked,
   isWatched,
   judgeAnswered,
   listGroupOf,
@@ -46,6 +47,7 @@ import {
   type TaskAssignment,
   type RepoCheck,
   type UnsavedBundle,
+  withAssigneeCheck,
 } from './mention-bundle';
 
 /** 멘션 묶음에 필요한 포트. */
@@ -90,6 +92,8 @@ export type RunPreparation =
   | { kind: 'prepared'; bundle: MentionBundle; context: BundleContext }
   /** Flow에 이미 내 답이 있어 초안 없이 처리됨의 "이미 답함"으로 옮겼다. */
   | { kind: 'answered' }
+  /** 내가 담당자에서 빠진 것을 확인해 초안 없이 처리됨의 "담당 해제"로 옮겼다. */
+  | { kind: 'unassigned' }
   /** 쓸 키가 없거나 Flow가 키를 거부해(`401`) 맥락을 조회하지 못했다. 묶음의 실패가 아니라 "키 확인 필요"를 풀 일이다. */
   | { kind: 'key-unusable' }
   /**
@@ -462,13 +466,14 @@ export class MentionBundles {
 
   /**
    * 준비된 뒤의 변화 감시. 사용자 행동을 기다리는 묶음(준비됨, 실패, 게시 실패, 저장소 확인 필요)마다 Flow 내용을 대기열 순서로 다시 조회한다.
+   * 생성 중인 담당 업무 묶음도 조회해 담당 여부만 반영한다. 담당 해제를 확인하면 처리됨의 "담당 해제"로 옮겨 초안 대기열이 실행을 끊게 한다.
    * 알림 폴링이 끝날 때마다 부른다. 검토 화면을 열 때는 부르지 않는다.
    * 쓸 키가 없거나 Flow에 닿지 못하면(키 거부, 연결 실패, 요청 한도) 다른 묶음도 같으므로 이번 감시를 멈춘다.
    */
   async watchWaiting(): Promise<void> {
     /** 감시할 묶음. 대기열 순서다. 시험 묶음은 감시하지 않는다. */
     const ids = this.bundles
-      .filter((bundle) => isWatched(bundle.status) && !bundle.trial)
+      .filter((bundle) => isWatchTarget(bundle) && !bundle.trial)
       .sort(compareBundles)
       .map((bundle) => bundle.id);
     for (const bundleId of ids) {
@@ -484,7 +489,7 @@ export class MentionBundles {
   private async watch(bundleId: number): Promise<'continue' | 'stop'> {
     /** 감시할 묶음. */
     const bundle = this.bundles.find((item) => item.id === bundleId);
-    if (!bundle || !isWatched(bundle.status)) return 'continue';
+    if (!bundle || !isWatchTarget(bundle)) return 'continue';
     /** 이 조회의 번호. 늦게 끝난 옛 조회가 이 결과를 덮지 않게 한다. */
     const request = this.startContextRequest(bundleId);
     /** 조회한 결과. 쓸 키가 없으면 `null`. */
@@ -510,6 +515,11 @@ export class MentionBundles {
       return failure.kind === 'unauthorized' || failure.kind === 'network' || failure.kind === 'rate-limited' ? 'stop' : 'continue';
     }
 
+    if (isGeneratingAssignment(bundle)) {
+      if (result.ok) await this.applyGeneratingAssignee(bundleId, result.assigned);
+      return 'continue';
+    }
+
     await this.lane.run(async () => {
       /** 지금 묶음. 조회하는 사이에 바뀌었을 수 있다. */
       const latest = this.bundles.find((item) => item.id === bundleId);
@@ -531,8 +541,26 @@ export class MentionBundles {
   }
 
   /**
+   * 생성 중인 담당 업무 묶음에 조회한 담당 여부를 반영한다. 담당 해제로 막히면 초안 없이 처리됨의 "담당 해제"로 옮긴다.
+   * 초안 대기열은 묶음이 생성 중이 아니게 되면 실행을 끊고, 늦게 끝난 실행의 결과는 생성 중이 아닌 묶음에 저장하지 않는다.
+   * 맥락은 초안 실행 직전에 조회한 비교 기준이라 덮지 않는다.
+   */
+  private async applyGeneratingAssignee(bundleId: number, assigned: boolean | null): Promise<void> {
+    await this.change(bundleId, 'bundle.assignee-watched', (latest) => {
+      if (!isGeneratingAssignment(latest)) return null;
+      /** 담당 여부를 반영한 배정 자료. */
+      const assignment = withAssigneeCheck(latest.assignment, assigned, this.options.clock.now());
+      if (!assignment || JSON.stringify(assignment) === JSON.stringify(latest.assignment)) return null;
+      /** 반영한 묶음. */
+      const next: MentionBundle = { ...latest, assignment };
+      return isUnassignedBlocked(next) ? { ...next, status: 'unassigned', processedAt: this.options.clock.now() } : next;
+    });
+  }
+
+  /**
    * 초안 실행 직전에 맥락을 Flow에서 새로 조회해 비교 기준으로 저장하고, 같은 조회에서 찾은 내 답으로 "이미 답함"을 다시 판정한다(감지 때와 같은 규칙).
    * 내가 마지막으로 답한 글보다 앞선 멘션은 묶음에서 빼고, 모두 빠지면 초안 없이 처리됨의 "이미 답함"으로 옮긴다.
+   * 같은 조회에서 확인한 담당 여부로, 담당 해제로 막힌 담당 업무 묶음은 실행하지 않고 처리됨의 "담당 해제"로 옮긴다. 이미 답함이 앞선다.
    * 쓸 키가 없거나 Flow가 키를 거부했거나 지금 Flow에 닿지 못하면(네트워크 오류, 요청 한도) 묶음을 바꾸지 않고 그렇게 알린다.
    * 생성 중이 아닌 묶음은 바꾸지 않는다. 시험 묶음은 맥락만 저장하고 "이미 답함"은 판정하지 않는다.
    */
@@ -577,24 +605,32 @@ export class MentionBundles {
       const mentions = latest.trial ? latest.mentions : judgeAnswered(latest.mentions, answers, this.postedRanges());
       /** 모든 멘션이 빠졌는지 여부. */
       const answered = latest.assignment ? !latest.trial && answeredSinceAssignment(latest.assignment, answers) : activeMentions({ mentions }).length === 0;
+      /** 같은 조회의 담당 여부를 반영한 배정 자료. */
+      const assignment = withAssigneeCheck(latest.assignment, result.assigned, this.options.clock.now());
+      /** 담당 해제로 실행하지 않는지 여부. 이미 답했으면 이미 답함이 앞선다. */
+      const unassigned = !answered && !latest.trial && isUnassignedBlocked({ ...(assignment ? { assignment } : {}), mentions });
       /** 맥락과 판정을 반영한 묶음. 맥락의 멘션 표시는 묶음에 남은 멘션으로 다시 한다. */
       const next: MentionBundle = {
         ...latest,
+        ...(assignment ? { assignment } : {}),
         answers,
         mentions,
         context: markContextMentions(result.context, { ...latest, mentions }),
         // 비교 기준이 새로 바뀌므로 옛 기준과 견주던 감시 내용은 버린다.
         watchedContext: null,
         ...(answered ? { status: 'already-answered' as const, processedAt: this.options.clock.now() } : {}),
+        ...(unassigned ? { status: 'unassigned' as const, processedAt: this.options.clock.now() } : {}),
       };
       await this.options.stateStore.saveBundle(next);
       this.bundles = this.bundles.map((item) => (item.id === bundleId ? next : item));
-      this.options.logger.info(answered ? 'bundle.answered-before-run' : 'bundle.context-saved', {
+      this.options.logger.info(answered ? 'bundle.answered-before-run' : unassigned ? 'bundle.unassigned-before-run' : 'bundle.context-saved', {
         bundleId,
         answeredCount: mentions.length - activeMentions(next).length,
       });
       this.emit();
-      return answered ? { kind: 'answered' } : { kind: 'prepared', bundle: structuredClone(next), context: structuredClone(next.context!) };
+      if (answered) return { kind: 'answered' };
+      if (unassigned) return { kind: 'unassigned' };
+      return { kind: 'prepared', bundle: structuredClone(next), context: structuredClone(next.context!) };
     });
   }
 
@@ -707,12 +743,12 @@ export class MentionBundles {
    * 준비됨이나 저장소 확인 필요 묶음을 저장소 선택 창에서 고른 구성으로 다시 만든다. 생성 중으로 올라 초안 대기열에 들어간다.
    * 직전 초안과 비교 기준, 저장소 확인 필요 사유는 지운다. 재생성 입력은 처음 입력에 읽을 저장소만 바뀐 것이라 직전 결과를 남겨 둘 까닭이 없다.
    * 저장소를 바꾸면 그때까지의 지시와 고친 요구도 지운다.
-   * 고른 구성은 묶음에만 두고 저장소 매핑으로 저장하지 않는다. 구성이 비었거나 그 밖의 상태면 아무것도 하지 않는다.
+   * 고른 구성은 묶음에만 두고 저장소 매핑으로 저장하지 않는다. 구성이 비었거나 그 밖의 상태거나 담당 해제로 막혔으면 아무것도 하지 않는다.
    */
   async regenerateWithRepos(bundleId: number, repos: readonly string[]): Promise<void> {
     if (repos.length === 0) return;
     await this.change(bundleId, 'bundle.regenerated-with-repos', (bundle) =>
-      canPickRepos(bundle.status)
+      canPickRepos(bundle.status) && !isUnassignedBlocked(bundle)
         ? {
             ...bundle,
             ...clearedForRegeneration,
@@ -731,13 +767,14 @@ export class MentionBundles {
    * 직전 초안·편집본과 비교 기준은 바로 지운다. 지시를 덧붙이면 직전 결과를 재생성에 남겨 다음 초안 실행에 넘긴다.
    * 요구를 고치면 그때까지의 지시를 지운다. 받는 사람에서 뺀 사람은 초안 텍스트 밖이라 그대로 둔다.
    * 고친 요구는 한 문장이라 줄바꿈을 공백으로 잇는다. 준비됨이 아니거나 덧붙일 지시나 고친 요구가 비어 있으면 아무것도 하지 않는다.
+   * 담당 해제로 막힌 묶음도 다시 만들지 않는다. 다시 만들면 초안과 편집본을 지우고, 생성 직전 확인이 곧 실행을 멈추기 때문이다.
    */
   async regenerate(bundleId: number, request: RegenerationRequest): Promise<void> {
     /** 경로에 따라 바꿀 지시와 고친 요구. 덧붙일 지시나 고친 요구가 비었으면 `null`. */
     const inputs = regenerationInputsOf(request);
     if (!inputs) return;
     await this.change(bundleId, `bundle.regenerated-${request.path}`, (bundle) => {
-      if (!bundle.draft || !canRegenerate(bundle.status)) return null;
+      if (!bundle.draft || !canRegenerate(bundle.status) || isUnassignedBlocked(bundle)) return null;
       return { ...bundle, ...regenerationOf(bundle, request.path), ...inputs(bundle.directives) };
     });
   }
@@ -795,6 +832,9 @@ export class MentionBundles {
    * 게시를 누를 때의 확인. 게시 중(카운트다운) 묶음의 Flow 내용을 다시 조회해 화면에 보이던 내용과 견준다.
    * 판정은 준비된 뒤의 변화 감시와 같은 규칙이다.
    * - 남은 멘션이 모두 내 답으로 빠지면 "이미 답함", 모두 사라지면 "원문 사라짐"으로 옮긴다. 표기만 빠지고 게시할 자리가 남아 있어도 같다.
+   * - 담당 업무에서 내가 빠진 것을 확인하면(직접 멘션이 남은 합친 묶음 제외) 준비됨으로 돌려 게시를 막는다. 담당 여부를 알 수 없으면 해제로 보지 않는다.
+   *   이 확인과 게시 요청 사이에 Flow에서 담당자가 바뀌면 막지 못한다. 확인이 늦어 결과 없이 게시하거나(`endPostCheck`) 조회하지 못해도
+   *   그대로 게시하므로, 그때의 해제도 막지 못한다. 확인은 게시 직전의 안전망이지 원자적인 보장이 아니다.
    * - [게시]를 누를 때 화면에 없던 새 글(나를 멘션한 글 포함), 원문 수정, 새로 사라진 멘션이 있으면 준비됨으로 돌리고 알림 줄을 붙인다.
    * - 이미 알림 줄에 떠 있던 변화뿐이면 그대로 게시하게 두고, 조회한 내용에 있던 멘션을 이 PC가 게시할 글이 답한 범위로 둔다.
    * - 조회하지 못하면 그대로 게시하게 둔다. 이 확인은 게시를 막는 관문이 아니라 안전망이다.
@@ -829,6 +869,7 @@ export class MentionBundles {
       /** 게시를 멈춘 까닭. 멈추지 않으면 `null`. */
       let stop: PostStop | null = null;
       if (checkedBundle.status === 'already-answered' || checkedBundle.status === 'source-gone') stop = { kind: checkedBundle.status };
+      else if (isUnassignedBlocked(checkedBundle)) stop = { kind: 'unassigned' };
       else if (unseen.newWritings.length > 0 || unseen.editedWritings.length > 0 || unseen.goneMentions > 0) {
         stop = {
           kind: 'changed',
@@ -845,8 +886,8 @@ export class MentionBundles {
         return 'passed';
       }
 
-      /** 게시를 멈춘 묶음. 화면에 없던 변화면 준비됨으로 돌려 알림 줄을 붙인다. */
-      const next: MentionBundle = stop.kind === 'changed' ? { ...checkedBundle, status: 'ready' } : checkedBundle;
+      /** 게시를 멈춘 묶음. 화면에 없던 변화면 준비됨으로 돌려 알림 줄을 붙이고, 담당 해제면 초안을 둔 채 준비됨으로 돌려 게시를 막는다. */
+      const next: MentionBundle = stop.kind === 'changed' || stop.kind === 'unassigned' ? { ...checkedBundle, status: 'ready' } : checkedBundle;
       await this.options.stateStore.saveBundle(next);
       this.bundles = this.bundles.map((item) => (item.id === bundleId ? next : item));
       this.postChecks.delete(bundleId);
@@ -958,7 +999,7 @@ export class MentionBundles {
   }
 
   /**
-   * 무시함, 이미 답함, 원문 사라짐에서 되돌린다. 초안이 있으면 그대로 준비됨이 되고, 없으면 새로 만들도록 생성 중으로 올린다.
+   * 무시함, 이미 답함, 원문 사라짐, 담당 해제에서 되돌린다. 초안이 있으면 그대로 준비됨이 되고, 없으면 새로 만들도록 생성 중으로 올린다.
    * 초안이 없는데 매핑된 폴더가 사라졌으면 저장소 확인 필요로 돌아간다. 매핑이 없으면 생성 중으로 올라 자동 선택부터 한다.
    * 이미 답함·원문 사라짐에서 되돌리면 그때 있던 내 답과 사라진 멘션을 기록해 이후 판정에서 뺀다. 내 답은 Flow에서 새로 조회한다.
    * 같은 답이나 같은 사라짐으로 다시 처리됨이 되지 않게 하려는 것이고, 그래서 빠졌던 멘션도 다시 든다. 조회하지 못하면 판정 때 기록한 답만 뺀다.
@@ -1219,6 +1260,16 @@ export class MentionBundles {
   }
 }
 
+/** 변화 감시가 조회할 묶음인지 본다. 사용자 행동을 기다리는 묶음과, 담당 여부만 보는 생성 중 담당 업무 묶음이다. */
+function isWatchTarget(bundle: MentionBundle): boolean {
+  return isWatched(bundle.status) || isGeneratingAssignment(bundle);
+}
+
+/** 담당 여부를 감시하는 생성 중 담당 업무 묶음인지 본다. 시험 묶음은 담당 업무가 아니다. */
+function isGeneratingAssignment(bundle: MentionBundle): boolean {
+  return bundle.status === 'generating' && bundle.assignment !== undefined && !bundle.trial;
+}
+
 /** 멘션 하나로 시작하는 새 묶음. 저장소 매핑을 확인한 결과로 생성 중이나 저장소 확인 필요로 올라온다. */
 function newBundle(mention: Pick<Mention, 'postId' | 'remarkId' | 'projectId'>, now: number, resolution: RepoResolution | undefined): UnsavedBundle {
   return {
@@ -1383,7 +1434,7 @@ type WatchObservation =
    * 맥락과 묶음 자리의 내 답을 조회했다. 이 PC가 게시한 글도 들어 있고, 판정할 때 그 글이 답한 범위로만 센다.
    * `goneMentions`는 사라진 멘션의 위치(`mentionLocationKey`)다.
    */
-  | { kind: 'found'; context: BundleContext; myAnswers: MyAnswer[]; goneMentions: ReadonlySet<string> }
+  | { kind: 'found'; context: BundleContext; myAnswers: MyAnswer[]; goneMentions: ReadonlySet<string>; assigned: boolean | null }
   /** 게시물이나 머리 댓글이 지워졌거나 볼 수 없어, 묶음의 멘션이 모두 사라졌다. */
   | { kind: 'gone' };
 
@@ -1393,7 +1444,13 @@ type WatchObservation =
  */
 function observationOf(result: BundleContextResult): WatchObservation | null {
   if (result.ok) {
-    return { kind: 'found', context: result.context, myAnswers: result.myAnswers, goneMentions: new Set(result.goneMentions.map(mentionLocationKey)) };
+    return {
+      kind: 'found',
+      context: result.context,
+      myAnswers: result.myAnswers,
+      goneMentions: new Set(result.goneMentions.map(mentionLocationKey)),
+      assigned: result.assigned,
+    };
   }
   return isSourceGone(result.failure) ? { kind: 'gone' } : null;
 }
@@ -1404,6 +1461,8 @@ function observationOf(result: BundleContextResult): WatchObservation | null {
  * - 사라진 멘션은 묶음에서 뺀다. 되돌릴 때 사라진 것으로 기록한 멘션은 다시 빼지 않는다.
  * - 남아 있던 멘션이 모두 빠지면 처리됨으로 옮기고 초안은 편집본까지 그대로 둔다. 하나라도 내 답으로 빠졌으면 "이미 답함", 아니면 "원문 사라짐"이다.
  * - 초안이 있으면 조회한 맥락을 비교 기준과 견줄 감시 내용으로 둔다.
+ * - 담당 업무면 같은 조회의 담당 여부를 배정 자료에 반영한다. 담당 해제로 막혀도 초안이 있으면 상태와 편집본을 그대로 두고 게시만 막는다.
+ *   초안이 없는 묶음(실패, 저장소 확인 필요)은 처리됨의 "담당 해제"로 옮긴다.
  */
 function applyWatch(bundle: MentionBundle, observed: WatchObservation, now: number, postedRanges: PostedAnswerRanges): MentionBundle {
   /** 새로 찾은 내 답을 더한 기록. */
@@ -1413,8 +1472,10 @@ function applyWatch(bundle: MentionBundle, observed: WatchObservation, now: numb
     ...mention,
     gone: !mention.goneExcluded && (observed.kind === 'gone' || observed.goneMentions.has(mentionLocationKey(mention))),
   }));
+  /** 담당 여부를 반영한 배정 자료. 게시물이 사라졌으면 담당 여부를 알 수 없다. */
+  const assignment = withAssigneeCheck(bundle.assignment, observed.kind === 'found' ? observed.assigned : null, now);
   /** 반영한 묶음. */
-  let next: MentionBundle = { ...bundle, answers, mentions };
+  let next: MentionBundle = { ...bundle, ...(assignment ? { assignment } : {}), answers, mentions };
   // 초안이 없는 묶음은 비교 기준이 없으므로 이미 답함과 원문 사라짐만 판정하고 조회한 내용은 두지 않는다.
   if (observed.kind === 'found' && bundle.draft) next = { ...next, watchedContext: markContextMentions(observed.context, next) };
 
@@ -1425,6 +1486,7 @@ function applyWatch(bundle: MentionBundle, observed: WatchObservation, now: numb
     const answered = mentions.some((mention) => mention.answered && wasActive.has(mentionLocationKey(mention)));
     next = { ...next, status: answered ? 'already-answered' : 'source-gone', processedAt: now };
   }
+  if (!next.draft && !isProcessed(next.status) && isUnassignedBlocked(next)) next = { ...next, status: 'unassigned', processedAt: now };
   return next;
 }
 

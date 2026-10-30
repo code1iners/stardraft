@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { bundleChanges, type BundleChanges } from '../core/bundles/bundle-changes';
-import { activeMentions, canEditDraft, canRegenerate, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
+import { activeMentions, canEditDraft, canRegenerate, isRestorable, isUnassignedBlocked, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
 import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
@@ -141,7 +141,9 @@ export function bundleSnapshot(
     projectTitle: projectOf(bundle.projectId)?.title || null,
     postTitle: bundle.postTitle,
     mentions: shown,
-    ...(bundle.assignment ? { assignment: { text: splitMentionMarkup((bundle.watchedContext ?? bundle.context)?.post.contents ?? '') } } : {}),
+    ...(bundle.assignment
+      ? { assignment: { text: splitMentionMarkup((bundle.watchedContext ?? bundle.context)?.post.contents ?? ''), blockedByUnassignment: isUnassignedBlocked(bundle) } }
+      : {}),
     senderNames: bundle.assignment ? [bundle.context?.post.authorName || bundle.assignment.authorName] : [...new Set(shown.map((mention) => mention.senderName).filter(Boolean))],
     newMentionCount: bundle.newMentionCount,
     directives: [...bundle.directives],
@@ -205,7 +207,7 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
     editorText: bundle.editedText ?? draftEditorText(draft),
     edited: bundle.editedText !== null,
     canEdit: canEditDraft(bundle.status),
-    canRegenerate: canRegenerate(bundle.status),
+    canRegenerate: canRegenerate(bundle.status) && !isUnassignedBlocked(bundle),
     recipients: recipients.map(({ name }) => ({ name })),
     // 빈 편집기 텍스트의 게시 본문이 곧 받는 사람 표기와 이어 붙이는 공백이다.
     postBodyPrefixLength: postBody(recipients, '').length,

@@ -812,3 +812,34 @@ describe('최근 멘션으로 시험 스냅숏', () => {
     });
   });
 });
+
+describe('묶음 스냅숏: 담당 해제', () => {
+  /** 준비된 초안. */
+  const draft = {
+    requirement: { text: '배포 순서를 알고 싶다.', summary: '배포 순서' },
+    paragraphs: [{ sentences: [{ text: '먼저 API를 배포합니다.', evidence: [] }] }],
+    evidence: [],
+    repositories: ['/fake/work/billing-api'],
+    autoSelection: null,
+    createdAt: 144_000,
+  };
+  /** 배정 자료. */
+  const assignment = { taskId: 'task-1', authorId: 'author@example.test', authorName: '업무 작성자', assignedAt: '20261020090100' };
+
+  it('담당자에서 제외된 담당 업무 초안은 해제를 표시하고 게시와 다시 만들기를 막으며, 편집은 그대로 둔다', () => {
+    /** 스냅숏. */
+    const snapshot = bundleSnapshot(bundle({ status: 'ready', remarkId: '-1', mentions: [], draft, assignment: { ...assignment, unassignedAt: 5_000 } }), () => PROJECT);
+    expect(snapshot.assignment?.blockedByUnassignment).toBe(true);
+    expect(snapshot.draft).toMatchObject({ canPost: false, canRegenerate: false, canEdit: true });
+  });
+
+  it('직접 멘션이 남은 합친 묶음은 담당만 해제돼도 게시할 수 있다', () => {
+    /** 스냅숏. */
+    const snapshot = bundleSnapshot(
+      bundle({ status: 'ready', remarkId: '-1', mentions: [mention('101', { remarkId: '-1' })], draft, assignment: { ...assignment, unassignedAt: 5_000 } }),
+      () => PROJECT,
+    );
+    expect(snapshot.assignment?.blockedByUnassignment).toBe(false);
+    expect(snapshot.draft).toMatchObject({ canPost: true, canRegenerate: true });
+  });
+});

@@ -3498,3 +3498,260 @@ describe('본문 멘션과 담당자 지정의 합치기', () => {
     expect(executor.requests).toHaveLength(1);
   });
 });
+
+describe('담당 해제', () => {
+  /** 담당 업무 게시물. */
+  const TASK_POST = 'removed-task';
+  /** 다른 담당자. 실제 사람이 아니다. */
+  const CO_WORKER = 'co-worker@example.test';
+  /** 업무 생성 시각. 기능 시작 뒤다. */
+  const CREATED_AT = '20261020090100';
+
+  /** 생성 시 나와 다른 담당자를 지정한 업무를 둔다. `workerIds`로 지금 담당자를 바꾼다. */
+  function setTask(flow: FakeFlowApi, workerIds: string[] | null, contents = '배포 순서를 정리해주세요.') {
+    flow.addPost({ postId: TASK_POST, title: '담당 업무', registerId: SENDER, registerName: '업무 작성자',
+      registeredDateTime: CREATED_AT, editedDateTime: CREATED_AT,
+      textComponents: [{ contents, mentions: contents.includes(MY_MARKUP) ? [ME] : [] }],
+      tasks: [{ taskId: 'removed-task-id', workerIds, completion: 'active' }] });
+  }
+
+  /** 기능을 시작한 뒤 업무를 배정하고 담당 업무 감지를 한 번 돌린다. 대기열은 바로 생성을 시작한다. */
+  async function assign(env: Awaited<ReturnType<typeof setup>>, contents?: string) {
+    const { flow, clock, stateStore, bundles } = env;
+    /** 담당 업무 감지. */
+    const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+    await detection.checkNow();
+    clock.advance(60_000);
+    setTask(flow, [ME, CO_WORKER], contents);
+    flow.addWorkerAlarm(alarm('201', { postId: TASK_POST, remarkId: '-1', registeredDateTime: CREATED_AT }));
+    await detection.checkNow();
+    await settle();
+    return detection;
+  }
+
+  it('생성 직전에 담당 해제를 확인하면 실행하지 않고 처리됨의 담당 해제로 옮긴다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, setConnected } = env;
+    setConnected(false);
+    await assign(env);
+    expect(bundles.state()).toMatchObject([{ status: 'generating' }]);
+    setTask(flow, [CO_WORKER]);
+    setConnected(true);
+    await settle();
+    expect(executor.requests).toEqual([]);
+    expect(bundles.state()).toMatchObject([{ status: 'unassigned', draft: null, assignment: { taskId: 'removed-task-id', unassignedAt: NOW + 60_000 } }]);
+  });
+
+  it('생성 중 다음 폴링에서 담당 해제를 확인하면 실행을 끊고, 뒤늦게 도착한 실행 결과를 초안으로 저장하지 않는다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, poll } = env;
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    await poll();
+    await assign(env);
+    expect(bundles.state()).toMatchObject([{ status: 'generating' }]);
+    setTask(flow, [CO_WORKER]);
+    await poll();
+    expect(executor.requests[0]?.signal.aborted).toBe(true);
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+    expect(executor.requests).toHaveLength(1);
+    expect(bundles.state()).toMatchObject([{ status: 'unassigned', draft: null, assignment: { unassignedAt: expect.any(Number) } }]);
+    expect(bundles.state()[0]?.runs.map((record) => record.result)).toEqual(['bundle-changed']);
+  });
+
+  it('생성 중 담당자 조회가 실패하거나 다른 담당자만 빠지면 해제로 보지 않고 초안을 만든다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, poll } = env;
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    await poll();
+    await assign(env);
+    flow.failOn(`GET /user/posts/${TASK_POST}`, { kind: 'http', status: 500 }, 1);
+    await poll();
+    setTask(flow, null);
+    await poll();
+    setTask(flow, [ME]);
+    await poll();
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+    expect(executor.requests).toHaveLength(1);
+    expect(bundles.state()).toMatchObject([{ status: 'ready' }]);
+    expect(bundles.state()[0]?.runs.map((record) => record.result)).toEqual(['succeeded']);
+    expect(bundles.state()[0]?.assignment?.unassignedAt).toBeUndefined();
+  });
+
+  /** 승인 후 게시 서비스. */
+  function postingOf({ bundles, flow, clock }: Awaited<ReturnType<typeof setup>>) {
+    return new Posting({ bundles, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }), myUserId: () => ME,
+      clock, logger: createLogger([{ write: () => {} }], clock) });
+  }
+
+  it('검토 중 담당 해제를 확인하면 초안과 편집본을 둔 채 게시를 막고, 다시 담당자로 확인되면 게시할 수 있다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, poll, clock } = env;
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    await assign(env);
+    /** 준비된 담당 업무 초안. */
+    const ready = bundles.state()[0]!;
+    await bundles.editDraft(ready.id, '편집한 답변입니다.');
+    setTask(flow, [CO_WORKER]);
+    await poll();
+    expect(bundles.get(ready.id)).toMatchObject({ status: 'ready', editedText: '편집한 답변입니다.', draft: { createdAt: ready.draft!.createdAt },
+      assignment: { unassignedAt: expect.any(Number) } });
+    /** 게시 서비스. */
+    const posting = postingOf(env);
+    await posting.post(ready.id);
+    await settle();
+    clock.advance(5_000);
+    await settle();
+    expect(flow.writes).toEqual([]);
+    expect(bundles.get(ready.id)?.status).toBe('ready');
+    await bundles.regenerate(ready.id, { path: 'again' });
+    await settle();
+    expect(executor.requests).toHaveLength(1);
+    expect(bundles.get(ready.id)?.editedText).toBe('편집한 답변입니다.');
+
+    setTask(flow, [ME]);
+    await poll();
+    expect(bundles.get(ready.id)?.assignment?.unassignedAt).toBeUndefined();
+    await posting.post(ready.id);
+    await settle();
+    clock.advance(5_000);
+    await settle();
+    expect(flow.writes).toEqual([{ request: `POST /user/comments/${TASK_POST}`, contents: expect.stringContaining('편집한 답변입니다.') }]);
+  });
+
+  it('검토 중 담당자 조회가 실패하거나 담당자 목록이 누락되면 해제로 기록하지 않는다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, poll } = env;
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    await assign(env);
+    flow.failOn(`GET /user/posts/${TASK_POST}`, { kind: 'network' }, 1);
+    await poll();
+    flow.failOn(`GET /user/posts/${TASK_POST}`, { kind: 'http', status: 500 }, 1);
+    await poll();
+    setTask(flow, null);
+    await poll();
+    expect(bundles.state()).toMatchObject([{ status: 'ready' }]);
+    expect(bundles.state()[0]?.assignment?.unassignedAt).toBeUndefined();
+  });
+
+  it('본문 멘션과 합친 묶음은 담당만 해제되고 멘션이 남아 있으면 게시할 수 있다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, poll, clock } = env;
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    await assign(env, `${MY_MARKUP} 배포 순서를 정리해주세요.`);
+    await poll(alarm('101', { postId: TASK_POST, remarkId: '-1', registerName: '업무 작성자', registeredDateTime: CREATED_AT }));
+    /** 합친 묶음. */
+    const merged = bundles.state()[0]!;
+    expect(merged).toMatchObject({ status: 'ready', mentions: [{ remarkId: '-1' }] });
+    setTask(flow, [CO_WORKER], `${MY_MARKUP} 배포 순서를 정리해주세요.`);
+    await poll();
+    expect(bundles.get(merged.id)?.assignment?.unassignedAt).toEqual(expect.any(Number));
+    await postingOf(env).post(merged.id);
+    await settle();
+    clock.advance(5_000);
+    await settle();
+    expect(bundles.get(merged.id)?.status).toBe('posted');
+  });
+
+  it('게시 직전 확인에서 담당 해제를 찾으면 게시 요청을 보내지 않고 준비됨으로 돌려 해제를 알린다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, poll, clock } = env;
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    await assign(env);
+    /** 준비된 담당 업무 초안. */
+    const ready = bundles.state()[0]!;
+    /** 게시를 멈춘 까닭. */
+    const stops: unknown[] = [];
+    bundles.onPostStopped((_, stop) => stops.push(stop));
+    setTask(flow, [CO_WORKER]);
+    await postingOf(env).post(ready.id);
+    await settle();
+    clock.advance(5_000);
+    await settle();
+    expect(flow.writes).toEqual([]);
+    expect(stops).toEqual([{ kind: 'unassigned' }]);
+    expect(bundles.get(ready.id)).toMatchObject({ status: 'ready', draft: { createdAt: ready.draft!.createdAt }, assignment: { unassignedAt: expect.any(Number) } });
+  });
+
+  it('게시 직전 확인이 실패하면 담당 해제로 기록하지 않고 기존 확인 실패 규칙대로 게시한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, poll, clock } = env;
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    await assign(env);
+    /** 준비된 담당 업무 초안. */
+    const ready = bundles.state()[0]!;
+    flow.failOn(`GET /user/posts/${TASK_POST}`, { kind: 'http', status: 503 }, 1);
+    await postingOf(env).post(ready.id);
+    await settle();
+    clock.advance(5_000);
+    await settle();
+    expect(bundles.get(ready.id)?.assignment?.unassignedAt).toBeUndefined();
+    expect(bundles.get(ready.id)?.status).toBe('posted');
+  });
+
+  it('담당 해제로 생성을 멈춘 묶음은 재지정 알림으로 다시 만들지 않고, 되돌리면 생성 직전에 담당 여부를 다시 확인한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, repos, setConnected, clock } = env;
+    setConnected(false);
+    /** 담당 업무 감지. */
+    const detection = await assign(env);
+    setTask(flow, [CO_WORKER]);
+    setConnected(true);
+    await settle();
+    /** 담당 해제로 멈춘 묶음. */
+    const stopped = bundles.state()[0]!;
+    expect(stopped.status).toBe('unassigned');
+
+    await bundles.restore(stopped.id);
+    await settle();
+    expect(bundles.get(stopped.id)?.status).toBe('unassigned');
+    expect(executor.requests).toEqual([]);
+
+    setTask(flow, [ME, CO_WORKER]);
+    flow.addWorkerAlarm(alarm('202', { postId: TASK_POST, remarkId: '-1', registeredDateTime: '20261020090500' }));
+    clock.advance(60_000);
+    await detection.checkNow();
+    await settle();
+    expect(bundles.state()).toHaveLength(1);
+    expect(executor.requests).toEqual([]);
+
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await bundles.restore(stopped.id);
+    await settle();
+    expect(bundles.get(stopped.id)).toMatchObject({ status: 'ready' });
+    expect(bundles.get(stopped.id)?.assignment?.unassignedAt).toBeUndefined();
+  });
+
+  it('초안 없이 실패한 담당 업무가 감시에서 담당 해제로 확인되면 처리됨의 담당 해제로 옮기고 다시 시도하지 않는다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, executor, poll } = env;
+    executor.script({ outcome: { type: 'timed-out' } });
+    await poll();
+    await assign(env);
+    expect(bundles.state()).toMatchObject([{ status: 'failed', draft: null }]);
+    setTask(flow, [CO_WORKER]);
+    await poll();
+    expect(bundles.state()).toMatchObject([{ status: 'unassigned', assignment: { unassignedAt: expect.any(Number) } }]);
+    expect(executor.requests).toHaveLength(1);
+  });
+});

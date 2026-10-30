@@ -257,6 +257,46 @@ export const STATE_MIGRATIONS: readonly string[] = [
   CREATE TABLE assignment_record (project_id TEXT NOT NULL, task_id TEXT NOT NULL, bundle_id INTEGER NOT NULL,
     PRIMARY KEY (project_id, task_id)) STRICT;
   `,
+  // 20: 담당 해제. 초안이 생기기 전에 담당자에서 빠져 생성을 멈춘 묶음(`unassigned`)도 처리됨이라 최소 기록에 남는다.
+  // SQLite는 CHECK를 바꿀 수 없어 최소 기록 표를 새로 만들어 옮긴다. 부모 표를 지우면 외래 키가 자식 행을 함께 지우므로
+  // 자식 표를 먼저 옮기고 지운 뒤 부모를 지우고, 이름을 바꿀 때 자식의 외래 키가 새 부모 이름을 따라간다. 이미 있던 기록은 그대로다.
+  `
+  CREATE TABLE minimal_record_new (
+    bundle_id INTEGER PRIMARY KEY,
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('posted', 'ignored', 'already-answered', 'source-gone', 'unassigned')),
+    processed_at INTEGER NOT NULL,
+    posted_id TEXT
+  ) STRICT;
+  INSERT INTO minimal_record_new (bundle_id, post_id, remark_id, status, processed_at, posted_id)
+    SELECT bundle_id, post_id, remark_id, status, processed_at, posted_id FROM minimal_record;
+  CREATE TABLE minimal_record_mention_new (
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    reply_id TEXT NOT NULL,
+    bundle_id INTEGER NOT NULL REFERENCES minimal_record_new (bundle_id) ON DELETE CASCADE,
+    PRIMARY KEY (post_id, remark_id, reply_id)
+  ) STRICT;
+  INSERT INTO minimal_record_mention_new (post_id, remark_id, reply_id, bundle_id)
+    SELECT post_id, remark_id, reply_id, bundle_id FROM minimal_record_mention;
+  CREATE TABLE minimal_record_answered_new (
+    bundle_id INTEGER NOT NULL REFERENCES minimal_record_new (bundle_id) ON DELETE CASCADE,
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    reply_id TEXT NOT NULL,
+    PRIMARY KEY (bundle_id, post_id, remark_id, reply_id)
+  ) STRICT;
+  INSERT INTO minimal_record_answered_new (bundle_id, post_id, remark_id, reply_id)
+    SELECT bundle_id, post_id, remark_id, reply_id FROM minimal_record_answered;
+  DROP TABLE minimal_record_answered;
+  DROP TABLE minimal_record_mention;
+  DROP TABLE minimal_record;
+  ALTER TABLE minimal_record_new RENAME TO minimal_record;
+  ALTER TABLE minimal_record_mention_new RENAME TO minimal_record_mention;
+  ALTER TABLE minimal_record_answered_new RENAME TO minimal_record_answered;
+  CREATE INDEX minimal_record_mention_bundle_id ON minimal_record_mention (bundle_id);
+  `,
 ];
 
 /**

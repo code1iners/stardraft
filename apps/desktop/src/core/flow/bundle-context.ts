@@ -1,6 +1,6 @@
 import { activeMentions, type MentionBundle } from '../bundles/mention-bundle';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
-import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowRemarkAuthorship, FlowReply } from '../ports/flow-api';
+import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowPost, FlowRemarkAuthorship, FlowReply } from '../ports/flow-api';
 import { compareAlarmIds } from './alarm-id';
 import { readableFlowTime } from './flow-time';
 import { myAnswersAmong, type MyAnswer } from './mention-judgement';
@@ -8,6 +8,7 @@ import { taskAnswers, taskRemarks } from './task-remarks';
 import { hasMentionMarkupFor, namedMentionText, postBodyMentions } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
+import { isSameFlowUser } from './user-id';
 
 /** 맥락 문서의 길이 상한(글자 수). 넘치면 정한 순서대로 빼고, 절대 빼지 않는 것만으로 넘치면 그대로 둔다. */
 export const CONTEXT_CHAR_LIMIT = 30_000;
@@ -105,11 +106,20 @@ export function mentionWritingOf(context: BundleContext, mention: MentionLocatio
  * 맥락을 모은 결과. 같은 조회에서 찾은 묶음 자리의 내 답도 함께 돌려준다. 초안을 만들기 직전과 준비된 뒤의 "이미 답함" 판정에 쓴다.
  * 내 답은 본문 묶음이면 게시물에 쓴 내 댓글, 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다. 시스템 댓글은 들지 않는다.
  * `goneMentions`는 묶음의 멘션 가운데 지금 Flow에서 사라진 것(글이 지워짐, 수정되어 나를 지목하지 않음)이다. 준비된 뒤의 변화 감시가 쓴다.
+ * `assigned`는 담당 업무 묶음의 지금 내 담당 여부다. 업무가 없거나 담당자를 읽을 수 없으면 해제로 단정하지 않고 `null`이다.
  * `myMentions`는 묶음 자리에서 지금 나를 지목한 글의 멘션 위치다. 아직 알림이 오지 않은 글도 든다. 본문 묶음이면 게시물 본문,
  * 댓글 스레드 묶음이면 머리 댓글과 대댓글이다. 게시를 누를 때의 확인이 이 PC가 게시할 글이 답한 범위로 쓴다.
  */
 export type BundleContextResult =
-  | { ok: true; context: BundleContext; myAnswers: MyAnswer[]; goneMentions: MentionLocation[]; myMentions: MentionLocation[] }
+  | {
+      ok: true;
+      context: BundleContext;
+      myAnswers: MyAnswer[];
+      goneMentions: MentionLocation[];
+      myMentions: MentionLocation[];
+      /** 담당 업무 묶음이면 같은 조회에서 확인한 지금 내 담당 여부. 담당 업무가 아니거나 업무·담당자를 읽을 수 없으면 `null`이다. */
+      assigned: boolean | null;
+    }
   | { ok: false; failure: BundleContextFailure };
 
 /** 맥락을 모을 묶음. 자리와 멘션만 본다. */
@@ -221,7 +231,16 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     myAnswers,
     goneMentions: bundle.mentions.filter((mention) => !stillMentions(mention)).map(mentionLocationOf),
     myMentions,
+    assigned: bundle.assignment ? isAssignedTo(post.value, bundle.assignment.taskId, myIds) : null,
   };
+}
+
+/** 게시물의 그 업무에 내가 지금 담당자로 있는지 본다. 업무가 없거나 담당자 목록이 누락됐으면 알 수 없어 `null`이다. 빈 목록은 해제로 본다. */
+function isAssignedTo(post: FlowPost, taskId: string, myIds: readonly string[]): boolean | null {
+  /** 묶음의 업무. 업무 ID로 찾고 게시물 ID와 같다고 보지 않는다. */
+  const task = post.tasks?.find((item) => item.taskId === taskId);
+  if (!task || task.workerIds === null) return null;
+  return task.workerIds.some((id) => myIds.some((myId) => isSameFlowUser(id, myId)));
 }
 
 /** 댓글이나 대댓글에 사용자 ID들 가운데 하나를 가리키는 멘션 표기가 있는지 본다. */

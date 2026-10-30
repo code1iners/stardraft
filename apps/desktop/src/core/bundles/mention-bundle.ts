@@ -28,7 +28,9 @@ export type BundleStatus =
   /** 이미 답함. Flow에 내 답이 있어 자동으로 옮겨졌다. 초안이 있으면 편집본까지 그대로 둔다. */
   | 'already-answered'
   /** 원문 사라짐. 멘션이 모두 사라졌다(삭제, 내 표기 제거, 접근 불가, 머리 댓글 삭제). 초안이 있으면 그대로 둔다. */
-  | 'source-gone';
+  | 'source-gone'
+  /** 담당 해제. 초안이 생기기 전에 내가 담당자에서 빠진 것을 확인해 생성을 멈췄다. 해제 사유는 배정 자료(`unassignedAt`)에 따로 둔다. */
+  | 'unassigned';
 
 /** 펼친 창의 목록 묶음 하나. 검토 대기·생성 중·실패·처리됨이다. */
 export type BundleListGroup = 'awaiting-review' | 'generating' | 'failed' | 'processed';
@@ -49,26 +51,30 @@ export function listGroupOf(status: BundleStatus): BundleListGroup {
     case 'ignored':
     case 'already-answered':
     case 'source-gone':
+    case 'unassigned':
       return 'processed';
   }
 }
 
-/** 처리됨 상태. 게시됨·무시함·이미 답함·원문 사라짐이다. */
-export type ProcessedStatus = Extract<BundleStatus, 'posted' | 'ignored' | 'already-answered' | 'source-gone'>;
+/** 처리됨 상태. 게시됨·무시함·이미 답함·원문 사라짐·담당 해제다. */
+export type ProcessedStatus = Extract<BundleStatus, 'posted' | 'ignored' | 'already-answered' | 'source-gone' | 'unassigned'>;
 
-/** 처리됨(게시됨·무시함·이미 답함·원문 사라짐)인지 본다. 처리됨 묶음은 작은 창 대기열에 없고 되돌릴 수만 있다. */
+/** 처리됨(게시됨·무시함·이미 답함·원문 사라짐·담당 해제)인지 본다. 처리됨 묶음은 작은 창 대기열에 없고 되돌릴 수만 있다. */
 export function isProcessed(status: BundleStatus): status is ProcessedStatus {
   return listGroupOf(status) === 'processed';
 }
 
-/** Flow에 내 답이 생겼거나 멘션이 사라져 자동으로 처리됨이 된 상태(이미 답함, 원문 사라짐)인지 본다. 되돌릴 때 그 까닭을 기록해 이후 판정에서 뺀다. */
+/**
+ * Flow에 내 답이 생겼거나 멘션이 사라져 자동으로 처리됨이 된 상태(이미 답함, 원문 사라짐)인지 본다. 되돌릴 때 그 까닭을 기록해 이후 판정에서 뺀다.
+ * 담당 해제도 자동으로 옮겨지지만 뺄 답이나 사라진 멘션이 없고, 되돌리면 생성 직전에 담당 여부를 다시 확인하므로 넣지 않는다.
+ */
 export function isAutoProcessed(status: BundleStatus): boolean {
   return status === 'already-answered' || status === 'source-gone';
 }
 
-/** 처리됨에서 되돌릴 수 있는 상태인지 본다. 게시됨은 되돌릴 수 없다. */
+/** 처리됨에서 되돌릴 수 있는 상태인지 본다. 게시됨은 되돌릴 수 없다. 담당 해제에서 되돌리면 생성 직전에 담당 여부를 다시 확인한다. */
 export function isRestorable(status: BundleStatus): boolean {
-  return status === 'ignored' || status === 'already-answered' || status === 'source-gone';
+  return status === 'ignored' || status === 'already-answered' || status === 'source-gone' || status === 'unassigned';
 }
 
 /**
@@ -220,6 +226,8 @@ export type PostStop =
   | { kind: 'already-answered' }
   /** 멘션이 모두 사라져 "원문 사라짐"으로 옮겼다. */
   | { kind: 'source-gone' }
+  /** 내가 담당자에서 빠진 것을 확인해, 초안을 둔 채 준비됨으로 돌려 게시를 막았다. */
+  | { kind: 'unassigned' }
   /**
    * [게시]를 누를 때 화면에 없던 변화가 있어 준비됨으로 돌렸다. 확인이 끝나기 전에 합쳐진 새 멘션 수,
    * 화면에 보이던 내용 뒤에 새로 생긴 글 수(나를 멘션한 글 포함), 원문 수정 여부, 새로 사라진 멘션 수다.
@@ -247,6 +255,35 @@ export interface TaskAssignment {
    * 이 시각보다 뒤에 쓴 내 글만 "이미 답함"의 근거다. 근거 없이 만든 예전 묶음에는 없고, 그때는 판정하지 않는다.
    */
   assignedAt?: string;
+  /**
+   * 내가 이 업무의 담당자에서 빠진 것을 확인한 시각(PC 시각, Unix epoch 밀리초). 묶음 상태와 따로 둔다.
+   * 다시 담당자로 확인되면 지운다. 조회하지 못했거나 담당자를 읽을 수 없으면 바꾸지 않아, 한 번 확인한 해제는 다시 담당으로 확인될 때까지 게시를 막는다.
+   * Flow 시각인 `assignedAt`과 달리 해제 시각은 Flow가 주지 않아 확인한 PC 시각을 쓴다.
+   */
+  unassignedAt?: number;
+}
+
+/**
+ * 담당 해제로 생성과 게시를 막는 묶음인지 본다. 내가 담당자에서 빠진 것이 확인됐고, 묶음에 남은 직접 멘션이 없다.
+ * 본문 멘션과 합친 묶음은 직접 멘션이 남아 있으면 멘션 답변으로 계속 유효하다.
+ */
+export function isUnassignedBlocked(bundle: Pick<MentionBundle, 'assignment' | 'mentions'>): boolean {
+  return bundle.assignment?.unassignedAt !== undefined && activeMentions(bundle).length === 0;
+}
+
+/**
+ * Flow에서 확인한 지금 담당 여부(`assigned`)를 배정 자료에 반영한다. 빠졌으면 처음 확인한 시각을 남기고, 다시 담당이면 지운다.
+ * 담당 업무가 아니거나 담당 여부를 알 수 없으면(`null`) 그대로 둔다. 조회 실패를 담당 해제로 기록하지 않기 위해서다.
+ */
+export function withAssigneeCheck(assignment: TaskAssignment | undefined, assigned: boolean | null, now: number): TaskAssignment | undefined {
+  if (!assignment || assigned === null) return assignment;
+  if (assigned) {
+    /** 해제 기록을 지운 배정 자료. */
+    const reassigned = { ...assignment };
+    delete reassigned.unassignedAt;
+    return reassigned;
+  }
+  return { ...assignment, unassignedAt: assignment.unassignedAt ?? now };
 }
 
 /**

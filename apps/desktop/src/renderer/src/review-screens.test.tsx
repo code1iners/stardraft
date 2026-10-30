@@ -1443,3 +1443,37 @@ it('본문 멘션과 합쳐진 담당 업무 초안은 검토 대상 하나로 �
   const popover = textOf(<PopoverContent snapshot={snapshot([item])} />);
   expect(popover).toContain('담당 업무 초안 · 본문 멘션');
 });
+
+it('검토 중 담당자에서 제외된 담당 업무 초안은 초안을 보이되 제외 사유와 게시 불가를 상세 머리에 보이고 다시 만들기를 두지 않는다', () => {
+  /** 담당 해제로 게시를 막은 준비된 초안. */
+  const item = bundle(94, { ...READY, id: 94, mentions: [], assignment: { text: [{ text: '업무 본문 요청', mention: false }], blockedByUnassignment: true },
+    senderNames: ['업무 작성자'], changes: { newWritingCount: 1, edited: false, goneMentionCount: 0 },
+    draft: { ...READY.draft!, canPost: false, canRegenerate: false } });
+  for (const view of [<PopoverContent snapshot={snapshot([item])} />, <ReviewContent snapshot={snapshot([item])} initialBundleId={94} />]) {
+    /** 화면의 글. */
+    const text = textOf(view);
+    expect(text).toContain('담당자에서 제외되어 게시할 수 없습니다');
+    expect(text).not.toContain('다시 만들기');
+    expect(renderToStaticMarkup(view).match(/<button[^>]*>게시<\/button>/)?.[0]).toContain('disabled');
+  }
+});
+
+it('게시 실패한 담당 업무 초안도 담당자에서 제외되면 [다시 게시]가 꺼진 까닭으로 제외 사유를 보인다', () => {
+  /** 게시 실패 뒤 담당 해제로 막힌 초안. */
+  const item = bundle(96, { ...READY, id: 96, mentions: [], assignment: { text: [], blockedByUnassignment: true }, senderNames: ['업무 작성자'],
+    status: 'post-failed', group: 'failed', postFailure: 'no-response', draft: { ...READY.draft!, canPost: false, canRegenerate: false } });
+  /** 펼친 검토 화면의 글. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={96} />);
+  expect(text).toContain('담당자에서 제외되어 게시할 수 없습니다');
+});
+
+it('생성 중 담당자에서 제외된 담당 업무는 처리됨의 담당 해제로 보이고 되돌릴 수 있다', () => {
+  /** 초안 없이 멈춘 담당 업무. */
+  const item = bundle(95, { ...READY, id: 95, mentions: [], assignment: { text: [{ text: '업무 본문 요청', mention: false }], blockedByUnassignment: true },
+    senderNames: ['업무 작성자'], status: 'unassigned', group: 'processed', canRestore: true, draft: null });
+  /** 펼친 검토 화면의 글. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={95} />);
+  expect(text).toContain('담당 해제');
+  expect(text).toContain('담당자에서 제외되어 초안을 만들지 않았습니다.');
+  expect(text).toContain('되돌리기');
+});

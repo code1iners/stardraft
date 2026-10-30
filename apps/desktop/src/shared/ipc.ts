@@ -404,7 +404,7 @@ export interface TrialSnapshot {
   picker: TrialPickerSnapshot | null;
 }
 
-/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시 실패, 게시됨, 무시함, 이미 답함, 원문 사라짐이다. */
+/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시 실패, 게시됨, 무시함, 이미 답함, 원문 사라짐, 담당 해제다. */
 export type BundleStatusSnapshot =
   | 'generating'
   | 'ready'
@@ -415,7 +415,8 @@ export type BundleStatusSnapshot =
   | 'posted'
   | 'ignored'
   | 'already-answered'
-  | 'source-gone';
+  | 'source-gone'
+  | 'unassigned';
 
 /**
  * 게시 실패의 사유. 권한 없음(`403`), 지워짐(`404`, `412`), 받지 않음(`400`, `422` 등), 요청 한도 초과(`429` 두 번),
@@ -424,12 +425,14 @@ export type BundleStatusSnapshot =
 export type PostFailureSnapshot = 'forbidden' | 'gone' | 'rejected' | 'rate-limited' | 'no-response' | 'app-quit';
 
 /**
- * 게시를 누를 때의 확인이 게시를 멈춘 까닭. 이미 답함, 원문 사라짐, 또는 [게시]를 누를 때 화면에 없던 변화다.
+ * 게시를 누를 때의 확인이 게시를 멈춘 까닭. 이미 답함, 원문 사라짐, 담당 해제, 또는 [게시]를 누를 때 화면에 없던 변화다.
  * 변화면 확인이 끝나기 전에 합쳐진 새 멘션 수, 새로 생긴 글 수(나를 멘션한 글 포함), 원문 수정 여부, 새로 사라진 멘션 수를 넘긴다.
  */
 export type PostStopSnapshot =
   | { kind: 'already-answered' }
   | { kind: 'source-gone' }
+  /** 담당자에서 빠진 것을 확인해 준비됨으로 돌리고 게시를 막았다. */
+  | { kind: 'unassigned' }
   | { kind: 'changed'; newMentionCount: number; newWritingCount: number; edited: boolean; goneMentionCount: number }
   /** 카운트다운 중에 추가한 비밀 파일 패턴에 초안의 근거가 맞아 결과를 버렸다. */
   | { kind: 'secret-evidence' };
@@ -692,7 +695,11 @@ export type RepoCheckSnapshot =
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
   /** 담당 업무 초안의 원문. 직접 멘션과 별도 표시한다. */
-  assignment?: { text: BundleMentionSnapshot['text'] };
+  assignment?: {
+    text: BundleMentionSnapshot['text'];
+    /** 담당자에서 제외된 것을 확인해 게시와 다시 만들기를 막았는지 여부. 직접 멘션이 남은 합친 묶음은 막지 않아 거짓이다. */
+    blockedByUnassignment?: boolean;
+  };
   /** 묶음 ID. 명령에 실어 보낸다. */
   id: number;
   /** 상태. */

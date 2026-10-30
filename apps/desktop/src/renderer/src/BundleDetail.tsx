@@ -40,6 +40,7 @@ import {
   postingFooterText,
   processedNote,
   QUIT_DURING_COUNTDOWN_TEXT,
+  UNASSIGNED_TEXT,
   reasonText,
   repoCheckText,
   runLineText,
@@ -109,9 +110,12 @@ export function RunLine({ bundle }: BundleProps) {
 
 /**
  * 상세 머리에 더하는 게시 상태 한 줄. 게시 실패면 쉬운 말 사유, 게시 요청을 보내고 결과를 기다리면 "게시 결과 확인 중",
- * 카운트다운 중에 앱이 꺼져 준비됨으로 돌아왔으면 "앱이 꺼져서 게시하지 않았습니다"다. 셋 다 아니면 그리지 않는다.
+ * 카운트다운 중에 앱이 꺼져 준비됨으로 돌아왔으면 "앱이 꺼져서 게시하지 않았습니다", 검토 중 담당자에서 제외됐으면 게시할 수 없다는 줄이다.
+ * 모두 아니면 그리지 않는다. 담당 해제로 처리됨이 된 묶음은 바닥 줄 안내가 알린다.
  */
 export function PostStatusLine({ bundle }: BundleProps) {
+  // 게시 실패 묶음도 담당 해제로 막혔으면 [다시 게시]가 꺼진 까닭을 먼저 보인다.
+  if (bundle.assignment?.blockedByUnassignment && bundle.group !== 'processed') return <p className="post-status-line warning">{UNASSIGNED_TEXT}</p>;
   if (bundle.postFailure) return <p className="post-status-line failure">{POST_FAILURE_TEXT[bundle.postFailure]}</p>;
   if (bundle.posting?.phase === 'sending') return <p className="post-status-line">{POST_CHECKING_TEXT}</p>;
   if (bundle.quitDuringCountdown) return <p className="post-status-line warning">{QUIT_DURING_COUNTDOWN_TEXT}</p>;
@@ -971,7 +975,7 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
       )}
       {bundle.status === 'ready' && (
         <>
-          <RegenerateMenu onPick={handlePick} />
+          {bundle.draft?.canRegenerate !== false && <RegenerateMenu onPick={handlePick} />}
           {bundle.trial ? (
             <button type="button" className="btn primary" onClick={onEndTrial}>
               시험 끝내기
@@ -1245,7 +1249,7 @@ function BundleNotice({ bundle, movedWhileViewing }: BundleNoticeProps) {
   /** 알림 줄 문구. */
   const text = noticeText(bundle);
   /** 지금 내용으로 다시 만들 수 있는지 여부. */
-  const canRegenerate = bundle.status === 'ready' && bundle.draft !== null;
+  const canRegenerate = bundle.status === 'ready' && bundle.draft?.canRegenerate === true;
   /** [다시 만들기]를 눌렀다. 편집한 초안이 있으면 먼저 묻는다. */
   const handleRegenerate = () => {
     if (bundle.draft?.edited) setConfirmingBundleId(bundle.id);

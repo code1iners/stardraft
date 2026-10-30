@@ -1,4 +1,4 @@
-import { activeMentions, canPost, compareMentions, type MentionBundle } from '../bundles/mention-bundle';
+import { activeMentions, canPost, compareMentions, isUnassignedBlocked, type MentionBundle } from '../bundles/mention-bundle';
 import { mentionWritingOf } from '../flow/bundle-context';
 import { isSameFlowUser } from '../flow/user-id';
 import type { Draft } from './draft';
@@ -70,9 +70,10 @@ export function bundleEditorText(bundle: Pick<MentionBundle, 'draft' | 'editedTe
 
 /**
  * 묶음을 지금 게시하면 올라갈 게시 본문. 게시할 수 없는 글이면 `null`이다.
- * 초안이 없거나, 편집기 텍스트가 비었거나(앞뒤 공백만), 게시 본문이 상한(4,000자)을 넘으면 게시할 수 없다.
+ * 초안이 없거나, 편집기 텍스트가 비었거나(앞뒤 공백만), 게시 본문이 상한(4,000자)을 넘거나, 담당 해제로 막혔으면 게시할 수 없다.
  */
 export function postableBody(bundle: Pick<MentionBundle, 'assignment' | 'mentions' | 'context' | 'removedRecipients' | 'draft' | 'editedText'>): string | null {
+  if (isUnassignedBlocked(bundle)) return null;
   /** 편집기 텍스트. */
   const text = bundleEditorText(bundle);
   if (text === null || text.trim() === '') return null;

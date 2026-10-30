@@ -596,7 +596,7 @@ export class DraftQueue {
     /** 실행 직전 준비의 결과. */
     const prepared = await this.options.bundles.prepareRun(entry.bundleId);
     if (entry.interruption) return this.afterInterruption(entry, []);
-    if (prepared.kind === 'skipped' || prepared.kind === 'answered') return;
+    if (prepared.kind === 'skipped' || prepared.kind === 'answered' || prepared.kind === 'unassigned') return;
     // 쓸 키가 없거나 Flow가 키를 거부했으면 묶음이 아니라 키의 문제다. 실패로 두지 않고 "키 확인 필요"가 풀릴 때까지 멈춘다.
     if (prepared.kind === 'key-unusable') {
       this.pauseUntilChanged('flow-key', flowKeyChangesBefore);

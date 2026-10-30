@@ -1136,3 +1136,53 @@ it('같은 본문의 기존 멘션 묶음에 담당 업무 사유를 더해 저�
     expect(await reopened.listBundles()).toHaveLength(1);
   } finally { reopenedDb.close(); }
 });
+
+it('담당 해제 기록과 담당 해제 상태를 재시작 뒤에도 복원하고, 담당 해제 묶음을 최소 기록으로 보관한다', async () => {
+  /** 실제 데이터베이스 파일. */
+  const path = join(dir, 'assignment-removed.db');
+  /** 첫 연결과 저장소. */
+  const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+  const store = new SqliteStateStore(db);
+  await store.setAccount(OLD_ACCOUNT);
+  /** 해제 사유를 따로 둔 배정 자료. */
+  const assignment = { taskId: 'removed-task', authorId: 'author@example.test', authorName: '작성자', assignedAt: '20261020090100', unassignedAt: 5_000 };
+  /** 초안 없이 멈춘 담당 업무 묶음. */
+  const saved = await store.addAssignmentBundle(bundle([], { assignment, status: 'unassigned', processedAt: 5_000 }), OLD_ACCOUNT.userId);
+  db.close();
+  /** 다시 연 저장소. */
+  const reopenedDb = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+  const reopened = new SqliteStateStore(reopenedDb);
+  try {
+    expect(await reopened.listBundles()).toMatchObject([{ id: saved!.id, status: 'unassigned', assignment }]);
+    /** 보관할 최소 기록. */
+    const record = { bundleId: saved!.id, postId: '90000011', remarkId: '-1', mentions: [], status: 'unassigned' as const, processedAt: 5_000, posted: null };
+    await reopened.archiveBundles([record]);
+    await expect(reopened.listMinimalRecords()).resolves.toEqual([record]);
+  } finally { reopenedDb.close(); }
+});
+
+it('형식 19에서 올리면 이미 있던 최소 기록과 그 멘션 위치·답한 범위가 그대로 남는다', async () => {
+  /** `state.db` 경로. */
+  const path = join(dir, 'state.db');
+  /** 형식 19로 만든 DB. */
+  const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 19), '0.0.19');
+  /** 형식 19의 저장소. */
+  const oldStore = new SqliteStateStore(old);
+  /** 게시됨 최소 기록. */
+  const record = {
+    bundleId: 1, postId: '90000011', remarkId: '-1', mentions: [{ postId: '90000011', remarkId: '-1', replyId: '-1' }],
+    status: 'posted' as const, processedAt: 6_000,
+    posted: { postedId: '950000001', answeredMentions: [{ postId: '90000011', remarkId: '-1', replyId: '-1' }, { postId: '90000011', remarkId: '701', replyId: '-1' }] },
+  };
+  await oldStore.saveDetectedBundles([bundle([mention('101')], { status: 'posted', processedAt: 6_000 })], '101');
+  await oldStore.archiveBundles([record]);
+  old.close();
+
+  /** 마지막 형식으로 올린 저장소. */
+  const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+
+  await expect(store.listMinimalRecords()).resolves.toEqual([record]);
+  await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(true);
+  await store.resetForAccount(NEW_ACCOUNT);
+  await expect(store.listMinimalRecords()).resolves.toEqual([]);
+});

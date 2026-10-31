@@ -204,15 +204,7 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   /** 멘션 표시를 하기 전의 맥락. */
   const context: BundleContext = {
     fetchedAt: now,
-    post: {
-      title: post.value.title,
-      authorId: post.value.registerId,
-      authorName: post.value.registerName,
-      registeredDateTime: post.value.registeredDateTime,
-      contents: post.value.textComponents.map(({ contents }) => contents).join('\n'),
-      attachments: [...post.value.attachments],
-      mention: false,
-    },
+    post: contextPostOf(post.value),
     targetThread,
     otherComments: comments
       .filter((comment) => postBody || comment.commentId !== bundle.remarkId)
@@ -246,6 +238,19 @@ function isAssignedTo(post: FlowPost, taskId: string, myIds: readonly string[]):
 /** 댓글이나 대댓글에 사용자 ID들 가운데 하나를 가리키는 멘션 표기가 있는지 본다. */
 function mentionsAnyOf(contents: string, userIds: readonly string[]): boolean {
   return userIds.some((id) => hasMentionMarkupFor(contents, id));
+}
+
+/** 조회한 게시물의 제목과 본문. 멘션 표시는 `markContextMentions`가 한다. */
+export function contextPostOf(post: FlowPost): ContextPost {
+  return {
+    title: post.title,
+    authorId: post.registerId,
+    authorName: post.registerName,
+    registeredDateTime: post.registeredDateTime,
+    contents: post.textComponents.map(({ contents }) => contents).join('\n'),
+    attachments: [...post.attachments],
+    mention: false,
+  };
 }
 
 /**

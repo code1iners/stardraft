@@ -158,8 +158,9 @@ export class AssignmentDetection {
         dropCandidate();
         continue;
       }
-      if (!task.workerIds.some((id) => isSameFlowUser(id, account.userId)) || task.completion === 'unknown') continue;
-      if (task.completion === 'completed') {
+      if (!task.workerIds.some((id) => isSameFlowUser(id, account.userId))) continue;
+      // 진행·피드백·보류처럼 요청이 아닌 범주도 다시 조회해도 같으므로, 완료와 함께 새 알림이 올 때까지 후보에서 뺀다.
+      if (task.completion !== 'active') {
         dropCandidate();
         continue;
       }
@@ -169,7 +170,11 @@ export class AssignmentDetection {
         if (remarks.failure.kind === 'unauthorized') { flow.reportKeyRejected(); return; }
         continue;
       }
-      if (!remarks.value.complete) continue;
+      // 쪽 상한에 닿은 기록은 다시 받아도 끝나지 않으므로, 답이 없다고 단정하지 않고 후보에서 뺀다.
+      if (!remarks.value.complete) {
+        dropCandidate();
+        continue;
+      }
       // 생성 시 지정이 아니면 나를 추가한 담당 변경 기록의 서버 시각을 쓰며, 알림·관측·작성 시각으로 대체하지 않는다.
       /** 배정 시점 근거. */
       const assignedAt = isAssignedAtCreation(alarm, post, createdAt, state.enabledAt)

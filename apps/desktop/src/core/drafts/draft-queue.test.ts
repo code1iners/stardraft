@@ -2975,6 +2975,8 @@ it.each(['existing', 'self', 'completed', 'unknown', 'unassigned', 'comment'] as
   await settle();
   expect(bundles.state()).toEqual([]);
   expect(executor.requests).toEqual([]);
+  // 다시 조회해도 같은 상태 범주는 보류하지 않고 새 알림이 올 때까지 후보에서 뺀다.
+  if (kind === 'unknown') expect((await stateStore.getAssignmentState())?.pending).toEqual([]);
 });
 
 it.each([
@@ -3128,6 +3130,8 @@ describe('기존 업무의 신규 배정과 이미 답함', () => {
     await detection.checkNow();
     await settle();
     expect(bundles.state()).toMatchObject([{ status: 'already-answered', assignment: { assignedAt: ASSIGNED_AT } }]);
+    // 감지 때 받은 업무 본문을 남겨 처리됨 원문 칸이 비지 않는다.
+    expect(bundles.state()[0]?.context?.post).toMatchObject({ title: '오래된 업무', contents: '배포 순서를 정리해주세요.', assignment: true });
     expect(executor.requests).toEqual([]);
     flow.addWorkerAlarm(alarm('202', { postId: 'answered-task', remarkId: '805', registeredDateTime: '20261020090300' }));
     await detection.checkNow();
@@ -3195,7 +3199,7 @@ describe('기존 업무의 신규 배정과 이미 답함', () => {
     expect(executor.requests).toEqual([]);
   });
 
-  it('댓글을 쪽 상한까지 받아도 끝나지 않으면 답이 없다고 단정하지 않고 보류한다', async () => {
+  it('댓글을 쪽 상한까지 받아도 끝나지 않으면 답이 없다고 단정하지 않고 새 알림이 올 때까지 후보에서 뺀다', async () => {
     /** 서비스 검증 환경. */
     const env = await setup();
     const { flow, bundles, executor, stateStore } = env;
@@ -3210,7 +3214,11 @@ describe('기존 업무의 신규 배정과 이미 답함', () => {
     await settle();
     expect(bundles.state()).toEqual([]);
     expect(executor.requests).toEqual([]);
-    expect((await stateStore.getAssignmentState())?.pending.map((item) => item.postId)).toEqual(['long-thread']);
+    expect((await stateStore.getAssignmentState())?.pending).toEqual([]);
+    /** 다음 주기 전까지 받은 요청 수. */
+    const before = flow.requests.length;
+    await detection.checkNow();
+    expect(flow.requests.slice(before)).toEqual(['GET /user/alarms/worker']);
   });
 
   it('기능 시작 전부터 맡던 업무의 일반 댓글·상태 변경 알림을 신규 배정으로 보지 않는다', async () => {
@@ -3348,21 +3356,20 @@ describe('마스킹한 실응답 사례 A의 최종 판정', () => {
     expect(env.executor.requests).toEqual([]);
   });
 
-  it('변형: 진행·피드백 범주(1)였다면 미확인으로 보류하고 주기마다 상세를 다시 받는다', async () => {
+  it('변형: 진행·피드백 범주(1)였다면 초안 없이 후보에서 빼고 다음 주기에 상세를 다시 받지 않는다', async () => {
     /** 서비스 검증 환경. */
     const env = await setup();
     /** 실응답 대역. */
     const server = new FakeFlowServer();
     /** 기준을 만든 감지. */
     const detection = await caseDetection(env, server);
-    server.replyNext({ status: 200, body: caseAlarms }, { status: 200, body: casePost('1') },
-      { status: 200, body: caseAlarms }, { status: 200, body: casePost('1') });
+    server.replyNext({ status: 200, body: caseAlarms }, { status: 200, body: casePost('1') }, { status: 200, body: caseAlarms });
     await detection.checkNow();
     await detection.checkNow();
     await settle();
     expect(env.bundles.state()).toEqual([]);
-    expect((await env.stateStore.getAssignmentState())?.pending.map((item) => item.postId)).toEqual(['id-7']);
-    expect(paths(server)).toEqual(['/user/alarms', '/user/alarms', '/user/posts/id-7', '/user/alarms', '/user/posts/id-7']);
+    expect((await env.stateStore.getAssignmentState())?.pending).toEqual([]);
+    expect(paths(server)).toEqual(['/user/alarms', '/user/alarms', '/user/posts/id-7', '/user/alarms']);
   });
 });
 

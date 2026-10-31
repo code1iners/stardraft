@@ -1,4 +1,4 @@
-import { isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
+import { contextPostOf, isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
 import { mentionLocationKey, mentionLocationOf, type Mention, type MentionLocation } from '../detection/mention';
 import { isPostBody } from '../flow/mention-place';
 import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
@@ -296,6 +296,8 @@ export class MentionBundles {
         bundle.status = 'already-answered';
         bundle.repoCheck = null;
         bundle.processedAt = this.options.clock.now();
+        // 맥락을 따로 조회하지 않으므로, 처리됨 원문 칸에 보일 업무 본문을 감지 때 받은 상세로 남긴다. 댓글은 넣지 않는다.
+        bundle.context = markContextMentions({ fetchedAt: bundle.processedAt, post: contextPostOf(post), targetThread: null, otherComments: [] }, bundle);
       }
       bundle.postTitle = post.title;
       bundle.connectUrl = post.connectUrl;

@@ -87,7 +87,7 @@ export class MentionDetection {
     return this.pollNow();
   }
 
-  /** 지금 바로 조회한다. 잠자기에서 깨어났을 때와 트레이 메뉴 "지금 확인"에서 부른다. 감지 중이 아니면 아무것도 하지 않는다. */
+  /** 지금 바로 조회한다. 잠자기에서 깨어났을 때와 트레이 메뉴 "Flow 알림 지금 확인"에서 부른다. 감지 중이 아니면 아무것도 하지 않는다. */
   checkNow(): Promise<void> {
     return this.pollNow();
   }

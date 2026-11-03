@@ -839,7 +839,7 @@ export interface RestartWaitSnapshot {
   posting: boolean;
 }
 
-/** 앱 내 업데이트의 화면 상태. 오른쪽 클릭 메뉴, 작은 창 띠와 다시 시작 확인 화면, 설정 "일반"이 그린다. */
+/** 앱 내 업데이트의 화면 상태. 작은 창 띠와 다시 시작 확인 화면, 설정 "일반"이 그린다. */
 export interface UpdateStateSnapshot {
   /** 업데이트 상태. */
   status: UpdateSnapshot;

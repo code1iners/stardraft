@@ -2,7 +2,6 @@ import { app, Menu, nativeTheme, powerMonitor, systemPreferences, Tray, type Men
 import type { TrayIndicator } from '../core/tray-indicator';
 import type { GlobalProblemText } from '../shared/global-problem-text';
 import type { SettingsSection } from '../shared/ipc';
-import type { UpdateMenuAction, UpdateMenuItem } from '../shared/update-text';
 import { TrayAnimation } from './tray-animation';
 import { TrayImages } from './tray-images';
 
@@ -14,10 +13,8 @@ export interface TrayActions {
   openPopover: () => void;
   /** 메뉴 "설정…"과 전역 문제 항목. 칸을 주면 그 칸을 연다. */
   openSettings: (section?: SettingsSection) => void;
-  /** 메뉴 "지금 확인". Flow 알림을 바로 조회한다. */
+  /** 메뉴 "Flow 알림 지금 확인". Flow 알림을 바로 조회한다. */
   checkNow: () => void;
-  /** 메뉴의 업데이트 항목. 항목마다 정한 일을 한다. */
-  runUpdateAction: (action: UpdateMenuAction) => void;
   /** 메뉴 "종료". */
   quit: () => void;
 }
@@ -28,7 +25,7 @@ export interface TrayView {
   indicator: TrayIndicator;
   /** 오른쪽 클릭 메뉴 맨 위에 둘 전역 문제의 문구. 없으면 `null`. */
   problem: GlobalProblemText | null;
-  /** 메뉴 "지금 확인"을 누를 수 있는지 여부. 감지를 시작하기 전에는 끈다. */
+  /** 메뉴 "Flow 알림 지금 확인"을 누를 수 있는지 여부. 감지를 시작하기 전에는 끈다. */
   canCheckNow: boolean;
 }
 
@@ -50,8 +47,6 @@ export class AppTray {
   private readonly tray: Tray;
   /** 지금 보이는 상태. 오른쪽 클릭할 때 메뉴를 이 상태로 만든다. */
   private view: TrayView = { indicator: { kind: 'idle', generating: false }, problem: null, canCheckNow: false };
-  /** 메뉴의 업데이트 항목. 없으면 `null`. 받는 동안 자주 바뀌므로 아이콘과 따로 두고 메뉴를 열 때 읽는다. */
-  private updateItem: UpdateMenuItem | null = null;
   /** 모든 상태와 배율의 미리 만든 이미지. */
   private readonly images = new TrayImages();
   /** pulse 예약과 동작 줄이기를 관리한다. */
@@ -109,20 +104,15 @@ export class AppTray {
     this.animation.show(view.indicator.kind);
   }
 
-  /** 메뉴의 업데이트 항목을 바꾼다. 업데이트 때문에 아이콘은 바꾸지 않는다. */
-  setUpdateItem(item: UpdateMenuItem | null): void {
-    if (this.disposed) return;
-    this.updateItem = item;
-  }
-
-  /** 오른쪽 클릭 메뉴. 전역 문제가 있으면 맨 위에 그 항목을 두고, 업데이트 항목은 "설정…" 아래에 둔다. */
+  /**
+   * 오른쪽 클릭 메뉴. 전역 문제가 있으면 맨 위에 그 항목을 둔다.
+   * 업데이트 항목은 두지 않는다. 설정 "일반"의 업데이트 [지금 확인]과 헷갈리지 않도록 업데이트는 작은 창 띠와 설정에서만 다룬다.
+   */
   private buildMenu(): Menu {
     /** 메뉴 항목이 부를 동작. */
     const { actions } = this;
     /** 맨 위에 둘 전역 문제. */
     const problem = this.view.problem;
-    /** 업데이트 항목. */
-    const update = this.updateItem;
     /** 메뉴 항목. */
     const items: MenuItemConstructorOptions[] = [
       ...(problem
@@ -132,17 +122,11 @@ export class AppTray {
           ] satisfies MenuItemConstructorOptions[])
         : []),
       { label: '창 열기', click: actions.openPopover },
-      { label: '지금 확인', enabled: this.view.canCheckNow, click: actions.checkNow },
+      { label: 'Flow 알림 지금 확인', enabled: this.view.canCheckNow, click: actions.checkNow },
       { label: '설정…', click: () => actions.openSettings() },
-      ...(update ? [updateMenuEntry(update, actions)] : []),
       { type: 'separator' },
       { label: '종료', click: actions.quit },
     ];
     return Menu.buildFromTemplate(items);
   }
-}
-
-/** 업데이트 항목의 메뉴 항목. 누를 일이 없으면 누를 수 없게 둔다. */
-function updateMenuEntry({ label, action }: UpdateMenuItem, actions: TrayActions): MenuItemConstructorOptions {
-  return action ? { label, click: () => actions.runUpdateAction(action) } : { label, enabled: false };
 }

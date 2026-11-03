@@ -92,7 +92,7 @@ export function updateBannerView(update: UpdateStateSnapshot): UpdateBannerView 
   return open(statusBanner(update.status)) ?? open(update.justUpdated === null ? null : justUpdatedBanner(update.justUpdated));
 }
 
-/** 상태의 띠. 메뉴나 설정에만 보이는 상태(최신, 확인 중, 받는 중, 확인 실패)는 `null`. */
+/** 상태의 띠. 설정에만 보이는 상태(최신, 확인 중, 받는 중, 확인 실패)는 `null`. */
 function statusBanner(status: UpdateSnapshot): UpdateBannerView | null {
   switch (status.kind) {
     case 'idle':

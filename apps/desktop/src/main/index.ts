@@ -35,12 +35,11 @@ import { UpdateRestart } from '../core/update/update-restart';
 import { checkInstallLocation, macBundlePathOf, type BlockedLocationReason } from '../core/update/install-location';
 import { UPDATE_PUBLIC_KEYS } from '../core/update/update-public-keys.mts';
 import { globalProblemText, type GlobalProblemText } from '../shared/global-problem-text';
-import { updateMenuItem } from '../shared/update-text';
 import { APP_ID, appPlatform, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
 import { createAppLogger } from './app-logger';
 import { AppWindows } from './app-windows';
 import { editorSystem } from './editor-system';
-import { globalProblemSnapshot, openSite, registerIpc } from './ipc';
+import { globalProblemSnapshot, registerIpc } from './ipc';
 import { OsNotifier } from './os-notifier';
 import { ReviewSections } from './review-sections';
 import { hardenRenderers } from './security';
@@ -452,27 +451,9 @@ function start(): void {
       openPopover: () => appWindows.openPopover(),
       openSettings: (section) => appWindows.openSettings(section),
       checkNow: () => void mentionDetection.checkNow(),
-      runUpdateAction: (action) => {
-        switch (action) {
-          case 'restart':
-            void updateRestart?.requestRestart();
-            return;
-          case 'open-popover':
-            appWindows.openPopover();
-            return;
-          case 'open-site':
-            void openSite('update', logger);
-            return;
-        }
-      },
       quit: () => app.quit(),
     });
     tray = appTray;
-    // 업데이트 상태는 메뉴 항목으로만 보이고 아이콘은 바꾸지 않는다.
-    /** 메뉴의 업데이트 항목을 지금 상태에 맞춘다. */
-    const refreshUpdateItem = () => appTray.setUpdateItem(updateRestart && updateMenuItem(updateRestart.state().status));
-    refreshUpdateItem();
-    updateRestart?.onChange(refreshUpdateItem);
     /** 전역 문제, 감지 시작 여부, 묶음 상태(검토 대기 수, 실패·게시 실패, 생성 중)에 맞춰 트레이 표시를 바꾼다. */
     const refreshTray = () =>
       appTray.show(

@@ -1,4 +1,4 @@
-import type { BlockedLocationReasonSnapshot, InstallFailureReasonSnapshot, RestartWaitSnapshot, UpdateSnapshot } from './ipc';
+import type { BlockedLocationReasonSnapshot, InstallFailureReasonSnapshot, RestartWaitSnapshot } from './ipc';
 
 /**
  * 받은 파일의 서명 검증에 실패했을 때의 문구. 사이트에서 받아 설치하라고 권하지 않는다.
@@ -14,38 +14,6 @@ const BLOCKED_LOCATION_TEXT: Record<BlockedLocationReasonSnapshot, string> = {
   'read-only': '응용 프로그램 폴더로 옮긴 뒤 다시 여세요',
   'no-permission': '이 계정은 Stardraft를 바꿀 권한이 없습니다',
 };
-
-/** 오른쪽 클릭 메뉴의 업데이트 항목을 누를 때 할 일. `restart`는 [다시 시작], `open-popover`는 작은 창 열기, `open-site`는 사이트의 업데이트 섹션 열기다. */
-export type UpdateMenuAction = 'restart' | 'open-popover' | 'open-site';
-
-/** 오른쪽 클릭 메뉴의 업데이트 항목. */
-export interface UpdateMenuItem {
-  /** 항목 이름. */
-  label: string;
-  /** 누를 때 할 일. 누를 수 없는 항목이면 `null`. */
-  action: UpdateMenuAction | null;
-}
-
-/** 오른쪽 클릭 메뉴의 업데이트 항목. 메뉴에 둘 것이 없는 상태면 `null`. 트레이 아이콘과 OS 알림은 업데이트에 쓰지 않는다. */
-export function updateMenuItem(status: UpdateSnapshot): UpdateMenuItem | null {
-  switch (status.kind) {
-    case 'idle':
-    case 'checking':
-    case 'up-to-date':
-    case 'check-failed':
-    case 'signature-failed':
-    case 'install-failed':
-      return null;
-    case 'downloading':
-      return { label: `${status.version} 받는 중… ${status.percent}%`, action: null };
-    case 'ready':
-      return { label: `다시 시작해서 업데이트 (${status.version})`, action: 'restart' };
-    case 'restart-pending':
-      return { label: '다시 시작 대기 중…', action: 'open-popover' };
-    case 'location-blocked':
-      return { label: `새 버전 ${status.version} · 사이트에서 받기`, action: 'open-site' };
-  }
-}
 
 /** 설치 준비됨의 문구. */
 export function readyText(version: string): string {

@@ -11,9 +11,9 @@ export interface TrayActions {
   togglePopover: () => void;
   /** 메뉴 "창 열기". */
   openPopover: () => void;
-  /** 메뉴 "설정…"과 전역 문제 항목. 칸을 주면 그 칸을 연다. */
+  /** 메뉴 "설정"과 전역 문제 항목. 칸을 주면 그 칸을 연다. */
   openSettings: (section?: SettingsSection) => void;
-  /** 메뉴 "Flow 알림 지금 확인". Flow 알림을 바로 조회한다. */
+  /** 메뉴 "알림 확인". Flow 알림을 바로 조회한다. */
   checkNow: () => void;
   /** 메뉴 "종료". */
   quit: () => void;
@@ -25,7 +25,7 @@ export interface TrayView {
   indicator: TrayIndicator;
   /** 오른쪽 클릭 메뉴 맨 위에 둘 전역 문제의 문구. 없으면 `null`. */
   problem: GlobalProblemText | null;
-  /** 메뉴 "Flow 알림 지금 확인"을 누를 수 있는지 여부. 감지를 시작하기 전에는 끈다. */
+  /** 메뉴 "알림 확인"을 누를 수 있는지 여부. 감지를 시작하기 전에는 끈다. */
   canCheckNow: boolean;
 }
 
@@ -117,13 +117,13 @@ export class AppTray {
     const items: MenuItemConstructorOptions[] = [
       ...(problem
         ? ([
-            { label: `${problem.title}: ${problem.actionLabel}…`, click: () => actions.openSettings(problem.actionSection) },
+            { label: `${problem.title}: ${problem.actionLabel}`, click: () => actions.openSettings(problem.actionSection) },
             { type: 'separator' },
           ] satisfies MenuItemConstructorOptions[])
         : []),
       { label: '창 열기', click: actions.openPopover },
-      { label: 'Flow 알림 지금 확인', enabled: this.view.canCheckNow, click: actions.checkNow },
-      { label: '설정…', click: () => actions.openSettings() },
+      { label: '알림 확인', enabled: this.view.canCheckNow, click: actions.checkNow },
+      { label: '설정', click: () => actions.openSettings() },
       { type: 'separator' },
       { label: '종료', click: actions.quit },
     ];

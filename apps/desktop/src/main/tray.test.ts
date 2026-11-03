@@ -71,8 +71,8 @@ describe('트레이 연결', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('오른쪽 클릭 메뉴는 Flow 알림 조회임을 이름에 드러내고 업데이트 항목은 두지 않는다', () => {
-    /** 메뉴 "Flow 알림 지금 확인"이 부를 동작. */
+  it('오른쪽 클릭 메뉴는 알림 조회를 "알림 확인"으로 보이고 업데이트 항목은 두지 않는다', () => {
+    /** 메뉴 "알림 확인"이 부를 동작. */
     const checkNow = vi.fn();
     const tray = new AppTray({ togglePopover: vi.fn(), openPopover: vi.fn(), openSettings: vi.fn(), checkNow, quit: vi.fn() });
     const native = mock.trays[0]!;
@@ -80,9 +80,28 @@ describe('트레이 연결', () => {
     native.emit('right-click');
     /** 띄운 메뉴 항목. `Menu.buildFromTemplate`을 흉내 내 템플릿을 그대로 받는다. */
     const items = native.popUpContextMenu.mock.calls[0]![0] as { label?: string; type?: string; click?: () => void }[];
-    expect(items.map((item) => item.label ?? item.type)).toEqual(['창 열기', 'Flow 알림 지금 확인', '설정…', 'separator', '종료']);
+    expect(items.map((item) => item.label ?? item.type)).toEqual(['창 열기', '알림 확인', '설정', 'separator', '종료']);
     items[1]!.click!();
     expect(checkNow).toHaveBeenCalledTimes(1);
+    tray.destroy();
+  });
+
+  it('전역 문제가 있으면 맨 위 항목을 "이름: 행동"으로 보이고 누르면 그 칸의 설정을 연다', () => {
+    /** 전역 문제 항목이 부를 동작. */
+    const openSettings = vi.fn();
+    const tray = new AppTray({ togglePopover: vi.fn(), openPopover: vi.fn(), openSettings, checkNow: vi.fn(), quit: vi.fn() });
+    const native = mock.trays[0]!;
+    tray.show({
+      indicator: { kind: 'problem', reason: 'setup-needed' },
+      problem: { title: '설정 필요', message: '', actionLabel: '키 입력', actionSection: 'flow-account' },
+      canCheckNow: false,
+    });
+    native.emit('right-click');
+    /** 띄운 메뉴 항목. */
+    const items = native.popUpContextMenu.mock.calls[0]![0] as { label?: string; click?: () => void }[];
+    expect(items[0]!.label).toBe('설정 필요: 키 입력');
+    items[0]!.click!();
+    expect(openSettings).toHaveBeenCalledWith('flow-account');
     tray.destroy();
   });
 });

@@ -3,7 +3,7 @@
 Map: [Sentry 오류 이슈 진단 보고서](../map.md)
 Type: grilling
 Mode: HITL
-Status: open
+Status: resolved
 Blocked by: 03
 
 ## Question
@@ -17,3 +17,48 @@ Blocked by: 03
 ## Comments
 
 - 2026-11-12 [진단 보고서의 형식과 저장 위치](07-diagnosis-report-format.md)에서 진단 보고서의 종착 상태를 **완료** 하나로 정했다(조사 문서의 "저장됨" 자리). 내보내기는 상태를 바꾸지 않는 선택 동작이다. 완료하면 최소 기록만 남기므로 `minimal_record.status`에 새 값이 필요하다.
+
+## Answer
+
+2026-11-13 grilling 세션에서 정했다. 근거는 [경계 후보 조사](../research/provider-seam-candidates.md)와 [계정 연결 티켓](04-sentry-connection-and-mapping.md)의 "Flow 키 문제와 Sentry 토큰 문제는 서로의 감지·대기열을 멈추지 않는다"다. [ADR 0004](../../../docs/adr/0004-generation-queue-with-provider-adapters.md)로 남겼다.
+
+### 경계는 B: 생성 대기열 + 대상 어댑터
+
+- `DraftQueue`에서 프로바이더와 무관한 부분을 떼어 공통 **생성 대기열**로 둔다. 직렬 실행, 우선순위, 대기열 저장·복원, 실행 직전 에이전트 확인, 일시적 실패 1회 재시도, 전역 실패 멈춤, 취소·앱 종료, 진행 단계가 여기에 들어간다.
+- 대상마다 다른 부분은 **대상 어댑터**로 받는다. `prepare(targetId)`(지침·입력 문서·출력 스키마·저장소 해석·`timeoutMs`·`RunKind`, 또는 건너뜀·어댑터 멈춤·잠시 뒤 다시), `read(output)`, `save`·`fail`·`needsRepoCheck`, "아직 생성 중인가" 판정이다. 이름과 정확한 시그니처는 구현 재량이다.
+- Flow 어댑터는 기존 `MentionBundles`·`draft-input`·`repo-selection`을 감싼다. 담당 업무 초안은 Flow 어댑터 안에 그대로 둔다. Sentry 어댑터는 새 모듈이다.
+- 공유하는 것: 실행기 포트와 두 구현, 에이전트 연결·실행 직전 확인, 일시적·전역 실패 분류, 비밀 파일 패턴·근거 위치 검사, 작업 폴더 후보 찾기, `RepoResolution`과 폴더 존재 확인, 에디터 열기.
+- A(`MentionBundle`에 `errorIssue?` 추가)는 쓰지 않는다. Flow 핵심 파일에 분기가 퍼지고, `mention_bundle`의 Flow 열이 `NOT NULL`이며, Flow 키 멈춤을 풀려면 결국 대기열을 뜯어야 한다. C(실행기만 공유)는 재시도·멈춤·취소를 중복하고 같은 에이전트를 동시에 돌리게 되어 쓰지 않는다.
+
+### 실행 종류와 지침
+
+- `RunKind`에 `'diagnosis'`를 더한다. 두 실행기가 이 값을 보고 턴 상한·시간 상한·도구 범위를 정한다.
+- 저장소의 **재현 허용**이 꺼져 있어도 `'diagnosis'`로 실행하되 실행기가 읽기 전용 경계로 낮춘다. 보고서의 재현은 앱이 "불가(허용 안 됨)"로 채운다.
+- 지침·입력 문서·출력 스키마·문체 검사는 어댑터가 만든다. 설정의 사용자 **추가 지침**은 Flow 초안에만 붙이고 진단에는 붙이지 않는다. 진단용 추가 지침은 이번 범위가 아니다.
+
+### 상태 저장
+
+- Sentry 어댑터는 전용 저장 포트(예: `SentryStore`)를 갖고, 오류 이슈·진단 보고서 표를 그 뒤에 둔다. 지금 `StateStore` 포트(계정 타입 `FlowEmployee`)에는 Sentry 메서드를 더하지 않는다.
+- 생성 대기열은 대상을 `(kind, targetId)`로만 안다. `draft_queue`에 `kind` 열을 더하는 이관을 하고 기존 행은 `flow`로 채운다.
+- 진단 보고서를 **완료**하면 Sentry 쪽 표에 최소 행(오류 이슈 ID·재발 식별자·완료 시각 정도)만 남기고 본문과 첨부를 지운다. Flow의 `minimal_record`는 건드리지 않는다. 그래서 위 Comments의 "`minimal_record.status`에 새 값이 필요하다"는 메모는 필요 없어졌다. 이 최소 행은 "따라잡기와 중복 억제"에서 같은 재발을 다시 진단하지 않는 근거로 쓸 수 있다.
+- 표를 `state.db`에 둘지 다른 파일에 둘지(Flow 계정 리셋과의 관계)는 지도의 "Sentry 실행 상태의 저장 위치"에서 정한다.
+
+### 검토 화면 데이터
+
+- `ReviewSnapshot`에 `diagnoses: DiagnosisSnapshot[]`를 따로 더한다. `bundles`를 종류 유니온으로 바꾸지 않고, `BundleSnapshot`·`BundleDetail`은 그대로 둔다. 상세 컴포넌트는 종류별로 둔다.
+- 목록 그룹(생성 중·준비됨·실패·처리됨) 판정만 공통 함수로 뽑아 두 종류가 같은 기준으로 묶이게 한다.
+- 두 목록을 한 화면에 섞을지 나눌지, 트레이 수 합산은 지도의 "검토 화면과 알림"에서 정한다.
+
+### 멈춤은 두 층
+
+- **전역 멈춤**: 에이전트를 쓸 수 없으면 모든 대상이 멈춘다.
+- **어댑터 멈춤**: `prepare`가 그 어댑터의 연결 문제를 돌려주면 그 어댑터의 대상만 멈춘다. Flow 키 거부·Flow 미도달은 Flow 어댑터 멈춤, Sentry 토큰 문제·Sentry 미도달은 Sentry 어댑터 멈춤이다. 멈춘 대상은 실패로 바꾸지 않고 순서를 유지한 채 기다리며, 다른 어댑터의 대상은 그 앞으로 지나간다.
+- 지금 대기열이 돌 조건에 들어 있는 `flowKeyUsable()`은 Flow 어댑터 멈춤으로 옮긴다.
+
+### 다음 프로바이더 점검(설계 아님)
+
+Slack·Gmail은 어댑터 하나와 자기 저장 포트·스냅숏 배열을 더하면 붙는다. 대기열 정책·멈춤 층·실행기는 그대로 쓴다. 게시 여부는 어댑터 뒤의 일이라 경계와 무관하다. 맞지 않는 점은 찾지 못했다.
+
+### 남긴 것
+
+- 진단과 Flow 초안이 한 줄을 직렬로 쓸지, 동시 실행 수, 우선순위, 취소는 [진단 실행 큐의 동시 실행과 우선순위](12-diagnosis-run-queue.md)에서 정한다.

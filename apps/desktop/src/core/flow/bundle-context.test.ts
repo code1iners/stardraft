@@ -188,6 +188,30 @@ describe('맥락 수집: 댓글 스레드 묶음', () => {
     expect(result.ok && result.context.targetThread?.mention).toBe(false);
   });
 
+  it('머리 댓글이 사람 글이어도 첨부 때문에 systemCode(S13)가 붙어 오면 대상 댓글 스레드를 찾는다. 다른 댓글을 셀 때는 그대로 뺀다', async () => {
+    const flow = new FakeFlowApi();
+    flow.addPost({ postId: POST_ID, title: '오류 문의', textComponents: [{ contents: '본문', mentions: [] }] });
+    flow.addComment(POST_ID, { commentId: '900000101', contents: '다른 댓글', registeredDateTime: at(1) });
+    // 실제 Flow는 첨부가 있는 사람 글에도 systemCode를 붙여 보낸다. 본문과 첨부가 있으니 사람 글이다.
+    flow.addComment(POST_ID, {
+      commentId: '900000102',
+      contents: `${MY_MARKUP} 로그를 확인해 주세요`,
+      registerId: SENDER,
+      registerName: '보낸 사람',
+      registeredDateTime: at(2),
+      systemCode: 'S13',
+      attachments: ['로그.png'],
+    });
+    flow.addComment(POST_ID, { commentId: '900000103', contents: '업무 상태를 바꿨습니다.', systemCode: 'S45_2^^대기^^진행', registeredDateTime: at(3) });
+
+    const result = await collectBundleContext(flow, bundle('900000102', [mention({ remarkId: '900000102' })]), NOW, [ME]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.context.targetThread).toMatchObject({ id: '900000102', authorId: SENDER, mention: true });
+    expect(result.context.otherComments.map((comment) => comment.id)).toEqual(['900000101']);
+  });
+
   it('머리 댓글이 목록에 없으면 대상 댓글 스레드가 사라졌다고, 조회가 실패하면 그 실패를 돌려준다', async () => {
     const flow = threadFlow();
     await expect(collectBundleContext(flow, bundle('900000999', [mention({ remarkId: '900000999' })]), NOW, [ME])).resolves.toEqual({

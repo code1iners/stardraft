@@ -139,12 +139,15 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   const post = await api.getPost(bundle.postId);
   if (!post.ok) return post;
 
+  /** 게시물의 댓글 전부. 시스템 댓글을 거르기 전이다. 링크가 가리킨 머리 댓글을 찾는 데 쓴다. */
+  const allComments: FlowComment[] = [];
   /** 게시물의 댓글 전부. 시스템 댓글은 뺐다. */
   const comments: FlowComment[] = [];
   /** 댓글을 넘긴 결과. */
   const walk = await walkPages(
     (cursor) => api.listComments(bundle.postId, cursor),
     (page) => {
+      allComments.push(...page.comments);
       comments.push(...page.comments.filter(isHumanRemark));
       return true;
     },
@@ -170,8 +173,11 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   /** 묶음 자리에서 지금 나를 지목한 글의 멘션 위치. 본문 묶음이면 게시물 본문이다. */
   let myMentions: MentionLocation[] = [{ postId: bundle.postId, remarkId: '-1', replyId: '-1' }].filter((location) => postBody && stillMentions(location));
   if (!postBody) {
-    /** 대상 댓글 스레드의 머리 댓글. */
-    const head = comments.find((comment) => comment.commentId === bundle.remarkId);
+    /**
+     * 대상 댓글 스레드의 머리 댓글. 첨부가 있는 사람 글에도 `systemCode`가 붙어 오므로, 거르기 전 전체 목록에서 찾는다.
+     * 그래서 여기서 못 찾았다면 Flow 목록에 정말 없는 것이다.
+     */
+    const head = allComments.find((comment) => comment.commentId === bundle.remarkId);
     if (!head) return { ok: false, failure: { kind: 'thread-gone' } };
     /** 머리 댓글의 대댓글 전부. */
     const replies = head.replyHasNext ? await allReplies(api, bundle.postId, head.commentId) : { ok: true as const, value: head.replies };

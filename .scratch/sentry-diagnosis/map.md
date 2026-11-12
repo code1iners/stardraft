@@ -54,14 +54,17 @@ Created: 2026-11-12
 - [Sentry 오류 이슈 감지와 인증 조사](issues/01-sentry-detection-auth-research.md): 조직 단위 이슈 목록 API를 폴링해 감지할 수 있다(신규는 `firstSeen` 체크포인트, 재발은 `is:regressed`). 인증은 개인 토큰에 `org:read`+`event:read`이고 조직 토큰은 쓸 수 없다. 환경·레벨·프로젝트 필터는 서버에서 걸 수 있고, 진단 데이터는 `events/latest/` 한 번으로 받는다. 지역별 `regionUrl`과 rate limit은 주의해야 한다.
 - [재현에 필요한 에이전트 실행 권한 조사](issues/02-agent-reproduction-permissions-research.md): 두 CLI 모두 macOS Seatbelt로 쓰기 범위와 네트워크를 좁힐 수 있다. Codex는 이미 OS 수준에서 셸 경유 비밀 읽기를 막고, Claude는 샌드박스를 켜야만 막힌다. MCP(Playwright)는 샌드박스 밖에서 돈다. 환경 변수가 그대로 넘어가는 문제와 `mcp__*` deny 구조도 바꿔야 한다. 정리한 선택지는 A~F다.
 - [Sentry 계정 연결, 진단 대상 필터, 저장소 매핑 설정](issues/04-sentry-connection-and-mapping.md): 개인 토큰 하나를 safeStorage로 저장하고, 문제가 생기면 Sentry 감지만 멈춘다. 여러 조직을 허용하며 프로젝트는 옵트인으로 등록하고 `id`를 키로 쓴다. 환경·레벨 필터는 프로젝트마다 두고(기본 `production`, `error`·`fatal`), 등록 시각을 기준 시각으로 잡는다. 설정은 `settings.json`에 두므로 Flow 리셋에도 남는다. 화면은 `Sentry` 칸을 새로 두고 매핑은 `저장소` 칸에 모은다. sentry.io만 지원하고, 온보딩에서 Flow 필수를 풀어 모든 프로바이더를 선택으로 둔다.
+- [재현 실행의 보안 경계](issues/05-reproduction-security-boundary.md): 샌드박스로 가두지 않고, 저장소마다 켠 **재현 허용** 아래에서 내 개발 환경을 APFS 복제 사본(`.git` 제외)으로 그대로 쓴다. 사본의 `.env`는 저장소별 **재현용 환경 파일**이고 그 값의 노출은 받아들인다. 셸·네트워크를 열고, 사용자의 MCP 정의만 가져와 에이전트가 직접 조작한다(기본 `자동` + 위험 도구 deny, `직접 선택` 가능). 상한 20분, 새로 켜진 시뮬레이터만 정리. [ADR 0003](../../docs/adr/0003-reproduction-opens-agent-boundary.md).
+- [저장소 매핑이 없는 Sentry 프로젝트의 오류 이슈 처리](issues/06-unmapped-sentry-project.md): 추측하지 않는다. 자동 선택·경로 추정 없이 **저장소 매핑 필요**로 남기고, 그 프로젝트에 매핑을 저장하면 자동으로 재개한다. 오류 이슈 하나에만 고르는 경로는 두지 않는다. Sentry 매핑은 프로젝트 하나에 저장소 하나이고 같은 저장소를 여러 프로젝트에 매핑할 수 있다. 매핑된 폴더가 사라지면 **저장소 확인 필요**로 멈춘다.
+- [재현용 MCP 불러오기와 위험 도구 목록 조사](issues/10-reproduction-mcp-research.md): Claude는 `--restricted`에서 사용자 MCP가 전혀 실리지 않으므로 앱이 설정 파일을 읽어 `--mcp-config`로 넘겨야 한다. Codex는 `--ignore-user-config`를 유지한 채 `-c mcp_servers.*`로 넘길 수 있다. `${VAR}` 인증과 최소 환경 변수가 충돌하고, Codex는 승인 `never`에서 조작 도구가 막힐 수 있으며, Codex의 MCP 프로세스는 그룹 SIGKILL을 견딘다. deny는 Claude glob, Codex 서버별 `disabled_tools`로 걸고, 우회되는 도구가 있다.
 
 ## Not yet specified
 
-- **진단 실행 큐**: 기존 초안 큐와 함께 쓸지 따로 둘지, 동시 실행 수, 몇 분씩 걸리는 실행의 취소·시간 초과 처리. 공통 경계 결정(B냐 C냐)이 나오면 티켓으로 만든다. 걸리는 사실(Flow 키 멈춤, 단일 `busy` 직렬화, 고정 시간 상한, `draft_queue` 키)은 [경계 조사](research/provider-seam-candidates.md)에 있다.
+- **진단 실행 큐**: 기존 초안 큐와 함께 쓸지 따로 둘지, 동시 실행 수(재현 실행은 시뮬레이터·dev 서버 포트를 나눠 쓰므로 함께 돌릴 수 있는지), 취소 처리. 실행 한 번의 상한은 [보안 경계](issues/05-reproduction-security-boundary.md)에서 20분으로 정했다. 공통 경계 결정(B냐 C냐)이 나오면 티켓으로 만든다. 걸리는 사실(Flow 키 멈춤, 단일 `busy` 직렬화, 고정 시간 상한, `draft_queue` 키)은 [경계 조사](research/provider-seam-candidates.md)에 있다.
 - **Sentry 실행 상태의 저장 위치**: 등록·필터·기준 시각·매핑은 `settings.json`으로 정했다. 감지 체크포인트·중복 억제 기록·진단 상태처럼 실행 중에 바뀌는 상태는 아직 정하지 않았다. 같은 `state.db`에 두면 Flow 계정을 바꿀 때 실행되는 `resetForAccount`가 Sentry 표까지 지운다. 보존 목록에 넣을지, 저장소를 따로 둘지 정해야 한다.
 - **`diagnosing-bugs` 전달 방식**: 에이전트 쪽에 스킬이 설치되어 있다고 가정할지, 절차를 지침에 직접 넣을지.
 - **따라잡기와 중복 억제**: PC가 꺼져 있는 동안 쌓인 오류 이슈를 처리하는 방법, 같은 오류 이슈가 거듭 재발할 때 진단을 반복하지 않는 기준. [API 조사](research/sentry-api-facts.md)에서 확인한 제약이 있다. 재발 상태는 7일 뒤 `ongoing`으로 바뀌어 그보다 오래 꺼져 있던 동안의 재발은 되찾을 수 없다. 재발마다 남는 `SET_REGRESSION` 활동(`event_id`·`version`)은 중복 억제 키 후보다. 보관 뒤 다시 늘어나는 `escalating` 오류 이슈는 지금 전제("해결 후 재발")에 들어가지 않는데, 이대로 둘지 확인해야 한다.
-- **검토 화면과 알림**: 진단 보고서 검토 화면, 트레이 알림, **지시**를 받아 다시 진단하는 흐름. Flow 초안 검토 화면과 얼마나 공유할지.
+- **검토 화면과 알림**: 진단 보고서 검토 화면, 트레이 알림, **지시**를 받아 다시 진단하는 흐름. Flow 초안 검토 화면과 얼마나 공유할지. **저장소 매핑 필요**·**저장소 확인 필요** 상태의 오류 이슈를 어떻게 알릴지(오류 이슈마다 알릴지, 프로젝트 단위로 묶어 알릴지)도 여기서 정한다.
 - **실패 처리**: 재현이 불가능하거나 이벤트 데이터(스택트레이스, breadcrumbs, release)가 부족할 때 보고서와 상태를 어떻게 남길지.
 
 ## Out of scope

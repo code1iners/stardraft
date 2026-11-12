@@ -30,7 +30,7 @@ Created: 2026-11-12
 - **진행 방식**: 지도와 티켓은 차팅 세션에서 만들고, 각 티켓은 새 세션에서 하나씩 진행한다. research 티켓도 차팅 세션에서 실행하지 않았다.
 - **문서 언어**: 이 지도의 모든 문서는 한국어로 쓴다.
 - **조사 결과 위치**: 조사 결과는 이 폴더의 `research/`에 파일로 두고 티켓에서 링크한다.
-- **현재 코드 사실**: 에이전트 실행은 읽기 전용이다. Claude Code는 `--tools Read,Glob,Grep`·`--restricted`·MCP 차단(`apps/desktop/src/core/agent/claude-code-executor.ts`), Codex는 권한 프로필로 읽기 범위를 제한한다(`apps/desktop/src/core/agent/codex-executor.ts`). 재현은 이 경계를 여는 일이라서 가장 무거운 결정이다.
+- **현재 코드 사실**: 에이전트 실행은 읽기 전용이다. Claude Code는 `--tools Read,Glob,Grep`·`--restricted`·MCP 차단(`apps/desktop/src/core/agent/claude-code-executor.ts`), Codex는 셸 명령을 실행하되 권한 프로필(Seatbelt)로 읽기 범위를 제한하고 쓰기와 네트워크를 막는다(`apps/desktop/src/core/agent/codex-executor.ts`). 재현은 이 경계를 여는 일이라서 가장 무거운 결정이다.
 
 ### 차팅 중 확정된 전제
 
@@ -49,11 +49,16 @@ Created: 2026-11-12
 
 <!-- 닫힌 티켓마다 한 줄: 관련성을 판단할 만큼의 요지 + 링크 -->
 
+- [Flow 전용 구조에서 프로바이더 공통 경계 후보 조사](issues/03-provider-seam-codebase-research.md): 공통으로 쓸 수 있는 것은 실행기 포트뿐이고 나머지는 Flow 묶음 타입에 묶여 있다. 경계 후보는 A(묶음에 종류 추가)·B(대기열의 실행 관리를 공통으로 떼고 프로바이더 어댑터)·C(실행기 포트만 공유) 셋이다. 이와 별도로 대기열 직렬 실행·Flow 키 멈춤·계정 리셋이 Sentry 쪽에 미치는 영향도 적었다.
+- [Sentry 오류 이슈 감지와 인증 조사](issues/01-sentry-detection-auth-research.md): 조직 단위 이슈 목록 API를 폴링해 감지할 수 있다(신규는 `firstSeen` 체크포인트, 재발은 `is:regressed`). 인증은 개인 토큰에 `org:read`+`event:read`이고 조직 토큰은 쓸 수 없다. 환경·레벨·프로젝트 필터는 서버에서 걸 수 있고, 진단 데이터는 `events/latest/` 한 번으로 받는다. 지역별 `regionUrl`과 rate limit은 주의해야 한다.
+- [재현에 필요한 에이전트 실행 권한 조사](issues/02-agent-reproduction-permissions-research.md): 두 CLI 모두 macOS Seatbelt로 쓰기 범위와 네트워크를 좁힐 수 있다. Codex는 이미 OS 수준에서 셸 경유 비밀 읽기를 막고, Claude는 샌드박스를 켜야만 막힌다. MCP(Playwright)는 샌드박스 밖에서 돈다. 환경 변수가 그대로 넘어가는 문제와 `mcp__*` deny 구조도 바꿔야 한다. 정리한 선택지는 A~F다.
+
 ## Not yet specified
 
-- **진단 실행 큐**: 기존 초안 큐와 함께 쓸지 따로 둘지, 동시 실행 수, 몇 분씩 걸리는 실행의 취소·시간 초과 처리.
+- **진단 실행 큐**: 기존 초안 큐와 함께 쓸지 따로 둘지, 동시 실행 수, 몇 분씩 걸리는 실행의 취소·시간 초과 처리. 공통 경계 결정(B냐 C냐)이 나오면 티켓으로 만든다. 걸리는 사실(Flow 키 멈춤, 단일 `busy` 직렬화, 고정 시간 상한, `draft_queue` 키)은 [경계 조사](research/provider-seam-candidates.md)에 있다.
+- **Sentry 상태의 저장 위치**: 같은 `state.db`에 두면 Flow 계정을 바꿀 때 실행되는 `resetForAccount`가 Sentry 표까지 지운다. 보존 목록에 넣을지, 저장소를 따로 둘지 정해야 한다.
 - **`diagnosing-bugs` 전달 방식**: 에이전트 쪽에 스킬이 설치되어 있다고 가정할지, 절차를 지침에 직접 넣을지.
-- **따라잡기와 중복 억제**: PC가 꺼져 있는 동안 쌓인 오류 이슈를 처리하는 방법, 같은 오류 이슈가 거듭 재발할 때 진단을 반복하지 않는 기준.
+- **따라잡기와 중복 억제**: PC가 꺼져 있는 동안 쌓인 오류 이슈를 처리하는 방법, 같은 오류 이슈가 거듭 재발할 때 진단을 반복하지 않는 기준. [API 조사](research/sentry-api-facts.md)에서 확인한 제약이 있다. 재발 상태는 7일 뒤 `ongoing`으로 바뀌어 그보다 오래 꺼져 있던 동안의 재발은 되찾을 수 없다. 재발마다 남는 `SET_REGRESSION` 활동(`event_id`·`version`)은 중복 억제 키 후보다. 보관 뒤 다시 늘어나는 `escalating` 오류 이슈는 지금 전제("해결 후 재발")에 들어가지 않는데, 이대로 둘지 확인해야 한다.
 - **검토 화면과 알림**: 진단 보고서 검토 화면, 트레이 알림, **지시**를 받아 다시 진단하는 흐름. Flow 초안 검토 화면과 얼마나 공유할지.
 - **실패 처리**: 재현이 불가능하거나 이벤트 데이터(스택트레이스, breadcrumbs, release)가 부족할 때 보고서와 상태를 어떻게 남길지.
 

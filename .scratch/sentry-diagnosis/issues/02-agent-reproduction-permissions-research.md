@@ -3,7 +3,7 @@
 Map: [Sentry 오류 이슈 진단 보고서](../map.md)
 Type: research
 Mode: AFK
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -19,3 +19,12 @@ Blocked by:
 7. **버전 하한**: 위 기능이 생긴 CLI 버전. 기존 `cli-version.ts`의 하한과 비교한다.
 
 결과는 `../research/agent-reproduction-permissions.md`에 쓰고 이 티켓에서 링크한다. 실제 바이너리로 확인한 항목과 문서로만 확인한 항목을 구분한다.
+
+## Answer
+
+- 두 CLI 모두 macOS Seatbelt로 셸 명령의 쓰기 범위와 네트워크를 좁힐 수 있다. Claude Code는 `--restricted`를 유지한 채 `--tools`에 `Bash`를 적고 `--settings`로 `sandbox`(`failIfUnavailable`, `allowUnsandboxedCommands:false`, `strictAllowlist`)를 넘긴다. Codex는 지금의 인라인 권한 프로필에서 사본 루트만 `write`로 바꾸고 `network`와 `features.network_proxy`를 더한다.
+- 셸 경유 비밀 읽기: Codex 프로필 deny는 `cat`·`python`·`grep -r`을 모두 OS 수준에서 막는다(실측). Claude Code의 `Read` deny는 샌드박스 없이는 `cat` 같은 알아보는 명령만 막고 스크립트는 못 막는다. 샌드박스를 켜면 `denyRead`로 합쳐지지만, 지금의 `//**/` 루트 기준 규칙이 시스템 전체(`*.pem`, `.git/**`)에 걸리는 부작용이 의심된다.
+- MCP 서버(Playwright MCP 포함)는 두 CLI 모두 샌드박스 밖에서 돈다. Playwright MCP의 `browser_run_code_unsafe`는 RCE와 같으므로 이름을 지정해 거부해야 한다. Claude는 deny가 allow보다 우선하므로 `mcp__*` deny를 빼고 `--strict-mcp-config`로 서버를 제한해야 한다.
+- 모바일: Claude는 `allowMachLookup`(예: `com.apple.CoreSimulator.*`)과 `allowLocalBinding`으로 열 수 있지만 격리가 약해진다. Codex는 mach-lookup 설정을 찾지 못했다. 시뮬레이터와 adb 서버는 앱의 프로세스 그룹 종료로 끝나지 않는다.
+- 버전: 현재 하한(Claude `2.1.259`, Codex `0.162.1`) 안에서 대부분 가능하다. `tee` 검사(2.1.269), `--settings`로 관리자 필수 샌드박스(2.1.285), `blockWritesOutsideWorkingDirectories`(2.1.314)는 더 높다. 일부 키의 도입 버전은 확인 못 함.
+- 자세한 내용과 선택지별 트레이드오프: [../research/agent-reproduction-permissions.md](../research/agent-reproduction-permissions.md)

@@ -143,6 +143,7 @@ function postedBundle(processedAt: number): UnsavedBundle {
     },
     quitDuringCountdown: false,
     trial: false,
+    manual: false,
   };
 }
 

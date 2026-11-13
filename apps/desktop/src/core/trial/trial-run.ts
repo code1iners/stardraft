@@ -2,7 +2,7 @@ import type { MentionBundles } from '../bundles/mention-bundles';
 import { errorFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { FlowApiFailure, FlowConnection } from '../ports/flow-api';
-import { listRecentMentions, type RecentMention } from './recent-mentions';
+import { listRecentMentions, type RecentMention } from '../manual-check/recent-mentions';
 
 /** 멘션 고르기 목록을 연 창. 작은 창의 빈 화면이나 설정 "초안" 칸이다. */
 export type TrialWindow = 'popover' | 'settings';
@@ -134,7 +134,7 @@ export class TrialRun {
       const titles = new Map<string, Promise<string | null>>();
       /** 목록에 보일 멘션. */
       const candidates = await Promise.all(
-        result.value.map(async (recent): Promise<TrialCandidate> => {
+        result.value.mentions.map(async (recent): Promise<TrialCandidate> => {
           /** 멘션이 온 Flow 프로젝트. */
           const { projectId } = recent.mention;
           if (!titles.has(projectId)) titles.set(projectId, this.options.projectTitle(projectId).catch(() => null));

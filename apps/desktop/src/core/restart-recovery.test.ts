@@ -113,6 +113,7 @@ function seededBundle(commentId: string, alarmId: string, overrides: Partial<Uns
     posting: null,
     quitDuringCountdown: false,
     trial: false,
+    manual: false,
     ...overrides,
   };
 }

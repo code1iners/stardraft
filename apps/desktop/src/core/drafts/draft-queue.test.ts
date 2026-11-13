@@ -38,7 +38,8 @@ import { DraftSettings } from './draft-settings';
 import { Posting } from '../posting/posting';
 import { openStateDatabase, SqliteStateStore, STATE_MIGRATIONS } from '../storage/state-database';
 import { SELECTION_INSTRUCTIONS } from './repo-selection';
-import { listRecentMentions } from '../trial/recent-mentions';
+import { listRecentMentions } from '../manual-check/recent-mentions';
+import { ManualMentionCheck } from '../manual-check/manual-mention-check';
 
 /** 지금 시각. 2026-10-20 09:00:00 한국 표준시(00:00:00 UTC). */
 const NOW = Date.UTC(2026, 9, 20, 0, 0, 0);
@@ -2611,7 +2612,7 @@ async function recentMentionsOf(flow: FakeFlowApi) {
   /** 목록을 만든 결과. */
   const result = await listRecentMentions(flow, ME, NOW);
   if (!result.ok) throw new Error('최근 멘션 목록을 만들지 못했습니다.');
-  return result.value;
+  return result.value.mentions;
 }
 
 describe('최근 멘션으로 시험', () => {
@@ -4258,5 +4259,210 @@ describe('재시작·재시도·재지정 복구', () => {
     expect(third.bundles.get(merged.id)?.status).toBe('posted');
     expect(executor.requests).toHaveLength(2);
     await third.quit();
+  });
+});
+
+/** 하루(밀리초). */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 가짜 Flow와 멘션 묶음으로 최근 멘션 확인을 만든다. 쓸 키가 있는지와 Flow가 키를 거부했다고 알린 횟수를 함께 돌려준다. */
+function manualCheckOf(flow: FakeFlowApi, bundles: MentionBundles, clock: FakeClock) {
+  /** 쓸 키가 있는지 여부와 Flow가 키를 거부했다고 알린 횟수. */
+  const env = { hasKey: true, rejected: 0 };
+  const check = new ManualMentionCheck({
+    bundles,
+    connectFlow: () => (env.hasKey ? { api: flow, reportKeyRejected: () => (env.rejected += 1) } : null),
+    myUserId: () => ME,
+    projectTitle: async (projectId) => (projectId === PROJECT_ID ? '가짜 프로젝트' : null),
+    clock,
+    logger: createLogger([{ write: () => {} }], clock),
+  });
+  return { check, env };
+}
+
+/** 최근 멘션 확인의 첫 목록을 불러온다. 불러오지 못하면 테스트를 멈춘다. */
+async function manualCandidatesOf(check: ManualMentionCheck) {
+  /** 불러온 목록. */
+  const list = await check.listMentions(null);
+  if (!list.ok) throw new Error(`최근 멘션 목록을 불러오지 못했습니다: ${list.reason}`);
+  return list.candidates;
+}
+
+describe('최근 멘션 확인: 수동 요청 묶음', () => {
+  it('72시간이 지난 멘션과 기준점 앞의 멘션도 목록에 나오고, 고르면 게시할 수 있는 수동 요청 묶음이 되며 기준점은 그대로다', async () => {
+    const { flow, executor, bundles, stateStore, notifier, clock, repos } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    flow.addAlarm(alarm('99'));
+    flow.addAlarm(addThreadMention(flow, '101', '701', '닷새 전 질문', '20261015085000'));
+    const { check } = manualCheckOf(flow, bundles, clock);
+
+    /** 목록에 보인 멘션. */
+    const candidates = await manualCandidatesOf(check);
+    expect(candidates.map(({ mention, projectTitle, answered }) => [mention.alarmId, projectTitle, answered])).toEqual([
+      ['101', '가짜 프로젝트', false],
+      ['99', '가짜 프로젝트', false],
+    ]);
+
+    /** 고른 두 멘션으로 만든 결과. */
+    const results = [await check.request(candidates[0]!), await check.request(candidates[1]!)];
+    await settle();
+
+    expect(results.map((result) => result.kind)).toEqual(['created', 'created']);
+    expect(results.map((result) => bundles.get(result.bundleId))).toMatchObject([
+      { manual: true, trial: false, status: 'ready', postTitle: '가짜 게시물', mentions: [expect.objectContaining({ alarmId: '101' })] },
+      { manual: true, trial: false, status: 'ready', mentions: [expect.objectContaining({ alarmId: '99' })] },
+    ]);
+    expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 닷새 전 질문', '@테스트 사용자 재시도는 몇 번 하나요?']);
+    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', bundleId: results[0]!.bundleId });
+    expect(bundles.reviewCount()).toBe(2);
+    expect(stateStore.baselineAlarmId).toBe('100');
+
+    expect(await bundles.startPosting(results[0]!.bundleId)).toBe(true);
+    expect(await bundles.checkBeforePost(results[0]!.bundleId)).toBe('passed');
+  });
+
+  it('나에게 온 멘션이 아닌 알림은 나오지 않고, 더 보기는 다음 10건을 이어 불러오며 끝에서 멈춘다', async () => {
+    const { flow, bundles, clock } = await setup();
+    flow.alarmPageSize = 5;
+    flow.addPost({ postId: '90000099', textComponents: [{ contents: '@전체 공지', mentions: ['ALL'] }] });
+    for (let index = 0; index < 12; index += 1) {
+      flow.addAlarm(addThreadMention(flow, String(200 + index), String(710 + index), `질문 ${index}`, '20261020085000'));
+      if (index === 6) flow.addAlarm(alarm(String(250 + index), { postId: '90000099', remarkId: '-1' }));
+    }
+    const { check } = manualCheckOf(flow, bundles, clock);
+
+    /** 첫 목록. */
+    const first = await check.listMentions(null);
+    if (!first.ok) throw new Error('첫 목록을 불러오지 못했습니다.');
+    /** 더 보기로 이어 불러온 목록. */
+    const second = await check.listMentions(first.next);
+    if (!second.ok) throw new Error('이어 불러오지 못했습니다.');
+
+    expect(first.candidates.map((candidate) => candidate.mention.alarmId)).toEqual(['211', '210', '209', '208', '207', '206', '205', '204', '203', '202']);
+    expect(second.candidates.map((candidate) => candidate.mention.alarmId)).toEqual(['201', '200']);
+    expect(second.next).toBeNull();
+  });
+
+  it('이미 묶음이 있는 멘션은 처리됐어도 7일 안이면 새로 만들지 않고 그 묶음을 돌려주고, 최소 기록만 남았으면 최소 기록을 지우고 새로 만든다', async () => {
+    const { flow, executor, bundles, stateStore, clock, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    /** 감지해 만든 묶음. */
+    const [detected] = bundles.state();
+    expect(detected?.status).toBe('ready');
+    const { check } = manualCheckOf(flow, bundles, clock);
+    /** 그 멘션의 목록 줄. */
+    const [candidate] = await manualCandidatesOf(check);
+
+    expect(await check.request(candidate!)).toEqual({ kind: 'existing', bundleId: detected!.id });
+    await bundles.ignore(detected!.id);
+    clock.advance(6 * DAY_MS);
+    expect(await check.request(candidate!)).toEqual({ kind: 'existing', bundleId: detected!.id });
+    expect(bundles.state()).toHaveLength(1);
+
+    clock.advance(2 * DAY_MS);
+    /** 7일이 지나 최소 기록만 남은 뒤에 고른 결과. */
+    const recreated = await check.request(candidate!);
+    await settle();
+
+    expect(recreated.kind).toBe('created');
+    expect(recreated.bundleId).not.toBe(detected!.id);
+    expect(bundles.state()).toMatchObject([{ id: recreated.bundleId, manual: true, status: 'ready' }]);
+    expect(await stateStore.listMinimalRecords()).toEqual([]);
+    expect(await stateStore.hasMentionLocation(candidate!.mention)).toBe(true);
+  });
+
+  it('이미 답한 멘션도 초안을 만들고 실행 직전에도 이미 답함으로 처리하지 않으며, 게시를 누를 때의 확인을 통과한다. 그 뒤의 새 답은 일반 묶음처럼 감시한다', async () => {
+    const { flow, executor, bundles, clock, repos, poll } = await setup();
+    await poll();
+    flow.addReply(POST_ID, '700', { replyId: '800', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085500' });
+    flow.respondToListMentionAlarms([alarm('99')]);
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    const { check } = manualCheckOf(flow, bundles, clock);
+    /** 이미 답한 멘션의 목록 줄. */
+    const [candidate] = await manualCandidatesOf(check);
+    expect(candidate?.answered).toBe(true);
+
+    /** 고른 결과. */
+    const { bundleId } = await check.request(candidate!);
+    await settle();
+
+    expect(executor.requests).toHaveLength(1);
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'ready', mentions: [expect.objectContaining({ answered: false })] });
+    await poll();
+    expect(bundles.get(bundleId)?.status).toBe('ready');
+    expect(await bundles.startPosting(bundleId)).toBe(true);
+    expect(await bundles.checkBeforePost(bundleId)).toBe('passed');
+    expect(await bundles.cancelPosting(bundleId)).toBe(true);
+
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: '다시 답했습니다', registerId: ME, registeredDateTime: '20261020090500' });
+    await poll();
+    expect(bundles.get(bundleId)?.status).toBe('already-answered');
+  });
+
+  it('수동 요청 묶음을 만든 뒤 같은 멘션 위치의 알림이 와도 자동 감지가 묶음을 만들지 않는다', async () => {
+    const { flow, executor, bundles, stateStore, clock, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    flow.addAlarm(alarm('101'));
+    const { check } = manualCheckOf(flow, bundles, clock);
+    /** 아직 감지하지 않은 기준점 뒤의 멘션. */
+    const [candidate] = await manualCandidatesOf(check);
+
+    /** 고른 결과. */
+    const { bundleId } = await check.request(candidate!);
+    expect(stateStore.baselineAlarmId).toBe('100');
+    await poll(alarm('102'));
+
+    expect(bundles.state().map(({ id, manual }) => [id, manual])).toEqual([[bundleId, true]]);
+    expect(executor.requests).toHaveLength(1);
+  });
+
+  it('감지해서 기다리는 묶음보다 앞에서 실행하고, 저장소 매핑이 없는 프로젝트면 일반 묶음처럼 자동 선택을 거쳐 저장소 확인 필요로 올린다', async () => {
+    const { flow, executor, bundles, notifier, settingsStore, clock, repos, poll } = await setup();
+    /** 저장소가 둘인 작업 폴더. 후보가 둘이어야 선택 실행이 돈다. */
+    const work = makeWorkFolder('work', ['api', 'web']);
+    settingsStore.settings.workFolders = [work.folder];
+    /** 끝나지 않고 기다리는 실행. */
+    const run = heldOutcome();
+    executor.script({ outcome: run.outcome });
+    executor.script({ outcome: { type: 'completed', output: { verdict: 'unrelated', repositories: [], reason: '회의 일정을 묻는 멘션입니다.' } } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    flow.addPost({ postId: '90000021', title: '매핑 없는 게시물', textComponents: [{ contents: `${MY_MARKUP} 회의는 언제인가요?`, mentions: [ME] }] });
+    flow.respondToListMentionAlarms([alarm('99', { projectId: UNMAPPED_PROJECT_ID, postId: '90000021', remarkId: '-1' })]);
+    const { check } = manualCheckOf(flow, bundles, clock);
+    /** 매핑 없는 프로젝트의 멘션. */
+    const [candidate] = await manualCandidatesOf(check);
+
+    /** 고른 결과. */
+    const { bundleId } = await check.request(candidate!);
+    run.release({ type: 'completed', output: draftOutput(repos.a) });
+    await settle();
+
+    expect(executor.requests.map((request) => request.kind)).toEqual(['draft', 'selection', 'draft']);
+    expect(targetMentionOf(executor.requests[2])).toBe('@테스트 사용자 두 번째 질문');
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'repo-check-needed', repoCheck: { kind: 'unrelated' } });
+    expect(notifier.sent).toContainEqual({ title: '저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId });
+  });
+
+  it('목록을 불러오지 못하면 키 없음, 키 거부, 연결 실패, 요청 한도를 구분해 돌려주고, 키 거부는 "키 확인 필요"로 알린다', async () => {
+    const { flow, bundles, clock } = await setup();
+    flow.addAlarm(alarm('101'));
+    const { check, env } = manualCheckOf(flow, bundles, clock);
+
+    env.hasKey = false;
+    expect(await check.listMentions(null)).toEqual({ ok: false, reason: 'no-key' });
+    env.hasKey = true;
+    flow.respondToListMentionAlarms({ ok: false, failure: { kind: 'unauthorized' } });
+    expect(await check.listMentions(null)).toEqual({ ok: false, reason: 'unauthorized' });
+    expect(env.rejected).toBe(1);
+    flow.respondToListMentionAlarms({ ok: false, failure: { kind: 'network' } });
+    expect(await check.listMentions(null)).toEqual({ ok: false, reason: 'network' });
+    flow.respondToListMentionAlarms({ ok: false, failure: { kind: 'rate-limited', retryAfterMs: 30_000 } });
+    expect(await check.listMentions(null)).toEqual({ ok: false, reason: 'rate-limited' });
+    expect(bundles.state()).toEqual([]);
   });
 });

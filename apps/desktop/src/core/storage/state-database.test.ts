@@ -126,6 +126,7 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     posting: null,
     quitDuringCountdown: false,
     trial: false,
+    manual: false,
     ...overrides,
   };
 }
@@ -1004,6 +1005,78 @@ describe('다시 켜기', () => {
   });
 });
 
+describe('수동 요청 묶음', () => {
+  it('기준점을 옮기지 않고 저장하며, 다시 열어도 수동 요청 표시가 남고 그 멘션 위치는 다시 감지하지 않을 위치다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await store.setBaselineAlarmId('200');
+
+    /** 저장한 수동 요청 묶음. 기준점 앞의 멘션이다. */
+    const saved = await store.addManualBundle(bundle([mention('101')], { status: 'generating', manual: true }), null);
+
+    expect(saved).toMatchObject({ id: 1, manual: true, trial: false, mentions: [expect.objectContaining({ alarmId: '101' })] });
+    /** 다시 연 저장소. */
+    const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    expect((await reopened.listBundles()).map(({ id, manual, status }) => ({ id, manual, status }))).toEqual([{ id: 1, manual: true, status: 'generating' }]);
+    await expect(reopened.getBaselineAlarmId()).resolves.toBe('200');
+    await expect(reopened.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(true);
+  });
+
+  it('최소 기록만 남은 멘션이면 그 최소 기록을 지우고 새 묶음을 함께 저장한다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 2_000 })], '101');
+    await store.archiveBundles([
+      { bundleId: 1, postId: '90000011', remarkId: '-1', mentions: [mention('101')], status: 'ignored', processedAt: 2_000, posted: null },
+    ]);
+
+    /** 저장한 수동 요청 묶음. */
+    const saved = await store.addManualBundle(bundle([mention('101')], { status: 'generating', manual: true }), 1);
+
+    expect(saved).toMatchObject({ id: 2, manual: true });
+    await expect(store.listMinimalRecords()).resolves.toEqual([]);
+    expect((await store.listBundles()).map(({ id, manual }) => ({ id, manual }))).toEqual([{ id: 2, manual: true }]);
+    await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(true);
+  });
+
+  it('멘션 위치가 다른 묶음에 이미 있으면 실패하고 최소 기록도 지우지 않는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles(
+      [bundle([mention('101')], { status: 'ignored', processedAt: 2_000 }), bundle([mention('102', { postId: '90000012' })], { status: 'ready' })],
+      '102',
+    );
+    await store.archiveBundles([
+      { bundleId: 1, postId: '90000011', remarkId: '-1', mentions: [mention('101')], status: 'ignored', processedAt: 2_000, posted: null },
+    ]);
+
+    await expect(
+      store.addManualBundle(bundle([mention('101'), mention('102', { postId: '90000012' })], { status: 'generating', manual: true }), 1),
+    ).rejects.toThrow();
+
+    expect((await store.listMinimalRecords()).map(({ bundleId }) => bundleId)).toEqual([1]);
+    expect((await store.listBundles()).map(({ id }) => id)).toEqual([2]);
+  });
+
+  it('형식 21에서 올리면 이미 있던 묶음은 수동 요청 묶음이 아니다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 21로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 21), '0.1.9');
+    old
+      .prepare(
+        `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+         VALUES ('90000011', '-1', '900001', 'ready', '가짜 게시물', NULL, 0, 1000, NULL)`,
+      )
+      .run();
+    old.close();
+
+    /** 마지막 형식으로 올린 저장소. */
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.10'));
+
+    expect((await store.listBundles()).map(({ status, manual }) => ({ status, manual }))).toEqual([{ status: 'ready', manual: false }]);
+  });
+});
+
 describe('앱 내 업데이트', () => {
   it('서명 검증에 실패한 버전을 여럿 남기면 다시 열어도 모두 읽고, 같은 버전은 한 번만 남으며, 뺀 버전은 없다', async () => {
     /** `state.db` 경로. */
@@ -1174,7 +1247,13 @@ it('형식 19에서 올리면 이미 있던 최소 기록과 그 멘션 위치·
     status: 'posted' as const, processedAt: 6_000,
     posted: { postedId: '950000001', answeredMentions: [{ postId: '90000011', remarkId: '-1', replyId: '-1' }, { postId: '90000011', remarkId: '701', replyId: '-1' }] },
   };
-  await oldStore.saveDetectedBundles([bundle([mention('101')], { status: 'posted', processedAt: 6_000 })], '101');
+  // 지금 저장 코드는 뒤 형식의 열까지 쓰므로, 형식 19의 묶음 줄은 직접 넣는다.
+  old
+    .prepare(
+      `INSERT INTO mention_bundle (id, post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+       VALUES (1, '90000011', '-1', '900001', 'posted', '가짜 게시물', NULL, 0, 1000, 6000)`,
+    )
+    .run();
   await oldStore.archiveBundles([record]);
   old.close();
 

@@ -60,6 +60,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
       },
       repoPicker: null,
     },
+    manualCheck: { canOpen: false, sheet: null },
     trial: { canStart: false, bundleId: null, picker: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
@@ -137,11 +138,11 @@ describe('작은 창: 필수 설정 전', () => {
 });
 
 describe('작은 창: 감지를 시작한 뒤', () => {
-  it('묶음이 없으면 빈 화면과 [최근 멘션으로 시험] 자리를 보이고, 필수 세 줄은 보이지 않는다', () => {
+  it('묶음이 없으면 빈 화면과 [최근 멘션 확인] 자리를 보이고, 필수 세 줄은 보이지 않는다', () => {
     const text = textOf(<PopoverContent snapshot={snapshot({ ...READY, detectionStarted: true })} />);
 
     expect(text).toContain('아직 멘션이 없습니다.');
-    expect(text).toContain('최근 멘션으로 시험');
+    expect(text).toContain('최근 멘션 확인');
     expect(text).not.toContain('Flow 개인 API 키');
     expect(text).not.toContain('감지 시작');
   });

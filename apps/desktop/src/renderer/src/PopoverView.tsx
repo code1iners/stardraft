@@ -1,10 +1,11 @@
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleMeta, BundleSections, StatusTag, ToastStack, TrialTag } from './BundleDetail';
+import { BundleFooter, BundleMeta, BundleSections, ManualTag, StatusTag, ToastStack, TrialTag } from './BundleDetail';
 import { SetupChecklist } from './Onboarding';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
-import { TrialButton, TrialPickerSheet } from './TrialPicker';
+import { ManualCheckButton, ManualCheckSheet } from './ManualCheck';
+import { TrialPickerSheet } from './TrialPicker';
 import { RestartConfirm, UpdateBanner } from './UpdatePrompts';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
@@ -144,6 +145,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
       />
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
+      {snapshot.manualCheck.sheet?.window === 'popover' && <ManualCheckSheet sheet={snapshot.manualCheck.sheet} />}
       {snapshot.trial.picker?.window === 'popover' && <TrialPickerSheet picker={snapshot.trial.picker} />}
     </>
   );
@@ -178,6 +180,7 @@ function QueueHead({ queue, selected, onSelect, onExpand }: QueueHeadProps) {
       </button>
       <span className="queue-pos">{index >= 0 ? `${index + 1} / ${queue.length}` : '처리한 묶음'}</span>
       <span className="spacer" />
+      <ManualTag bundle={selected} />
       <TrialTag bundle={selected} />
       <StatusTag status={selected.status} />
       <button type="button" className="btn sm" onClick={onExpand}>
@@ -193,7 +196,7 @@ interface EmptyDetectionProps {
   snapshot: AppSnapshot;
 }
 
-/** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션으로 시험]을 누르면 이 창에 멘션 고르기 목록을 연다. */
+/** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션 확인]을 누르면 이 창에 확인 시트를 연다. */
 function EmptyDetection({ snapshot }: EmptyDetectionProps) {
   return (
     <>
@@ -202,7 +205,7 @@ function EmptyDetection({ snapshot }: EmptyDetectionProps) {
           <strong>아직 멘션이 없습니다.</strong>
         </p>
         <p className="small muted">새 멘션이 오면 초안을 만들어 여기에 보여 드립니다.</p>
-        <TrialButton trial={snapshot.trial} window="popover" />
+        <ManualCheckButton manualCheck={snapshot.manualCheck} window="popover" />
       </main>
     </>
   );

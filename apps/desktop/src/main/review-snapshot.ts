@@ -12,6 +12,9 @@ import { commentKey, mentionWritingKey, POST_WRITING_KEY, replyKey } from '../co
 import type { RepoCandidate } from '../core/repos/repo-candidates';
 import type { MappingMatch } from '../core/repos/repo-mappings';
 import type { RepoPickerState } from '../core/repos/repo-picker';
+import type { ManualPlace } from '../core/bundles/mention-bundles';
+import type { ManualCheckState } from '../core/manual-check/manual-check-session';
+import type { ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
 import type { TrialCandidate, TrialRunState } from '../core/trial/trial-run';
 import type {
   BundleMentionSnapshot,
@@ -26,6 +29,8 @@ import type {
   ReviewSnapshot,
   RunLineSnapshot,
   ThreadEntrySnapshot,
+  ManualCheckRowSnapshot,
+  ManualCheckSnapshot,
   TrialCandidateSnapshot,
   TrialSnapshot,
   WritingChangeSnapshot,
@@ -83,19 +88,67 @@ export function trialSnapshot(state: TrialRunState, trialBundleId: number | null
   };
 }
 
-/** 멘션 고르기 목록의 멘션 하나. 첫 줄은 비어 있지 않은 첫 줄이고 멘션 표기는 `@이름`으로 바꾼다. */
-function trialCandidateSnapshot({ mention, projectTitle, answered }: TrialCandidate): TrialCandidateSnapshot {
-  /** 멘션 글의 첫 줄. */
-  const firstLine =
-    namedMentionText(mention.text)
+/** 멘션 위치에 있는 기존 기록을 찾는 함수. */
+export type ManualPlaceLookup = (mention: ManualMentionCandidate['mention']) => ManualPlace;
+
+/**
+ * 최근 멘션 확인의 상태를 렌더러에 넘길 모양으로 바꾼다. 줄 태그는 지금 묶음 상태로 정하므로 묶음이 바뀌면 태그도 따라 바뀐다.
+ * 멘션은 송신자, Flow 프로젝트, 첫 줄, 시각만 넘기고 Flow 사용자 ID는 넘기지 않는다.
+ */
+export function manualCheckSnapshot(state: ManualCheckState, canOpen: boolean, placeOf: ManualPlaceLookup): ManualCheckSnapshot {
+  /** 열린 시트. */
+  const sheet = state.sheet;
+  if (sheet === null) return { canOpen, sheet: null };
+  if (sheet.status !== 'loaded') return { canOpen, sheet: { ...sheet } };
+  return {
+    canOpen,
+    sheet: {
+      window: sheet.window,
+      status: 'loaded',
+      rows: sheet.candidates.map((candidate) => manualCheckRowSnapshot(candidate, placeOf)),
+      hasMore: sheet.hasMore,
+      loadingMore: sheet.loadingMore,
+      moreFailure: sheet.moreFailure,
+    },
+  };
+}
+
+/** 최근 멘션 확인 시트의 줄 하나. 태그는 "답함", 기존 묶음(상태), 처리됨 순서다. */
+function manualCheckRowSnapshot({ mention, projectTitle, answered }: ManualMentionCandidate, placeOf: ManualPlaceLookup): ManualCheckRowSnapshot {
+  /** 그 멘션 위치의 기존 기록. */
+  const place = placeOf(mention);
+  return {
+    kind: 'mention',
+    alarmId: mention.alarmId,
+    senderName: mention.senderName,
+    projectTitle,
+    firstLine: firstLineOf(mention.text),
+    at: flowTimeToEpochMs(mention.registeredDateTime) ?? mention.detectedAt,
+    tags: [
+      ...(answered ? [{ kind: 'answered' as const }] : []),
+      ...(place.kind === 'bundle' ? [{ kind: 'bundle' as const, bundleId: place.bundleId, status: place.status }] : []),
+      ...(place.kind === 'record' ? [{ kind: 'archived' as const }] : []),
+    ],
+  };
+}
+
+/** 멘션 글의 비어 있지 않은 첫 줄. 멘션 표기는 `@이름`으로 바꾼다. */
+function firstLineOf(text: string): string {
+  return (
+    namedMentionText(text)
       .split('\n')
       .map((line) => line.trim())
-      .find((line) => line !== '') ?? '';
+      .find((line) => line !== '') ?? ''
+  );
+}
+
+/** 멘션 고르기 목록의 멘션 하나. 첫 줄은 비어 있지 않은 첫 줄이고 멘션 표기는 `@이름`으로 바꾼다. */
+function trialCandidateSnapshot({ mention, projectTitle, answered }: TrialCandidate): TrialCandidateSnapshot {
   return {
     alarmId: mention.alarmId,
     senderName: mention.senderName,
     projectTitle,
-    firstLine,
+    firstLine: firstLineOf(mention.text),
     at: flowTimeToEpochMs(mention.registeredDateTime) ?? mention.detectedAt,
     answered,
   };
@@ -162,6 +215,7 @@ export function bundleSnapshot(
     // 그 뒤 게시 중이 되었거나 처리한 묶음에는 보이지 않는다.
     quitDuringCountdown: bundle.status === 'ready' && bundle.quitDuringCountdown,
     changes: { newWritingCount: changes.newWritings.length, edited: changes.editedWritings.length > 0, goneMentionCount: changes.goneMentions },
+    manual: bundle.manual,
     trial: bundle.trial,
   };
 }

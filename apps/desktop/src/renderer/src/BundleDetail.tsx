@@ -75,6 +75,12 @@ interface BundleProps {
   bundle: BundleSnapshot;
 }
 
+/** 수동 요청 묶음에 상태 태그와 함께 붙이는 "수동 요청" 표시. 최근 멘션 확인으로 만든 묶음이 아니면 그리지 않는다. */
+export function ManualTag({ bundle }: BundleProps) {
+  if (!bundle.manual) return null;
+  return <span className="tag manual">수동 요청</span>;
+}
+
 /** 시험 묶음에 상태 태그와 함께 붙이는 "시험" 표시. 시험 묶음이 아니면 그리지 않는다. */
 export function TrialTag({ bundle }: BundleProps) {
   if (!bundle.trial) return null;

@@ -18,6 +18,7 @@ import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
 import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
+import type { ManualCheckSession } from '../core/manual-check/manual-check-session';
 import type { TrialRun } from '../core/trial/trial-run';
 import type { InAppUpdate } from '../core/update/in-app-update';
 import type { UpdateRestart, UpdateState } from '../core/update/update-restart';
@@ -47,7 +48,7 @@ import type { AppWindows } from './app-windows';
 import { siteSectionUrl } from './download-site';
 import { isAppRendererUrl } from './renderer-page';
 import type { ReviewSections } from './review-sections';
-import { flowUrlOf, reviewSnapshot, trialSnapshot, type ProjectLookup } from './review-snapshot';
+import { flowUrlOf, manualCheckSnapshot, reviewSnapshot, trialSnapshot, type ProjectLookup } from './review-snapshot';
 
 /** IPC가 부르는 main의 일. */
 export interface IpcServices {
@@ -83,6 +84,8 @@ export interface IpcServices {
   reviewSections: ReviewSections;
   /** 근거의 "에디터에서 열기"와 설정 "일반"의 에디터. */
   editorOpener: EditorOpener;
+  /** 최근 멘션 확인 시트. */
+  manualCheck: ManualCheckSession;
   /** 최근 멘션으로 시험의 멘션 고르기 목록. */
   trialRun: TrialRun;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
@@ -147,6 +150,14 @@ export function registerIpc(services: IpcServices): void {
   // 게시를 누를 때의 확인이 게시를 멈춘 것도 그 순간 한 번만 토스트로 알린다.
   services.bundles.onPostStopped((bundleId, stop) => services.windows.broadcast({ type: 'post-stopped', bundleId, stop }));
   services.reviewSections.onChange(broadcastReview);
+  // 확인 시트가 바뀌거나, 묶음이 바뀌어 줄 태그가 달라지거나, 감지 시작·Flow 키 상태가 바뀌면 최근 멘션 확인 상태를 다시 보낸다.
+  /** 최근 멘션 확인 상태를 열린 창에 알린다. */
+  const broadcastManualCheck = () => services.windows.broadcast({ type: 'manual-check-changed', manualCheck: currentManualCheckSnapshot(services) });
+  services.manualCheck.onChange(broadcastManualCheck);
+  services.bundles.onChange(broadcastManualCheck);
+  services.onboarding.onChange(broadcastManualCheck);
+  services.flowAccount.onChange(broadcastManualCheck);
+  services.globalProblems.onChange(broadcastManualCheck);
   // 멘션 고르기 목록이 바뀌거나, 시험 묶음이 생기거나 지워지거나, 감지를 시작하면 시험을 시작할 수 있는지가 바뀐다.
   /** 시험 상태를 열린 창에 알린다. */
   const broadcastTrial = () => services.windows.broadcast({ type: 'trial-changed', trial: currentTrialSnapshot(services) });
@@ -173,6 +184,11 @@ function currentReviewSnapshot({ bundles, drafts, posting, reviewSections, repoM
     repoPicker.state(),
     (bundleId) => posting.countdownEndsAt(bundleId),
   );
+}
+
+/** 지금 최근 멘션 확인 상태의 스냅숏. */
+function currentManualCheckSnapshot({ manualCheck, bundles }: IpcServices) {
+  return manualCheckSnapshot(manualCheck.state(), manualCheck.canOpen(), (mention) => bundles.manualPlaceOf(mention));
 }
 
 /** 지금 시험 상태의 스냅숏. */
@@ -211,6 +227,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     launchAtLogin: launchAtLogin.enabled(),
     editor: editorSnapshot(services.editorOpener.state()),
     review: currentReviewSnapshot(services),
+    manualCheck: currentManualCheckSnapshot(services),
     trial: currentTrialSnapshot(services),
     draftSettings: draftSettingsSnapshot(services.draftSettings.state()),
     update: services.updateRestart && updateSnapshot(services.updateRestart.state()),
@@ -236,6 +253,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     repoPicker,
     reviewSections,
     editorOpener,
+    manualCheck,
     trialRun,
     draftSettings,
     notifier,
@@ -397,6 +415,21 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'set-editor':
       await editorOpener.setChoice(command.choice);
+      return;
+    case 'open-manual-check':
+      await manualCheck.open(command.window);
+      return;
+    case 'close-manual-check':
+      manualCheck.close();
+      return;
+    case 'reload-manual-check':
+      await manualCheck.reload();
+      return;
+    case 'load-more-manual-check':
+      await manualCheck.more();
+      return;
+    case 'pick-manual-check':
+      await manualCheck.pick(command.alarmId);
       return;
     case 'open-trial-picker':
       await trialRun.open(command.window);

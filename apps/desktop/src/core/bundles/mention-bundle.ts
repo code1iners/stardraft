@@ -256,6 +256,11 @@ export interface TaskAssignment {
    */
   assignedAt?: string;
   /**
+   * `assignedAt`이 배정 근거 없이 WORKER 알림 시각으로 대신한 추정인지 여부. 최근 멘션 확인에서 근거 없는 업무를 골라 만든 수동 요청 묶음만 참이고,
+   * 상세가 배정 시각을 "추정"으로 보인다. 근거 시각이면 두지 않는다.
+   */
+  assignedAtEstimated?: boolean;
+  /**
    * 내가 이 업무의 담당자에서 빠진 것을 확인한 시각(PC 시각, Unix epoch 밀리초). 묶음 상태와 따로 둔다.
    * 다시 담당자로 확인되면 지운다. 조회하지 못했거나 담당자를 읽을 수 없으면 바꾸지 않아, 한 번 확인한 해제는 다시 담당으로 확인될 때까지 게시를 막는다.
    * Flow 시각인 `assignedAt`과 달리 해제 시각은 Flow가 주지 않아 확인한 PC 시각을 쓴다.

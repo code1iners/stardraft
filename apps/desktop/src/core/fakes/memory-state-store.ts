@@ -93,13 +93,14 @@ export class MemoryStateStore implements StateStore {
     return saved.map(cloneBundle);
   }
 
-  async addManualBundle(bundle: UnsavedBundle, replacedRecordId: number | null): Promise<MentionBundle> {
+  async addManualBundle(bundle: UnsavedBundle, replacedRecordIds: readonly number[]): Promise<MentionBundle> {
     // SQLite 저장소처럼, 다른 묶음에 이미 든 멘션 위치가 있으면 최소 기록도 지우지 않고 실패한다.
     this.assertOwnLocations(bundle);
-    if (replacedRecordId !== null) this.records.delete(replacedRecordId);
+    for (const recordId of replacedRecordIds) this.records.delete(recordId);
     /** 저장한 묶음. */
     const saved = { ...cloneBundle(bundle as MentionBundle), id: this.nextBundleId++, manual: true };
     this.bundles.set(saved.id, sortedMentions(saved));
+    if (bundle.assignment) this.assignmentTasks.add(JSON.stringify([bundle.projectId, bundle.assignment.taskId]));
     return cloneBundle(saved);
   }
 

@@ -1033,7 +1033,7 @@ describe('수동 요청 묶음', () => {
     await store.setBaselineAlarmId('200');
 
     /** 저장한 수동 요청 묶음. 기준점 앞의 멘션이다. */
-    const saved = await store.addManualBundle(bundle([mention('101')], { status: 'generating', manual: true }), null);
+    const saved = await store.addManualBundle(bundle([mention('101')], { status: 'generating', manual: true }), []);
 
     expect(saved).toMatchObject({ id: 1, manual: true, mentions: [expect.objectContaining({ alarmId: '101' })] });
     /** 다시 연 저장소. */
@@ -1051,7 +1051,7 @@ describe('수동 요청 묶음', () => {
     ]);
 
     /** 저장한 수동 요청 묶음. */
-    const saved = await store.addManualBundle(bundle([mention('101')], { status: 'generating', manual: true }), 1);
+    const saved = await store.addManualBundle(bundle([mention('101')], { status: 'generating', manual: true }), [1]);
 
     expect(saved).toMatchObject({ id: 2, manual: true });
     await expect(store.listMinimalRecords()).resolves.toEqual([]);
@@ -1070,11 +1070,58 @@ describe('수동 요청 묶음', () => {
     ]);
 
     await expect(
-      store.addManualBundle(bundle([mention('101'), mention('102', { postId: '90000012' })], { status: 'generating', manual: true }), 1),
+      store.addManualBundle(bundle([mention('101'), mention('102', { postId: '90000012' })], { status: 'generating', manual: true }), [1]),
     ).rejects.toThrow();
 
     expect((await store.listMinimalRecords()).map(({ bundleId }) => bundleId)).toEqual([1]);
     expect((await store.listBundles()).map(({ id }) => id)).toEqual([2]);
+  });
+
+  it('담당 업무 수동 요청 묶음은 본문 자리의 최소 기록을 모두 지우고 업무 처리 기록과 함께 저장하며, 다시 열어도 추정 배정 시각 표시가 남고 같은 업무를 다시 만들지 않는다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const store = new SqliteStateStore(db);
+    await store.setAccount(OLD_ACCOUNT);
+    await store.setBaselineAlarmId('200');
+    /** 담당 업무 감지 상태. */
+    const state = { accountId: OLD_ACCOUNT.userId, enabledAt: 1_000, baselineReady: true, baselineAlarmId: '300', initialPostIds: ['90000011'], pending: [] };
+    await store.setAssignmentState(state);
+    // 같은 본문 자리를 처리하고 최소 기록만 남은 본문 멘션 묶음과 담당 업무 묶음.
+    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 2_000 })], '200');
+    /** 처리한 업무. */
+    const assignment = { taskId: 'manual-task', authorId: 'author@example.test', authorName: '작성자', assignedAt: '20261020090100' };
+    await store.addAssignmentBundle(bundle([], { assignment, status: 'ignored', processedAt: 2_000 }), OLD_ACCOUNT.userId);
+    await store.archiveBundles([
+      { bundleId: 1, postId: '90000011', remarkId: '-1', mentions: [mention('101')], status: 'ignored', processedAt: 2_000, posted: null },
+      { bundleId: 2, postId: '90000011', remarkId: '-1', mentions: [], status: 'ignored', processedAt: 2_000, posted: null },
+    ]);
+
+    /** 근거 없이 알림 시각을 배정 시각으로 쓴 배정 자료. */
+    const estimated = { ...assignment, assignedAt: '20261020090400', assignedAtEstimated: true };
+    /** 저장한 수동 요청 묶음. */
+    const saved = await store.addManualBundle(bundle([], { status: 'generating', manual: true, assignment: estimated }), [1, 2]);
+    db.close();
+
+    expect(saved).toMatchObject({ id: 3, manual: true, assignment: estimated });
+    /** 다시 연 저장소. */
+    const reopenedDb = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const reopened = new SqliteStateStore(reopenedDb);
+    try {
+      expect(await reopened.listBundles()).toMatchObject([{ id: 3, manual: true, status: 'generating', mentions: [], assignment: estimated }]);
+      await expect(reopened.listMinimalRecords()).resolves.toEqual([]);
+      expect(await reopened.addAssignmentBundle(bundle([], { assignment }), OLD_ACCOUNT.userId)).toBeNull();
+      await expect(reopened.getBaselineAlarmId()).resolves.toBe('200');
+      await expect(reopened.getAssignmentState()).resolves.toEqual(state);
+
+      // 처리한 적 없는 업무도 수동 요청 묶음과 함께 처리 기록이 생긴다.
+      /** 다른 게시물의 처음 고른 업무. */
+      const fresh = { ...assignment, taskId: 'fresh-task' };
+      await reopened.addManualBundle(bundle([], { postId: '90000012', status: 'generating', manual: true, assignment: fresh }), []);
+      expect(await reopened.addAssignmentBundle(bundle([], { postId: '90000012', assignment: fresh }), OLD_ACCOUNT.userId)).toBeNull();
+    } finally {
+      reopenedDb.close();
+    }
   });
 
   it('형식 21에서 올리면 이미 있던 묶음은 수동 요청 묶음이 아니다', async () => {

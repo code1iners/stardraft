@@ -63,6 +63,12 @@ export async function listRecentMentions(
   const decided = new Set(from?.decidedLocations ?? []);
   /** 이어 불러올 자리. */
   let next: RecentMentionCursor | null = null;
+  /** `pageCursor` 쪽을 다시 받아 `afterAlarmId` 뒤부터 이어 갈 자리. 지금까지 판정한 멘션 위치를 함께 넘긴다. */
+  const cursorAt = (pageCursor: string | null, afterAlarmId: string | null): RecentMentionCursor => ({
+    pageCursor,
+    afterAlarmId,
+    decidedLocations: [...decided],
+  });
 
   // 쪽을 받을 때마다 판정해야 10건을 모은 뒤 더 오래된 쪽을 받지 않는다. walkPages는 쪽마다 바로 답해야 하므로 직접 넘긴다.
   /** 받을 쪽의 커서. */
@@ -71,7 +77,7 @@ export async function listRecentMentions(
   let after = from?.afterAlarmId ?? null;
   for (let page = 0; ; page += 1) {
     if (page === MAX_ALARM_PAGES) {
-      next = { pageCursor: cursor, afterAlarmId: null, decidedLocations: [...decided] };
+      next = cursorAt(cursor, null);
       break;
     }
     /** 이번 쪽. */
@@ -98,13 +104,13 @@ export async function listRecentMentions(
     const nextCursor: string | null = result.value.nextCursor === cursor ? null : result.value.nextCursor;
     if (judged < alarms.length) {
       // 10건을 채워 이 쪽의 남은 알림을 판정하지 않았다. 다음에는 이 쪽을 다시 받아 마지막으로 판정한 알림 뒤부터 본다.
-      next = { pageCursor: cursor, afterAlarmId: alarms[judged - 1]!.alarmId, decidedLocations: [...decided] };
+      next = cursorAt(cursor, alarms[judged - 1]!.alarmId);
       break;
     }
     if (nextCursor === null) break;
     cursor = nextCursor;
     if (found.length >= RECENT_MENTION_LIMIT) {
-      next = { pageCursor: cursor, afterAlarmId: null, decidedLocations: [...decided] };
+      next = cursorAt(cursor, null);
       break;
     }
   }

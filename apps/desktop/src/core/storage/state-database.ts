@@ -933,6 +933,7 @@ interface BundleRow {
   quit_during_countdown: number;
   /** 시험 묶음이면 1. */
   trial: number;
+  /** 최근 멘션 확인에서 고른 수동 요청 묶음이면 1. */
   manual: number;
   /** 별도 감지 사유인 담당 업무 자료. */
   assignment: string | null;

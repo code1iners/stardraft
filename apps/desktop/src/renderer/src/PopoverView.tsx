@@ -198,7 +198,7 @@ function EmptyDetection({ snapshot }: EmptyDetectionProps) {
           <strong>아직 멘션이 없습니다.</strong>
         </p>
         <p className="small muted">새 멘션이 오면 초안을 만들어 여기에 보여 드립니다.</p>
-        <ManualCheckButton manualCheck={snapshot.manualCheck} window="popover" />
+        <ManualCheckButton manualCheck={snapshot.manualCheck} window="popover" noteClassName="small muted" />
       </main>
     </>
   );

@@ -56,19 +56,27 @@ interface ManualCheckButtonProps {
   manualCheck: ManualCheckSnapshot;
   /** 확인 시트를 열 창. */
   window: ManualCheckWindowSnapshot;
+  /** 막혔을 때 이유 문구에 붙일 클래스. 자리마다 글 스타일이 다르다. */
+  noteClassName: string;
 }
 
-/** [최근 멘션 확인]. 감지를 시작했고 쓸 수 있는 Flow 키가 있을 때만 누를 수 있다. 누르면 이 창에 확인 시트를 연다. */
-export function ManualCheckButton({ manualCheck, window: checkWindow }: ManualCheckButtonProps) {
+/**
+ * [최근 멘션 확인]. 감지를 시작했고 쓸 수 있는 Flow 키가 있을 때만 누를 수 있다. 누르면 이 창에 확인 시트를 연다.
+ * 막혔을 때는 ⋯ 메뉴와 같은 이유를 버튼 아래 본문 문구로 보인다. 비활성 버튼은 툴팁이 잘 뜨지 않아 툴팁에 맡기지 않는다.
+ */
+export function ManualCheckButton({ manualCheck, window: checkWindow, noteClassName }: ManualCheckButtonProps) {
   /** 확인 시트를 연다. */
   const handleOpen = () => {
     void window.stardraft.send({ type: 'open-manual-check', window: checkWindow });
   };
 
   return (
-    <button type="button" className="btn" disabled={!manualCheck.canOpen} title={manualCheck.canOpen ? undefined : MANUAL_CHECK_DISABLED_TEXT} onClick={handleOpen}>
-      최근 멘션 확인
-    </button>
+    <>
+      <button type="button" className="btn" disabled={!manualCheck.canOpen} onClick={handleOpen}>
+        최근 멘션 확인
+      </button>
+      {!manualCheck.canOpen && <p className={noteClassName}>{MANUAL_CHECK_DISABLED_TEXT}</p>}
+    </>
   );
 }
 

@@ -1429,6 +1429,14 @@ describe('최근 멘션 확인', () => {
     expect(checkButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: false, sheet: null } })} />))).toContain('disabled');
   });
 
+  it('빈 화면에서 막힌 [최근 멘션 확인]은 이유를 툴팁이 아니라 본문 문구로 보이고, 쓸 수 있으면 문구가 없다', () => {
+    /** 막힌 빈 화면 HTML. */
+    const blocked = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: false, sheet: null } })} />);
+    expect(textOf(<div dangerouslySetInnerHTML={{ __html: blocked }} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+    expect(checkButton(blocked)).not.toContain('title=');
+    expect(textOf(<PopoverContent snapshot={snapshot([])} />)).not.toContain('열 수 있습니다.');
+  });
+
   it('설정 "초안" 칸에 [최근 멘션 확인]을 두고, 쓸 수 없으면 끄고 그 까닭을 보인다', () => {
     /** 감지를 시작한 스냅숏. */
     const started = snapshot([]);
@@ -1436,12 +1444,13 @@ describe('최근 멘션 확인', () => {
     /** 감지 전. */
     const before = snapshot([], { onboarding: { ...started.onboarding, detectionStarted: false }, manualCheck: { canOpen: false, sheet: null } });
     expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={before} />))).toContain('disabled');
-    expect(textOf(<DraftsSection snapshot={before} />)).toContain('멘션 감지를 시작한 뒤에 쓸 수 있습니다.');
+    expect(textOf(<DraftsSection snapshot={before} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+    expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={before} />))).not.toContain('title=');
     // 감지는 시작했지만 키를 쓸 수 없다.
     /** 키 문제. */
     const noKey = snapshot([], { manualCheck: { canOpen: false, sheet: null } });
     expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={noKey} />))).toContain('disabled');
-    expect(textOf(<DraftsSection snapshot={noKey} />)).toContain('Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+    expect(textOf(<DraftsSection snapshot={noKey} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
   });
 
   it('시트는 연 창에만 뜨고, 설정 창에서 연 시트는 설정 칸에 뜬다', () => {

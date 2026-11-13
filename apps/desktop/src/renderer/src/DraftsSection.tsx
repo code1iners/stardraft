@@ -152,9 +152,7 @@ export function DraftsSection({ snapshot }: DraftsSectionProps) {
       <div className="field">
         <span className="field-label">최근 멘션 확인</span>
         <p className="field-help muted">자동 감지에서 빠진 멘션을 직접 골라 초안을 만듭니다. 게시 전에는 Flow에 아무것도 올라가지 않습니다.</p>
-        <ManualCheckButton manualCheck={snapshot.manualCheck} window="settings" />
-        {!snapshot.onboarding.detectionStarted && <p className="field-note muted">멘션 감지를 시작한 뒤에 쓸 수 있습니다.</p>}
-        {snapshot.onboarding.detectionStarted && !snapshot.manualCheck.canOpen && <p className="field-note muted">Flow 키를 쓸 수 있을 때 열 수 있습니다. 설정 "Flow 계정"에서 키를 확인하세요.</p>}
+        <ManualCheckButton manualCheck={snapshot.manualCheck} window="settings" noteClassName="field-note muted" />
         {snapshot.manualCheck.sheet?.window === 'settings' && <ManualCheckSheet sheet={snapshot.manualCheck.sheet} />}
       </div>
     </>

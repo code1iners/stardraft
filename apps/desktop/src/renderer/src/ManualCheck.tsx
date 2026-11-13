@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from 'react';
+import { MANUAL_CHECK_TABS } from '../../shared/ipc';
 import type {
   ManualCheckLoadFailureSnapshot,
   ManualCheckMissReasonSnapshot,
@@ -15,9 +16,6 @@ const TAB_OBJECTS: Record<ManualCheckTabSnapshot, string> = { mentions: '최근 
 
 /** 탭 이름. */
 const TAB_LABELS: Record<ManualCheckTabSnapshot, string> = { mentions: '멘션', assignments: '담당 업무' };
-
-/** 탭 순서. 멘션이 먼저다. */
-const TABS: readonly ManualCheckTabSnapshot[] = ['mentions', 'assignments'];
 
 /** 목록을 불러오지 못한 까닭의 쉬운 말. `object`는 불러오던 목록(목적격)이다. */
 function loadFailureText(reason: ManualCheckLoadFailureSnapshot, object: string): string {
@@ -118,7 +116,7 @@ export function ManualCheckSheet({ sheet }: ManualCheckSheetProps) {
       <div className="sheet manual-check" role="dialog" aria-modal="true" aria-labelledby="manual-check-title" onKeyDown={handleKeyDown}>
         <h3 id="manual-check-title">확인할 항목 고르기</h3>
         <div className="manual-check-tabs" role="tablist" aria-label="확인할 항목 종류">
-          {TABS.map((tab) => (
+          {MANUAL_CHECK_TABS.map((tab) => (
             <button key={tab} type="button" role="tab" id={`manual-check-tab-${tab}`} aria-selected={tab === sheet.tab} className={tab === sheet.tab ? 'on' : undefined} onClick={() => handleTab(tab)}>
               {TAB_LABELS[tab]}
             </button>

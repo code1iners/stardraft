@@ -1198,11 +1198,12 @@ function isManualCheckWindow(value: unknown): value is ManualCheckWindowSnapshot
   return typeof value === 'string' && (MANUAL_CHECK_WINDOWS as readonly string[]).includes(value);
 }
 
-/** 최근 멘션 확인에서 고르는 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
+/** 최근 멘션 확인 시트의 탭 이름인지 확인한다. */
 function isManualCheckTab(value: unknown): value is ManualCheckTabSnapshot {
   return (MANUAL_CHECK_TABS as readonly unknown[]).includes(value);
 }
 
+/** 최근 멘션 확인에서 고르는 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
 function isAlarmIdInput(value: unknown): value is string {
   return typeof value === 'string' && /^\d{1,32}$/.test(value);
 }

@@ -38,7 +38,6 @@ import { DraftSettings } from './draft-settings';
 import { Posting } from '../posting/posting';
 import { openStateDatabase, SqliteStateStore, STATE_MIGRATIONS } from '../storage/state-database';
 import { SELECTION_INSTRUCTIONS } from './repo-selection';
-import { listRecentMentions } from '../manual-check/recent-mentions';
 import { ManualCheckSession } from '../manual-check/manual-check-session';
 import { ManualMentionCheck } from '../manual-check/manual-mention-check';
 
@@ -136,7 +135,7 @@ function draftOutput(repository: string) {
       {
         sentences: [
           { text: '실제 서비스에서는 다섯 번까지 다시 시도합니다.', evidence: [1] },
-          { text: '시험 환경은 세 번으로 보입니다.', evidence: [] },
+          { text: '테스트 환경은 세 번으로 보입니다.', evidence: [] },
         ],
       },
     ],
@@ -446,7 +445,7 @@ describe('초안 실행: 생성 중에서 준비됨으로', () => {
         {
           sentences: [
             { text: '실제 서비스에서는 다섯 번까지 다시 시도합니다.', evidence: [1] },
-            { text: '시험 환경은 세 번으로 보입니다.', evidence: [] },
+            { text: '테스트 환경은 세 번으로 보입니다.', evidence: [] },
           ],
         },
       ],
@@ -595,7 +594,7 @@ describe('초안 실행: 형식 위반과 실패', () => {
     const output = draftOutput(repos.a);
     output.paragraphs[0]!.sentences = [
       { text: '실제 서비스에서는 다섯 번까지 다시 시도합니다.', evidence: [4, 9] },
-      { text: '시험 환경은 세 번으로 보입니다.', evidence: [1] },
+      { text: '테스트 환경은 세 번으로 보입니다.', evidence: [1] },
     ];
     output.evidence = [
       { ...output.evidence[0]!, id: 1, repository: join(workDir, 'repo-c') },
@@ -2272,7 +2271,7 @@ describe('재생성: 입력', () => {
     expect(ready?.context).not.toBeNull();
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     // 처음 초안 실행 뒤에 생긴, 멘션이 아닌 새 글. 재생성은 Flow 내용을 새로 조회한다.
-    flow.addReply(POST_ID, '700', { replyId: '802', contents: '참고로 시험 환경도 궁금합니다.', registerId: OTHER_SENDER, registeredDateTime: '20261020085800' });
+    flow.addReply(POST_ID, '700', { replyId: '802', contents: '참고로 테스트 환경도 궁금합니다.', registerId: OTHER_SENDER, registeredDateTime: '20261020085800' });
     // 실행을 시작하기 전의 묶음을 보려고 에이전트 연결을 잠시 끊는다.
     setConnected(false);
 
@@ -2291,8 +2290,8 @@ describe('재생성: 입력', () => {
     expect(second?.instructions).toBe(first?.instructions);
     // 읽을 저장소와 멘션은 처음과 같고, 맥락은 새로 조회한 것이다. 직전 결과는 넘기지 않는다.
     expect(second?.input.slice(0, second.input.indexOf('## 맥락'))).toBe(first?.input.slice(0, first.input.indexOf('## 맥락')));
-    expect(first?.input).not.toContain('참고로 시험 환경도 궁금합니다.');
-    expect(second?.input).toContain('참고로 시험 환경도 궁금합니다.');
+    expect(first?.input).not.toContain('참고로 테스트 환경도 궁금합니다.');
+    expect(second?.input).toContain('참고로 테스트 환경도 궁금합니다.');
     expect(second?.input).not.toContain('다섯 번까지 다시 시도합니다');
     expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', draft: { repositories: [repos.a, repos.b] } });
   });
@@ -2310,7 +2309,7 @@ describe('재생성: 입력', () => {
 
     await drafts.regenerate(ready!.id, { path: 'directive', directive: '  더 짧게 써 주세요.  ' });
     await settle();
-    await drafts.regenerate(ready!.id, { path: 'directive', directive: '시험 환경 이야기는 빼 주세요.' });
+    await drafts.regenerate(ready!.id, { path: 'directive', directive: '테스트 환경 이야기는 빼 주세요.' });
     await settle();
 
     /** 처음 실행, 첫 지시를 덧붙인 실행, 둘째 지시를 덧붙인 실행. */
@@ -2326,7 +2325,7 @@ describe('재생성: 입력', () => {
         '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.',
         '요약: 재시도 횟수',
         '## 초안',
-        '실제 서비스에서는 다섯 번까지 다시 시도합니다. [근거 1] 시험 환경은 세 번으로 보입니다. [근거 없음]',
+        '실제 서비스에서는 다섯 번까지 다시 시도합니다. [근거 1] 테스트 환경은 세 번으로 보입니다. [근거 없음]',
         '## 근거',
         `1. 운영 설정에서 다시 시도하는 횟수를 5로 정해 둡니다. (${repos.a} · src/main/resources/application-prod.yml · 88-88번째 줄)`,
         '',
@@ -2338,7 +2337,7 @@ describe('재생성: 입력', () => {
     );
     // 둘째 재생성: 직전(둘째) 초안의 결과와 지금까지의 지시 전부.
     expect(third?.input).toContain('## 초안\n다섯 번 다시 시도합니다. [근거 1]\n');
-    expect(third?.input).toContain('# 덧붙인 지시\n1. 더 짧게 써 주세요.\n2. 시험 환경 이야기는 빼 주세요.\n');
+    expect(third?.input).toContain('# 덧붙인 지시\n1. 더 짧게 써 주세요.\n2. 테스트 환경 이야기는 빼 주세요.\n');
     for (const request of [second, third]) {
       expect(request?.input).not.toContain('사용자가 고쳐 쓴 초안입니다.');
       // 읽을 저장소와 데이터 구획은 처음 입력과 같다.
@@ -2346,7 +2345,7 @@ describe('재생성: 입력', () => {
       expect(request?.input.slice(request.input.indexOf('\n# 데이터\n'))).toBe(first?.input.slice(first.input.indexOf('\n# 데이터\n')));
     }
     expect(first?.input).not.toContain('# 직전 결과');
-    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', editedText: null, directives: ['더 짧게 써 주세요.', '시험 환경 이야기는 빼 주세요.'] });
+    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', editedText: null, directives: ['더 짧게 써 주세요.', '테스트 환경 이야기는 빼 주세요.'] });
   });
 
   it('다른 저장소로 다시 만들면 그때까지의 지시와 고친 요구를 지우고, 처음 입력에 읽을 저장소만 바꿔 넘긴다', async () => {
@@ -2491,7 +2490,7 @@ describe('재생성: 준비됨·실패 묶음에 새 멘션이 올 때', () => {
     const sendNewMention = async () => {
       context.flow.addReply(POST_ID, '700', {
         replyId: '801',
-        contents: `${MY_MARKUP} 시험 환경도 알려 주세요`,
+        contents: `${MY_MARKUP} 테스트 환경도 알려 주세요`,
         registerId: OTHER_SENDER,
         registerName: '다른 사람',
         registeredDateTime: '20261020085500',
@@ -2605,170 +2604,6 @@ describe('재생성: 준비됨·실패 묶음에 새 멘션이 올 때', () => {
     expect(input).toContain('# 덧붙인 지시\n1. 더 짧게\n');
     expect(input).toContain('## 멘션 2건 (시간순, 마지막이 답할 대상)');
     expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', regeneration: null, directives: ['더 짧게'] });
-  });
-});
-
-/** 가짜 Flow의 알림 목록에서 최근 멘션 목록을 만든다. 시험할 멘션을 고르는 목록과 같다. */
-async function recentMentionsOf(flow: FakeFlowApi) {
-  /** 목록을 만든 결과. */
-  const result = await listRecentMentions(flow, ME, NOW);
-  if (!result.ok) throw new Error('최근 멘션 목록을 만들지 못했습니다.');
-  return result.value.mentions;
-}
-
-describe('최근 멘션으로 시험', () => {
-  it('저장소 매핑이 없는 프로젝트의 멘션을 선택 실행이 코드와 무관하다고 판정하면 시험 묶음도 저장소 확인 필요로 끝나고 "[시험] …" 알림을 올린다', async () => {
-    const { flow, executor, bundles, notifier, settingsStore } = await setup();
-    /** 저장소가 둘인 작업 폴더. 후보가 둘이어야 선택 실행이 돈다. */
-    const work = makeWorkFolder('work', ['api', 'web']);
-    settingsStore.settings.workFolders = [work.folder];
-    flow.addAlarm(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'unrelated', repositories: [], reason: '회의 일정을 묻는 멘션입니다.' } } });
-    /** 시험할 멘션. */
-    const [recent] = await recentMentionsOf(flow);
-
-    /** 시험 묶음 ID. */
-    const trialId = await bundles.startTrial(recent!);
-    await settle();
-
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection']);
-    expect(bundles.get(trialId!)).toMatchObject({ trial: true, status: 'repo-check-needed', draft: null, repoCheck: { kind: 'unrelated' } });
-    expect(notifier.sent).toContainEqual({ title: '[시험] 저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: trialId });
-  });
-
-  it('생성 중에 시험을 끝내면 돌던 실행을 멈추고 묶음을 지운다', async () => {
-    const { flow, executor, bundles, stateStore } = await setup();
-    flow.addAlarm(alarm('101'));
-    executor.script({ outcome: 'wait-for-abort' });
-    /** 시험할 멘션. */
-    const [recent] = await recentMentionsOf(flow);
-    /** 시험 묶음 ID. */
-    const trialId = await bundles.startTrial(recent!);
-    await settle();
-    expect(bundles.get(trialId!)?.status).toBe('generating');
-    expect(executor.requests).toHaveLength(1);
-
-    expect(await bundles.endTrial(trialId!)).toBe(true);
-    await settle();
-
-    expect(executor.requests[0]?.signal.aborted).toBe(true);
-    expect(bundles.state()).toEqual([]);
-    expect(await stateStore.listBundles()).toEqual([]);
-  });
-
-  it('고른 멘션으로 시험 묶음을 만들어 감지해서 기다리는 묶음보다 앞에서 실제처럼 실행하고, 트레이 숫자와 "[시험] …" 알림을 올린다. 기준점은 옮기지 않는다', async () => {
-    const { flow, executor, bundles, notifier, stateStore, repos, poll } = await setup();
-    /** 끝나지 않고 기다리는 실행. */
-    const run = heldOutcome();
-    executor.script({ outcome: run.outcome });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
-    /** 시험할 멘션. 이미 감지해 묶음에 든 멘션도 고를 수 있다. */
-    const recent = (await recentMentionsOf(flow)).find((item) => item.mention.remarkId === '700')!;
-
-    /** 시험 묶음 ID. */
-    const trialId = await bundles.startTrial(recent);
-    run.release({ type: 'completed', output: draftOutput(repos.a) });
-    await settle();
-
-    expect(executor.requests.map(targetMentionOf)).toEqual([
-      '@테스트 사용자 재시도는 몇 번 하나요?',
-      '@테스트 사용자 재시도는 몇 번 하나요?',
-      '@테스트 사용자 두 번째 질문',
-    ]);
-    expect(bundles.get(trialId!)).toMatchObject({ trial: true, status: 'ready', postTitle: '가짜 게시물', mentions: [expect.objectContaining({ alarmId: '101' })] });
-    expect(bundles.reviewCount()).toBe(3);
-    expect(notifier.sent).toContainEqual({ title: '[시험] 초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', bundleId: trialId });
-    expect(stateStore.baselineAlarmId).toBe('102');
-  });
-
-  it('직접 답 확인을 건너뛰어 이미 답한 멘션으로도 초안을 만들고, 준비된 뒤의 변화 감시도 건너뛴다', async () => {
-    const { flow, executor, bundles, repos, poll } = await setup();
-    flow.addReply(POST_ID, '700', { replyId: '800', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085500' });
-    flow.respondToListMentionAlarms([alarm('99')]);
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    await poll();
-    /** 시험할 멘션. 이미 답한 멘션이다. */
-    const [recent] = await recentMentionsOf(flow);
-    expect(recent?.answered).toBe(true);
-
-    /** 시험 묶음 ID. */
-    const trialId = await bundles.startTrial(recent!);
-    await settle();
-    expect(bundles.get(trialId!)).toMatchObject({ status: 'ready', mentions: [expect.objectContaining({ answered: false })] });
-
-    // 원문이 지워져도 시험 묶음은 감시하지 않아 그대로 준비됨이다.
-    flow.removeComment(POST_ID, '700');
-    await poll();
-    expect(bundles.get(trialId!)?.status).toBe('ready');
-  });
-
-  it('시험은 한 번에 하나만 하고, 시험 묶음은 게시할 수 없다', async () => {
-    const { flow, executor, bundles, repos } = await setup();
-    flow.addAlarm(alarm('101'));
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    /** 시험할 멘션. */
-    const [recent] = await recentMentionsOf(flow);
-
-    /** 시험 묶음 ID. */
-    const trialId = await bundles.startTrial(recent!);
-    await settle();
-
-    expect(await bundles.startTrial(recent!)).toBeNull();
-    expect(bundles.state()).toHaveLength(1);
-    expect(await bundles.startPosting(trialId!)).toBe(false);
-    expect(bundles.get(trialId!)?.status).toBe('ready');
-  });
-
-  it('시험을 끝내거나 무시하면 묶음과 실행 기록을 지우고 처리됨·최소 기록·멘션 위치에 남기지 않아, 같은 멘션 위치의 알림도 실제 묶음이 된다', async () => {
-    const { flow, executor, bundles, stateStore, repos, poll } = await setup();
-    flow.addAlarm(alarm('101'));
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: 'Claude usage limit reached.' } });
-    /** 시험할 멘션. 아직 감지하지 않은 기준점 뒤의 멘션이다. */
-    const [recent] = await recentMentionsOf(flow);
-
-    /** 끝낼 시험 묶음 ID. */
-    const ended = await bundles.startTrial(recent!);
-    await settle();
-    expect(await bundles.endTrial(ended!)).toBe(true);
-    /** 무시할 시험 묶음 ID. 하나를 끝냈으므로 다시 시험할 수 있다. */
-    const ignored = await bundles.startTrial(recent!);
-    await settle();
-    expect(bundles.get(ignored!)?.status).toBe('failed');
-    await bundles.ignore(ignored!);
-
-    expect(bundles.state()).toEqual([]);
-    expect(await stateStore.listBundles()).toEqual([]);
-    expect(await stateStore.listMinimalRecords()).toEqual([]);
-    expect(await stateStore.hasMentionLocation(recent!.mention)).toBe(false);
-    expect(stateStore.baselineAlarmId).toBe('100');
-
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    await poll();
-    expect(bundles.state()).toMatchObject([{ trial: false, status: 'ready', mentions: [expect.objectContaining({ alarmId: '101' })] }]);
-  });
-
-  it('시험 묶음이 있는 동안 같은 자리에 온 멘션은 시험 묶음에 합치지 않고 실제 묶음이 된다', async () => {
-    const { flow, executor, bundles, stateStore, repos, poll } = await setup();
-    flow.addAlarm(alarm('101'));
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    /** 시험할 멘션. */
-    const [recent] = await recentMentionsOf(flow);
-    /** 시험 묶음 ID. */
-    const trialId = await bundles.startTrial(recent!);
-    await settle();
-
-    await poll();
-
-    expect(bundles.state().map((bundle) => [bundle.trial, bundle.status])).toEqual([
-      [true, 'ready'],
-      [false, 'ready'],
-    ]);
-    await bundles.endTrial(trialId!);
-    expect((await stateStore.listBundles()).map((bundle) => bundle.trial)).toEqual([false]);
   });
 });
 
@@ -4311,8 +4146,8 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
 
     expect(results.map((result) => result.kind)).toEqual(['created', 'created']);
     expect(results.map((result) => bundles.get(result.bundleId))).toMatchObject([
-      { manual: true, trial: false, status: 'ready', postTitle: '가짜 게시물', mentions: [expect.objectContaining({ alarmId: '101' })] },
-      { manual: true, trial: false, status: 'ready', mentions: [expect.objectContaining({ alarmId: '99' })] },
+      { manual: true, status: 'ready', postTitle: '가짜 게시물', mentions: [expect.objectContaining({ alarmId: '101' })] },
+      { manual: true, status: 'ready', mentions: [expect.objectContaining({ alarmId: '99' })] },
     ]);
     expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 닷새 전 질문', '@테스트 사용자 재시도는 몇 번 하나요?']);
     expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', bundleId: results[0]!.bundleId });
@@ -4419,6 +4254,26 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
 
     expect(bundles.state().map(({ id, manual }) => [id, manual])).toEqual([[bundleId, true]]);
     expect(executor.requests).toHaveLength(1);
+  });
+
+  it('무시한 수동 요청 묶음은 기록째 지워지지 않고 처리됨 "무시함"이 되어 되돌릴 수 있다', async () => {
+    const { flow, executor, bundles, clock, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll();
+    flow.addAlarm(alarm('101'));
+    const { check } = manualCheckOf(flow, bundles, clock);
+    /** 아직 감지하지 않은 기준점 뒤의 멘션. */
+    const [candidate] = await manualCandidatesOf(check);
+    /** 고른 결과. */
+    const { bundleId } = await check.request(candidate!);
+    await settle();
+
+    await bundles.ignore(bundleId);
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'ignored' });
+
+    await bundles.restore(bundleId);
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true });
+    expect(bundles.get(bundleId)?.status).not.toBe('ignored');
   });
 
   it('감지해서 기다리는 묶음보다 앞에서 실행하고, 저장소 매핑이 없는 프로젝트면 일반 묶음처럼 자동 선택을 거쳐 저장소 확인 필요로 올린다', async () => {

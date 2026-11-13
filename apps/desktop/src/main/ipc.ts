@@ -19,7 +19,6 @@ import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
 import type { ManualCheckSession } from '../core/manual-check/manual-check-session';
-import type { TrialRun } from '../core/trial/trial-run';
 import type { InAppUpdate } from '../core/update/in-app-update';
 import type { UpdateRestart, UpdateState } from '../core/update/update-restart';
 import { agentFixCommand } from '../shared/agent-fix-command';
@@ -48,7 +47,7 @@ import type { AppWindows } from './app-windows';
 import { siteSectionUrl } from './download-site';
 import { isAppRendererUrl } from './renderer-page';
 import type { ReviewSections } from './review-sections';
-import { flowUrlOf, manualCheckSnapshot, reviewSnapshot, trialSnapshot, type ProjectLookup } from './review-snapshot';
+import { flowUrlOf, manualCheckSnapshot, reviewSnapshot, type ProjectLookup } from './review-snapshot';
 
 /** IPC가 부르는 main의 일. */
 export interface IpcServices {
@@ -86,8 +85,6 @@ export interface IpcServices {
   editorOpener: EditorOpener;
   /** 최근 멘션 확인 시트. */
   manualCheck: ManualCheckSession;
-  /** 최근 멘션으로 시험의 멘션 고르기 목록. */
-  trialRun: TrialRun;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettings;
   /** 설정 "일반"의 [알림 시험]이 띄우는 OS 알림. */
@@ -158,12 +155,6 @@ export function registerIpc(services: IpcServices): void {
   services.onboarding.onChange(broadcastManualCheck);
   services.flowAccount.onChange(broadcastManualCheck);
   services.globalProblems.onChange(broadcastManualCheck);
-  // 멘션 고르기 목록이 바뀌거나, 시험 묶음이 생기거나 지워지거나, 감지를 시작하면 시험을 시작할 수 있는지가 바뀐다.
-  /** 시험 상태를 열린 창에 알린다. */
-  const broadcastTrial = () => services.windows.broadcast({ type: 'trial-changed', trial: currentTrialSnapshot(services) });
-  services.trialRun.onChange(broadcastTrial);
-  services.bundles.onChange(broadcastTrial);
-  services.onboarding.onChange(broadcastTrial);
   services.repoMappings.onChange(broadcastReview);
   services.repoPicker.onChange(broadcastReview);
   services.draftSettings.onChange(() =>
@@ -189,11 +180,6 @@ function currentReviewSnapshot({ bundles, drafts, posting, reviewSections, repoM
 /** 지금 최근 멘션 확인 상태의 스냅숏. */
 function currentManualCheckSnapshot({ manualCheck, bundles }: IpcServices) {
   return manualCheckSnapshot(manualCheck.state(), manualCheck.canOpen(), (mention) => bundles.manualPlaceOf(mention));
-}
-
-/** 지금 시험 상태의 스냅숏. */
-function currentTrialSnapshot({ trialRun, bundles, onboarding }: IpcServices) {
-  return trialSnapshot(trialRun.state(), bundles.trialId(), onboarding.state().detectionStarted);
 }
 
 /** 참여 Flow 프로젝트 목록에서 Flow 프로젝트를 찾는 함수. 목록을 아직 받지 않았으면 언제나 `null`이다. */
@@ -228,7 +214,6 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     editor: editorSnapshot(services.editorOpener.state()),
     review: currentReviewSnapshot(services),
     manualCheck: currentManualCheckSnapshot(services),
-    trial: currentTrialSnapshot(services),
     draftSettings: draftSettingsSnapshot(services.draftSettings.state()),
     update: services.updateRestart && updateSnapshot(services.updateRestart.state()),
   };
@@ -254,7 +239,6 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     reviewSections,
     editorOpener,
     manualCheck,
-    trialRun,
     draftSettings,
     notifier,
     inAppUpdate,
@@ -430,21 +414,6 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'pick-manual-check':
       await manualCheck.pick(command.alarmId);
-      return;
-    case 'open-trial-picker':
-      await trialRun.open(command.window);
-      return;
-    case 'reload-trial-picker':
-      await trialRun.reload();
-      return;
-    case 'close-trial-picker':
-      trialRun.close();
-      return;
-    case 'start-trial':
-      await trialRun.start(command.alarmId);
-      return;
-    case 'end-trial':
-      await bundles.endTrial(command.bundleId);
       return;
     case 'set-extra-instructions':
       await draftSettings.setExtraInstructions(command.text);

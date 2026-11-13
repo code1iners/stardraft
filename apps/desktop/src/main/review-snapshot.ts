@@ -15,7 +15,6 @@ import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
 import type { ManualCheckState } from '../core/manual-check/manual-check-session';
 import type { ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
-import type { TrialCandidate, TrialRunState } from '../core/trial/trial-run';
 import type {
   BundleMentionSnapshot,
   BundleSnapshot,
@@ -31,8 +30,6 @@ import type {
   ThreadEntrySnapshot,
   ManualCheckRowSnapshot,
   ManualCheckSnapshot,
-  TrialCandidateSnapshot,
-  TrialSnapshot,
   WritingChangeSnapshot,
 } from '../shared/ipc';
 
@@ -70,21 +67,6 @@ export function reviewSnapshot(
     bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf)),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
     repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
-  };
-}
-
-/**
- * 최근 멘션으로 시험의 상태를 렌더러에 넘길 모양으로 바꾼다. 감지를 시작했고 시험 묶음이 없어야 시작할 수 있다.
- * 멘션은 송신자, Flow 프로젝트, 첫 줄, 시각만 넘기고 Flow 사용자 ID는 넘기지 않는다.
- */
-export function trialSnapshot(state: TrialRunState, trialBundleId: number | null, detectionStarted: boolean): TrialSnapshot {
-  /** 열린 멘션 고르기 목록. */
-  const picker = state.picker;
-  return {
-    canStart: detectionStarted && trialBundleId === null,
-    bundleId: trialBundleId,
-    picker:
-      picker === null ? null : picker.status === 'loaded' ? { window: picker.window, status: 'loaded', candidates: picker.candidates.map(trialCandidateSnapshot) } : { ...picker },
   };
 }
 
@@ -140,18 +122,6 @@ function firstLineOf(text: string): string {
       .map((line) => line.trim())
       .find((line) => line !== '') ?? ''
   );
-}
-
-/** 멘션 고르기 목록의 멘션 하나. 첫 줄은 비어 있지 않은 첫 줄이고 멘션 표기는 `@이름`으로 바꾼다. */
-function trialCandidateSnapshot({ mention, projectTitle, answered }: TrialCandidate): TrialCandidateSnapshot {
-  return {
-    alarmId: mention.alarmId,
-    senderName: mention.senderName,
-    projectTitle,
-    firstLine: firstLineOf(mention.text),
-    at: flowTimeToEpochMs(mention.registeredDateTime) ?? mention.detectedAt,
-    answered,
-  };
 }
 
 /** 저장소 선택 창의 상태를 렌더러에 넘길 모양으로 바꾼다. */
@@ -216,7 +186,6 @@ export function bundleSnapshot(
     quitDuringCountdown: bundle.status === 'ready' && bundle.quitDuringCountdown,
     changes: { newWritingCount: changes.newWritings.length, edited: changes.editedWritings.length > 0, goneMentionCount: changes.goneMentions },
     manual: bundle.manual,
-    trial: bundle.trial,
   };
 }
 

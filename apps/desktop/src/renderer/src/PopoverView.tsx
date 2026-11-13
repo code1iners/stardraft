@@ -1,11 +1,10 @@
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleMeta, BundleSections, ManualTag, StatusTag, ToastStack, TrialTag } from './BundleDetail';
+import { BundleFooter, BundleMeta, BundleSections, ManualTag, StatusTag, ToastStack } from './BundleDetail';
 import { SetupChecklist } from './Onboarding';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
 import { ManualCheckButton, ManualCheckSheet } from './ManualCheck';
-import { TrialPickerSheet } from './TrialPicker';
 import { RestartConfirm, UpdateBanner } from './UpdatePrompts';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
@@ -91,7 +90,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   /** 보이는 묶음과 대기열. */
   const { queue, selected, select, movedWhileViewing } = selection;
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
-  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost, endTrial } = useBundleActions(selection);
+  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 연다. 작은 창은 main이 닫는다. */
   const handleExpand = () => {
@@ -115,7 +114,6 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
             onRetry={() => retry(selected.id)}
             onPost={() => post(selected)}
             onCancelPost={() => cancelPost(selected.id)}
-            onEndTrial={() => endTrial(selected.id)}
           />
         </>
       ) : (
@@ -146,7 +144,6 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
       {snapshot.manualCheck.sheet?.window === 'popover' && <ManualCheckSheet sheet={snapshot.manualCheck.sheet} />}
-      {snapshot.trial.picker?.window === 'popover' && <TrialPickerSheet picker={snapshot.trial.picker} />}
     </>
   );
 }
@@ -181,7 +178,6 @@ function QueueHead({ queue, selected, onSelect, onExpand }: QueueHeadProps) {
       <span className="queue-pos">{index >= 0 ? `${index + 1} / ${queue.length}` : '처리한 묶음'}</span>
       <span className="spacer" />
       <ManualTag bundle={selected} />
-      <TrialTag bundle={selected} />
       <StatusTag status={selected.status} />
       <button type="button" className="btn sm" onClick={onExpand}>
         펼쳐 보기

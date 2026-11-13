@@ -28,7 +28,6 @@ import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { ManualCheckSession } from '../core/manual-check/manual-check-session';
 import { ManualMentionCheck } from '../core/manual-check/manual-mention-check';
-import { TrialRun } from '../core/trial/trial-run';
 import { openAppData, type AppData } from '../core/storage/app-data';
 import { MigrationBackups } from '../core/storage/migration-backups';
 import { trayIndicator, type TrayIndicatorInput } from '../core/tray-indicator';
@@ -223,7 +222,7 @@ function start(): void {
     });
     await mentionBundles.load();
     bundles = mentionBundles;
-    // 앱이 꺼지며 끊긴 묶음을 정리한다. 카운트다운 중이던 게시는 준비됨으로 돌리고, 진행 중이던 시험 묶음은 지운다.
+    // 앱이 꺼지며 끊긴 묶음을 정리한다. 카운트다운 중이던 게시는 준비됨으로 돌린다.
     await mentionBundles.recoverAfterRestart().catch((error: unknown) => logger.error('bundle.restart-recovery-failed', errorFields(error)));
     // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
     retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
@@ -328,16 +327,6 @@ function start(): void {
       // 설정 창에서 골라도 묶음은 작은 창에서 검토하므로 작은 창을 열어 그 묶음을 보인다.
       showBundle: (bundleId) => appWindows.openPopover(bundleId),
     });
-    /** 최근 멘션으로 시험. 감지를 시작한 뒤 지금 키로 최근 멘션을 불러오고, 고른 멘션으로 시험 묶음을 만든다. */
-    const trialRun = new TrialRun({
-      bundles: mentionBundles,
-      connectFlow: connectCurrentFlow,
-      myUserId: () => flowAccount.state().account?.userId ?? null,
-      detectionStarted: () => onboarding.state().detectionStarted,
-      projectTitle: (projectId) => repoMappings.projectTitle(projectId),
-      clock: systemClock,
-      logger,
-    });
     /** electron-updater로 공개 Release에서 새 버전을 찾고 받고 설치하는 업데이트 피드. 설치본에서만 만든다. */
     const updateFeed = app.isPackaged ? electronUpdateFeed(autoUpdater, logger) : null;
     /**
@@ -409,7 +398,6 @@ function start(): void {
       reviewSections: new ReviewSections(),
       editorOpener,
       manualCheck,
-      trialRun,
       draftSettings,
       notifier,
       inAppUpdate,

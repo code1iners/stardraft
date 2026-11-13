@@ -350,40 +350,6 @@ export interface OnboardingSnapshot {
   start: DetectionStartSnapshot;
 }
 
-/** 멘션 고르기 목록을 여는 창. 작은 창의 빈 화면(`popover`)이나 설정 "초안" 칸(`settings`)이다. */
-export const TRIAL_WINDOWS = ['popover', 'settings'] as const;
-
-/** 멘션 고르기 목록을 여는 창 하나. */
-export type TrialWindowSnapshot = (typeof TRIAL_WINDOWS)[number];
-
-/** 최근 멘션을 불러오지 못한 까닭. 쓸 키 없음, 키 거부, 연결 실패, 요청 한도, 그 밖이다. */
-export type TrialLoadFailureSnapshot = 'no-key' | 'unauthorized' | 'network' | 'rate-limited' | 'unexpected';
-
-/** 멘션 고르기 목록의 멘션 하나. */
-export interface TrialCandidateSnapshot {
-  /** 고를 때 보내는 알림 ID. */
-  alarmId: string;
-  /** 송신자 이름. 비어 있을 수 있다. */
-  senderName: string;
-  /** Flow 프로젝트 이름. 모르면 `null`. */
-  projectTitle: string | null;
-  /** 멘션 글의 첫 줄. 멘션 표기는 `@이름`으로 바꿨다. */
-  firstLine: string;
-  /** 멘션 시각(Unix epoch 밀리초). */
-  at: number;
-  /** 멘션보다 나중에 쓴 내 답이 있는지 여부. "답함"을 붙이지만 고를 수 있다. */
-  answered: boolean;
-}
-
-/** 열린 멘션 고르기 목록. */
-export type TrialPickerSnapshot =
-  /** 최근 멘션을 불러오는 중이다. */
-  | { window: TrialWindowSnapshot; status: 'loading' }
-  /** 불러왔다. 최신이 앞이다. */
-  | { window: TrialWindowSnapshot; status: 'loaded'; candidates: TrialCandidateSnapshot[] }
-  /** 불러오지 못했다. */
-  | { window: TrialWindowSnapshot; status: 'failed'; reason: TrialLoadFailureSnapshot };
-
 /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
 export interface DraftSettingsSnapshot {
   /** 모든 초안에 적용할 추가 지침. 기본 지침 뒤에 붙는다. */
@@ -451,16 +417,6 @@ export interface ManualCheckSnapshot {
   canOpen: boolean;
   /** 열린 시트. 닫혀 있으면 `null`. */
   sheet: ManualCheckSheetSnapshot | null;
-}
-
-/** 최근 멘션으로 시험의 상태. */
-export interface TrialSnapshot {
-  /** 지금 시험을 시작할 수 있는지 여부. 감지를 시작했고 시험 묶음이 없어야 한다. */
-  canStart: boolean;
-  /** 지금 있는 시험 묶음의 ID. 없으면 `null`. */
-  bundleId: number | null;
-  /** 열린 멘션 고르기 목록. 닫혀 있으면 `null`. */
-  picker: TrialPickerSnapshot | null;
 }
 
 /** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시 실패, 게시됨, 무시함, 이미 답함, 원문 사라짐, 담당 해제다. */
@@ -813,8 +769,6 @@ export interface BundleSnapshot {
   changes: BundleChangesSnapshot;
   /** 최근 멘션 확인으로 만든 수동 요청 묶음인지 여부. 참이면 상세 머리에 "수동 요청" 태그를 보인다. */
   manual: boolean;
-  /** 최근 멘션으로 시험하는 시험 묶음인지 여부. 참이면 "시험" 표시와 안내를 붙이고 [게시] 대신 [시험 끝내기]를 둔다. */
-  trial: boolean;
 }
 
 /** 묶음을 보는 창. 작은 창(`compact`)과 펼친 창(`expanded`)이다. */
@@ -942,8 +896,6 @@ export interface AppSnapshot {
   review: ReviewSnapshot;
   /** 최근 멘션 확인. */
   manualCheck: ManualCheckSnapshot;
-  /** 최근 멘션으로 시험. */
-  trial: TrialSnapshot;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettingsSnapshot;
   /** 앱 내 업데이트의 화면 상태. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
@@ -978,8 +930,6 @@ export type AppEvent =
   | { type: 'review-changed'; review: ReviewSnapshot }
   /** 최근 멘션 확인 시트를 열 수 있는지, 시트의 상태가 바뀌었다. */
   | { type: 'manual-check-changed'; manualCheck: ManualCheckSnapshot }
-  /** 시험을 시작할 수 있는지, 시험 묶음, 멘션 고르기 목록이 바뀌었다. */
-  | { type: 'trial-changed'; trial: TrialSnapshot }
   /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
   | { type: 'draft-settings-changed'; draftSettings: DraftSettingsSnapshot }
   /** 앱 내 업데이트의 상태가 바뀌었다. */
@@ -1104,16 +1054,6 @@ export type AppCommand =
   | { type: 'load-more-manual-check' }
   /** 확인 시트에서 고른 멘션으로 수동 요청 묶음을 만들고 시트를 닫는다. 이미 묶음이 있으면 그 묶음을 연다. 목록에 없는 알림 ID는 main이 받지 않는다. */
   | { type: 'pick-manual-check'; alarmId: string }
-  /** [최근 멘션으로 시험]. 그 창에 멘션 고르기 목록을 열고 최근 멘션을 불러온다. 감지 전이거나 시험 묶음이 있으면 main이 무시한다. */
-  | { type: 'open-trial-picker'; window: TrialWindowSnapshot }
-  /** 멘션 고르기 목록의 최근 멘션을 다시 불러온다. */
-  | { type: 'reload-trial-picker' }
-  /** 멘션 고르기 목록을 닫는다. */
-  | { type: 'close-trial-picker' }
-  /** 멘션 고르기 목록에서 고른 멘션으로 시험을 시작한다. 목록에 없는 알림 ID는 main이 받지 않는다. */
-  | { type: 'start-trial'; alarmId: string }
-  /** [시험 끝내기]. 시험 묶음과 실행 기록을 지운다. 시험 묶음이 아니면 main이 무시한다. */
-  | { type: 'end-trial'; bundleId: number }
   /** 추가 지침을 저장한다. 여러 줄 입력이라 칸을 벗어날 때 보낸다. 다음 실행부터 쓴다. */
   | { type: 'set-extra-instructions'; text: string }
   /**
@@ -1234,12 +1174,7 @@ function isManualCheckWindow(value: unknown): value is ManualCheckWindowSnapshot
   return typeof value === 'string' && (MANUAL_CHECK_WINDOWS as readonly string[]).includes(value);
 }
 
-/** 멘션 고르기 목록을 여는 창 이름인지 확인한다. */
-function isTrialWindow(value: unknown): value is TrialWindowSnapshot {
-  return typeof value === 'string' && (TRIAL_WINDOWS as readonly string[]).includes(value);
-}
-
-/** 시험·최근 멘션 확인에서 고르는 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
+/** 최근 멘션 확인에서 고르는 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
 function isAlarmIdInput(value: unknown): value is string {
   return typeof value === 'string' && /^\d{1,32}$/.test(value);
 }
@@ -1333,7 +1268,6 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'open-repo-picker':
     case 'post-bundle':
     case 'cancel-posting':
-    case 'end-trial':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
     case 'expand-review':
     case 'collapse-review':
@@ -1355,16 +1289,12 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return { type: candidate.type };
     case 'pick-manual-check':
       return isAlarmIdInput(candidate.alarmId) ? { type: 'pick-manual-check', alarmId: candidate.alarmId } : null;
-    case 'open-trial-picker':
-      return isTrialWindow(candidate.window) ? { type: 'open-trial-picker', window: candidate.window } : null;
     case 'set-extra-instructions':
       return typeof candidate.text === 'string' && candidate.text.length <= EXTRA_INSTRUCTIONS_MAX_LENGTH ? { type: 'set-extra-instructions', text: candidate.text } : null;
     case 'add-secret-pattern':
       return typeof candidate.pattern === 'string' && candidate.pattern.trim() !== '' && candidate.pattern.length <= SECRET_PATTERN_MAX_LENGTH
         ? { type: 'add-secret-pattern', pattern: candidate.pattern }
         : null;
-    case 'start-trial':
-      return isAlarmIdInput(candidate.alarmId) ? { type: 'start-trial', alarmId: candidate.alarmId } : null;
     case 'choose-editor':
       return isEditorAppIdInput(candidate.appId) ? { type: 'choose-editor', appId: candidate.appId } : null;
     case 'set-editor': {
@@ -1388,8 +1318,6 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'link-repo-picker':
     case 'generate-with-repo-picker':
     case 'close-repo-picker':
-    case 'reload-trial-picker':
-    case 'close-trial-picker':
     case 'test-notification':
     case 'check-for-update':
     case 'retry-update':

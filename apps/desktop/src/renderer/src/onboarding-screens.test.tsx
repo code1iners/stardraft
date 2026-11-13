@@ -61,7 +61,6 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
       repoPicker: null,
     },
     manualCheck: { canOpen: false, sheet: null },
-    trial: { canStart: false, bundleId: null, picker: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
     ...overrides,

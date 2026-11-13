@@ -350,40 +350,6 @@ export interface OnboardingSnapshot {
   start: DetectionStartSnapshot;
 }
 
-/** 멘션 고르기 목록을 여는 창. 작은 창의 빈 화면(`popover`)이나 설정 "초안" 칸(`settings`)이다. */
-export const TRIAL_WINDOWS = ['popover', 'settings'] as const;
-
-/** 멘션 고르기 목록을 여는 창 하나. */
-export type TrialWindowSnapshot = (typeof TRIAL_WINDOWS)[number];
-
-/** 최근 멘션을 불러오지 못한 까닭. 쓸 키 없음, 키 거부, 연결 실패, 요청 한도, 그 밖이다. */
-export type TrialLoadFailureSnapshot = 'no-key' | 'unauthorized' | 'network' | 'rate-limited' | 'unexpected';
-
-/** 멘션 고르기 목록의 멘션 하나. */
-export interface TrialCandidateSnapshot {
-  /** 고를 때 보내는 알림 ID. */
-  alarmId: string;
-  /** 송신자 이름. 비어 있을 수 있다. */
-  senderName: string;
-  /** Flow 프로젝트 이름. 모르면 `null`. */
-  projectTitle: string | null;
-  /** 멘션 글의 첫 줄. 멘션 표기는 `@이름`으로 바꿨다. */
-  firstLine: string;
-  /** 멘션 시각(Unix epoch 밀리초). */
-  at: number;
-  /** 멘션보다 나중에 쓴 내 답이 있는지 여부. "답함"을 붙이지만 고를 수 있다. */
-  answered: boolean;
-}
-
-/** 열린 멘션 고르기 목록. */
-export type TrialPickerSnapshot =
-  /** 최근 멘션을 불러오는 중이다. */
-  | { window: TrialWindowSnapshot; status: 'loading' }
-  /** 불러왔다. 최신이 앞이다. */
-  | { window: TrialWindowSnapshot; status: 'loaded'; candidates: TrialCandidateSnapshot[] }
-  /** 불러오지 못했다. */
-  | { window: TrialWindowSnapshot; status: 'failed'; reason: TrialLoadFailureSnapshot };
-
 /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
 export interface DraftSettingsSnapshot {
   /** 모든 초안에 적용할 추가 지침. 기본 지침 뒤에 붙는다. */
@@ -394,17 +360,84 @@ export interface DraftSettingsSnapshot {
   extraSecretPatterns: string[];
 }
 
-/** 최근 멘션으로 시험의 상태. */
-export interface TrialSnapshot {
-  /** 지금 시험을 시작할 수 있는지 여부. 감지를 시작했고 시험 묶음이 없어야 한다. */
-  canStart: boolean;
-  /** 지금 있는 시험 묶음의 ID. 없으면 `null`. */
-  bundleId: number | null;
-  /** 열린 멘션 고르기 목록. 닫혀 있으면 `null`. */
-  picker: TrialPickerSnapshot | null;
+/** 최근 멘션 확인 시트를 여는 창. 작은 창의 빈 화면(`popover`)이나 설정 "초안" 칸(`settings`)이다. */
+export const MANUAL_CHECK_WINDOWS = ['popover', 'settings'] as const;
+
+/** 최근 멘션 확인 시트를 여는 창 하나. */
+export type ManualCheckWindowSnapshot = (typeof MANUAL_CHECK_WINDOWS)[number];
+
+/** 최근 멘션을 불러오지 못한 까닭. 쓸 키 없음, 키 거부, 연결 실패, 요청 한도, 그 밖이다. */
+export type ManualCheckLoadFailureSnapshot = 'no-key' | 'unauthorized' | 'network' | 'rate-limited' | 'unexpected';
+
+/**
+ * 줄에 붙는 상태 태그. 여러 개가 함께 붙을 수 있다.
+ * - `answered`: 멘션보다 나중에 쓴 내 답이 묶음 자리에 있다("답함"). 그래도 고를 수 있다.
+ * - `bundle`: 그 위치에 이미 묶음이 있다("이미 묶음 있음"과 그 묶음의 상태). 고르면 그 묶음으로 이동한다.
+ * - `archived`: 처리한 지 7일이 지나 최소 기록만 남았다("처리됨"). 고르면 새 묶음을 만든다.
+ */
+export type ManualCheckRowTagSnapshot = { kind: 'answered' } | { kind: 'bundle'; bundleId: number; status: BundleStatusSnapshot } | { kind: 'archived' };
+
+/** 최근 멘션 확인 시트의 탭. 멘션이 기본이다. */
+export const MANUAL_CHECK_TABS = ['mentions', 'assignments'] as const;
+
+/** 최근 멘션 확인 시트의 탭 하나. */
+export type ManualCheckTabSnapshot = (typeof MANUAL_CHECK_TABS)[number];
+
+/**
+ * 담당 업무 감지가 자동으로 가져오지 않은 까닭. 담당 업무 줄에 태그로 보인다.
+ * 기능 시작 전 업무, 기능 시작 전 배정, 자기 작성 업무, 배정 근거 없음이다.
+ */
+export type ManualCheckMissReasonSnapshot = 'pre-feature-task' | 'pre-feature-assignment' | 'self-authored' | 'no-evidence';
+
+/** 최근 멘션 확인 시트의 줄 하나. 멘션 줄과 담당 업무 줄이 있다. */
+export interface ManualCheckRowSnapshot {
+  /** 항목 종류. 멘션이거나 담당 업무다. */
+  kind: 'mention' | 'assignment';
+  /** 고를 때 보내는 알림 ID. 지금 보는 탭의 목록에서 찾는다. */
+  alarmId: string;
+  /** 멘션이면 송신자, 담당 업무면 업무 작성자의 이름. 비어 있을 수 있다. */
+  senderName: string;
+  /** Flow 프로젝트 이름. 모르면 `null`. */
+  projectTitle: string | null;
+  /** 멘션이면 글의 첫 줄(멘션 표기는 `@이름`), 담당 업무면 업무 제목. */
+  firstLine: string;
+  /** 멘션이면 멘션 시각, 담당 업무면 가장 최근 알림 시각(Unix epoch 밀리초). */
+  at: number;
+  /** 줄 상태 태그. 없으면 빈 배열. */
+  tags: ManualCheckRowTagSnapshot[];
+  /** 담당 업무 줄에서 감지에서 빠진 이유. 없으면 빈 배열이고, 멘션 줄은 항상 빈 배열이다. */
+  missReasons: ManualCheckMissReasonSnapshot[];
 }
 
-/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시 실패, 게시됨, 무시함, 이미 답함, 원문 사라짐이다. */
+/**
+ * 열린 최근 멘션 확인 시트. 지금 보는 탭(`tab`)의 목록 상태를 담는다. 다른 탭의 상태는 main이 들고 탭을 바꾸면 그 탭의 상태가 온다.
+ * 담당 업무 탭을 처음 열기 전에는 곧바로 불러오기 시작하므로 `loading`이다.
+ */
+export type ManualCheckSheetSnapshot =
+  /** 처음 불러오는 중이다. */
+  | { window: ManualCheckWindowSnapshot; tab: ManualCheckTabSnapshot; status: 'loading' }
+  /** 불러왔다. 최신이 앞이다. `hasMore`면 [더 보기]를 보이고, `loadingMore`는 이어 불러오는 중, `moreFailure`는 이어 불러오지 못한 까닭이다. */
+  | {
+      window: ManualCheckWindowSnapshot;
+      tab: ManualCheckTabSnapshot;
+      status: 'loaded';
+      rows: ManualCheckRowSnapshot[];
+      hasMore: boolean;
+      loadingMore: boolean;
+      moreFailure: ManualCheckLoadFailureSnapshot | null;
+    }
+  /** 불러오지 못했다. */
+  | { window: ManualCheckWindowSnapshot; tab: ManualCheckTabSnapshot; status: 'failed'; reason: ManualCheckLoadFailureSnapshot };
+
+/** 최근 멘션 확인의 상태. */
+export interface ManualCheckSnapshot {
+  /** 지금 시트를 열 수 있는지 여부. 감지를 시작했고 쓸 수 있는 Flow 키가 있어야 한다. */
+  canOpen: boolean;
+  /** 열린 시트. 닫혀 있으면 `null`. */
+  sheet: ManualCheckSheetSnapshot | null;
+}
+
+/** 멘션 묶음의 상태. 생성 중, 준비됨, 저장소 확인 필요, 게시 중, 실패, 게시 실패, 게시됨, 무시함, 이미 답함, 원문 사라짐, 담당 해제다. */
 export type BundleStatusSnapshot =
   | 'generating'
   | 'ready'
@@ -415,7 +448,8 @@ export type BundleStatusSnapshot =
   | 'posted'
   | 'ignored'
   | 'already-answered'
-  | 'source-gone';
+  | 'source-gone'
+  | 'unassigned';
 
 /**
  * 게시 실패의 사유. 권한 없음(`403`), 지워짐(`404`, `412`), 받지 않음(`400`, `422` 등), 요청 한도 초과(`429` 두 번),
@@ -424,12 +458,14 @@ export type BundleStatusSnapshot =
 export type PostFailureSnapshot = 'forbidden' | 'gone' | 'rejected' | 'rate-limited' | 'no-response' | 'app-quit';
 
 /**
- * 게시를 누를 때의 확인이 게시를 멈춘 까닭. 이미 답함, 원문 사라짐, 또는 [게시]를 누를 때 화면에 없던 변화다.
+ * 게시를 누를 때의 확인이 게시를 멈춘 까닭. 이미 답함, 원문 사라짐, 담당 해제, 또는 [게시]를 누를 때 화면에 없던 변화다.
  * 변화면 확인이 끝나기 전에 합쳐진 새 멘션 수, 새로 생긴 글 수(나를 멘션한 글 포함), 원문 수정 여부, 새로 사라진 멘션 수를 넘긴다.
  */
 export type PostStopSnapshot =
   | { kind: 'already-answered' }
   | { kind: 'source-gone' }
+  /** 담당자에서 빠진 것을 확인해 준비됨으로 돌리고 게시를 막았다. */
+  | { kind: 'unassigned' }
   | { kind: 'changed'; newMentionCount: number; newWritingCount: number; edited: boolean; goneMentionCount: number }
   /** 카운트다운 중에 추가한 비밀 파일 패턴에 초안의 근거가 맞아 결과를 버렸다. */
   | { kind: 'secret-evidence' };
@@ -691,6 +727,16 @@ export type RepoCheckSnapshot =
 
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
+  /** 담당 업무 초안의 원문. 직접 멘션과 별도 표시한다. */
+  assignment?: {
+    text: BundleMentionSnapshot['text'];
+    /** 담당자에서 제외된 것을 확인해 게시와 다시 만들기를 막았는지 여부. 직접 멘션이 남은 합친 묶음은 막지 않아 거짓이다. */
+    blockedByUnassignment?: boolean;
+    /** 배정 시각(Unix epoch 밀리초). 모르면 없다. */
+    assignedAt?: number;
+    /** 배정 시각이 배정 근거 없이 알림 시각으로 대신한 추정인지 여부. 참이면 상세가 "추정"으로 보인다. */
+    assignedAtEstimated?: boolean;
+  };
   /** 묶음 ID. 명령에 실어 보낸다. */
   id: number;
   /** 상태. */
@@ -743,8 +789,8 @@ export interface BundleSnapshot {
   quitDuringCountdown: boolean;
   /** 준비된 뒤의 변화 감시가 찾은 변화. 변화가 없으면 모두 0과 거짓이다. */
   changes: BundleChangesSnapshot;
-  /** 최근 멘션으로 시험하는 시험 묶음인지 여부. 참이면 "시험" 표시와 안내를 붙이고 [게시] 대신 [시험 끝내기]를 둔다. */
-  trial: boolean;
+  /** 최근 멘션 확인으로 만든 수동 요청 묶음인지 여부. 참이면 상세 머리에 "수동 요청" 태그를 보인다. */
+  manual: boolean;
 }
 
 /** 묶음을 보는 창. 작은 창(`compact`)과 펼친 창(`expanded`)이다. */
@@ -830,7 +876,7 @@ export interface RestartWaitSnapshot {
   posting: boolean;
 }
 
-/** 앱 내 업데이트의 화면 상태. 오른쪽 클릭 메뉴, 작은 창 띠와 다시 시작 확인 화면, 설정 "일반"이 그린다. */
+/** 앱 내 업데이트의 화면 상태. 작은 창 띠와 다시 시작 확인 화면, 설정 "일반"이 그린다. */
 export interface UpdateStateSnapshot {
   /** 업데이트 상태. */
   status: UpdateSnapshot;
@@ -870,8 +916,8 @@ export interface AppSnapshot {
   editor: EditorSnapshot;
   /** 멘션 묶음과 창마다 영역 펼침 상태. */
   review: ReviewSnapshot;
-  /** 최근 멘션으로 시험. */
-  trial: TrialSnapshot;
+  /** 최근 멘션 확인. */
+  manualCheck: ManualCheckSnapshot;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettingsSnapshot;
   /** 앱 내 업데이트의 화면 상태. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
@@ -904,8 +950,8 @@ export type AppEvent =
   | { type: 'editor-changed'; editor: EditorSnapshot }
   /** 멘션 묶음이나 영역 펼침 상태가 바뀌었다. */
   | { type: 'review-changed'; review: ReviewSnapshot }
-  /** 시험을 시작할 수 있는지, 시험 묶음, 멘션 고르기 목록이 바뀌었다. */
-  | { type: 'trial-changed'; trial: TrialSnapshot }
+  /** 최근 멘션 확인 시트를 열 수 있는지, 시트의 상태가 바뀌었다. */
+  | { type: 'manual-check-changed'; manualCheck: ManualCheckSnapshot }
   /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
   | { type: 'draft-settings-changed'; draftSettings: DraftSettingsSnapshot }
   /** 앱 내 업데이트의 상태가 바뀌었다. */
@@ -1020,16 +1066,18 @@ export type AppCommand =
   | { type: 'close-editor-picker' }
   /** 설정 "일반"에서 에디터를 고르거나 명령을 직접 지정한다. `null`이면 다음에 열 때 다시 고른다. */
   | { type: 'set-editor'; choice: EditorChoiceSnapshot | null }
-  /** [최근 멘션으로 시험]. 그 창에 멘션 고르기 목록을 열고 최근 멘션을 불러온다. 감지 전이거나 시험 묶음이 있으면 main이 무시한다. */
-  | { type: 'open-trial-picker'; window: TrialWindowSnapshot }
-  /** 멘션 고르기 목록의 최근 멘션을 다시 불러온다. */
-  | { type: 'reload-trial-picker' }
-  /** 멘션 고르기 목록을 닫는다. */
-  | { type: 'close-trial-picker' }
-  /** 멘션 고르기 목록에서 고른 멘션으로 시험을 시작한다. 목록에 없는 알림 ID는 main이 받지 않는다. */
-  | { type: 'start-trial'; alarmId: string }
-  /** [시험 끝내기]. 시험 묶음과 실행 기록을 지운다. 시험 묶음이 아니면 main이 무시한다. */
-  | { type: 'end-trial'; bundleId: number }
+  /** [최근 멘션 확인]. 그 창에 확인 시트를 열고 최근 멘션을 불러온다. 감지 전이거나 쓸 수 있는 Flow 키가 없으면 main이 무시한다. */
+  | { type: 'open-manual-check'; window: ManualCheckWindowSnapshot }
+  /** 확인 시트를 닫는다. */
+  | { type: 'close-manual-check' }
+  /** 확인 시트의 탭을 바꾼다. 담당 업무 탭은 처음 열 때 불러온다. */
+  | { type: 'select-manual-check-tab'; tab: ManualCheckTabSnapshot }
+  /** 확인 시트에서 지금 보는 탭의 목록을 처음부터 다시 불러온다. */
+  | { type: 'reload-manual-check' }
+  /** [더 보기]. 확인 시트에서 지금 보는 탭의 목록을 10건 더 불러온다. */
+  | { type: 'load-more-manual-check' }
+  /** 확인 시트에서 고른 멘션이나 담당 업무로 수동 요청 묶음을 만들고 시트를 닫는다. 이미 묶음이 있으면 그 묶음을 연다. 지금 보는 탭의 목록에 없는 알림 ID는 main이 받지 않는다. */
+  | { type: 'pick-manual-check'; alarmId: string }
   /** 추가 지침을 저장한다. 여러 줄 입력이라 칸을 벗어날 때 보낸다. 다음 실행부터 쓴다. */
   | { type: 'set-extra-instructions'; text: string }
   /**
@@ -1145,12 +1193,17 @@ function isEditorChoiceInput(value: unknown): value is EditorChoiceSnapshot | nu
   return choice.kind === 'command' && typeof choice.command === 'string' && choice.command.trim() !== '' && choice.command.length <= EDITOR_COMMAND_MAX_LENGTH;
 }
 
-/** 멘션 고르기 목록을 여는 창 이름인지 확인한다. */
-function isTrialWindow(value: unknown): value is TrialWindowSnapshot {
-  return typeof value === 'string' && (TRIAL_WINDOWS as readonly string[]).includes(value);
+/** 최근 멘션 확인 시트를 여는 창 이름인지 확인한다. */
+function isManualCheckWindow(value: unknown): value is ManualCheckWindowSnapshot {
+  return typeof value === 'string' && (MANUAL_CHECK_WINDOWS as readonly string[]).includes(value);
 }
 
-/** 시험 시작 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
+/** 최근 멘션 확인 시트의 탭 이름인지 확인한다. */
+function isManualCheckTab(value: unknown): value is ManualCheckTabSnapshot {
+  return (MANUAL_CHECK_TABS as readonly unknown[]).includes(value);
+}
+
+/** 최근 멘션 확인에서 고르는 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
 function isAlarmIdInput(value: unknown): value is string {
   return typeof value === 'string' && /^\d{1,32}$/.test(value);
 }
@@ -1244,7 +1297,6 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'open-repo-picker':
     case 'post-bundle':
     case 'cancel-posting':
-    case 'end-trial':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
     case 'expand-review':
     case 'collapse-review':
@@ -1257,16 +1309,23 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isBundleIdInput(candidate.bundleId) && Number.isSafeInteger(candidate.evidenceIndex) && (candidate.evidenceIndex as number) >= 0
         ? { type: 'open-evidence-in-editor', bundleId: candidate.bundleId, evidenceIndex: candidate.evidenceIndex as number }
         : null;
-    case 'open-trial-picker':
-      return isTrialWindow(candidate.window) ? { type: 'open-trial-picker', window: candidate.window } : null;
+    case 'open-manual-check':
+      return isManualCheckWindow(candidate.window) ? { type: 'open-manual-check', window: candidate.window } : null;
+    case 'select-manual-check-tab':
+      return isManualCheckTab(candidate.tab) ? { type: 'select-manual-check-tab', tab: candidate.tab } : null;
+    // 아래 인자 없는 명령 묶음에 더하면 유니온이 너무 커져 TypeScript가 맞춰 보지 못하므로, 최근 멘션 확인의 인자 없는 명령은 따로 돌려준다.
+    case 'close-manual-check':
+    case 'reload-manual-check':
+    case 'load-more-manual-check':
+      return { type: candidate.type };
+    case 'pick-manual-check':
+      return isAlarmIdInput(candidate.alarmId) ? { type: 'pick-manual-check', alarmId: candidate.alarmId } : null;
     case 'set-extra-instructions':
       return typeof candidate.text === 'string' && candidate.text.length <= EXTRA_INSTRUCTIONS_MAX_LENGTH ? { type: 'set-extra-instructions', text: candidate.text } : null;
     case 'add-secret-pattern':
       return typeof candidate.pattern === 'string' && candidate.pattern.trim() !== '' && candidate.pattern.length <= SECRET_PATTERN_MAX_LENGTH
         ? { type: 'add-secret-pattern', pattern: candidate.pattern }
         : null;
-    case 'start-trial':
-      return isAlarmIdInput(candidate.alarmId) ? { type: 'start-trial', alarmId: candidate.alarmId } : null;
     case 'choose-editor':
       return isEditorAppIdInput(candidate.appId) ? { type: 'choose-editor', appId: candidate.appId } : null;
     case 'set-editor': {
@@ -1290,8 +1349,6 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'link-repo-picker':
     case 'generate-with-repo-picker':
     case 'close-repo-picker':
-    case 'reload-trial-picker':
-    case 'close-trial-picker':
     case 'test-notification':
     case 'check-for-update':
     case 'retry-update':

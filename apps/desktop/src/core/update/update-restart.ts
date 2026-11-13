@@ -42,7 +42,7 @@ export interface RestartActivity {
   holdDrafts(held: boolean): void;
 }
 
-/** 작은 창·메뉴·설정에 보일 업데이트 상태. 앱 내 업데이트의 상태에 다시 시작 대기와 설치 실패를 더했다. */
+/** 작은 창·설정에 보일 업데이트 상태. 앱 내 업데이트의 상태에 다시 시작 대기와 설치 실패를 더했다. */
 export type UpdateDisplayStatus =
   | UpdateStatus
   /** 다시 시작을 눌렀지만 진행 중인 일이 끝나기를 기다린다. `waitingFor`는 기다리는 일이다. */
@@ -174,7 +174,7 @@ export class UpdateRestart {
   }
 
   /**
-   * [다시 시작]. 메뉴, 작은 창 띠, 설정 "일반"에서 누른다. 설치 준비됨이 아니거나 이미 다시 시작하는 중이면 아무것도 하지 않는다.
+   * [다시 시작]. 작은 창 띠와 설정 "일반"에서 누른다. 설치 준비됨이 아니거나 이미 다시 시작하는 중이면 아무것도 하지 않는다.
    * 확인 화면을 띄우는 OS면 확인 화면을 띄우고 기다린다. 아니면 바로 다시 시작한다(진행 중인 일이 있으면 미룬다).
    */
   async requestRestart(): Promise<void> {

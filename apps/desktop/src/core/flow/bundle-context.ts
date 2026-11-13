@@ -1,12 +1,14 @@
 import { activeMentions, type MentionBundle } from '../bundles/mention-bundle';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
-import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowRemarkAuthorship, FlowReply } from '../ports/flow-api';
+import type { FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowPost, FlowRemarkAuthorship, FlowReply } from '../ports/flow-api';
 import { compareAlarmIds } from './alarm-id';
 import { readableFlowTime } from './flow-time';
 import { myAnswersAmong, type MyAnswer } from './mention-judgement';
+import { taskAnswers, taskRemarks } from './task-remarks';
 import { hasMentionMarkupFor, namedMentionText, postBodyMentions } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
 import { walkPages } from './pages';
+import { isSameFlowUser } from './user-id';
 
 /** 맥락 문서의 길이 상한(글자 수). 넘치면 정한 순서대로 빼고, 절대 빼지 않는 것만으로 넘치면 그대로 둔다. */
 export const CONTEXT_CHAR_LIMIT = 30_000;
@@ -19,6 +21,8 @@ const OTHER_REPLY_LIMIT = 10;
 
 /** 맥락의 글 하나가 갖는 값. 게시물 본문, 댓글, 대댓글이 함께 갖는다. 쓴 사람의 사용자 ID는 받는 사람에만 쓰고 맥락 문서와 화면에는 넣지 않는다. */
 export interface ContextWriting {
+  /** 담당 업무 본문의 답변 대상 표시. 직접 멘션 표기와 구별한다. */
+  assignment?: boolean;
   /** 쓴 사람의 사용자 ID(`registerId`). Flow가 주지 않았으면 빈 문자열이다. 받는 사람이 생기기 전에 저장한 맥락에는 이 값이 없다. */
   authorId?: string;
   /** 쓴 사람 이름. 비어 있을 수 있다. */
@@ -67,7 +71,11 @@ export interface BundleContext {
 }
 
 /** 맥락을 모으지 못한 이유. Flow API 실패이거나, 대상 댓글 스레드의 머리 댓글이 목록에 없다. */
-export type BundleContextFailure = FlowApiFailure | { kind: 'thread-gone' };
+export type BundleContextFailure =
+  | FlowApiFailure
+  | { kind: 'thread-gone' }
+  /** 담당 업무의 댓글을 쪽 수 상한까지 받아도 끝나지 않았다. 내 답이 없다고 단정하지 않는다. */
+  | { kind: 'remarks-incomplete' };
 
 /**
  * 맥락을 모으지 못한 이유가 원문이 사라진 것인지 본다. 글이 지워졌거나(`404`), 볼 권한이 없거나(`403`),
@@ -98,15 +106,24 @@ export function mentionWritingOf(context: BundleContext, mention: MentionLocatio
  * 맥락을 모은 결과. 같은 조회에서 찾은 묶음 자리의 내 답도 함께 돌려준다. 초안을 만들기 직전과 준비된 뒤의 "이미 답함" 판정에 쓴다.
  * 내 답은 본문 묶음이면 게시물에 쓴 내 댓글, 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다. 시스템 댓글은 들지 않는다.
  * `goneMentions`는 묶음의 멘션 가운데 지금 Flow에서 사라진 것(글이 지워짐, 수정되어 나를 지목하지 않음)이다. 준비된 뒤의 변화 감시가 쓴다.
+ * `assigned`는 담당 업무 묶음의 지금 내 담당 여부다. 업무가 없거나 담당자를 읽을 수 없으면 해제로 단정하지 않고 `null`이다.
  * `myMentions`는 묶음 자리에서 지금 나를 지목한 글의 멘션 위치다. 아직 알림이 오지 않은 글도 든다. 본문 묶음이면 게시물 본문,
  * 댓글 스레드 묶음이면 머리 댓글과 대댓글이다. 게시를 누를 때의 확인이 이 PC가 게시할 글이 답한 범위로 쓴다.
  */
 export type BundleContextResult =
-  | { ok: true; context: BundleContext; myAnswers: MyAnswer[]; goneMentions: MentionLocation[]; myMentions: MentionLocation[] }
+  | {
+      ok: true;
+      context: BundleContext;
+      myAnswers: MyAnswer[];
+      goneMentions: MentionLocation[];
+      myMentions: MentionLocation[];
+      /** 담당 업무 묶음이면 같은 조회에서 확인한 지금 내 담당 여부. 담당 업무가 아니거나 업무·담당자를 읽을 수 없으면 `null`이다. */
+      assigned: boolean | null;
+    }
   | { ok: false; failure: BundleContextFailure };
 
 /** 맥락을 모을 묶음. 자리와 멘션만 본다. */
-export type ContextTarget = Pick<MentionBundle, 'postId' | 'remarkId' | 'mentions'>;
+export type ContextTarget = Pick<MentionBundle, 'postId' | 'remarkId' | 'mentions' | 'assignment'>;
 
 /**
  * 묶음의 맥락을 Flow에서 새로 조회해 모은다. 게시물, 댓글 전부, 대상 댓글 스레드의 대댓글 전부를 받는다.
@@ -122,12 +139,15 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   const post = await api.getPost(bundle.postId);
   if (!post.ok) return post;
 
+  /** 게시물의 댓글 전부. 시스템 댓글을 거르기 전이다. 링크가 가리킨 머리 댓글을 찾는 데 쓴다. */
+  const allComments: FlowComment[] = [];
   /** 게시물의 댓글 전부. 시스템 댓글은 뺐다. */
   const comments: FlowComment[] = [];
   /** 댓글을 넘긴 결과. */
   const walk = await walkPages(
     (cursor) => api.listComments(bundle.postId, cursor),
     (page) => {
+      allComments.push(...page.comments);
       comments.push(...page.comments.filter(isHumanRemark));
       return true;
     },
@@ -137,16 +157,27 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
 
   /** 대상 댓글 스레드. */
   let targetThread: ContextComment | null = null;
-  /** 묶음 자리의 내 답. 본문 묶음이면 게시물에 쓴 내 댓글이다. */
+  /** 묶음 자리의 내 답. 본문 묶음이면 게시물에 쓴 내 댓글이고, 담당 업무면 모든 스레드의 내 대댓글도 든다. */
   let myAnswers = myAnswersAmong(comments, myIds);
+  if (bundle.assignment) {
+    // 시스템 기록 스레드의 답글도 들도록 댓글을 걸러내기 전의 전체 기록으로 다시 본다.
+    /** 업무의 댓글·대댓글 전부. */
+    const remarks = await taskRemarks(api, bundle.postId);
+    if (!remarks.ok) return remarks;
+    if (!remarks.value.complete) return { ok: false, failure: { kind: 'remarks-incomplete' } };
+    myAnswers = taskAnswers(remarks.value, myIds);
+  }
   /** 멘션이 일어난 글이 지금도 나를 지목하는지 보는 함수. 본문 묶음이면 게시물 본문이다. */
   let stillMentions = (mention: MentionLocation): boolean =>
     mentionPlaceOf(mention) === 'post' && myIds.some((id) => postBodyMentions(post.value.textComponents, id));
   /** 묶음 자리에서 지금 나를 지목한 글의 멘션 위치. 본문 묶음이면 게시물 본문이다. */
   let myMentions: MentionLocation[] = [{ postId: bundle.postId, remarkId: '-1', replyId: '-1' }].filter((location) => postBody && stillMentions(location));
   if (!postBody) {
-    /** 대상 댓글 스레드의 머리 댓글. */
-    const head = comments.find((comment) => comment.commentId === bundle.remarkId);
+    /**
+     * 대상 댓글 스레드의 머리 댓글. 첨부가 있는 사람 글에도 `systemCode`가 붙어 오므로, 거르기 전 전체 목록에서 찾는다.
+     * 그래서 여기서 못 찾았다면 Flow 목록에 정말 없는 것이다.
+     */
+    const head = allComments.find((comment) => comment.commentId === bundle.remarkId);
     if (!head) return { ok: false, failure: { kind: 'thread-gone' } };
     /** 머리 댓글의 대댓글 전부. */
     const replies = head.replyHasNext ? await allReplies(api, bundle.postId, head.commentId) : { ok: true as const, value: head.replies };
@@ -179,15 +210,7 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
   /** 멘션 표시를 하기 전의 맥락. */
   const context: BundleContext = {
     fetchedAt: now,
-    post: {
-      title: post.value.title,
-      authorId: post.value.registerId,
-      authorName: post.value.registerName,
-      registeredDateTime: post.value.registeredDateTime,
-      contents: post.value.textComponents.map(({ contents }) => contents).join('\n'),
-      attachments: [...post.value.attachments],
-      mention: false,
-    },
+    post: contextPostOf(post.value),
     targetThread,
     otherComments: comments
       .filter((comment) => postBody || comment.commentId !== bundle.remarkId)
@@ -206,12 +229,34 @@ export async function collectBundleContext(api: FlowApi, bundle: ContextTarget, 
     myAnswers,
     goneMentions: bundle.mentions.filter((mention) => !stillMentions(mention)).map(mentionLocationOf),
     myMentions,
+    assigned: bundle.assignment ? isAssignedTo(post.value, bundle.assignment.taskId, myIds) : null,
   };
+}
+
+/** 게시물의 그 업무에 내가 지금 담당자로 있는지 본다. 업무가 없거나 담당자 목록이 누락됐으면 알 수 없어 `null`이다. 빈 목록은 해제로 본다. */
+function isAssignedTo(post: FlowPost, taskId: string, myIds: readonly string[]): boolean | null {
+  /** 묶음의 업무. 업무 ID로 찾고 게시물 ID와 같다고 보지 않는다. */
+  const task = post.tasks?.find((item) => item.taskId === taskId);
+  if (!task || task.workerIds === null) return null;
+  return task.workerIds.some((id) => myIds.some((myId) => isSameFlowUser(id, myId)));
 }
 
 /** 댓글이나 대댓글에 사용자 ID들 가운데 하나를 가리키는 멘션 표기가 있는지 본다. */
 function mentionsAnyOf(contents: string, userIds: readonly string[]): boolean {
   return userIds.some((id) => hasMentionMarkupFor(contents, id));
+}
+
+/** 조회한 게시물의 제목과 본문. 멘션 표시는 `markContextMentions`가 한다. */
+export function contextPostOf(post: FlowPost): ContextPost {
+  return {
+    title: post.title,
+    authorId: post.registerId,
+    authorName: post.registerName,
+    registeredDateTime: post.registeredDateTime,
+    contents: post.textComponents.map(({ contents }) => contents).join('\n'),
+    attachments: [...post.attachments],
+    mention: false,
+  };
 }
 
 /**
@@ -227,7 +272,7 @@ export function markContextMentions(context: BundleContext, bundle: ContextTarge
   const thread = context.targetThread;
   return {
     ...context,
-    post: { ...context.post, mention: isPostBody(bundle) },
+    post: { ...context.post, mention: isPostBody(bundle), ...(bundle.assignment ? { assignment: true } : {}) },
     targetThread: thread && {
       ...thread,
       mention: active.some((mention) => mentionPlaceOf(mention) === 'comment'),
@@ -421,10 +466,10 @@ function remarkLines(remark: ContextRemark, indent: string): string[] {
 }
 
 /** 쓴 사람·시각 줄. 묶음의 멘션이면 "[멘션]"을 붙인다. */
-function byline({ authorName, registeredDateTime, mention }: ContextWriting): string {
+function byline({ authorName, registeredDateTime, mention, assignment }: ContextWriting): string {
   /** 읽을 수 있게 바꾼 시각. */
   const time = readableFlowTime(registeredDateTime);
-  return `${authorName || '이름 없음'}${time ? ` · ${time}` : ''}${mention ? ' [멘션]' : ''}`;
+  return `${authorName || '이름 없음'}${time ? ` · ${time}` : ''}${assignment ? ' [담당 업무]' : mention ? ' [멘션]' : ''}`;
 }
 
 /** 첨부 줄. 파일 이름만 쓴다. 첨부가 없으면 줄이 없다. */

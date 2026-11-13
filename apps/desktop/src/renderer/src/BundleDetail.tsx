@@ -16,6 +16,7 @@ import type {
 } from '../../shared/ipc';
 import {
   ANSWERED_NOTICE,
+  assignmentSourceText,
   BUNDLE_PLACE_LABELS,
   BUNDLE_STATUS_TAGS,
   circledNumber,
@@ -37,13 +38,13 @@ import {
   postStoppedToastText,
   postLine,
   postingFooterText,
-  PROCESSED_NOTES,
+  processedNote,
   QUIT_DURING_COUNTDOWN_TEXT,
+  UNASSIGNED_TEXT,
   reasonText,
   repoCheckText,
   runLineText,
   senderLine,
-  TRIAL_NOTE,
   WRITING_CHANGE_LABELS,
 } from './review-text';
 import { useSecondsLeft, type FailedToastState, type IgnoreToastState, type StoppedToastState } from './useReview';
@@ -73,16 +74,10 @@ interface BundleProps {
   bundle: BundleSnapshot;
 }
 
-/** 시험 묶음에 상태 태그와 함께 붙이는 "시험" 표시. 시험 묶음이 아니면 그리지 않는다. */
-export function TrialTag({ bundle }: BundleProps) {
-  if (!bundle.trial) return null;
-  return <span className="tag trial">시험</span>;
-}
-
-/** 시험 묶음의 상세 머리에 더하는 안내 한 줄. 시험 묶음이 아니면 그리지 않는다. */
-export function TrialLine({ bundle }: BundleProps) {
-  if (!bundle.trial) return null;
-  return <p className="trial-line">{TRIAL_NOTE}</p>;
+/** 수동 요청 묶음에 상태 태그와 함께 붙이는 "수동 요청" 표시. 최근 멘션 확인으로 만든 묶음이 아니면 그리지 않는다. */
+export function ManualTag({ bundle }: BundleProps) {
+  if (!bundle.manual) return null;
+  return <span className="tag manual">수동 요청</span>;
 }
 
 /** "Flow에서 열기". 열 주소가 없으면 보이지 않는다. 주소는 main이 정한다. */
@@ -108,9 +103,12 @@ export function RunLine({ bundle }: BundleProps) {
 
 /**
  * 상세 머리에 더하는 게시 상태 한 줄. 게시 실패면 쉬운 말 사유, 게시 요청을 보내고 결과를 기다리면 "게시 결과 확인 중",
- * 카운트다운 중에 앱이 꺼져 준비됨으로 돌아왔으면 "앱이 꺼져서 게시하지 않았습니다"다. 셋 다 아니면 그리지 않는다.
+ * 카운트다운 중에 앱이 꺼져 준비됨으로 돌아왔으면 "앱이 꺼져서 게시하지 않았습니다", 검토 중 담당자에서 제외됐으면 게시할 수 없다는 줄이다.
+ * 모두 아니면 그리지 않는다. 담당 해제로 처리됨이 된 묶음은 바닥 줄 안내가 알린다.
  */
 export function PostStatusLine({ bundle }: BundleProps) {
+  // 게시 실패 묶음도 담당 해제로 막혔으면 [다시 게시]가 꺼진 까닭을 먼저 보인다.
+  if (bundle.assignment?.blockedByUnassignment && bundle.group !== 'processed') return <p className="post-status-line warning">{UNASSIGNED_TEXT}</p>;
   if (bundle.postFailure) return <p className="post-status-line failure">{POST_FAILURE_TEXT[bundle.postFailure]}</p>;
   if (bundle.posting?.phase === 'sending') return <p className="post-status-line">{POST_CHECKING_TEXT}</p>;
   if (bundle.quitDuringCountdown) return <p className="post-status-line warning">{QUIT_DURING_COUNTDOWN_TEXT}</p>;
@@ -123,16 +121,21 @@ export function BundleMeta({ bundle }: BundleProps) {
     <div className="bundle-meta">
       <p className="review-meta">
         <strong>{senderLine(bundle.senderNames)}</strong>
-        <span>{BUNDLE_PLACE_LABELS[bundle.place]}</span>
+        <span>{bundle.assignment ? assignmentSourceText(bundle) : BUNDLE_PLACE_LABELS[bundle.place]}</span>
         <span>{formatTime(bundle.lastMentionAt)}</span>
       </p>
+      {bundle.assignment?.assignedAtEstimated && bundle.assignment.assignedAt !== undefined && (
+        <p className="review-meta small muted">
+          <span>배정 시각 {formatTime(bundle.assignment.assignedAt)}</span>
+          <span className="tag manual">추정</span>
+        </p>
+      )}
       <p className="post-line">
         <span>{postLine(bundle)}</span>
         <OpenInFlowButton bundle={bundle} />
       </p>
       <RunLine bundle={bundle} />
       <PostStatusLine bundle={bundle} />
-      <TrialLine bundle={bundle} />
     </div>
   );
 }
@@ -212,14 +215,15 @@ function ChangeTag({ change }: ChangeTagProps) {
 
 /**
  * 원문 영역 내용. 묶인 멘션 전부를 시간순으로 보이고, 수정된 멘션에는 "수정됨"을 붙인다.
- * 초안을 만든 뒤 새로 달린 글은 멘션 뒤에 "새 글"로 보인다.
+ * 초안을 만든 뒤 새로 달린 글은 멘션 뒤에 "새 글"로 보인다. 담당 업무 초안은 업무 본문을 보이고, 합쳐진 본문 멘션은 같은 글이라 다시 보이지 않는다.
  */
 function MentionList({ bundle }: BundleProps) {
   /** 초안을 만든 뒤 새로 달린 글. */
   const newEntries = bundle.thread.filter((entry) => entry.change === 'new');
   return (
     <ol className="mention-list">
-      {bundle.mentions.map((mention, index) => (
+      {bundle.assignment && <li className="mention-item"><PartsText parts={bundle.assignment.text} /></li>}
+      {!bundle.assignment && bundle.mentions.map((mention, index) => (
         <li key={index} className="mention-item">
           <div className="mention-meta">
             <strong>{mention.senderName || '이름 없음'}</strong>
@@ -813,7 +817,7 @@ export function BundleSections({ bundle, windowKind, sections, movedWhileViewing
   return (
     <>
       <BundleNotice bundle={bundle} movedWhileViewing={movedWhileViewing} />
-      <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={`멘션 ${bundle.mentions.length}건`}>
+      <ReviewSectionBlock windowKind={windowKind} section="original" open={open.original} title="원문" detail={bundle.assignment ? '담당 업무 본문' : `멘션 ${bundle.mentions.length}건`}>
         <OriginalBody bundle={bundle} threadOpen={threadBundleId === bundle.id} onToggleThread={handleToggleThread} />
       </ReviewSectionBlock>
       {bundle.generation && (
@@ -877,19 +881,16 @@ interface BundleFooterProps extends BundleProps {
   onPost: () => void;
   /** 카운트다운 중인 게시의 [취소]를 눌렀다. */
   onCancelPost: () => void;
-  /** 시험 묶음의 [시험 끝내기]를 눌렀다. */
-  onEndTrial: () => void;
 }
 
 /**
  * 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다.
  * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가, 준비됨 묶음은 오른쪽에 재생성 메뉴와 [게시]가 있다.
  * 게시 실패 묶음은 오른쪽에 [다시 게시]만 있다. 편집해 다시 게시할 수는 있지만 다시 만들지는 않는다.
- * 시험 묶음은 Flow에 올리지 않으므로 준비됨이어도 [게시] 대신 [시험 끝내기]가 있다.
  * 게시 중 묶음은 카운트다운 중이면 남은 초와 [취소]만, 게시 요청을 보냈으면 결과를 기다린다는 말과 꺼진 [게시]만 있다.
  * 재생성 메뉴에서 지시를 덧붙이기로 하면 바닥 줄이 지시를 쓰는 칸이 되고, 편집한 초안이 있으면 다시 만들기 전에 바닥 줄에서 버릴지 묻는다.
  */
-export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, onPost, onCancelPost, onEndTrial }: BundleFooterProps) {
+export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, onPost, onCancelPost }: BundleFooterProps) {
   // 바닥 줄의 칸은 보고 있는 묶음에만 연다. 다른 묶음으로 넘어가거나 준비됨이 아니게 되면 닫힌다.
   /** 바닥 줄에 연 칸과 그 묶음 ID. 지시를 쓰는 칸이거나, 그 경로로 다시 만들기 전에 편집본을 버릴지 묻는 칸이다. 열지 않았으면 `null`. */
   const [pane, setPane] = useState<{ bundleId: number; kind: RegenerateChoice } | null>(null);
@@ -941,7 +942,7 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
   if (bundle.group === 'processed') {
     return (
       <footer className="review-foot">
-        <span className="small muted">{PROCESSED_NOTES[bundle.status] ?? ''}</span>
+        <span className="small muted">{processedNote(bundle)}</span>
         <span className="spacer" />
         {bundle.canRestore && (
           <button type="button" className="btn" onClick={onRestore}>
@@ -969,16 +970,10 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
       )}
       {bundle.status === 'ready' && (
         <>
-          <RegenerateMenu onPick={handlePick} />
-          {bundle.trial ? (
-            <button type="button" className="btn primary" onClick={onEndTrial}>
-              시험 끝내기
-            </button>
-          ) : (
-            <button type="button" className="btn primary" disabled={!bundle.draft?.canPost} onClick={onPost}>
-              게시
-            </button>
-          )}
+          {bundle.draft?.canRegenerate !== false && <RegenerateMenu onPick={handlePick} />}
+          <button type="button" className="btn primary" disabled={!bundle.draft?.canPost} onClick={onPost}>
+            게시
+          </button>
         </>
       )}
     </footer>
@@ -1243,7 +1238,7 @@ function BundleNotice({ bundle, movedWhileViewing }: BundleNoticeProps) {
   /** 알림 줄 문구. */
   const text = noticeText(bundle);
   /** 지금 내용으로 다시 만들 수 있는지 여부. */
-  const canRegenerate = bundle.status === 'ready' && bundle.draft !== null;
+  const canRegenerate = bundle.status === 'ready' && bundle.draft?.canRegenerate === true;
   /** [다시 만들기]를 눌렀다. 편집한 초안이 있으면 먼저 묻는다. */
   const handleRegenerate = () => {
     if (bundle.draft?.edited) setConfirmingBundleId(bundle.id);

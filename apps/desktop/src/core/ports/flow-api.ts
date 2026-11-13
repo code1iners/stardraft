@@ -63,6 +63,10 @@ export interface FlowTextComponent {
 
 /** 게시물 하나. `GET /user/posts/{postId}` 응답에서 앱이 쓰는 값이다. */
 export interface FlowPost {
+  /** 업무 판별 자료. 없거나 해석할 수 없으면 미확인이다. */
+  tasks?: FlowTask[];
+  /** 마지막 수정 시각. 생성 시 지정 후보의 보수적 판별에 쓴다. */
+  editedDateTime?: string;
   /** 게시물 ID. */
   postId: string;
   /** 게시물 제목. 비어 있을 수 있다. */
@@ -163,11 +167,25 @@ export type FlowApiFailure =
 /** Flow API 호출 결과. */
 export type FlowApiResult<T> = { ok: true; value: T } | { ok: false; failure: FlowApiFailure };
 
+/** 상세 응답의 업무. 누락과 명시적인 빈 담당자 목록을 구별한다. */
+export interface FlowTask {
+  /** 게시글 ID와 다른 업무 ID. */
+  taskId: string;
+  /** 담당자 사용자 ID. 누락이면 null. */
+  workerIds: string[] | null;
+  /** 검증 가능한 상태 범주만 해석한다. 요청(`0`)만 미완료, 완료(`2`)만 완료이며, 진행·피드백·보류와 누락은 `unknown`이다. */
+  completion: 'active' | 'completed' | 'unknown';
+  /** 담당자 컬럼의 현재 사용자 ID와 표시 이름. 이름만 남는 담당 변경 기록의 동명이인 확인에 쓴다. 컬럼이 없거나 깨졌으면 없다. */
+  workerNames?: { userId: string; name: string }[];
+}
+
 /**
  * Flow API 포트.
  * Flow 전용 코드는 이 포트의 어댑터 한 곳에 모은다. 알림 조회, 맥락 조회, 게시가 이 포트를 거친다.
  */
 export interface FlowApi {
+  /** 담당 업무 후보 알림. 신규 배정 판정은 상세 조회에서 따로 한다. */
+  listWorkerAlarms(cursor: string | null): Promise<FlowApiResult<FlowAlarmPage>>;
   /** 키 소유자 본인의 구성원 정보를 조회한다. 키 확인에 쓴다. */
   getMe(): Promise<FlowApiResult<FlowEmployee>>;
   /** 키 소유자가 참여한 Flow 프로젝트 목록을 조회한다. 저장소 매핑에서 Flow 프로젝트를 고를 때 쓴다. */

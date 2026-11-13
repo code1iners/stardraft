@@ -173,6 +173,11 @@ export function DownloadPanel({ visitor, latest }: Props) {
   return (
     <div className="dl">
       <DownloadChoice visitor={visitor} latest={latest} />
+      <p className="other">
+        <a className="link" href="#install">
+          설치 방법 · 실행이 막힐 때
+        </a>
+      </p>
       <VersionLine visitor={visitor} latest={latest} />
     </div>
   );

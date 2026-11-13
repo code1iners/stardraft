@@ -1,10 +1,11 @@
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleMeta, BundleSections, StatusTag, ToastStack, TrialTag } from './BundleDetail';
-import { SetupChecklist, WindowsTrayHint } from './Onboarding';
+import { BundleFooter, BundleMeta, BundleSections, ManualTag, StatusTag, ToastStack } from './BundleDetail';
+import { SetupChecklist } from './Onboarding';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
-import { TrialButton, TrialPickerSheet } from './TrialPicker';
+import { ManualCheckButton, ManualCheckSheet } from './ManualCheck';
+import { PopoverMenu } from './PopoverMenu';
 import { RestartConfirm, UpdateBanner } from './UpdatePrompts';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
@@ -58,7 +59,10 @@ export function PopoverContent({ snapshot, initialBundleId = null }: PopoverCont
       ) : (
         <>
           <header className="popover-head">
+            <span className="popover-logo" aria-hidden="true" />
             <strong>{snapshot.appName}</strong>
+            <span className="spacer" />
+            <SettingsButton />
           </header>
           <SetupChecklist snapshot={snapshot} />
         </>
@@ -77,7 +81,7 @@ interface CompactReviewProps {
 
 /**
  * 작은 창의 묶음 보기. 처리되지 않은 묶음을 가장 오래된 미처리 멘션 순으로 하나씩 보인다.
- * 머리에 대기열 위치, ‹ › 이동, 상태 태그, "펼쳐 보기"가 있고, 무시하면 다음 묶음으로 넘어간다.
+ * 머리에 대기열 위치, ‹ › 이동, 상태 태그, ⋯ 메뉴("최근 멘션 확인"·"펼쳐 보기")가 있고, 무시하면 다음 묶음으로 넘어간다.
  */
 function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   /** 묶음 상태와 열린 저장소 선택 창. */
@@ -87,7 +91,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   /** 보이는 묶음과 대기열. */
   const { queue, selected, select, movedWhileViewing } = selection;
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
-  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost, endTrial } = useBundleActions(selection);
+  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 연다. 작은 창은 main이 닫는다. */
   const handleExpand = () => {
@@ -98,7 +102,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
     <>
       {selected ? (
         <>
-          <QueueHead queue={queue} selected={selected} onSelect={select} onExpand={handleExpand} />
+          <QueueHead queue={queue} selected={selected} manualCheck={snapshot.manualCheck} onSelect={select} onExpand={handleExpand} />
           <main className="popover-body review-body">
             <BundleMeta bundle={selected} />
             <BundleSections bundle={selected} windowKind="compact" sections={sections} movedWhileViewing={movedWhileViewing} />
@@ -111,19 +115,16 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
             onRetry={() => retry(selected.id)}
             onPost={() => post(selected)}
             onCancelPost={() => cancelPost(selected.id)}
-            onEndTrial={() => endTrial(selected.id)}
           />
         </>
       ) : (
         <>
           <header className="popover-head">
+            <span className="popover-logo" aria-hidden="true" />
             <strong>{snapshot.appName}</strong>
             <span className="spacer" />
-            {bundles.length > 0 && (
-              <button type="button" className="btn sm" onClick={handleExpand}>
-                펼쳐 보기
-              </button>
-            )}
+            <PopoverMenu manualCheck={snapshot.manualCheck} canExpand={bundles.length > 0} onExpand={handleExpand} />
+            <SettingsButton />
           </header>
           <EmptyDetection snapshot={snapshot} />
         </>
@@ -139,7 +140,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
       />
       {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
       {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
-      {snapshot.trial.picker?.window === 'popover' && <TrialPickerSheet picker={snapshot.trial.picker} />}
+      {snapshot.manualCheck.sheet?.window === 'popover' && <ManualCheckSheet sheet={snapshot.manualCheck.sheet} />}
     </>
   );
 }
@@ -150,14 +151,16 @@ interface QueueHeadProps {
   queue: readonly BundleSnapshot[];
   /** 보이는 묶음. */
   selected: BundleSnapshot;
+  /** 최근 멘션 확인 상태. ⋯ 메뉴 항목이 막혔는지 가른다. */
+  manualCheck: AppSnapshot['manualCheck'];
   /** 묶음을 고른다. */
   onSelect: (bundleId: number) => void;
-  /** "펼쳐 보기"를 눌렀다. */
+  /** 메뉴에서 "펼쳐 보기"를 골랐다. */
   onExpand: () => void;
 }
 
-/** 작은 창 머리. 대기열 위치(`3 / 4`), ‹ › 이동, 상태 태그, "펼쳐 보기"다. 처리됨 묶음을 보고 있으면 위치 대신 "처리한 묶음"이다. */
-function QueueHead({ queue, selected, onSelect, onExpand }: QueueHeadProps) {
+/** 작은 창 머리. 대기열 위치(`3 / 4`), ‹ › 이동, 상태 태그, ⋯ 메뉴다. 처리됨 묶음을 보고 있으면 위치 대신 "처리한 묶음"이다. */
+function QueueHead({ queue, selected, manualCheck, onSelect, onExpand }: QueueHeadProps) {
   /** 보이는 묶음의 대기열 위치. 처리됨 묶음이면 -1. */
   const index = queue.findIndex((bundle) => bundle.id === selected.id);
   /** 앞 묶음과 다음 묶음. */
@@ -173,11 +176,9 @@ function QueueHead({ queue, selected, onSelect, onExpand }: QueueHeadProps) {
       </button>
       <span className="queue-pos">{index >= 0 ? `${index + 1} / ${queue.length}` : '처리한 묶음'}</span>
       <span className="spacer" />
-      <TrialTag bundle={selected} />
+      <ManualTag bundle={selected} />
       <StatusTag status={selected.status} />
-      <button type="button" className="btn sm" onClick={onExpand}>
-        펼쳐 보기
-      </button>
+      <PopoverMenu manualCheck={manualCheck} canExpand onExpand={onExpand} />
     </header>
   );
 }
@@ -188,13 +189,8 @@ interface EmptyDetectionProps {
   snapshot: AppSnapshot;
 }
 
-/** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션으로 시험]을 누르면 이 창에 멘션 고르기 목록을 연다. */
+/** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션 확인]을 누르면 이 창에 확인 시트를 연다. */
 function EmptyDetection({ snapshot }: EmptyDetectionProps) {
-  /** 설정 창을 연다. 작은 창은 main이 닫는다. */
-  const handleOpenSettings = () => {
-    void window.stardraft.send({ type: 'open-settings' });
-  };
-
   return (
     <>
       <main className="popover-body popover-empty">
@@ -202,16 +198,27 @@ function EmptyDetection({ snapshot }: EmptyDetectionProps) {
           <strong>아직 멘션이 없습니다.</strong>
         </p>
         <p className="small muted">새 멘션이 오면 초안을 만들어 여기에 보여 드립니다.</p>
-        <TrialButton trial={snapshot.trial} window="popover" />
-        <p className="small muted">지난 멘션 하나로 앱이 동작하는지 확인합니다. Flow에는 아무것도 올리지 않습니다.</p>
-        <WindowsTrayHint snapshot={snapshot} />
+        <ManualCheckButton manualCheck={snapshot.manualCheck} window="popover" noteClassName="small muted" />
       </main>
-      <footer className="popover-foot">
-        <button type="button" className="btn" onClick={handleOpenSettings}>
-          설정 열기
-        </button>
-      </footer>
     </>
+  );
+}
+
+/** 트레이 제목 오른쪽에서 설정 창을 여는 아이콘 버튼. */
+function SettingsButton() {
+  return (
+    <button
+      type="button"
+      className="popover-settings"
+      aria-label="설정 열기"
+      title="설정 열기"
+      onClick={() => void window.stardraft.send({ type: 'open-settings' })}
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9.7 4.3 10.3 2h3.4l.6 2.3 2 1.2 2.3-.6 1.7 2.9-1.7 1.7v2.4l1.7 1.7-1.7 2.9-2.3-.6-2 1.2-.6 2.3h-3.4l-.6-2.3-2-1.2-2.3.6-1.7-2.9 1.7-1.7V9.5L3.7 7.8l1.7-2.9 2.3.6Z" transform="translate(0 1.3)" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    </button>
   );
 }
 

@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { bundleChanges, type BundleChanges } from '../core/bundles/bundle-changes';
-import { activeMentions, canEditDraft, canRegenerate, isRestorable, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
+import { activeMentions, canEditDraft, canRegenerate, isRestorable, isUnassignedBlocked, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
 import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
@@ -12,7 +12,9 @@ import { commentKey, mentionWritingKey, POST_WRITING_KEY, replyKey } from '../co
 import type { RepoCandidate } from '../core/repos/repo-candidates';
 import type { MappingMatch } from '../core/repos/repo-mappings';
 import type { RepoPickerState } from '../core/repos/repo-picker';
-import type { TrialCandidate, TrialRunState } from '../core/trial/trial-run';
+import type { ManualPlace } from '../core/bundles/mention-bundles';
+import type { ManualCheckState } from '../core/manual-check/manual-check-session';
+import type { ManualAssignmentCandidate, ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
 import type {
   BundleMentionSnapshot,
   BundleSnapshot,
@@ -26,8 +28,9 @@ import type {
   ReviewSnapshot,
   RunLineSnapshot,
   ThreadEntrySnapshot,
-  TrialCandidateSnapshot,
-  TrialSnapshot,
+  ManualCheckRowSnapshot,
+  ManualCheckRowTagSnapshot,
+  ManualCheckSnapshot,
   WritingChangeSnapshot,
 } from '../shared/ipc';
 
@@ -68,37 +71,96 @@ export function reviewSnapshot(
   };
 }
 
+/** 멘션 위치에 있는 기존 기록을 찾는 함수. */
+export type ManualPlaceLookup = (mention: ManualMentionCandidate['mention']) => ManualPlace;
+
+/** 업무 본문 자리(게시물 ID)에 있는 기존 기록을 찾는 함수. */
+export type ManualAssignmentPlaceLookup = (postId: string) => ManualPlace;
+
 /**
- * 최근 멘션으로 시험의 상태를 렌더러에 넘길 모양으로 바꾼다. 감지를 시작했고 시험 묶음이 없어야 시작할 수 있다.
+ * 최근 멘션 확인의 상태를 렌더러에 넘길 모양으로 바꾼다. 지금 보는 탭의 목록 상태만 넘기고, 담당 업무 탭을 아직 불러오지 않았으면 불러오는 중으로 본다.
+ * 줄 태그는 지금 묶음 상태로 정하므로 묶음이 바뀌면 태그도 따라 바뀐다.
  * 멘션은 송신자, Flow 프로젝트, 첫 줄, 시각만 넘기고 Flow 사용자 ID는 넘기지 않는다.
  */
-export function trialSnapshot(state: TrialRunState, trialBundleId: number | null, detectionStarted: boolean): TrialSnapshot {
-  /** 열린 멘션 고르기 목록. */
-  const picker = state.picker;
+export function manualCheckSnapshot(state: ManualCheckState, canOpen: boolean, placeOf: ManualPlaceLookup, assignmentPlaceOf: ManualAssignmentPlaceLookup): ManualCheckSnapshot {
+  /** 열린 시트. */
+  const sheet = state.sheet;
+  if (sheet === null) return { canOpen, sheet: null };
+  /** 시트를 연 창과 지금 탭. */
+  const head = { window: sheet.window, tab: sheet.tab };
+  /** 지금 탭의 목록 상태. */
+  const list = sheet.tab === 'mentions' ? sheet.mentions : sheet.assignments;
+  if (list.status === 'idle' || list.status === 'loading') return { canOpen, sheet: { ...head, status: 'loading' } };
+  if (list.status === 'failed') return { canOpen, sheet: { ...head, status: 'failed', reason: list.reason } };
   return {
-    canStart: detectionStarted && trialBundleId === null,
-    bundleId: trialBundleId,
-    picker:
-      picker === null ? null : picker.status === 'loaded' ? { window: picker.window, status: 'loaded', candidates: picker.candidates.map(trialCandidateSnapshot) } : { ...picker },
+    canOpen,
+    sheet: {
+      ...head,
+      status: 'loaded',
+      rows:
+        sheet.tab === 'mentions'
+          ? (sheet.mentions.status === 'loaded' ? sheet.mentions.candidates : []).map((candidate) => manualCheckRowSnapshot(candidate, placeOf))
+          : (sheet.assignments.status === 'loaded' ? sheet.assignments.candidates : []).map((candidate) => manualAssignmentRowSnapshot(candidate, assignmentPlaceOf)),
+      hasMore: list.hasMore,
+      loadingMore: list.loadingMore,
+      moreFailure: list.moreFailure,
+    },
   };
 }
 
-/** 멘션 고르기 목록의 멘션 하나. 첫 줄은 비어 있지 않은 첫 줄이고 멘션 표기는 `@이름`으로 바꾼다. */
-function trialCandidateSnapshot({ mention, projectTitle, answered }: TrialCandidate): TrialCandidateSnapshot {
-  /** 멘션 글의 첫 줄. */
-  const firstLine =
-    namedMentionText(mention.text)
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => line !== '') ?? '';
+/** 줄의 기존 기록을 상태 태그로 바꾼다. 묶음은 "이미 묶음 있음"과 그 상태, 최소 기록만 있으면 "처리됨"이다. */
+function placeTags(place: ManualPlace): ManualCheckRowTagSnapshot[] {
+  if (place.kind === 'bundle') return [{ kind: 'bundle', bundleId: place.bundleId, status: place.status }];
+  return place.kind === 'record' ? [{ kind: 'archived' }] : [];
+}
+
+/** 최근 멘션 확인 시트의 멘션 줄 하나. 태그는 "답함", 기존 묶음(상태), 처리됨 순서다. */
+function manualCheckRowSnapshot({ mention, projectTitle, answered }: ManualMentionCandidate, placeOf: ManualPlaceLookup): ManualCheckRowSnapshot {
   return {
+    kind: 'mention',
     alarmId: mention.alarmId,
     senderName: mention.senderName,
     projectTitle,
-    firstLine,
+    firstLine: firstLineOf(mention.text),
     at: flowTimeToEpochMs(mention.registeredDateTime) ?? mention.detectedAt,
-    answered,
+    tags: [...(answered ? [{ kind: 'answered' as const }] : []), ...placeTags(placeOf(mention))],
+    missReasons: [],
   };
+}
+
+/** 최근 멘션 확인 시트의 담당 업무 줄 하나. 작성자, Flow 프로젝트, 업무 제목, 알림 시각과 "답함", 기존 묶음(상태), 처리됨 태그, 감지에서 빠진 이유를 넘긴다. */
+function manualAssignmentRowSnapshot(
+  { alarm, post, answered, missReasons, projectTitle }: ManualAssignmentCandidate,
+  assignmentPlaceOf: ManualAssignmentPlaceLookup,
+): ManualCheckRowSnapshot {
+  return {
+    kind: 'assignment',
+    alarmId: alarm.alarmId,
+    senderName: post.registerName,
+    projectTitle,
+    firstLine: post.title,
+    at: flowTimeToEpochMs(alarm.registeredDateTime) ?? 0,
+    tags: [...(answered ? [{ kind: 'answered' as const }] : []), ...placeTags(assignmentPlaceOf(post.postId))],
+    missReasons: [...missReasons],
+  };
+}
+
+/** 배정 시각을 상세에 보일 값으로 바꾼다. 시각을 읽을 수 없으면 아무것도 넣지 않고, 추정이면 그 표시를 함께 넣는다. */
+function assignedAtSnapshot(assignment: { assignedAt?: string; assignedAtEstimated?: boolean }): { assignedAt?: number; assignedAtEstimated?: true } {
+  /** 배정 시각. */
+  const assignedAt = assignment.assignedAt ? flowTimeToEpochMs(assignment.assignedAt) : null;
+  if (assignedAt === null) return {};
+  return { assignedAt, ...(assignment.assignedAtEstimated ? { assignedAtEstimated: true as const } : {}) };
+}
+
+/** 멘션 글의 비어 있지 않은 첫 줄. 멘션 표기는 `@이름`으로 바꾼다. */
+function firstLineOf(text: string): string {
+  return (
+    namedMentionText(text)
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line !== '') ?? ''
+  );
 }
 
 /** 저장소 선택 창의 상태를 렌더러에 넘길 모양으로 바꾼다. */
@@ -141,7 +203,10 @@ export function bundleSnapshot(
     projectTitle: projectOf(bundle.projectId)?.title || null,
     postTitle: bundle.postTitle,
     mentions: shown,
-    senderNames: [...new Set(shown.map((mention) => mention.senderName).filter(Boolean))],
+    ...(bundle.assignment
+      ? { assignment: { text: splitMentionMarkup((bundle.watchedContext ?? bundle.context)?.post.contents ?? ''), blockedByUnassignment: isUnassignedBlocked(bundle), ...assignedAtSnapshot(bundle.assignment) } }
+      : {}),
+    senderNames: bundle.assignment ? [bundle.context?.post.authorName || bundle.assignment.authorName] : [...new Set(shown.map((mention) => mention.senderName).filter(Boolean))],
     newMentionCount: bundle.newMentionCount,
     directives: [...bundle.directives],
     lastMentionAt: shown.length > 0 ? Math.max(...shown.map((mention) => mention.at)) : bundle.createdAt,
@@ -159,7 +224,7 @@ export function bundleSnapshot(
     // 그 뒤 게시 중이 되었거나 처리한 묶음에는 보이지 않는다.
     quitDuringCountdown: bundle.status === 'ready' && bundle.quitDuringCountdown,
     changes: { newWritingCount: changes.newWritings.length, edited: changes.editedWritings.length > 0, goneMentionCount: changes.goneMentions },
-    trial: bundle.trial,
+    manual: bundle.manual,
   };
 }
 
@@ -204,7 +269,7 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
     editorText: bundle.editedText ?? draftEditorText(draft),
     edited: bundle.editedText !== null,
     canEdit: canEditDraft(bundle.status),
-    canRegenerate: canRegenerate(bundle.status),
+    canRegenerate: canRegenerate(bundle.status) && !isUnassignedBlocked(bundle),
     recipients: recipients.map(({ name }) => ({ name })),
     // 빈 편집기 텍스트의 게시 본문이 곧 받는 사람 표기와 이어 붙이는 공백이다.
     postBodyPrefixLength: postBody(recipients, '').length,

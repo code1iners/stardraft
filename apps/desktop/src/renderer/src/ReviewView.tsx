@@ -1,9 +1,9 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleSections, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack, TrialLine, TrialTag } from './BundleDetail';
+import { BundleFooter, BundleSections, ManualTag, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
-import { BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
+import { assignmentSourceText, BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
 
@@ -41,7 +41,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
   /** 보이는 묶음. */
   const { selected, select, movedWhileViewing } = selection;
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
-  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost, endTrial } = useBundleActions(selection);
+  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {
@@ -63,7 +63,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                     <p className="review-meta">
                       {selected.projectTitle && <span>{selected.projectTitle}</span>}
                       <span>
-                        {senderLine(selected.senderNames)}님이 {BUNDLE_PLACE_LABELS[selected.place]}에서 멘션
+                        {selected.assignment ? `${assignmentSourceText(selected)} · ${senderLine(selected.senderNames)}` : `${senderLine(selected.senderNames)}님이 ${BUNDLE_PLACE_LABELS[selected.place]}에서 멘션`}
                       </span>
                       <span>{formatTime(selected.lastMentionAt)}</span>
                     </p>
@@ -71,9 +71,8 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                   </div>
                   <RunLine bundle={selected} />
                   <PostStatusLine bundle={selected} />
-                  <TrialLine bundle={selected} />
                 </div>
-                <TrialTag bundle={selected} />
+                <ManualTag bundle={selected} />
                 <StatusTag status={selected.status} />
                 <button type="button" className="btn sm" onClick={handleCollapse}>
                   접어 보기
@@ -90,7 +89,6 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                 onRetry={() => retry(selected.id)}
                 onPost={() => post(selected)}
                 onCancelPost={() => cancelPost(selected.id)}
-                onEndTrial={() => endTrial(selected.id)}
               />
             </>
           ) : (
@@ -101,7 +99,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                   접어 보기
                 </button>
               </header>
-              <p className="detail-empty muted">아직 멘션이 없습니다.</p>
+              <p className="detail-empty muted">{snapshot.review.bundles.some((bundle) => bundle.assignment) ? '검토할 초안이 없습니다.' : '아직 멘션이 없습니다.'}</p>
             </>
           )}
         </section>
@@ -161,7 +159,8 @@ function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
                 </span>
                 <span className="list-row-sub">{bundle.draft?.requirement.summary || postLine(bundle)}</span>
                 <span className="list-row-tags">
-                  <TrialTag bundle={bundle} />
+                  {bundle.assignment && <span className="tag">{assignmentSourceText(bundle)}</span>}
+                  <ManualTag bundle={bundle} />
                   <StatusTag status={bundle.status} />
                 </span>
               </button>

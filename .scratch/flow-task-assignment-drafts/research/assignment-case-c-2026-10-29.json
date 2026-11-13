@@ -1,0 +1,132 @@
+{
+  "source": "live-api-projection",
+  "case": "C: 사용자 제공 링크. 원본 링크와 실제 식별자는 저장하지 않음.",
+  "redaction": "조회 실행 안에서 식별자 별칭을 공유한다. systemCode의 원래 표시 이름을 별칭으로 바꾸었다. 생략된 필드는 서버의 누락을 뜻하지 않는다.",
+  "currentUser": "id-1",
+  "calls": [
+    {
+      "label": "me",
+      "observedAt": "2026-10-29T08:51:03.833Z",
+      "status": 200,
+      "durationMs": 88,
+      "data": {
+        "userId": "id-1"
+      }
+    },
+    {
+      "label": "post-C",
+      "observedAt": "2026-10-29T08:51:03.892Z",
+      "status": 200,
+      "durationMs": 58,
+      "data": {
+        "projectId": "id-4",
+        "postId": "id-5",
+        "registerId": "id-6",
+        "registeredDateTime": "20261028151848",
+        "editedDateTime": "20261028151907",
+        "tasks": [
+          {
+            "TASK_SRNO": "id-18",
+            "STTS": "0",
+            "WORKER_REC": [
+              {
+                "WORKER_ID": "id-1"
+              }
+            ],
+            "statusCategories": [
+              "0"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "label": "comments-C",
+      "observedAt": "2026-10-29T08:51:03.959Z",
+      "status": 200,
+      "durationMs": 66,
+      "data": {
+        "hasNext": false,
+        "lastCursor": 2,
+        "comments": [
+          {
+            "commentId": "id-25",
+            "registerId": "id-6",
+            "registeredDateTime": "20261028151907",
+            "systemCode": "S41^^'id-1'@$%",
+            "replyHasNext": false,
+            "replyCount": 0
+          },
+          {
+            "commentId": "id-8",
+            "registerId": "id-7",
+            "registeredDateTime": "20261028152158",
+            "systemCode": "",
+            "replyHasNext": false,
+            "replyCount": 9
+          },
+          {
+            "commentId": "id-9",
+            "registerId": "id-1",
+            "registeredDateTime": "20261029094741",
+            "systemCode": "",
+            "replyHasNext": false,
+            "replyCount": 4
+          }
+        ]
+      }
+    },
+    {
+      "label": "worker-first-page",
+      "observedAt": "2026-10-29T08:51:03.978Z",
+      "status": 200,
+      "durationMs": 19,
+      "data": {
+        "hasNext": true,
+        "lastCursor": 20,
+        "receivedCount": 20,
+        "caseAlarms": [
+          {
+            "alarmId": "id-68",
+            "postId": "id-5",
+            "remarkId": "id-8",
+            "replyId": "-1",
+            "registeredDateTime": "20261028152158",
+            "alarmType": null,
+            "mentionYn": "N",
+            "workerYn": "Y",
+            "readYn": "Y"
+          },
+          {
+            "alarmId": "id-69",
+            "postId": "id-5",
+            "remarkId": "id-25",
+            "replyId": "-1",
+            "registeredDateTime": "20261028151907",
+            "alarmType": null,
+            "mentionYn": "N",
+            "workerYn": "Y",
+            "readYn": "Y"
+          }
+        ]
+      }
+    },
+    {
+      "label": "project-C-exact-title-search",
+      "observedAt": "2026-10-29T08:51:04.033Z",
+      "status": 200,
+      "durationMs": 55,
+      "data": {
+        "hasNext": false,
+        "lastCursor": -1,
+        "tasks": [
+          {
+            "taskId": "id-18",
+            "postId": "id-5",
+            "projectId": "id-4"
+          }
+        ]
+      }
+    }
+  ]
+}

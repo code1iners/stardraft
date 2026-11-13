@@ -1,0 +1,56 @@
+{
+  "passed": true,
+  "retryPassed": true,
+  "reopenPassed": true,
+  "before": {
+    "top": 100.5,
+    "scrollTop": 0,
+    "buttonTop": 210,
+    "focused": true,
+    "active": "폴더 추가…",
+    "overflow": false
+  },
+  "after": {
+    "top": 100.5,
+    "scrollTop": 0,
+    "buttonTop": 258,
+    "focused": true,
+    "active": "폴더 추가…",
+    "overflow": false
+  },
+  "detectionStarted": true,
+  "launchAtLogin": true,
+  "persisted": {
+    "schemaVersion": 1,
+    "workFolders": [
+      "/private/var/folders/5f/d0py5mc57tj6dnqvxb7nr6500000gn/T/stardraft-full-flow-ozz09F/home/work"
+    ],
+    "repoMappings": {},
+    "defaultAgent": "claude-code",
+    "agentCliPaths": {
+      "codex": "/opt/homebrew/bin/codex",
+      "claude-code": "/var/folders/5f/d0py5mc57tj6dnqvxb7nr6500000gn/T/stardraft-full-flow-ozz09F/home/.local/bin/claude"
+    },
+    "agentModels": {},
+    "extraSecretPatterns": [],
+    "extraInstructions": "",
+    "editor": null,
+    "launchAtLogin": true,
+    "detectionStarted": true,
+    "appVersion": "44.9.0"
+  },
+  "notifications": [
+    {
+      "title": "멘션 감지를 시작했습니다",
+      "body": "나를 지목한 새 멘션이 오면 답변 초안을 만들어 알려 드립니다."
+    }
+  ],
+  "rendererErrors": [],
+  "boundaries": [
+    "Flow 응답 대체",
+    "에이전트 프로세스 응답 대체",
+    "키 암호화 대체",
+    "폴더 선택 대체",
+    "OS 알림 기록으로 대체"
+  ]
+}

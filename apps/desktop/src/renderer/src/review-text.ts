@@ -30,6 +30,7 @@ export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; c
   ignored: { label: '무시함', className: 'done' },
   'already-answered': { label: '이미 답함', className: 'done' },
   'source-gone': { label: '원문 사라짐', className: 'done' },
+  unassigned: { label: '담당 해제', className: 'done' },
 };
 
 /** 펼친 창의 목록 묶음 이름. */
@@ -59,7 +60,14 @@ export const PROCESSED_NOTES: Partial<Record<BundleStatusSnapshot, string>> = {
   ignored: '무시한 묶음입니다.',
   'already-answered': 'Flow에 이미 내 답이 있어 처리했습니다.',
   'source-gone': 'Flow에서 멘션이 모두 사라져 처리했습니다.',
+  unassigned: '담당자에서 제외되어 초안을 만들지 않았습니다.',
 };
+
+/** 처리됨 묶음의 바닥 줄 안내. 담당 업무는 배정 이후의 내 답으로 처리했음을 직접 멘션과 구별해 알린다. */
+export function processedNote(bundle: Pick<BundleSnapshot, 'status' | 'assignment'>): string {
+  if (bundle.assignment && bundle.status === 'already-answered') return '배정 이후 Flow에 내 답이 있어 초안 없이 처리했습니다.';
+  return PROCESSED_NOTES[bundle.status] ?? '';
+}
 
 /** 원문 영역에서 초안을 만든 뒤 바뀐 글에 붙이는 태그 이름. */
 export const WRITING_CHANGE_LABELS: Record<WritingChangeSnapshot, string> = {
@@ -109,6 +117,11 @@ export function formatTime(at: number, now = Date.now()): string {
   return (sameDay ? TIME_FORMAT : DATE_TIME_FORMAT).format(when);
 }
 
+/** 담당 업무 초안의 출처. 같은 본문의 멘션과 합쳐졌으면 두 감지 사유를 함께 보인다. */
+export function assignmentSourceText(bundle: Pick<BundleSnapshot, 'mentions'>): string {
+  return bundle.mentions.length > 0 ? '담당 업무 초안 · 본문 멘션' : '담당 업무 초안';
+}
+
 /** 송신자 이름들을 한 줄로 보인다. 이름을 모르면 "이름 없음"이다. */
 export function senderLine(senderNames: readonly string[]): string {
   return senderNames.length > 0 ? senderNames.join(', ') : '이름 없음';
@@ -126,7 +139,7 @@ export function postLine(bundle: BundleSnapshot): string {
 
 /** 무시 토스트 문구. */
 export function ignoredText(bundle: BundleSnapshot): string {
-  return `무시했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
+  return `무시했습니다: ${bundle.assignment ? '담당 업무 초안' : `${senderLine(bundle.senderNames)}님 멘션`}`;
 }
 
 /** 카운트다운의 남은 초를 알리는 말. 예: 5초 뒤 게시합니다 */
@@ -141,7 +154,7 @@ export function postingFooterText(secondsLeft: number): string {
 
 /** 카운트다운 토스트 문구. 예: 5초 뒤 게시합니다: 김철수님 멘션 */
 export function countdownToastText(bundle: BundleSnapshot, secondsLeft: number): string {
-  return `${countdownText(secondsLeft)}: ${senderLine(bundle.senderNames)}님 멘션`;
+  return `${countdownText(secondsLeft)}: ${bundle.assignment ? '담당 업무 초안' : `${senderLine(bundle.senderNames)}님 멘션`}`;
 }
 
 /** 게시 실패의 사유마다 상세 머리에 보일 쉬운 말 한 줄. */
@@ -160,12 +173,12 @@ export const POST_CHECKING_TEXT = '게시 결과 확인 중';
 /** 카운트다운 중에 앱이 꺼져 게시하지 않고 준비됨으로 돌아온 묶음의 상세 머리 한 줄. */
 export const QUIT_DURING_COUNTDOWN_TEXT = '앱이 꺼져서 게시하지 않았습니다';
 
-/** 시험 묶음의 상세 머리 한 줄. 시험 묶음은 게시하지 않는다. */
-export const TRIAL_NOTE = 'Flow에는 아무것도 올라가지 않습니다';
+/** 검토 중 담당자에서 제외된 담당 업무 초안의 상세 머리 한 줄. */
+export const UNASSIGNED_TEXT = '담당자에서 제외되어 게시할 수 없습니다. 다시 담당자로 지정되면 게시할 수 있습니다.';
 
 /** 게시 실패 토스트 문구. 예: 게시하지 못했습니다: 김철수님 멘션 */
 export function postFailedToastText(bundle: BundleSnapshot): string {
-  return `게시하지 못했습니다: ${senderLine(bundle.senderNames)}님 멘션`;
+  return `게시하지 못했습니다: ${bundle.assignment ? '담당 업무 초안' : `${senderLine(bundle.senderNames)}님 멘션`}`;
 }
 
 /**
@@ -178,6 +191,8 @@ export function postStoppedToastText(stop: PostStopSnapshot): string {
       return '게시하지 않았습니다: Flow에 이미 내 답이 있음';
     case 'source-gone':
       return '게시하지 않았습니다: Flow에서 멘션이 사라짐';
+    case 'unassigned':
+      return '게시하지 않았습니다: 담당자에서 제외됨';
     case 'changed': {
       /** 이을 변화. */
       const parts = [
@@ -195,7 +210,7 @@ export function postStoppedToastText(stop: PostStopSnapshot): string {
 
 /** 멈춘 게시 토스트의 행동. 처리됨으로 옮겨졌으면 되돌리기, 준비됨으로 돌아왔거나 실패로 옮겨졌으면 그 묶음 보기다. */
 export function postStoppedAction(stop: PostStopSnapshot): 'restore' | 'show' {
-  return stop.kind === 'changed' || stop.kind === 'secret-evidence' ? 'show' : 'restore';
+  return stop.kind === 'changed' || stop.kind === 'secret-evidence' || stop.kind === 'unassigned' ? 'show' : 'restore';
 }
 
 /**

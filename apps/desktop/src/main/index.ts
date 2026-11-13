@@ -1,3 +1,4 @@
+import { AssignmentDetection } from '../core/detection/assignment-detection';
 import { app, dialog, Menu, net, powerMonitor, safeStorage } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { userInfo } from 'node:os';
@@ -25,7 +26,8 @@ import { RepoMappings } from '../core/repos/repo-mappings';
 import { RepoPicker } from '../core/repos/repo-picker';
 import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
-import { TrialRun } from '../core/trial/trial-run';
+import { ManualCheckSession } from '../core/manual-check/manual-check-session';
+import { ManualMentionCheck } from '../core/manual-check/manual-mention-check';
 import { openAppData, type AppData } from '../core/storage/app-data';
 import { MigrationBackups } from '../core/storage/migration-backups';
 import { trayIndicator, type TrayIndicatorInput } from '../core/tray-indicator';
@@ -34,12 +36,11 @@ import { UpdateRestart } from '../core/update/update-restart';
 import { checkInstallLocation, macBundlePathOf, type BlockedLocationReason } from '../core/update/install-location';
 import { UPDATE_PUBLIC_KEYS } from '../core/update/update-public-keys.mts';
 import { globalProblemText, type GlobalProblemText } from '../shared/global-problem-text';
-import { updateMenuItem } from '../shared/update-text';
 import { APP_ID, appPlatform, applyAppIdentity, dataFolderPath, logsFolderPath } from './app-identity';
 import { createAppLogger } from './app-logger';
 import { AppWindows } from './app-windows';
 import { editorSystem } from './editor-system';
-import { globalProblemSnapshot, openSite, registerIpc } from './ipc';
+import { globalProblemSnapshot, registerIpc } from './ipc';
 import { OsNotifier } from './os-notifier';
 import { ReviewSections } from './review-sections';
 import { hardenRenderers } from './security';
@@ -221,7 +222,7 @@ function start(): void {
     });
     await mentionBundles.load();
     bundles = mentionBundles;
-    // 앱이 꺼지며 끊긴 묶음을 정리한다. 카운트다운 중이던 게시는 준비됨으로 돌리고, 진행 중이던 시험 묶음은 지운다.
+    // 앱이 꺼지며 끊긴 묶음을 정리한다. 카운트다운 중이던 게시는 준비됨으로 돌린다.
     await mentionBundles.recoverAfterRestart().catch((error: unknown) => logger.error('bundle.restart-recovery-failed', errorFields(error)));
     // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
     retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
@@ -311,15 +312,23 @@ function start(): void {
     globalProblems.onChange(refreshOnboarding);
     agentConnections.onChange(refreshOnboarding);
     workFolders.onChange(refreshOnboarding);
-    /** 최근 멘션으로 시험. 감지를 시작한 뒤 지금 키로 최근 멘션을 불러오고, 고른 멘션으로 시험 묶음을 만든다. */
-    const trialRun = new TrialRun({
-      bundles: mentionBundles,
-      connectFlow: connectCurrentFlow,
-      myUserId: () => flowAccount.state().account?.userId ?? null,
-      detectionStarted: () => onboarding.state().detectionStarted,
-      projectTitle: (projectId) => repoMappings.projectTitle(projectId),
-      clock: systemClock,
-      logger,
+    /** 담당 업무 감지 상태를 읽을 저장소. 함수 안에서는 `appData`가 null이 아님을 알 수 없어 따로 잡아 둔다. */
+    const assignmentStateStore = appData.stateStore;
+    /** 최근 멘션 확인. 감지에서 빠진 멘션까지 지금 키로 최근 멘션을 불러오고, 고른 멘션으로 게시할 수 있는 수동 요청 묶음을 만든다. */
+    const manualCheck = new ManualCheckSession({
+      check: new ManualMentionCheck({
+        bundles: mentionBundles,
+        connectFlow: connectCurrentFlow,
+        account: () => flowAccount.state().account,
+        assignmentState: () => assignmentStateStore.getAssignmentState(),
+        projectTitle: (projectId) => repoMappings.projectTitle(projectId),
+        clock: systemClock,
+        logger,
+      }),
+      // 감지를 시작했고 Flow 키를 쓸 수 있어야 연다. 키는 확인을 마쳤고 Flow가 거부하지 않은 것이다.
+      canOpen: () => onboarding.state().detectionStarted && flowAccount.state().account !== null && !globalProblems.has('flow-key'),
+      // 설정 창에서 골라도 묶음은 작은 창에서 검토하므로 작은 창을 열어 그 묶음을 보인다.
+      showBundle: (bundleId) => appWindows.openPopover(bundleId),
     });
     /** electron-updater로 공개 Release에서 새 버전을 찾고 받고 설치하는 업데이트 피드. 설치본에서만 만든다. */
     const updateFeed = app.isPackaged ? electronUpdateFeed(autoUpdater, logger) : null;
@@ -391,17 +400,21 @@ function start(): void {
       repoPicker,
       reviewSections: new ReviewSections(),
       editorOpener,
-      trialRun,
+      manualCheck,
       draftSettings,
       notifier,
       inAppUpdate,
       updateRestart,
     });
+    /** 담당 업무 후보를 직접 멘션과 별도로 판정한다. */
+    const assignmentDetection = new AssignmentDetection({ stateStore: appData.stateStore, bundles: mentionBundles,
+      clock: systemClock, connectFlow: connectCurrentFlow });
     /**
      * 알림 폴링과 멘션 판정. 감지를 시작한 뒤 쓸 수 있는 키가 있을 때만 돈다. 판정을 통과한 멘션은 멘션 묶음에 넣고,
      * 폴링마다 사용자 행동을 기다리는 묶음의 Flow 내용을 다시 조회한다(준비된 뒤의 변화 감시).
      */
     const mentionDetection = new MentionDetection({
+      assignments: assignmentDetection,
       stateStore: appData.stateStore,
       bundles: mentionBundles,
       clock: systemClock,
@@ -447,27 +460,9 @@ function start(): void {
       openPopover: () => appWindows.openPopover(),
       openSettings: (section) => appWindows.openSettings(section),
       checkNow: () => void mentionDetection.checkNow(),
-      runUpdateAction: (action) => {
-        switch (action) {
-          case 'restart':
-            void updateRestart?.requestRestart();
-            return;
-          case 'open-popover':
-            appWindows.openPopover();
-            return;
-          case 'open-site':
-            void openSite('update', logger);
-            return;
-        }
-      },
       quit: () => app.quit(),
     });
     tray = appTray;
-    // 업데이트 상태는 메뉴 항목으로만 보이고 아이콘은 바꾸지 않는다.
-    /** 메뉴의 업데이트 항목을 지금 상태에 맞춘다. */
-    const refreshUpdateItem = () => appTray.setUpdateItem(updateRestart && updateMenuItem(updateRestart.state().status));
-    refreshUpdateItem();
-    updateRestart?.onChange(refreshUpdateItem);
     /** 전역 문제, 감지 시작 여부, 묶음 상태(검토 대기 수, 실패·게시 실패, 생성 중)에 맞춰 트레이 표시를 바꾼다. */
     const refreshTray = () =>
       appTray.show(

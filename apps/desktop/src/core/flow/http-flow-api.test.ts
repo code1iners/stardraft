@@ -1,7 +1,54 @@
+import assignmentPost from './fixtures/assignment-post-2026-10-29.json';
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeFlowServer, flowEnvelope } from '../fakes/fake-flow-server';
+import { parseWorkerChange } from './worker-change';
 import { HttpFlowApi } from './http-flow-api';
+import assignmentComments from './fixtures/assignment-comments-2026-10-29.json';
+import assignmentActivePost from './fixtures/assignment-active-post-2026-10-29.json';
+import workerAlarms from './fixtures/worker-alarms-2026-10-29.json';
+
+describe('Flow 어댑터: 실제 담당 변경 기록의 보존', () => {
+  it('담당 변경 시스템 기록과 이후 본인 답글의 작성자·서버 시각을 별도로 보존한다', async () => {
+    /** 2026-10-29 실응답에서 개인정보와 본문을 제거한 외부 응답 대역. */
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: assignmentComments });
+
+    /** 기존 공개 댓글 조회 경계로 읽은 결과. */
+    const result = await connect(server).listComments('id-7', null);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('실응답 댓글을 읽지 못했습니다.');
+    expect(result.value.nextCursor).toBeNull();
+    expect(result.value.comments).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        commentId: 'id-40',
+        registerId: 'id-11',
+        registeredDateTime: '20261029102448',
+        systemCode: "S41^^'id-4', 'id-5'^^'id-4', 'id-5', 'id-1'",
+      }),
+      expect.objectContaining({
+        commentId: 'id-37',
+        systemCode: '',
+        replies: expect.arrayContaining([
+          expect.objectContaining({ replyId: 'id-38', registerId: 'id-1', registeredDateTime: '20261029105102', systemCode: '' }),
+        ]),
+      }),
+    ]));
+  });
+
+  it('실응답에서 관측한 담당 변경 기록 두 형식의 이전·이후 이름을 읽고 다른 형식은 해석하지 않는다', () => {
+    /** 실응답 댓글의 담당 변경 기록. 이름은 별칭으로 가렸다. */
+    const changes = assignmentComments.response.data.comments.map((comment) => comment.systemCode).filter((code) => code?.startsWith('S41'));
+    expect(changes.map((code) => parseWorkerChange(code!))).toEqual([
+      { before: [], after: ['id-4', 'id-5'] },
+      { before: ['id-4', 'id-5'], after: ['id-4', 'id-5', 'id-1'] },
+    ]);
+    expect(parseWorkerChange("S41^^'id-1'")).toBeNull();
+    expect(parseWorkerChange("S41^^id-1^^'id-1'")).toBeNull();
+    expect(parseWorkerChange("S45_2^^'id-1'^^'id-2'")).toBeNull();
+  });
+});
 
 /** 가짜 Flow 서버에 키 하나로 붙인 Flow 어댑터. */
 function connect(server: FakeFlowServer, apiKey = 'fake-key-1', clock = new FakeClock()): HttpFlowApi {
@@ -741,5 +788,83 @@ describe('Flow 어댑터: 게시(댓글·대댓글 쓰기)', () => {
     await expect(api.createComment('90000011', '답')).resolves.toEqual({ ok: false, failure: { kind: 'unauthorized' } });
     await expect(api.createComment('90000011', '답')).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
     await expect(api.createReply('90000011', '700', '답')).resolves.toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+  });
+});
+
+it('담당 업무 목록의 잘못된 다음 쪽 정보를 완료한 조회로 해석하지 않는다', async () => {
+  /** 성공 봉투지만 다음 커서가 빠진 응답. */
+  const server = new FakeFlowServer();
+  server.replyNext({ status: 200, body: flowEnvelope({ alarms: { alarms: [], hasNext: true } }) });
+  expect(await connect(server).listWorkerAlarms(null)).toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+});
+
+it('실제 상세 응답 구조에서 업무 ID와 담당자, 완료 범주를 읽고 누락은 미확인으로 유지한다', async () => {
+  /** 관측한 TASK_COLUMN_REC 구조의 값만 가린 응답. */
+  const server = new FakeFlowServer();
+  server.replyNext({ status: 200, body: flowEnvelope({ postId: 'post-id', content: '본문', tasks: [
+    { TASK_SRNO: 'task-id', WORKER_REC: [{ WORKER_ID: 'me@example.test' }, { WORKER_ID: 'other@example.test' }],
+      STTS: '0', PROGRESS: '100', TASK_COLUMN_REC: [{ DEFAULT_COLUMN_TYPE: 'STATUS', COLUMN_DATA_REC: [{ OPTION_CATEGORY: '2' }] },
+        { DEFAULT_COLUMN_TYPE: 'WORKER_ID', COLUMN_DATA_REC: [{ CUSTOM_COLUMN_DATA: 'me@example.test', USER_NM: '테스트 사용자' },
+          { CUSTOM_COLUMN_DATA: 'other@example.test', USER_NM: '다른 사람' }] }] },
+    { TASK_SRNO: 'missing-workers' },
+    { TASK_SRNO: 'empty-workers', WORKER_REC: [] },
+  ] }) });
+  expect(await connect(server).getPost('post-id')).toMatchObject({ ok: true, value: { postId: 'post-id', tasks: [
+    { taskId: 'task-id', workerIds: ['me@example.test', 'other@example.test'], completion: 'completed',
+      workerNames: [{ userId: 'me@example.test', name: '테스트 사용자' }, { userId: 'other@example.test', name: '다른 사람' }] },
+    { taskId: 'missing-workers', workerIds: null, completion: 'unknown' },
+    { taskId: 'empty-workers', workerIds: [], completion: 'unknown' },
+  ] } });
+});
+
+
+it('마스킹한 실제 상세 응답을 담당 업무 구조로 읽는다', async () => {
+  /** 2026-10-29 읽기 전용 실응답의 최소 투영본. */
+  const server = new FakeFlowServer();
+  server.replyNext({ status: 200, body: flowEnvelope(assignmentPost) });
+  expect(await connect(server).getPost(assignmentPost.postId)).toMatchObject({ ok: true, value: {
+    postId: assignmentPost.postId,
+    tasks: [{ taskId: 'id-23', workerIds: ['id-4', 'id-5', 'id-1'], completion: 'completed',
+      workerNames: ['id-4', 'id-5', 'id-1'].map((userId) => ({ userId, name: '[redacted]' })) }],
+  } });
+});
+
+describe('Flow 어댑터: 마스킹한 실응답의 최근 담당 업무 조회', () => {
+  it('실제 WORKER 알림 첫 쪽의 숫자 커서를 다음 쪽 커서로 읽고, 같은 게시물의 알림 여럿을 Flow가 준 순서대로 돌려준다(읽음 상태는 보내지 않음)', async () => {
+    const server = new FakeFlowServer();
+    // 2026-10-29 실응답 첫 쪽에서 사례 게시물의 알림만 남긴 투영본이다. 투영본에 없던 projectId만 별칭으로 채웠다.
+    server.replyNext({ status: 200, body: workerAlarms }, { status: 200, body: workerAlarms });
+    const api = connect(server);
+
+    /** 첫 쪽. */
+    const first = await api.listWorkerAlarms(null);
+    await api.listWorkerAlarms('20');
+
+    expect(first).toMatchObject({ ok: true, value: { nextCursor: '20' } });
+    expect(first.ok && first.value.alarms.map(({ alarmId, postId, remarkId, replyId, registeredDateTime }) => [alarmId, postId, remarkId, replyId, registeredDateTime])).toEqual([
+      ['id-13', 'id-14', 'id-15', '-1', '20261029122120'],
+      ['id-16', 'id-14', 'id-17', 'id-18', '20261029122115'],
+      ['id-19', 'id-14', 'id-17', '-1', '20261029120234'],
+      ['id-21', 'id-14', 'id-22', 'id-23', '20261029105140'],
+      ['id-24', 'id-14', 'id-25', '-1', '20261029102448'],
+    ]);
+    expect(server.requests.map((request) => request.url)).toEqual([
+      'https://api.flow.team/user/alarms?filters=WORKER&size=20',
+      'https://api.flow.team/user/alarms?filters=WORKER&size=20&cursor=20',
+    ]);
+  });
+
+  it('내가 유일한 담당자인 요청 상태 업무의 실제 상세를 업무 ID·담당자·요청 상태와 작성자·시각으로 읽는다', async () => {
+    const server = new FakeFlowServer();
+    // 2026-10-29 사례 C 상세의 투영본이다. 상태 범주(`0`)와 담당자를 기존 상세 사례의 컬럼 구조로 옮겼다.
+    server.replyNext({ status: 200, body: flowEnvelope(assignmentActivePost) });
+
+    expect(await connect(server).getPost(assignmentActivePost.postId)).toMatchObject({ ok: true, value: {
+      postId: 'id-5',
+      registerId: 'id-6',
+      registeredDateTime: '20261028151848',
+      editedDateTime: '20261028151907',
+      tasks: [{ taskId: 'id-18', workerIds: ['id-1'], completion: 'active', workerNames: [{ userId: 'id-1', name: '[redacted]' }] }],
+    } });
   });
 });

@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppSnapshot, BundleSnapshot, PostStopSnapshot, ReviewSnapshot, TrialCandidateSnapshot } from '../../shared/ipc';
+import type { AppSnapshot, BundleSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
 import { DraftsSection } from './DraftsSection';
+import { ManualCheckSheet } from './ManualCheck';
 import { PopoverContent } from './PopoverView';
+import { PopoverMenu, menuKeyAction } from './PopoverMenu';
 import { ReviewContent } from './ReviewView';
 import { nextBundleAfter, resolveSelection } from './useReview';
 
@@ -58,7 +60,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     postFailure: null,
     quitDuringCountdown: false,
     changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
-    trial: false,
+    manual: false,
     ...overrides,
   };
 }
@@ -112,7 +114,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     launchAtLogin: true,
     editor: { choice: null, installed: [], picker: null },
     review: { bundles, sections: SECTIONS, repoPicker: null },
-    trial: { canStart: true, bundleId: null, picker: null },
+    manualCheck: { canOpen: true, sheet: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
     ...overrides,
@@ -127,12 +129,13 @@ function textOf(element: React.ReactElement): string {
 }
 
 describe('작은 창: 멘션 묶음', () => {
-  it('대기열 첫 묶음을 대기열 위치, 상태 태그, 펼쳐 보기와 함께 보이고, 원문 영역에 묶인 멘션 전부를 시간순으로 보인다', () => {
+  it('대기열 첫 묶음을 대기열 위치, 상태 태그, ⋯ 메뉴와 함께 보이고, 원문 영역에 묶인 멘션 전부를 시간순으로 보인다', () => {
     const text = textOf(<PopoverContent snapshot={snapshot([bundle(1), bundle(2), ANSWERED])} />);
 
     expect(text).toContain('1 / 2');
     expect(text).toContain('저장소 확인 필요');
-    expect(text).toContain('펼쳐 보기');
+    expect(text).not.toContain('펼쳐 보기');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([bundle(1)])} />)).toContain('aria-label="메뉴 열기"');
     expect(text).toContain('원문');
     expect(text).toContain('멘션 2건');
     expect(text.indexOf('@테스트 사용자 첫 질문입니다')).toBeLessThan(text.indexOf('둘째 질문입니다'));
@@ -220,11 +223,70 @@ describe('작은 창: 멘션 묶음', () => {
     expect(textOf(<PopoverContent snapshot={snapshot([bundle(1, { canOpenInFlow: false })])} />)).not.toContain('Flow에서 열기');
   });
 
-  it('처리되지 않은 묶음이 없으면 빈 화면을 보이고, 처리됨 묶음이 있으면 펼쳐 보기로 목록을 열 수 있다', () => {
-    const text = textOf(<PopoverContent snapshot={snapshot([ANSWERED])} />);
+  it('처리되지 않은 묶음이 없으면 빈 화면을 보이고, 머리에 ⋯ 메뉴와 설정 아이콘을 둔다', () => {
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([ANSWERED])} />);
 
-    expect(text).toContain('아직 멘션이 없습니다.');
-    expect(text).toContain('펼쳐 보기');
+    expect(textOf(<PopoverContent snapshot={snapshot([ANSWERED])} />)).toContain('아직 멘션이 없습니다.');
+    expect(html).toContain('aria-label="메뉴 열기"');
+    expect(html).toContain('aria-label="설정 열기"');
+    expect(html).not.toContain('>펼쳐 보기<');
+  });
+});
+
+describe('작은 창 ⋯ 메뉴', () => {
+  /** 열린 메뉴를 그린 HTML. */
+  function openMenu(manualCheck: ManualCheckSnapshot, canExpand = true): string {
+    return renderToStaticMarkup(<PopoverMenu manualCheck={manualCheck} canExpand={canExpand} onExpand={() => {}} defaultOpen />);
+  }
+
+  /** 메뉴 항목 버튼 태그와 이름. */
+  function itemsOf(html: string): { tag: string; label: string }[] {
+    return [...html.matchAll(/<button([^>]*role="menuitem"[^>]*)>([^<]*)<\/button>/g)].map((match) => ({ tag: match[1] ?? '', label: match[2] ?? '' }));
+  }
+
+  it('닫혀 있으면 항목 없이 열림 상태가 거짓인 트리거만 보인다', () => {
+    const html = renderToStaticMarkup(<PopoverMenu manualCheck={{ canOpen: true, sheet: null }} canExpand onExpand={() => {}} />);
+
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('role="menu"');
+  });
+
+  it('열면 "최근 멘션 확인"과 "펼쳐 보기"가 이 순서로 있고 둘 다 쓸 수 있다', () => {
+    const items = itemsOf(openMenu({ canOpen: true, sheet: null }));
+
+    expect(items.map((item) => item.label)).toEqual(['최근 멘션 확인', '펼쳐 보기']);
+    expect(items.every((item) => !item.tag.includes('disabled'))).toBe(true);
+  });
+
+  it('감지를 시작하지 않았거나 키가 없어 열 수 없으면 "최근 멘션 확인"이 막히고 까닭이 보이며, "펼쳐 보기"는 그대로 쓸 수 있다', () => {
+    const html = openMenu({ canOpen: false, sheet: null });
+    const [check, expand] = itemsOf(html);
+
+    expect(check?.tag).toContain('disabled');
+    expect(expand?.tag).not.toContain('disabled');
+    expect(textOf(<div dangerouslySetInnerHTML={{ __html: html }} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+  });
+
+  it('펼칠 묶음이 없으면 "펼쳐 보기" 항목을 두지 않는다', () => {
+    expect(itemsOf(openMenu({ canOpen: true, sheet: null }, false)).map((item) => item.label)).toEqual(['최근 멘션 확인']);
+  });
+
+  it('키보드: ↓↑는 쓸 수 있는 항목만 돌고 끝에서 이어지며, Home·End는 처음과 끝으로 간다', () => {
+    expect(menuKeyAction('ArrowDown', -1, [true, true])).toEqual({ kind: 'focus', index: 0 });
+    expect(menuKeyAction('ArrowDown', 0, [true, true])).toEqual({ kind: 'focus', index: 1 });
+    expect(menuKeyAction('ArrowDown', 1, [true, true])).toEqual({ kind: 'focus', index: 0 });
+    expect(menuKeyAction('ArrowUp', 0, [true, true])).toEqual({ kind: 'focus', index: 1 });
+    expect(menuKeyAction('ArrowDown', -1, [false, true])).toEqual({ kind: 'focus', index: 1 });
+    expect(menuKeyAction('Home', 1, [true, true])).toEqual({ kind: 'focus', index: 0 });
+    expect(menuKeyAction('End', 0, [true, true])).toEqual({ kind: 'focus', index: 1 });
+  });
+
+  it('키보드: Esc는 트리거로 포커스를 돌려주며 닫고, Tab은 포커스를 두고 닫으며, 다른 키는 무시한다', () => {
+    expect(menuKeyAction('Escape', 0, [true, true])).toEqual({ kind: 'close', restoreFocus: true });
+    expect(menuKeyAction('Tab', 0, [true, true])).toEqual({ kind: 'close', restoreFocus: false });
+    expect(menuKeyAction('a', 0, [true, true])).toBeNull();
+    expect(menuKeyAction('ArrowDown', -1, [false, false])).toBeNull();
   });
 });
 
@@ -337,7 +399,7 @@ const READY = bundle(4, {
       {
         sentences: [
           { text: '실제 서비스에서는 다섯 번까지 다시 시도합니다.', evidence: [1], developerTerms: [] },
-          { text: '시험 환경은 세 번으로 보입니다.', evidence: [], developerTerms: [] },
+          { text: '테스트 환경은 세 번으로 보입니다.', evidence: [], developerTerms: [] },
         ],
       },
       { sentences: [{ text: '설정을 바꾸면 다음 배포부터 적용됩니다.', evidence: [1, 2], developerTerms: [] }] },
@@ -370,7 +432,7 @@ const READY = bundle(4, {
     ],
     autoSelection: null,
     mapping: 'unmapped',
-    editorText: '실제 서비스에서는 다섯 번까지 다시 시도합니다. 시험 환경은 세 번으로 보입니다.\n\n설정을 바꾸면 다음 배포부터 적용됩니다.',
+    editorText: '실제 서비스에서는 다섯 번까지 다시 시도합니다. 테스트 환경은 세 번으로 보입니다.\n\n설정을 바꾸면 다음 배포부터 적용됩니다.',
     edited: false,
     canEdit: true,
     canRegenerate: true,
@@ -406,7 +468,7 @@ describe('작은 창: 초안 실행', () => {
     expect(text.indexOf('에이전트가 이해한 요구')).toBeLessThan(text.indexOf('실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.'));
     expect(text.indexOf('실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.')).toBeLessThan(text.indexOf('초안'));
     expect(text).toContain('실제 서비스에서는 다섯 번까지 다시 시도합니다. ①');
-    expect(text).toContain('시험 환경은 세 번으로 보입니다. 근거 없음');
+    expect(text).toContain('테스트 환경은 세 번으로 보입니다. 근거 없음');
     expect(text).toContain('설정을 바꾸면 다음 배포부터 적용됩니다. ① ②');
     expect(text).toContain('근거 2개');
     // 근거와 저장소는 처음에 접혀 있다.
@@ -751,7 +813,7 @@ describe('초안 편집기와 받는 사람', () => {
     expect(html).toContain('aria-label="다른 사람 빼기"');
     expect(text.indexOf('받는 사람 @보낸 사람')).toBeLessThan(text.indexOf('실제 서비스에서는 다섯 번까지 다시 시도합니다. ①'));
     // 받는 사람 표기 59자와 편집기 텍스트 69자.
-    expect(text).toContain('글자 수 128 / 4,000');
+    expect(text).toContain('글자 수 129 / 4,000');
     expect(text).not.toContain('원래 초안으로 되돌리기');
     // 받는 사람을 더하는 기능은 없다.
     expect(text).not.toContain('받는 사람 추가');
@@ -759,11 +821,11 @@ describe('초안 편집기와 받는 사람', () => {
 
   it('편집한 초안은 근거 번호 없이 편집본을 편집기에 보이고 "원래 초안으로 되돌리기"를 둔다', () => {
     /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.')])} />);
-    const text = textOf(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.')])} />);
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n테스트 환경은 다릅니다.')])} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n테스트 환경은 다릅니다.')])} />);
 
     expect(html).toContain('<textarea');
-    expect(html).toContain('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.');
+    expect(html).toContain('재시도는 다섯 번입니다.\n\n테스트 환경은 다릅니다.');
     expect(text).not.toContain('①');
     expect(text).not.toContain('근거 없음');
     expect(text).toContain('원래 초안으로 되돌리기');
@@ -785,7 +847,7 @@ describe('초안 편집기와 받는 사람', () => {
     const text = textOf(<PopoverContent snapshot={snapshot([none])} />);
 
     expect(text).toContain('받는 사람 없음 · 멘션 없이 올립니다');
-    expect(text).toContain('글자 수 69 / 4,000');
+    expect(text).toContain('글자 수 70 / 4,000');
   });
 
   it('고칠 수 없는 묶음(처리됨)의 초안은 받는 사람을 뺄 수 없고 되돌리기도 없으며, 편집본은 글로만 보인다', () => {
@@ -893,7 +955,7 @@ describe('근거와 에디터에서 열기', () => {
 
     expect(html).toContain('aria-label="근거 ① 보기"');
     expect(html).toContain('aria-label="근거 ② 보기"');
-    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('시험 환경은 세 번으로 보입니다. 근거 없음');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('테스트 환경은 세 번으로 보입니다. 근거 없음');
   });
 
   it('위치를 찾은 근거마다 "에디터에서 열기"를 두고, 위치를 찾을 수 없는 근거는 끈다', () => {
@@ -1304,98 +1366,360 @@ describe('준비된 뒤의 변화', () => {
   });
 });
 
-describe('최근 멘션으로 시험', () => {
-  /** 준비된 가짜 시험 묶음. */
-  const TRIAL: BundleSnapshot = { ...READY, id: 9, trial: true };
-  /** 멘션 고르기 목록의 가짜 멘션. 둘째는 이미 답한 멘션이다. */
-  const CANDIDATES: TrialCandidateSnapshot[] = [
-    { alarmId: '102', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), answered: false },
-    { alarmId: '101', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), answered: true },
-  ];
+describe('시험 폐지', () => {
+  it('준비된 묶음은 [게시]를 두고 "시험" 표시·안내·[시험 끝내기]는 어느 창에도 없다. 재생성 메뉴와 [무시]는 그대로다', () => {
+    /** 작은 창 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />);
+    /** 펼친 창 HTML. */
+    const expanded = renderToStaticMarkup(<ReviewContent snapshot={snapshot([READY])} initialBundleId={READY.id} />);
 
-  /** 그린 HTML에서 [최근 멘션으로 시험] 버튼. */
-  function trialButton(html: string): string | undefined {
-    return html.match(/<button[^>]*>최근 멘션으로 시험<\/button>/)?.[0];
+    expect(html).toMatch(/<button[^>]*>게시<\/button>/);
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('다시 만들기 ▾');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('무시');
+    for (const rendered of [html, expanded]) {
+      expect(rendered).not.toContain('tag trial');
+      expect(rendered).not.toContain('시험 끝내기');
+      expect(rendered).not.toContain('Flow에는 아무것도 올라가지 않습니다');
+    }
+  });
+});
+
+describe('최근 멘션 확인', () => {
+  /** 확인 시트의 가짜 줄. 둘째는 이미 답한 멘션, 셋째는 이미 묶음이 있는 멘션, 넷째는 최소 기록만 남은 멘션이다. */
+  const ROWS: ManualCheckRowSnapshot[] = [
+    { kind: 'mention', alarmId: '104', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), tags: [], missReasons: [] },
+    { kind: 'mention', alarmId: '103', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), tags: [{ kind: 'answered' }], missReasons: [] },
+    { kind: 'mention', alarmId: '102', senderName: '세 번째', projectTitle: '가짜 프로젝트', firstLine: '이미 묶음이 있는 멘션', at: Date.UTC(2026, 9, 9, 2, 0), tags: [{ kind: 'bundle', bundleId: 7, status: 'posted' }], missReasons: [] },
+    { kind: 'mention', alarmId: '101', senderName: '네 번째', projectTitle: '가짜 프로젝트', firstLine: '최소 기록만 남은 멘션', at: Date.UTC(2026, 9, 8, 2, 0), tags: [{ kind: 'archived' }], missReasons: [] },
+  ];
+  /** 이어 불러올 수 있는 확인 시트. */
+  const LOADED: NonNullable<ManualCheckSnapshot['sheet']> = { window: 'popover', tab: 'mentions', status: 'loaded', rows: ROWS, hasMore: true, loadingMore: false, moreFailure: null };
+  /** 담당 업무 탭의 가짜 줄. 첫째는 감지에서 빠진 이유가 둘이고 이미 답했으며, 둘째는 이유가 없다. */
+  const ASSIGNMENT_ROWS: ManualCheckRowSnapshot[] = [
+    {
+      kind: 'assignment',
+      alarmId: '301',
+      senderName: '업무 작성자',
+      projectTitle: '백오피스',
+      firstLine: '쿠폰 만료 처리 오류 수정',
+      at: Date.UTC(2026, 9, 18, 9, 0),
+      tags: [{ kind: 'answered' }, { kind: 'bundle', bundleId: 9, status: 'ready' }],
+      missReasons: ['pre-feature-task', 'no-evidence'],
+    },
+    { kind: 'assignment', alarmId: '302', senderName: '다른 작성자', projectTitle: '백오피스', firstLine: '정산 화면 수정', at: Date.UTC(2026, 9, 17, 9, 0), tags: [{ kind: 'archived' }], missReasons: [] },
+  ];
+  /** 담당 업무 탭을 보는 시트. */
+  const ASSIGNMENTS: NonNullable<ManualCheckSnapshot['sheet']> = { ...LOADED, tab: 'assignments', rows: ASSIGNMENT_ROWS, hasMore: false };
+
+  /** 그린 HTML에서 [최근 멘션 확인] 버튼. */
+  function checkButton(html: string): string | undefined {
+    return html.match(/<button[^>]*>최근 멘션 확인<\/button>/)?.[0];
   }
 
-  it('감지 중 묶음이 없는 작은 창의 [최근 멘션으로 시험]은 시작할 수 있을 때만 켠다', () => {
-    expect(trialButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([])} />))).not.toContain('disabled');
-    expect(
-      trialButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { trial: { canStart: false, bundleId: null, picker: null } })} />)),
-    ).toContain('disabled');
+  /** 확인 시트를 그린 글자. */
+  function sheetText(sheet: NonNullable<ManualCheckSnapshot['sheet']>): string {
+    return textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet } })} />);
+  }
+
+  it('빈 화면의 [최근 멘션 확인]은 쓸 수 있을 때만 켜고, "시험" 문구는 없다', () => {
+    /** 빈 화면 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([])} />);
+    expect(checkButton(html)).not.toContain('disabled');
+    expect(html).not.toContain('최근 멘션으로 시험');
+    expect(checkButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: false, sheet: null } })} />))).toContain('disabled');
   });
 
-  it('멘션 고르기 목록은 송신자·Flow 프로젝트·첫 줄·시각을 보이고, 이미 답한 멘션에 "답함"을 붙이되 고를 수 있다. 연 창에만 뜬다', () => {
-    /** 작은 창에 연 목록. */
-    const trial: AppSnapshot['trial'] = { canStart: true, bundleId: null, picker: { window: 'popover', status: 'loaded', candidates: CANDIDATES } };
-    /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { trial })} />);
-    const text = textOf(<PopoverContent snapshot={snapshot([], { trial })} />);
+  it('빈 화면에서 막힌 [최근 멘션 확인]은 이유를 툴팁이 아니라 본문 문구로 보이고, 쓸 수 있으면 문구가 없다', () => {
+    /** 막힌 빈 화면 HTML. */
+    const blocked = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: false, sheet: null } })} />);
+    expect(textOf(<div dangerouslySetInnerHTML={{ __html: blocked }} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+    expect(checkButton(blocked)).not.toContain('title=');
+    expect(textOf(<PopoverContent snapshot={snapshot([])} />)).not.toContain('열 수 있습니다.');
+  });
 
-    expect(text).toContain('시험할 멘션 고르기');
+  it('설정 "초안" 칸에 [최근 멘션 확인]을 두고, 쓸 수 없으면 끄고 그 까닭을 보인다', () => {
+    /** 감지를 시작한 스냅숏. */
+    const started = snapshot([]);
+    expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={started} />))).not.toContain('disabled');
+    /** 감지 전. */
+    const before = snapshot([], { onboarding: { ...started.onboarding, detectionStarted: false }, manualCheck: { canOpen: false, sheet: null } });
+    expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={before} />))).toContain('disabled');
+    expect(textOf(<DraftsSection snapshot={before} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+    expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={before} />))).not.toContain('title=');
+    // 감지는 시작했지만 키를 쓸 수 없다.
+    /** 키 문제. */
+    const noKey = snapshot([], { manualCheck: { canOpen: false, sheet: null } });
+    expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={noKey} />))).toContain('disabled');
+    expect(textOf(<DraftsSection snapshot={noKey} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+  });
+
+  it('시트는 연 창에만 뜨고, 설정 창에서 연 시트는 설정 칸에 뜬다', () => {
+    expect(sheetText(LOADED)).toContain('확인할 항목 고르기');
+    expect(textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, window: 'settings' } } })} />)).not.toContain('확인할 항목 고르기');
+    expect(textOf(<DraftsSection snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, window: 'settings' } } })} />)).toContain('확인할 항목 고르기');
+  });
+
+  it('줄은 보낸 사람·Flow 프로젝트·첫 줄·시각과 상태 태그를 보이고 모두 고를 수 있다. 안내 문구가 있다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: LOADED } })} />);
+    /** 그린 글자. */
+    const text = sheetText(LOADED);
+
+    expect(text).toContain('게시 전에는 Flow에 아무것도 올라가지 않습니다');
     expect(text).toContain('보낸 사람');
     expect(text).toContain('가짜 프로젝트');
     expect(text).toContain('@테스트 사용자 배포 언제 되나요?');
     expect(text).toContain('Flow 프로젝트 이름 모름');
     expect(text.match(/답함/g)).toHaveLength(1);
-    // 고르기 전에는 자동으로 고르지 않고, 이미 답한 멘션도 누를 수 있다.
-    expect(html.match(/class="trial-choice"/g)).toHaveLength(2);
-    expect(html).not.toMatch(/class="trial-choice"[^>]*disabled/);
-    // 설정 창에서 연 목록은 작은 창에 뜨지 않는다.
-    expect(
-      textOf(<PopoverContent snapshot={snapshot([], { trial: { ...trial, picker: { ...trial.picker!, window: 'settings' } } })} />),
-    ).not.toContain('시험할 멘션 고르기');
+    expect(text).toContain('이미 묶음 있음 게시됨');
+    expect(text.match(/처리됨/g)).toHaveLength(1);
+    expect(html.match(/class="manual-check-choice"/g)).toHaveLength(4);
+    expect(html).not.toMatch(/class="manual-check-choice"[^>]*disabled/);
   });
 
-  it('불러오는 중, 불러오지 못함, 멘션 없음을 보인다', () => {
-    /** 목록 상태마다 그린 글자. */
-    const textWith = (picker: AppSnapshot['trial']['picker']) => textOf(<PopoverContent snapshot={snapshot([], { trial: { canStart: true, bundleId: null, picker } })} />);
-
-    expect(textWith({ window: 'popover', status: 'loading' })).toContain('최근 멘션을 불러오는 중입니다.');
-    expect(textWith({ window: 'popover', status: 'failed', reason: 'network' })).toContain('Flow에 연결하지 못했습니다');
-    expect(textWith({ window: 'popover', status: 'failed', reason: 'network' })).toContain('다시 불러오기');
-    expect(textWith({ window: 'popover', status: 'loaded', candidates: [] })).toContain('시험할 수 있는 최근 멘션이 없습니다.');
+  it('[더 보기]는 더 있을 때만 보이고, 이어 불러오는 중에는 눌 수 없다. 끝이면 "더 이상 없음"을 보인다', () => {
+    expect(sheetText(LOADED)).toContain('더 보기');
+    expect(sheetText(LOADED)).not.toContain('더 이상 없음');
+    expect(sheetText({ ...LOADED, hasMore: false })).not.toContain('더 보기');
+    expect(sheetText({ ...LOADED, hasMore: false })).toContain('더 이상 없음');
+    /** 이어 불러오는 중. */
+    const loadingMore = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, loadingMore: true } } })} />);
+    expect(loadingMore.match(/<button[^>]*>더 보기<\/button>/)?.[0]).toContain('disabled');
+    expect(textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, loadingMore: true } } })} />)).toContain('더 불러오는 중입니다.');
+    expect(sheetText({ ...LOADED, moreFailure: 'rate-limited' })).toContain('Flow 요청이 많습니다');
   });
 
-  it('시험 묶음은 "시험" 표시와 "Flow에는 아무것도 올라가지 않습니다"를 보이고, [게시] 대신 [시험 끝내기]를 둔다. 재생성 메뉴와 [무시]는 그대로다', () => {
-    /** 작은 창 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([TRIAL])} />);
-    const text = textOf(<PopoverContent snapshot={snapshot([TRIAL])} />);
-
-    expect(html).toContain('<span class="tag trial">시험</span>');
-    expect(text).toContain('Flow에는 아무것도 올라가지 않습니다');
-    expect(text).toContain('시험 끝내기');
-    expect(text).toContain('다시 만들기 ▾');
-    expect(text).toContain('무시');
-    expect(html).not.toMatch(/<button[^>]*>게시<\/button>/);
-
-    /** 펼친 창 HTML. */
-    const expanded = renderToStaticMarkup(<ReviewContent snapshot={snapshot([TRIAL, READY])} initialBundleId={9} />);
-    expect(expanded.match(/<span class="tag trial">시험<\/span>/g)).toHaveLength(2);
-    expect(expanded).toContain('Flow에는 아무것도 올라가지 않습니다');
-    expect(expanded).toContain('시험 끝내기');
-
-    // 실제 묶음에는 붙이지 않는다.
-    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('tag trial');
-    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('Flow에는 아무것도 올라가지 않습니다');
+  it('불러오는 중, 불러오지 못한 까닭 네 가지, 멘션 없음을 보인다. 실패하면 [다시 불러오기]가 있다', () => {
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'loading' })).toContain('최근 멘션을 불러오는 중입니다.');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'loading' })).not.toContain('다시 불러오기');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'no-key' })).toContain('Flow 개인 API 키가 없어');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'unauthorized' })).toContain('Flow가 키를 받지 않아');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'network' })).toContain('Flow에 연결하지 못했습니다');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'rate-limited' })).toContain('Flow 요청이 많습니다');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'network' })).toContain('다시 불러오기');
+    expect(sheetText({ ...LOADED, rows: [], hasMore: false })).toContain('확인할 수 있는 최근 멘션이 없습니다.');
   });
 
-  it('설정 "초안" 칸에 [최근 멘션으로 시험]을 두고, 감지 전이거나 시험 중이면 끄고 그 까닭을 보인다', () => {
-    /** 감지를 시작한 스냅숏. */
-    const started = snapshot([]);
+  it('Esc와 [닫기]는 시트를 닫는 명령을 보내고, 줄을 고르면 그 알림으로 고르는 명령을 보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 시트가 그린 요소. 훅을 쓰지 않아 함수로 직접 부른다. */
+      const element = ManualCheckSheet({ sheet: LOADED });
+      /** 요소 트리에서 조건에 맞는 요소를 모두 찾는다. */
+      const find = (node: unknown, match: (props: Record<string, unknown>) => boolean): Record<string, unknown>[] => {
+        if (Array.isArray(node)) return node.flatMap((child) => find(child, match));
+        if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+        /** 요소의 속성. */
+        const props = (node as { props: Record<string, unknown> }).props;
+        return [...(match(props) ? [props] : []), ...find(props.children, match)];
+      };
 
-    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={started} />))).not.toContain('disabled');
-    /** 감지 전. */
-    const before = snapshot([], { onboarding: { ...started.onboarding, detectionStarted: false }, trial: { canStart: false, bundleId: null, picker: null } });
-    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={before} />))).toContain('disabled');
-    expect(textOf(<DraftsSection snapshot={before} />)).toContain('멘션 감지를 시작한 뒤에 쓸 수 있습니다.');
-    /** 시험 중. */
-    const running = snapshot([TRIAL], { trial: { canStart: false, bundleId: 9, picker: null } });
-    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={running} />))).toContain('disabled');
-    expect(textOf(<DraftsSection snapshot={running} />)).toContain('시험 중인 묶음이 있습니다.');
-    // 설정에서 연 목록은 설정 칸에 뜬다.
-    expect(
-      textOf(<DraftsSection snapshot={snapshot([], { trial: { canStart: true, bundleId: null, picker: { window: 'settings', status: 'loading' } } })} />),
-    ).toContain('시험할 멘션 고르기');
+      /** Esc를 처리하는 대화상자. */
+      const [dialog] = find(element, (props) => props.role === 'dialog');
+      (dialog!.onKeyDown as (event: { key: string }) => void)({ key: 'a' });
+      expect(send).not.toHaveBeenCalled();
+      (dialog!.onKeyDown as (event: { key: string }) => void)({ key: 'Escape' });
+      expect(send).toHaveBeenLastCalledWith({ type: 'close-manual-check' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
+
+  it('시트 위쪽에 "멘션 | 담당 업무" 탭이 있고 멘션 탭이 기본으로 선택된다. 탭마다 안내 문구가 다르다', () => {
+    /** 멘션 탭을 그린 HTML. */
+    const mentions = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: LOADED } })} />);
+    expect(mentions).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>멘션<\/button>/);
+    expect(mentions).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="false"[^>]*>담당 업무<\/button>/);
+    expect(sheetText(LOADED)).not.toContain('알림이 오기 전에 배정된 업무');
+    /** 담당 업무 탭을 그린 HTML. */
+    const assignments = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: ASSIGNMENTS } })} />);
+    expect(assignments).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>담당 업무<\/button>/);
+    // 알림이 없는 업무는 나오지 않는 한계를 안내한다.
+    expect(sheetText(ASSIGNMENTS)).toContain('알림이 오기 전에 배정된 업무나 알림이 없는 업무는 목록에 없습니다');
+    expect(sheetText(ASSIGNMENTS)).toContain('게시 전에는 Flow에 아무것도 올라가지 않습니다');
+  });
+
+  it('담당 업무 줄은 작성자·프로젝트·업무 제목·시각과 상태 태그, 감지에서 빠진 이유 태그를 보이고 모두 고를 수 있다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: ASSIGNMENTS } })} />);
+    /** 그린 글자. */
+    const text = sheetText(ASSIGNMENTS);
+
+    expect(text).toContain('업무 작성자');
+    expect(text).toContain('백오피스');
+    expect(text).toContain('쿠폰 만료 처리 오류 수정');
+    expect(text).toContain('기능 시작 전 업무');
+    expect(text).toContain('배정 근거 없음');
+    expect(text).not.toContain('기능 시작 전 배정');
+    expect(text).not.toContain('자기 작성 업무');
+    expect(text.match(/답함/g)).toHaveLength(1);
+    expect(text).toContain('이미 묶음 있음 준비됨');
+    expect(text.match(/처리됨/g)).toHaveLength(1);
+    // 빠진 이유는 경고색 태그로 보인다.
+    expect(html).toContain('<span class="tag warn">기능 시작 전 업무</span>');
+    expect(html.match(/class="manual-check-choice"/g)).toHaveLength(2);
+    expect(html).not.toMatch(/class="manual-check-choice"[^>]*disabled/);
+    // 멘션 줄에는 빠진 이유 태그가 없다.
+    expect(sheetText(LOADED)).not.toContain('기능 시작 전');
+  });
+
+  it('감지에서 빠진 이유 네 가지가 각자 태그로 보인다', () => {
+    /** 이유 네 가지를 모두 가진 줄. */
+    const row: ManualCheckRowSnapshot = { ...ASSIGNMENT_ROWS[1]!, tags: [], missReasons: ['pre-feature-task', 'pre-feature-assignment', 'self-authored', 'no-evidence'] };
+    /** 그린 글자. */
+    const text = sheetText({ ...ASSIGNMENTS, rows: [row] });
+    for (const label of ['기능 시작 전 업무', '기능 시작 전 배정', '자기 작성 업무', '배정 근거 없음']) expect(text).toContain(label);
+  });
+
+  it('담당 업무 탭은 자기 불러오는 중·실패 문구와 [다시 불러오기], 목록 없음 문구, [더 보기]를 가진다', () => {
+    expect(sheetText({ window: 'popover', tab: 'assignments', status: 'loading' })).toContain('담당 업무를 불러오는 중입니다.');
+    expect(sheetText({ window: 'popover', tab: 'assignments', status: 'loading' })).not.toContain('다시 불러오기');
+    /** 실패한 담당 업무 탭. */
+    const failed = (reason: 'no-key' | 'unauthorized' | 'network' | 'rate-limited' | 'unexpected') => sheetText({ window: 'popover', tab: 'assignments', status: 'failed', reason });
+    expect(failed('no-key')).toContain('Flow 개인 API 키가 없어 담당 업무를 불러오지 못했습니다.');
+    expect(failed('unauthorized')).toContain('Flow가 키를 받지 않아 담당 업무를 불러오지 못했습니다.');
+    expect(failed('network')).toContain('Flow에 연결하지 못했습니다');
+    expect(failed('rate-limited')).toContain('Flow 요청이 많습니다');
+    expect(failed('unexpected')).toContain('담당 업무를 불러오지 못했습니다.');
+    expect(failed('network')).toContain('다시 불러오기');
+    // 실패해도 탭은 그대로 보여 다른 탭으로 옮길 수 있다.
+    expect(failed('network')).toContain('멘션');
+    expect(sheetText({ ...ASSIGNMENTS, rows: [], hasMore: false })).toContain('고를 수 있는 담당 업무가 없습니다.');
+    expect(sheetText({ ...ASSIGNMENTS, hasMore: true })).toContain('더 보기');
+    expect(sheetText(ASSIGNMENTS)).toContain('더 이상 없음');
+    expect(sheetText({ ...ASSIGNMENTS, hasMore: true, moreFailure: 'rate-limited' })).toContain('Flow 요청이 많습니다');
+  });
+
+  it('탭을 누르면 탭 전환 명령을 보내고, 이미 보는 탭은 보내지 않는다. 줄을 고르면 그 알림으로 고르는 명령을 보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 요소 트리에서 조건에 맞는 요소의 속성을 모두 찾는다. */
+      const find = (node: unknown, match: (props: Record<string, unknown>) => boolean): Record<string, unknown>[] => {
+        if (Array.isArray(node)) return node.flatMap((child) => find(child, match));
+        if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+        /** 요소의 속성. */
+        const props = (node as { props: Record<string, unknown> }).props;
+        return [...(match(props) ? [props] : []), ...find(props.children, match)];
+      };
+      /** 멘션 탭을 보는 시트가 그린 요소. */
+      const element = ManualCheckSheet({ sheet: LOADED });
+      /** 탭 단추. */
+      const tabs = find(element, (props) => props.role === 'tab');
+      expect(tabs).toHaveLength(2);
+      (tabs[0]!.onClick as () => void)();
+      expect(send).not.toHaveBeenCalled();
+      (tabs[1]!.onClick as () => void)();
+      expect(send).toHaveBeenLastCalledWith({ type: 'select-manual-check-tab', tab: 'assignments' });
+
+      /** 담당 업무 탭을 보는 시트가 그린 요소의 탭 단추. */
+      const assignmentTabs = find(ManualCheckSheet({ sheet: ASSIGNMENTS }), (props) => props.role === 'tab');
+      (assignmentTabs[0]!.onClick as () => void)();
+      expect(send).toHaveBeenLastCalledWith({ type: 'select-manual-check-tab', tab: 'mentions' });
+      (assignmentTabs[1]!.onClick as () => void)();
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('배정 시각이 추정인 담당 업무 묶음은 상세에서 "추정"으로 표시하고, 근거 시각이나 멘션 묶음에는 표시하지 않는다', () => {
+    /** 추정 배정 시각을 가진 담당 업무 묶음. */
+    const estimated: BundleSnapshot = { ...READY, id: 21, assignment: { text: [], assignedAt: Date.UTC(2026, 9, 20, 0, 1), assignedAtEstimated: true } };
+    /** 근거 시각을 가진 담당 업무 묶음. */
+    const evidenced: BundleSnapshot = { ...READY, id: 22, assignment: { text: [], assignedAt: Date.UTC(2026, 9, 20, 0, 1) } };
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([estimated])} />)).toContain('<span class="tag manual">추정</span>');
+    expect(textOf(<PopoverContent snapshot={snapshot([estimated])} />)).toContain('배정 시각');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([evidenced])} />)).not.toContain('추정');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('배정 시각');
+  });
+
+  it('수동 요청 묶음은 상세 머리에 "수동 요청" 태그를 보이고, 자동 감지 묶음에는 붙이지 않는다', () => {
+    /** 수동 요청 묶음. */
+    const manual: BundleSnapshot = { ...READY, id: 12, manual: true };
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([manual])} />)).toContain('<span class="tag manual">수동 요청</span>');
+    expect(renderToStaticMarkup(<ReviewContent snapshot={snapshot([manual, READY])} initialBundleId={12} />).match(/<span class="tag manual">수동 요청<\/span>/g)).toHaveLength(2);
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('수동 요청');
+  });
+});
+
+it('담당 업무 초안의 출처와 업무 본문을 기존 검토 화면에 표시한다', () => {
+  /** 직접 멘션이 없는 담당 업무 초안. */
+  const item = bundle(91, { ...READY, id: 91, mentions: [], assignment: { text: [{ text: '업무 본문 요청', mention: false }] }, senderNames: ['업무 작성자'] });
+  /** 펼친 검토 화면. */
+  const html = renderToStaticMarkup(<ReviewContent snapshot={snapshot([item])} initialBundleId={91} />);
+  expect(html).toContain('담당 업무 초안');
+  expect(html).toContain('업무 본문 요청');
+  expect(html).not.toContain('멘션 0건');
+});
+
+it('담당 업무 게시 카운트다운을 직접 멘션으로 표시하지 않는다', () => {
+  /** 받는 사람을 제거한 담당 업무 게시 대기. */
+  const item = bundle(91, { ...READY, id: 91, assignment: { text: [] }, mentions: [], status: 'posting',
+    posting: { phase: 'countdown', endsAt: Date.now() + 5000 }, draft: { ...READY.draft!, recipients: [], canEdit: false, canPost: false } });
+  /** 실제 검토 화면의 카운트다운 문구. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={91} />);
+  expect(text).toContain('뒤 게시합니다: 담당 업무 초안');
+  expect(text).not.toContain('님 멘션');
+});
+
+it('배정 후 이미 답한 담당 업무를 처리됨에서 담당 업무의 이미 답함으로 표시한다', () => {
+  /** 초안 없이 처리한 담당 업무. */
+  const item = bundle(92, { ...READY, id: 92, mentions: [], assignment: { text: [{ text: '업무 본문 요청', mention: false }] }, senderNames: ['업무 작성자'],
+    status: 'already-answered', group: 'processed', canRestore: true, draft: null });
+  /** 펼친 검토 화면의 글. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={92} />);
+  expect(text).toContain('이미 답함');
+  expect(text).toContain('배정 이후 Flow에 내 답이 있어 초안 없이 처리했습니다.');
+  expect(text).toContain('되돌리기');
+});
+
+it('본문 멘션과 합쳐진 담당 업무 초안은 검토 대상 하나로 두 감지 사유를 보이고 본문을 한 번만 보인다', () => {
+  /** 같은 본문의 멘션과 담당자 지정을 합친 초안. */
+  const item = bundle(93, { ...READY, id: 93, place: 'post', assignment: { text: [{ text: '업무 본문 요청', mention: false }] }, senderNames: ['업무 작성자'],
+    mentions: [{ senderName: '업무 작성자', place: 'post', at: 0, text: [{ text: '업무 본문 요청', mention: false }], edited: false }] });
+  /** 펼친 검토 화면의 글. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={93} />);
+  expect(text).toContain('담당 업무 초안 · 본문 멘션');
+  expect(text.split('업무 본문 요청')).toHaveLength(2);
+  /** 작은 창의 글. */
+  const popover = textOf(<PopoverContent snapshot={snapshot([item])} />);
+  expect(popover).toContain('담당 업무 초안 · 본문 멘션');
+});
+
+it('검토 중 담당자에서 제외된 담당 업무 초안은 초안을 보이되 제외 사유와 게시 불가를 상세 머리에 보이고 다시 만들기를 두지 않는다', () => {
+  /** 담당 해제로 게시를 막은 준비된 초안. */
+  const item = bundle(94, { ...READY, id: 94, mentions: [], assignment: { text: [{ text: '업무 본문 요청', mention: false }], blockedByUnassignment: true },
+    senderNames: ['업무 작성자'], changes: { newWritingCount: 1, edited: false, goneMentionCount: 0 },
+    draft: { ...READY.draft!, canPost: false, canRegenerate: false } });
+  for (const view of [<PopoverContent snapshot={snapshot([item])} />, <ReviewContent snapshot={snapshot([item])} initialBundleId={94} />]) {
+    /** 화면의 글. */
+    const text = textOf(view);
+    expect(text).toContain('담당자에서 제외되어 게시할 수 없습니다');
+    expect(text).not.toContain('다시 만들기');
+    expect(renderToStaticMarkup(view).match(/<button[^>]*>게시<\/button>/)?.[0]).toContain('disabled');
+  }
+});
+
+it('게시 실패한 담당 업무 초안도 담당자에서 제외되면 [다시 게시]가 꺼진 까닭으로 제외 사유를 보인다', () => {
+  /** 게시 실패 뒤 담당 해제로 막힌 초안. */
+  const item = bundle(96, { ...READY, id: 96, mentions: [], assignment: { text: [], blockedByUnassignment: true }, senderNames: ['업무 작성자'],
+    status: 'post-failed', group: 'failed', postFailure: 'no-response', draft: { ...READY.draft!, canPost: false, canRegenerate: false } });
+  /** 펼친 검토 화면의 글. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={96} />);
+  expect(text).toContain('담당자에서 제외되어 게시할 수 없습니다');
+});
+
+it('생성 중 담당자에서 제외된 담당 업무는 처리됨의 담당 해제로 보이고 되돌릴 수 있다', () => {
+  /** 초안 없이 멈춘 담당 업무. */
+  const item = bundle(95, { ...READY, id: 95, mentions: [], assignment: { text: [{ text: '업무 본문 요청', mention: false }], blockedByUnassignment: true },
+    senderNames: ['업무 작성자'], status: 'unassigned', group: 'processed', canRestore: true, draft: null });
+  /** 펼친 검토 화면의 글. */
+  const text = textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={95} />);
+  expect(text).toContain('담당 해제');
+  expect(text).toContain('담당자에서 제외되어 초안을 만들지 않았습니다.');
+  expect(text).toContain('되돌리기');
 });

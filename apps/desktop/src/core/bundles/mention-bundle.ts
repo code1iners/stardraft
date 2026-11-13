@@ -3,6 +3,7 @@ import { mentionLocationKey, type Mention, type MentionLocation } from '../detec
 import type { Draft, DraftFailure, Regeneration, RunRecord } from '../drafts/draft';
 import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
+import { isPostBody } from '../flow/mention-place';
 import type { MyAnswer } from '../flow/mention-judgement';
 import type { RepoCandidate } from '../repos/repo-candidates';
 
@@ -27,7 +28,9 @@ export type BundleStatus =
   /** 이미 답함. Flow에 내 답이 있어 자동으로 옮겨졌다. 초안이 있으면 편집본까지 그대로 둔다. */
   | 'already-answered'
   /** 원문 사라짐. 멘션이 모두 사라졌다(삭제, 내 표기 제거, 접근 불가, 머리 댓글 삭제). 초안이 있으면 그대로 둔다. */
-  | 'source-gone';
+  | 'source-gone'
+  /** 담당 해제. 초안이 생기기 전에 내가 담당자에서 빠진 것을 확인해 생성을 멈췄다. 해제 사유는 배정 자료(`unassignedAt`)에 따로 둔다. */
+  | 'unassigned';
 
 /** 펼친 창의 목록 묶음 하나. 검토 대기·생성 중·실패·처리됨이다. */
 export type BundleListGroup = 'awaiting-review' | 'generating' | 'failed' | 'processed';
@@ -48,26 +51,30 @@ export function listGroupOf(status: BundleStatus): BundleListGroup {
     case 'ignored':
     case 'already-answered':
     case 'source-gone':
+    case 'unassigned':
       return 'processed';
   }
 }
 
-/** 처리됨 상태. 게시됨·무시함·이미 답함·원문 사라짐이다. */
-export type ProcessedStatus = Extract<BundleStatus, 'posted' | 'ignored' | 'already-answered' | 'source-gone'>;
+/** 처리됨 상태. 게시됨·무시함·이미 답함·원문 사라짐·담당 해제다. */
+export type ProcessedStatus = Extract<BundleStatus, 'posted' | 'ignored' | 'already-answered' | 'source-gone' | 'unassigned'>;
 
-/** 처리됨(게시됨·무시함·이미 답함·원문 사라짐)인지 본다. 처리됨 묶음은 작은 창 대기열에 없고 되돌릴 수만 있다. */
+/** 처리됨(게시됨·무시함·이미 답함·원문 사라짐·담당 해제)인지 본다. 처리됨 묶음은 작은 창 대기열에 없고 되돌릴 수만 있다. */
 export function isProcessed(status: BundleStatus): status is ProcessedStatus {
   return listGroupOf(status) === 'processed';
 }
 
-/** Flow에 내 답이 생겼거나 멘션이 사라져 자동으로 처리됨이 된 상태(이미 답함, 원문 사라짐)인지 본다. 되돌릴 때 그 까닭을 기록해 이후 판정에서 뺀다. */
+/**
+ * Flow에 내 답이 생겼거나 멘션이 사라져 자동으로 처리됨이 된 상태(이미 답함, 원문 사라짐)인지 본다. 되돌릴 때 그 까닭을 기록해 이후 판정에서 뺀다.
+ * 담당 해제도 자동으로 옮겨지지만 뺄 답이나 사라진 멘션이 없고, 되돌리면 생성 직전에 담당 여부를 다시 확인하므로 넣지 않는다.
+ */
 export function isAutoProcessed(status: BundleStatus): boolean {
   return status === 'already-answered' || status === 'source-gone';
 }
 
-/** 처리됨에서 되돌릴 수 있는 상태인지 본다. 게시됨은 되돌릴 수 없다. */
+/** 처리됨에서 되돌릴 수 있는 상태인지 본다. 게시됨은 되돌릴 수 없다. 담당 해제에서 되돌리면 생성 직전에 담당 여부를 다시 확인한다. */
 export function isRestorable(status: BundleStatus): boolean {
-  return status === 'ignored' || status === 'already-answered' || status === 'source-gone';
+  return status === 'ignored' || status === 'already-answered' || status === 'source-gone' || status === 'unassigned';
 }
 
 /**
@@ -219,6 +226,8 @@ export type PostStop =
   | { kind: 'already-answered' }
   /** 멘션이 모두 사라져 "원문 사라짐"으로 옮겼다. */
   | { kind: 'source-gone' }
+  /** 내가 담당자에서 빠진 것을 확인해, 초안을 둔 채 준비됨으로 돌려 게시를 막았다. */
+  | { kind: 'unassigned' }
   /**
    * [게시]를 누를 때 화면에 없던 변화가 있어 준비됨으로 돌렸다. 확인이 끝나기 전에 합쳐진 새 멘션 수,
    * 화면에 보이던 내용 뒤에 새로 생긴 글 수(나를 멘션한 글 포함), 원문 수정 여부, 새로 사라진 멘션 수다.
@@ -233,11 +242,62 @@ export type PostedAnswerRanges = ReadonlyMap<string, ReadonlySet<string>>;
 /** 멘션 묶음 자리. 같은 댓글 스레드(`remarkId`가 댓글)나 같은 게시물 본문(`remarkId`가 `"-1"`)이다. */
 export type BundlePlace = Pick<MentionLocation, 'postId' | 'remarkId'>;
 
+/** 담당 업무 초안의 감지 근거. 직접 멘션과 별도로 보존한다. */
+export interface TaskAssignment {
+  /** 계정별로 구별하는 업무 ID. */
+  taskId: string;
+  /** 업무 작성자. 기본 받는 사람이다. */
+  authorId: string;
+  /** 작성자 표시 이름. */
+  authorName: string;
+  /**
+   * 배정 시점 근거의 서버 시각(Flow 형식). 생성 시 지정은 업무 작성 시각, 생성 후 지정은 나를 추가한 담당 변경 기록의 시각이다.
+   * 이 시각보다 뒤에 쓴 내 글만 "이미 답함"의 근거다. 근거 없이 만든 예전 묶음에는 없고, 그때는 판정하지 않는다.
+   */
+  assignedAt?: string;
+  /**
+   * `assignedAt`이 배정 근거 없이 WORKER 알림 시각으로 대신한 추정인지 여부. 최근 멘션 확인에서 근거 없는 업무를 골라 만든 수동 요청 묶음만 참이고,
+   * 상세가 배정 시각을 "추정"으로 보인다. 근거 시각이면 두지 않는다.
+   */
+  assignedAtEstimated?: boolean;
+  /**
+   * 내가 이 업무의 담당자에서 빠진 것을 확인한 시각(PC 시각, Unix epoch 밀리초). 묶음 상태와 따로 둔다.
+   * 다시 담당자로 확인되면 지운다. 조회하지 못했거나 담당자를 읽을 수 없으면 바꾸지 않아, 한 번 확인한 해제는 다시 담당으로 확인될 때까지 게시를 막는다.
+   * Flow 시각인 `assignedAt`과 달리 해제 시각은 Flow가 주지 않아 확인한 PC 시각을 쓴다.
+   */
+  unassignedAt?: number;
+}
+
+/**
+ * 담당 해제로 생성과 게시를 막는 묶음인지 본다. 내가 담당자에서 빠진 것이 확인됐고, 묶음에 남은 직접 멘션이 없다.
+ * 본문 멘션과 합친 묶음은 직접 멘션이 남아 있으면 멘션 답변으로 계속 유효하다.
+ */
+export function isUnassignedBlocked(bundle: Pick<MentionBundle, 'assignment' | 'mentions'>): boolean {
+  return bundle.assignment?.unassignedAt !== undefined && activeMentions(bundle).length === 0;
+}
+
+/**
+ * Flow에서 확인한 지금 담당 여부(`assigned`)를 배정 자료에 반영한다. 빠졌으면 처음 확인한 시각을 남기고, 다시 담당이면 지운다.
+ * 담당 업무가 아니거나 담당 여부를 알 수 없으면(`null`) 그대로 둔다. 조회 실패를 담당 해제로 기록하지 않기 위해서다.
+ */
+export function withAssigneeCheck(assignment: TaskAssignment | undefined, assigned: boolean | null, now: number): TaskAssignment | undefined {
+  if (!assignment || assigned === null) return assignment;
+  if (assigned) {
+    /** 해제 기록을 지운 배정 자료. */
+    const reassigned = { ...assignment };
+    delete reassigned.unassignedAt;
+    return reassigned;
+  }
+  return { ...assignment, unassignedAt: assignment.unassignedAt ?? now };
+}
+
 /**
  * 멘션 묶음. 같은 댓글 스레드나 같은 게시물 본문에서 온, 아직 처리하지 않은 멘션의 모음이다.
  * 초안·상태·트레이 검토 수·대기열 위치는 모두 묶음 단위다.
  */
 export interface MentionBundle extends BundlePlace {
+  /** 담당 업무 초안이면 배정 자료. 기존 멘션 묶음에는 없다. */
+  assignment?: TaskAssignment;
   /** 묶음 ID. 저장할 때 정해지고 다시 쓰지 않는다. */
   id: number;
   /** 멘션이 온 Flow 프로젝트 ID. */
@@ -304,8 +364,11 @@ export interface MentionBundle extends BundlePlace {
    * 다시 [게시]하거나, 다시 만들거나, 처리됨에서 되돌리면 지운다.
    */
   quitDuringCountdown: boolean;
-  /** 최근 멘션으로 시험하는 시험 묶음인지 여부. 시험 묶음은 처리됨에 남기지 않고, 앱을 다시 켤 때 진행 중이던 것을 지운다. */
-  trial: boolean;
+  /**
+   * 최근 멘션 확인에서 사용자가 골라 만든 수동 요청 묶음인지 여부. 게시할 수 있는 실제 묶음이고 감지 기준점을 옮기지 않는다.
+   * 초안 실행 직전에 "이미 답함"을 판정하지 않으며, 대기열에서는 사용자 행동 자리에 든다.
+   */
+  manual: boolean;
 }
 
 /**
@@ -344,9 +407,10 @@ export function bundlePlaceKey({ postId, remarkId }: BundlePlace): string {
 /**
  * 묶음에 든 멘션 위치 전부를 한 문자열로 나타낸다. 이미 답함으로 빠진 멘션도 넣어, 판정이 바뀌어도 같은 값이다.
  * 초안 실행을 시작한 뒤 새 멘션이 합쳐졌는지 가려낼 때 쓴다.
+ * 본문 멘션은 넣지 않는다. 본문 자리에는 그 하나뿐이라 새 요청이 아니고, 담당 업무 묶음에 늦게 합쳐져도 같은 본문에 답하는 실행을 다시 하지 않는다.
  */
 export function mentionSetKey(bundle: Pick<MentionBundle, 'mentions'>): string {
-  return bundle.mentions.map(mentionLocationKey).sort().join('\n');
+  return bundle.mentions.filter((mention) => !isPostBody(mention)).map(mentionLocationKey).sort().join('\n');
 }
 
 /** 두 멘션을 알림 시각, 같으면 `alarmId` 크기로 비교한다. */
@@ -390,6 +454,18 @@ export function judgeAnswered(
     /** 이 PC가 게시한 글이 답한 범위에 드는지 여부. */
     const inPostedRange = counted.some((answer) => postedRanges.get(answer.answerId)?.has(location) === true);
     return { ...mention, answered: inPostedRange || (latestAnswerAt !== null && at !== null && latestAnswerAt > at) };
+  });
+}
+
+/** 담당 업무 묶음에 배정 시점보다 뒤에 쓴 내 답이 있는지 본다. 되돌릴 때 뺀 답과 배정 시점 근거가 없는 묶음은 세지 않는다. */
+export function answeredSinceAssignment(assignment: TaskAssignment | undefined, answers: readonly RecordedAnswer[]): boolean {
+  /** 배정 시점. */
+  const assignedAt = assignment?.assignedAt ? flowTimeToEpochMs(assignment.assignedAt) : null;
+  if (assignedAt === null) return false;
+  return answers.some((answer) => {
+    /** 답을 쓴 시각. */
+    const at = flowTimeToEpochMs(answer.registeredDateTime);
+    return !answer.excluded && at !== null && at > assignedAt;
   });
 }
 

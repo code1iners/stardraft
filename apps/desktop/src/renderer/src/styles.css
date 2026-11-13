@@ -296,6 +296,31 @@ html[data-platform='win32'] .popover {
   border-bottom: 1px solid var(--border);
 }
 
+.popover-logo {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background: currentColor;
+  mask: url('../../../resources/tray/review.svg') center / contain no-repeat;
+}
+
+.popover-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.popover-settings:hover {
+  color: var(--text);
+}
+
 /* 줄 안에서 남은 폭을 채워 뒤 요소를 오른쪽으로 민다. */
 .spacer {
   flex: 1;
@@ -416,9 +441,21 @@ p.setup-tray-hint {
   height: 100%;
 }
 
+/* 두 상태를 같은 칸에 겹쳐 완료 안내가 나타나도 설정 본문을 밀지 않는다. */
+.setup-band-stack {
+  flex: none;
+  display: grid;
+}
+
+.setup-band-reserve {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* 설정 창 맨 위 첫 설정 띠. 감지를 시작하기 전에만 보인다. */
 .setup-band {
-  flex: none;
+  grid-area: 1 / 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1097,19 +1134,13 @@ p.setup-tray-hint {
   color: var(--danger);
 }
 
-.tag.trial {
-  border: 1px solid var(--warn-dot);
-  color: var(--warn);
+/* 수동 요청 묶음의 "수동 요청" 표시. 경고색이 아니라 옅은 테두리다. */
+.tag.manual {
+  border: 1px solid var(--border);
+  color: var(--muted);
 }
 
-/* 시험 묶음의 안내 줄. 상세 머리에서 게시 상태 줄과 같은 크기다. */
-p.trial-line {
-  margin: 0;
-  font-size: 12px;
-  color: var(--warn);
-}
-
-/* 작은 창: 대기열 위치, ‹ › 이동, 상태 태그, 펼쳐 보기. */
+/* 작은 창: 대기열 위치, ‹ › 이동, 상태 태그, ⋯ 메뉴. */
 .review-head {
   flex: none;
   display: flex;
@@ -1660,8 +1691,43 @@ button.cite:hover {
   cursor: pointer;
 }
 
-.menu-item:hover {
+.menu-item:hover:not(:disabled) {
   background: var(--surface-2);
+}
+
+.menu-item:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+/* 작은 창 머리의 ⋯ 메뉴: 머리 아래로 펼치고 오른쪽 끝을 맞춘다. */
+.popover-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.popover-menu-trigger:hover,
+.popover-menu-trigger[aria-expanded='true'] {
+  color: var(--text);
+}
+
+.popover-menu-list {
+  top: calc(100% + 4px);
+  bottom: auto;
+  width: 224px;
+}
+
+.menu-reason {
+  margin: 0;
+  padding: 0 8px 6px;
 }
 
 /* 저장소 선택 창: 후보 목록은 창 높이 안에서 스크롤한다. */
@@ -1968,14 +2034,37 @@ p.detail-empty {
   text-align: center;
 }
 
-/* 멘션 고르기 목록: 최근 멘션을 한 줄에 하나씩 두고, 목록은 창 높이 안에서 스크롤한다. */
-.sheet.trial-picker {
+/* 최근 멘션 확인 목록: 최근 멘션을 한 줄에 하나씩 두고, 목록은 창 높이 안에서 스크롤한다. */
+.sheet.manual-check {
   display: flex;
   flex-direction: column;
   max-height: calc(100% - 24px);
 }
 
-.trial-choices {
+/* 확인 시트의 "멘션 | 담당 업무" 탭. 고른 탭은 밑줄과 강조색으로 보인다. */
+.manual-check-tabs {
+  display: flex;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.manual-check-tabs button {
+  padding: 4px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.manual-check-tabs button.on {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.manual-check-choices {
   flex: 1 1 auto;
   min-height: 0;
   margin: 10px 0 0;
@@ -1984,7 +2073,7 @@ p.detail-empty {
   list-style: none;
 }
 
-.trial-choice {
+.manual-check-choice {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1998,16 +2087,17 @@ p.detail-empty {
   cursor: pointer;
 }
 
-.trial-choice:hover {
+.manual-check-choice:hover {
   background: var(--surface-2);
 }
 
-.trial-choice .list-row-top {
+.manual-check-choice .list-row-top {
+  flex-wrap: wrap;
   justify-content: flex-start;
   align-items: center;
 }
 
-/* 펼친 창 목록 행의 태그 줄. 시험 묶음이면 "시험" 표시가 상태 태그 앞에 붙는다. */
+/* 펼친 창 목록 행의 태그 줄. 수동 요청 묶음이면 "수동 요청" 표시가 상태 태그 앞에 붙는다. */
 .list-row-tags {
   display: flex;
   gap: 4px;

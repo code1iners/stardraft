@@ -1,4 +1,4 @@
-import { activeMentions, canPost, compareMentions, type MentionBundle } from '../bundles/mention-bundle';
+import { activeMentions, canPost, compareMentions, isUnassignedBlocked, type MentionBundle } from '../bundles/mention-bundle';
 import { mentionWritingOf } from '../flow/bundle-context';
 import { isSameFlowUser } from '../flow/user-id';
 import type { Draft } from './draft';
@@ -27,9 +27,15 @@ export function draftEditorText(draft: Pick<Draft, 'paragraphs'>): string {
  * "이미 답함"으로 빠진 멘션의 송신자는 넣지 않는다. 이름과 ID는 맥락(초안을 만들 때 조회한 글)의 `registerName`·`registerId`이고,
  * 맥락에서 멘션 글을 찾지 못하면(맥락이 없거나 옛 맥락이라 ID가 없음) 알림의 송신자를 쓴다.
  */
-export function bundleRecipients(bundle: Pick<MentionBundle, 'mentions' | 'context' | 'removedRecipients'>): Recipient[] {
+export function bundleRecipients(bundle: Pick<MentionBundle, 'assignment' | 'mentions' | 'context' | 'removedRecipients'>): Recipient[] {
   /** 받는 사람. */
   const recipients: Recipient[] = [];
+  if (bundle.assignment) {
+    /** 생성 시 조회한 최신 업무 작성자를 기본 받는 사람으로 쓴다. */
+    const author = { id: bundle.context?.post.authorId || bundle.assignment.authorId,
+      name: bundle.context?.post.authorName || bundle.assignment.authorName };
+    return author.id && !bundle.removedRecipients.some((id) => isSameFlowUser(id, author.id)) ? [author] : [];
+  }
   for (const mention of activeMentions(bundle).sort(compareMentions)) {
     /** 맥락에서 찾은 멘션 글. */
     const writing = bundle.context && mentionWritingOf(bundle.context, mention);
@@ -64,9 +70,10 @@ export function bundleEditorText(bundle: Pick<MentionBundle, 'draft' | 'editedTe
 
 /**
  * 묶음을 지금 게시하면 올라갈 게시 본문. 게시할 수 없는 글이면 `null`이다.
- * 초안이 없거나, 편집기 텍스트가 비었거나(앞뒤 공백만), 게시 본문이 상한(4,000자)을 넘으면 게시할 수 없다.
+ * 초안이 없거나, 편집기 텍스트가 비었거나(앞뒤 공백만), 게시 본문이 상한(4,000자)을 넘거나, 담당 해제로 막혔으면 게시할 수 없다.
  */
-export function postableBody(bundle: Pick<MentionBundle, 'mentions' | 'context' | 'removedRecipients' | 'draft' | 'editedText'>): string | null {
+export function postableBody(bundle: Pick<MentionBundle, 'assignment' | 'mentions' | 'context' | 'removedRecipients' | 'draft' | 'editedText'>): string | null {
+  if (isUnassignedBlocked(bundle)) return null;
   /** 편집기 텍스트. */
   const text = bundleEditorText(bundle);
   if (text === null || text.trim() === '') return null;
@@ -76,6 +83,6 @@ export function postableBody(bundle: Pick<MentionBundle, 'mentions' | 'context' 
 }
 
 /** 지금 [게시]를 눌러 게시를 시작할 수 있는지 본다. 준비됨 묶음이고 게시할 수 있는 글(`postableBody`)일 때다. */
-export function isPostable(bundle: Pick<MentionBundle, 'status' | 'mentions' | 'context' | 'removedRecipients' | 'draft' | 'editedText'>): boolean {
+export function isPostable(bundle: Pick<MentionBundle, 'status' | 'assignment' | 'mentions' | 'context' | 'removedRecipients' | 'draft' | 'editedText'>): boolean {
   return canPost(bundle.status) && postableBody(bundle) !== null;
 }

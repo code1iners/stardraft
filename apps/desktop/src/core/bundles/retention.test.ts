@@ -142,7 +142,7 @@ function postedBundle(processedAt: number): UnsavedBundle {
       answeredMentions: [{ postId: POST_ID, remarkId: '700', replyId: '-1' }],
     },
     quitDuringCountdown: false,
-    trial: false,
+    manual: false,
   };
 }
 

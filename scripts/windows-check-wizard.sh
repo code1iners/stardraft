@@ -474,7 +474,7 @@ stage_6() {
   step "설정 > 에이전트의 \"자세히\"에 보이는 경로가 claude.cmd인지 봅니다."
   say "실행 전 프로세스:"
   agent_processes | sed 's/^/    /'
-  step "작은 창에서 ${BOLD}최근 멘션으로 시험${RESET} → 멘션 하나를 고릅니다. 초안 생성이 시작되면 Enter."
+  step "작은 창에서 ${BOLD}최근 멘션 확인${RESET} → 멘션 하나를 고릅니다. 초안 생성이 시작되면 Enter."
   pause "생성 중이면 Enter"
   say "생성 중 프로세스:"
   agent_processes | sed 's/^/    /'
@@ -486,7 +486,7 @@ stage_6() {
   say "생성 중에 새로 생긴 claude·node·cmd가 취소 뒤 모두 사라졌으면 통과입니다."
   ask_result ".cmd 래퍼 claude 실행"
   ask_result "취소할 때 프로세스 트리 종료"
-  step "다시 ${BOLD}최근 멘션으로 시험${RESET}으로 초안을 끝까지 만들어 보고 ${BOLD}시험 끝내기${RESET}."
+  step "다시 ${BOLD}최근 멘션 확인${RESET}으로 초안을 끝까지 만들어 보고, 게시하지 않을 거라면 ${BOLD}무시${RESET}합니다."
   pause "Enter를 누르면 다음 스테이지로"
 }
 
@@ -504,7 +504,7 @@ stage_7() {
     return 0
   fi
   step "설정의 계정 쪽에서 한글 이름의 로컬 계정을 하나 더합니다. 메뉴 이름은 Windows 버전마다 달라 화면에서 확인하세요."
-  step "그 계정으로 로그인해 Stardraft를 설치하고, claude를 설치·로그인한 뒤 ${BOLD}최근 멘션으로 시험${RESET}으로 초안을 끝까지 만듭니다."
+  step "그 계정으로 로그인해 Stardraft를 설치하고, claude를 설치·로그인한 뒤 ${BOLD}최근 멘션 확인${RESET}으로 초안을 끝까지 만듭니다."
   ask_result "한글 사용자 이름 경로에서 CLI 실행"
   pause "원래 계정으로 돌아왔으면 Enter"
 }
@@ -520,7 +520,7 @@ stage_8() {
   else
     warn "데이터 폴더가 없습니다."
   fi
-  step "state.db가 있고, 앱이 오류 띠 없이 켜져 처리됨·시험 기록 같은 이전 상태를 보이나요?"
+  step "state.db가 있고, 앱이 오류 띠 없이 켜져 처리됨 기록 같은 이전 상태를 보이나요?"
   ask_result "better-sqlite3 win32-x64 로드"
   pause "Enter를 누르면 다음 스테이지로"
 }

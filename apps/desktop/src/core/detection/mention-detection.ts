@@ -1,3 +1,4 @@
+import type { AssignmentDetection } from './assignment-detection';
 import { bundlePlaceKey } from '../bundles/mention-bundle';
 import type { MentionBundles } from '../bundles/mention-bundles';
 import { compareAlarmIds, latestAlarmId } from '../flow/alarm-id';
@@ -24,6 +25,8 @@ const MIN_RETRY_DELAY_MS = 1_000;
 
 /** 멘션 감지에 필요한 포트. */
 export interface MentionDetectionOptions {
+  /** 같은 주기로 조회하는 담당 업무 감지. */
+  assignments?: AssignmentDetection;
   /** 기준점과 계정을 두는 상태 저장소. */
   stateStore: StateStore;
   /** 감지한 멘션을 넣을 멘션 묶음. 묶음이 트레이 검토 수와 OS 알림을 올린다. */
@@ -84,7 +87,7 @@ export class MentionDetection {
     return this.pollNow();
   }
 
-  /** 지금 바로 조회한다. 잠자기에서 깨어났을 때와 트레이 메뉴 "지금 확인"에서 부른다. 감지 중이 아니면 아무것도 하지 않는다. */
+  /** 지금 바로 조회한다. 잠자기에서 깨어났을 때와 트레이 메뉴 "알림 확인"에서 부른다. 감지 중이 아니면 아무것도 하지 않는다. */
   checkNow(): Promise<void> {
     return this.pollNow();
   }
@@ -135,6 +138,11 @@ export class MentionDetection {
       next = NEXT_INTERVAL;
     }
 
+    // 담당 업무 조회 실패가 직접 멘션의 기준점이나 재시도를 막지 않게 별도로 처리한다.
+    if (this.status === 'running' && next.kind !== 'stop') {
+      try { await this.options.assignments?.checkNow(); }
+      catch { this.options.logger.warn('assignment.poll-failed'); }
+    }
     if (this.status !== 'running') return;
     if (next.kind === 'stop' && generation === this.generation) {
       this.status = 'key-rejected';

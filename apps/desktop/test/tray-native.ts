@@ -35,8 +35,7 @@ void app.whenReady().then(() => {
     },
     openPopover: () => { window.show(); console.log('창 열기 메뉴 확인'); },
     openSettings: () => console.log('설정 메뉴 확인'),
-    checkNow: () => console.log('지금 확인 메뉴 확인'),
-    runUpdateAction: () => {},
+    checkNow: () => console.log('알림 확인 메뉴 확인'),
     quit: () => app.quit(),
   };
   for (const indicator of [{ kind: 'idle', generating: false }, { kind: 'review', count: 12 }, { kind: 'problem', reason: 'setup-needed' }] as const) {

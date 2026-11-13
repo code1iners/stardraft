@@ -1,4 +1,6 @@
+import type { MentionBundle } from '../bundles/mention-bundle';
 import type { MentionLocation } from '../detection/mention';
+import { taskAnswers, taskRemarks } from './task-remarks';
 import type { FlowAlarm, FlowApi, FlowApiFailure, FlowApiResult, FlowComment, FlowPost, FlowReply } from '../ports/flow-api';
 import { hasMentionMarkupFor, postBodyMentions } from './mention-markup';
 import { isPostBody, mentionPlaceOf } from './mention-place';
@@ -109,9 +111,15 @@ export class MentionJudge {
 
   /**
    * 묶음 자리의 내 답을 조회한다. 본문 묶음이면 게시물에 쓴 내 댓글(대댓글 제외), 댓글 스레드 묶음이면 그 스레드의 내 대댓글이다.
+   * 담당 업무 묶음이면 게시물의 내 댓글과 모든 스레드의 내 대댓글이다.
    * `myIds`는 내 사용자 ID들이다. 조회하지 못하면(머리 댓글이 지워진 경우 포함) `null`이다.
    */
-  async myAnswers(place: RemarkPlace, myIds: readonly string[]): Promise<MyAnswer[] | null> {
+  async myAnswers(place: Pick<MentionBundle, 'postId' | 'remarkId' | 'assignment'>, myIds: readonly string[]): Promise<MyAnswer[] | null> {
+    if (place.assignment) {
+      /** 업무의 댓글·대댓글 전부. 끝까지 받지 못했으면 판정하지 않는다. */
+      const remarks = await taskRemarks(this.api, place.postId);
+      return remarks.ok && remarks.value.complete ? taskAnswers(remarks.value, myIds) : null;
+    }
     /** 묶음 자리의 글. */
     const remarks = await this.placeRemarks(place);
     return remarks.kind === 'found' ? myAnswersAmong(remarks.value, myIds) : null;

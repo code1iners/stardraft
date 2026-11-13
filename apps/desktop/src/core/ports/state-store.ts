@@ -1,3 +1,4 @@
+import type { AssignmentState } from '../detection/assignment-detection';
 import type { MentionBundle, MinimalRecord, UnsavedBundle } from '../bundles/mention-bundle';
 import type { MentionLocation } from '../detection/mention';
 import type { QueuedDraft } from '../drafts/draft';
@@ -9,6 +10,15 @@ import type { FlowEmployee } from './flow-api';
  * 계정과 기준점, 멘션 묶음부터 시작해, 초안·게시 기록 같은 상태를 다루는 메서드를 차례로 더한다.
  */
 export interface StateStore {
+  /** 계정의 담당 업무 감지 기준과 보류 후보. */
+  getAssignmentState(): Promise<AssignmentState | null>;
+  /** 기준과 보류 후보를 저장한다. 계정이 바뀌었으면 저장하지 않는다. */
+  setAssignmentState(state: AssignmentState): Promise<void>;
+  /**
+   * 업무별 최초 묶음을 한 번만 만든다. 처리 기록과 묶음은 원자적으로 저장한다.
+   * ID가 있는 묶음을 주면 같은 본문의 기존 묶음에 배정 자료를 더해 저장하고 처리 기록은 그 묶음을 가리킨다.
+   */
+  addAssignmentBundle(bundle: UnsavedBundle, accountId: string): Promise<MentionBundle | null>;
   /** 키 확인에 성공한 계정. 없으면 `null`. */
   getAccount(): Promise<FlowEmployee | null>;
   /** 키 확인에 성공한 계정을 저장한다. 같은 계정의 이름·소속·이메일이 바뀌었을 때도 쓴다. */
@@ -24,7 +34,7 @@ export interface StateStore {
   setBaselineAlarmId(alarmId: string): Promise<void>;
   /**
    * 이 멘션 위치를 이미 기록해 두었는지 본다. 같은 멘션 위치에서 다시 온 알림은 글이 수정됐더라도 다시 감지하지 않는다.
-   * 묶음에 든 멘션과 처리됨 목록에서 빠진 묶음의 최소 기록을 함께 본다. 시험 묶음의 멘션은 보지 않는다.
+   * 묶음에 든 멘션과 처리됨 목록에서 빠진 묶음의 최소 기록을 함께 본다.
    */
   hasMentionLocation(location: MentionLocation): Promise<boolean>;
   /** 저장한 멘션 묶음 전부. 묶음마다 멘션은 알림 시각 순서다. */
@@ -36,10 +46,12 @@ export interface StateStore {
    */
   saveDetectedBundles(bundles: readonly UnsavedBundle[], baselineAlarmId: string): Promise<MentionBundle[]>;
   /**
-   * 새 시험 묶음 하나를 저장하고 ID를 받는다. 기준점은 옮기지 않는다. 저장한 묶음을 돌려준다.
-   * 시험 묶음의 멘션 위치는 실제 묶음·최소 기록의 멘션 위치와 따로 두어, 같은 위치가 있어도 실패하지 않고 `hasMentionLocation`에도 세지 않는다.
+   * 최근 멘션 확인에서 고른 수동 요청 묶음 하나를 저장하고 ID를 받는다. 저장한 묶음은 수동 요청 표시를 가진다.
+   * 기준점과 담당 업무 감지 상태는 바꾸지 않는다. `replacedRecordIds`의 최소 기록을 지우고, 묶음 저장과 한 트랜잭션으로 한다.
+   * 담당 업무 묶음이면 그 업무의 처리 기록도 이 묶음을 가리키게 함께 저장해, 이후 자동 감지가 같은 업무로 묶음을 또 만들지 않게 한다.
+   * 다른 묶음에 이미 든 멘션 위치를 주면 실패하고 아무것도 바꾸지 않는다.
    */
-  addTrialBundle(bundle: UnsavedBundle): Promise<MentionBundle>;
+  addManualBundle(bundle: UnsavedBundle, replacedRecordIds: readonly number[]): Promise<MentionBundle>;
   /** 이미 저장한 묶음 하나를 주어진 값으로 맞춘다. 무시·되돌리기처럼 상태를 바꿀 때 쓴다. */
   saveBundle(bundle: MentionBundle): Promise<void>;
   /** 처리됨 목록에서 빠져 최소 기록만 남은 묶음 전부. 묶음 ID 순서다. */
@@ -50,7 +62,7 @@ export interface StateStore {
    */
   archiveBundles(records: readonly MinimalRecord[]): Promise<void>;
   /**
-   * 묶음의 전체 기록(묶음, 멘션, 내 답)을 지우고 최소 기록도 남기지 않는다. 한 트랜잭션으로 한다. 시험 묶음을 지울 때 쓴다.
+   * 묶음의 전체 기록(묶음, 멘션, 내 답)을 지우고 최소 기록도 남기지 않는다. 한 트랜잭션으로 한다.
    * 지운 Flow 글과 초안이 파일에 남지 않게 한다. 저장하지 않은 묶음이 하나라도 있으면 실패하고 아무것도 지우지 않는다.
    */
   deleteBundles(bundleIds: readonly number[]): Promise<void>;

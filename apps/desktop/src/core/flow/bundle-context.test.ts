@@ -188,6 +188,30 @@ describe('맥락 수집: 댓글 스레드 묶음', () => {
     expect(result.ok && result.context.targetThread?.mention).toBe(false);
   });
 
+  it('머리 댓글이 사람 글이어도 첨부 때문에 systemCode(S13)가 붙어 오면 대상 댓글 스레드를 찾는다. 다른 댓글을 셀 때는 그대로 뺀다', async () => {
+    const flow = new FakeFlowApi();
+    flow.addPost({ postId: POST_ID, title: '오류 문의', textComponents: [{ contents: '본문', mentions: [] }] });
+    flow.addComment(POST_ID, { commentId: '900000101', contents: '다른 댓글', registeredDateTime: at(1) });
+    // 실제 Flow는 첨부가 있는 사람 글에도 systemCode를 붙여 보낸다. 본문과 첨부가 있으니 사람 글이다.
+    flow.addComment(POST_ID, {
+      commentId: '900000102',
+      contents: `${MY_MARKUP} 로그를 확인해 주세요`,
+      registerId: SENDER,
+      registerName: '보낸 사람',
+      registeredDateTime: at(2),
+      systemCode: 'S13',
+      attachments: ['로그.png'],
+    });
+    flow.addComment(POST_ID, { commentId: '900000103', contents: '업무 상태를 바꿨습니다.', systemCode: 'S45_2^^대기^^진행', registeredDateTime: at(3) });
+
+    const result = await collectBundleContext(flow, bundle('900000102', [mention({ remarkId: '900000102' })]), NOW, [ME]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.context.targetThread).toMatchObject({ id: '900000102', authorId: SENDER, mention: true });
+    expect(result.context.otherComments.map((comment) => comment.id)).toEqual(['900000101']);
+  });
+
   it('머리 댓글이 목록에 없으면 대상 댓글 스레드가 사라졌다고, 조회가 실패하면 그 실패를 돌려준다', async () => {
     const flow = threadFlow();
     await expect(collectBundleContext(flow, bundle('900000999', [mention({ remarkId: '900000999' })]), NOW, [ME])).resolves.toEqual({
@@ -451,5 +475,34 @@ describe('맥락 문서', () => {
     } else {
       expect(document.text).toContain('  [대댓글 20개 생략]\n  - 보낸 사람');
     }
+  });
+});
+
+describe('담당 업무의 지금 담당 여부', () => {
+  /** 담당 업무 묶음. */
+  const target = { postId: POST_ID, remarkId: '-1', mentions: [],
+    assignment: { taskId: 'task-1', authorId: SENDER, authorName: '작성자', assignedAt: '20261020090100' } };
+
+  it.each([
+    ['나를 포함', [{ taskId: 'task-1', workerIds: ['co@example.test', ME], completion: 'active' as const }], true],
+    ['다른 담당자만 남음', [{ taskId: 'task-1', workerIds: ['co@example.test'], completion: 'active' as const }], false],
+    ['빈 담당자 목록', [{ taskId: 'task-1', workerIds: [], completion: 'active' as const }], false],
+    ['담당자 누락', [{ taskId: 'task-1', workerIds: null, completion: 'active' as const }], null],
+    ['업무를 찾지 못함', [{ taskId: 'other-task', workerIds: [], completion: 'active' as const }], null],
+    ['업무 자료 없음', undefined, null],
+  ])('%s', async (_, tasks, expected) => {
+    const flow = new FakeFlowApi();
+    flow.addPost({ postId: POST_ID, textComponents: [{ contents: '본문', mentions: [] }], ...(tasks ? { tasks } : {}) });
+    /** 조회 결과. */
+    const result = await collectBundleContext(flow, target, NOW, [ME]);
+    expect(result).toMatchObject({ ok: true, assigned: expected });
+  });
+
+  it('담당 업무가 아니면 담당 여부를 보지 않는다', async () => {
+    const flow = new FakeFlowApi();
+    flow.addPost({ postId: POST_ID, textComponents: [{ contents: `${MY_MARKUP} 본문`, mentions: [ME] }], tasks: [{ taskId: 'task-1', workerIds: [], completion: 'active' }] });
+    /** 조회 결과. */
+    const result = await collectBundleContext(flow, bundle('-1', []), NOW, [ME]);
+    expect(result).toMatchObject({ ok: true, assigned: null });
   });
 });

@@ -385,12 +385,13 @@ export class DraftQueue {
     /** 바꾸기 전의 대기열 순서. */
     const before = this.waitingOrder();
     // 생성 중이 아니게 된 묶음(취소함, 저장소 확인 필요 등)은 빼고, 새로 생성 중이 된 묶음은 그 까닭에 맞는 자리에 넣는다.
-    // 시험 묶음은 사용자가 시작한 것이라 감지해서 기다리는 묶음보다 앞에 든다.
+    // 수동 요청 묶음은 사용자가 시작한 것이라 감지해서 기다리는 묶음보다 앞에 든다.
     this.waiting = this.waiting.filter((queued) => generating.includes(queued.bundleId));
-    /** 시험 묶음의 ID. */
-    const trialId = this.options.bundles.trialId();
     for (const bundleId of generating) {
-      if (bundleId !== this.running?.bundleId) this.enqueue(bundleId, this.reservedPriorities.get(bundleId) ?? (bundleId === trialId ? 'user' : 'auto'));
+      if (bundleId === this.running?.bundleId) continue;
+      /** 사용자가 시작한 묶음인지 여부. */
+      const byUser = this.options.bundles.get(bundleId)?.manual === true;
+      this.enqueue(bundleId, this.reservedPriorities.get(bundleId) ?? (byUser ? 'user' : 'auto'));
     }
     // 실행 중인 묶음에 새 멘션이 합쳐졌거나 묶음이 생성 중이 아니게 되었으면 실행을 멈춘다. 생성 중으로 남았으면 처음부터 다시 만든다.
     if (this.running && !this.isStillGenerating(this.running)) this.interrupt(this.running, 'bundle-changed');
@@ -596,7 +597,7 @@ export class DraftQueue {
     /** 실행 직전 준비의 결과. */
     const prepared = await this.options.bundles.prepareRun(entry.bundleId);
     if (entry.interruption) return this.afterInterruption(entry, []);
-    if (prepared.kind === 'skipped' || prepared.kind === 'answered') return;
+    if (prepared.kind === 'skipped' || prepared.kind === 'answered' || prepared.kind === 'unassigned') return;
     // 쓸 키가 없거나 Flow가 키를 거부했으면 묶음이 아니라 키의 문제다. 실패로 두지 않고 "키 확인 필요"가 풀릴 때까지 멈춘다.
     if (prepared.kind === 'key-unusable') {
       this.pauseUntilChanged('flow-key', flowKeyChangesBefore);
@@ -728,6 +729,7 @@ export class DraftQueue {
     const document = contextDocument(prepared.context);
     return {
       data: {
+        assignment: !!prepared.bundle.assignment,
         mentions: activeMentions(prepared.bundle),
         context: prepared.context,
         contextText: document.text,

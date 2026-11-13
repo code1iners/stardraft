@@ -1,0 +1,80 @@
+{
+  "source": "live-api-projection",
+  "case": "D: 사용자 제공 테스트 업무",
+  "redaction": "실제 식별자·링크·제목·본문·인명을 제거했다. 별칭은 이 파일 안에서만 일치한다. 생략한 필드는 서버 누락을 뜻하지 않는다.",
+  "currentUser": "id-1",
+  "calls": [
+    {
+      "label": "me",
+      "observedAt": "2026-10-29T09:00:08.877Z",
+      "status": 200,
+      "durationMs": 84,
+      "data": {
+        "userId": "id-1"
+      }
+    },
+    {
+      "label": "post-D",
+      "observedAt": "2026-10-29T09:00:08.935Z",
+      "status": 200,
+      "durationMs": 56,
+      "data": {
+        "postId": "id-5",
+        "projectId": "id-4",
+        "registerId": "id-1",
+        "registeredDateTime": "20261029175922",
+        "editedDateTime": "20261029175922",
+        "tasks": [
+          {
+            "TASK_SRNO": "id-14",
+            "WORKER_REC": [
+              {
+                "WORKER_ID": "id-1"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "label": "comments-D",
+      "observedAt": "2026-10-29T09:00:08.993Z",
+      "status": 200,
+      "durationMs": 57,
+      "data": {
+        "hasNext": false,
+        "lastCursor": -1,
+        "comments": []
+      }
+    },
+    {
+      "label": "worker-first-page",
+      "observedAt": "2026-10-29T09:00:09.011Z",
+      "status": 200,
+      "durationMs": 18,
+      "summary": {
+        "hasNext": true,
+        "lastCursor": 20,
+        "receivedCount": 20,
+        "caseAlarmCount": 0
+      }
+    },
+    {
+      "label": "project-D-exact-title-search",
+      "observedAt": "2026-10-29T09:00:09.052Z",
+      "status": 200,
+      "durationMs": 41,
+      "data": {
+        "hasNext": false,
+        "lastCursor": -1,
+        "tasks": [
+          {
+            "taskId": "id-14",
+            "postId": "id-5",
+            "projectId": "id-4"
+          }
+        ]
+      }
+    }
+  ]
+}

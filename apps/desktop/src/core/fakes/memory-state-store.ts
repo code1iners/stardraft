@@ -1,3 +1,4 @@
+import type { AssignmentState } from '../detection/assignment-detection';
 import { compareMentions, type MentionBundle, type MinimalRecord, type UnsavedBundle } from '../bundles/mention-bundle';
 import { mentionLocationKey, type MentionLocation } from '../detection/mention';
 import type { QueuedDraft } from '../drafts/draft';
@@ -7,6 +8,25 @@ import type { UpdateAttempt } from '../update/update-restart';
 
 /** 메모리에만 두는 상태 저장소. */
 export class MemoryStateStore implements StateStore {
+  /** 계정별 감지 상태. */
+  private assignmentState: AssignmentState | null = null;
+  /** 이미 묶음을 만든 업무. 묶음 보관 기간과 독립적이다. */
+  private assignmentTasks = new Set<string>();
+  async getAssignmentState(): Promise<AssignmentState | null> { return structuredClone(this.assignmentState); }
+  async setAssignmentState(state: AssignmentState): Promise<void> {
+    if (this.account?.userId === state.accountId) this.assignmentState = structuredClone(state);
+  }
+  async addAssignmentBundle(bundle: UnsavedBundle, accountId: string): Promise<MentionBundle | null> {
+    if (this.account?.userId !== accountId || !bundle.assignment) return null;
+    /** 계정 초기화 때 함께 지워지는 업무 키. */
+    const key = JSON.stringify([bundle.projectId, bundle.assignment.taskId]);
+    if (this.assignmentTasks.has(key)) return null;
+    /** 멘션 기준점을 바꾸지 않는 저장. */
+    const saved = { ...structuredClone(bundle), id: bundle.id ?? this.nextBundleId++ };
+    this.bundles.set(saved.id, sortedMentions(saved));
+    this.assignmentTasks.add(key);
+    return saved;
+  }
   /** 저장한 계정. */
   account: FlowEmployee | null = null;
   /** 저장한 기준점. */
@@ -33,6 +53,8 @@ export class MemoryStateStore implements StateStore {
   }
 
   async resetForAccount(account: FlowEmployee): Promise<void> {
+    this.assignmentState = null;
+    this.assignmentTasks.clear();
     this.baselineAlarmId = null;
     this.bundles.clear();
     this.records.clear();
@@ -51,7 +73,7 @@ export class MemoryStateStore implements StateStore {
   async hasMentionLocation(location: MentionLocation): Promise<boolean> {
     /** 찾는 멘션 위치. */
     const key = mentionLocationKey(location);
-    return [...[...this.bundles.values()].filter((bundle) => !bundle.trial), ...this.records.values()].some((item) =>
+    return [...this.bundles.values(), ...this.records.values()].some((item) =>
       item.mentions.some((mention) => mentionLocationKey(mention) === key),
     );
   }
@@ -71,10 +93,14 @@ export class MemoryStateStore implements StateStore {
     return saved.map(cloneBundle);
   }
 
-  async addTrialBundle(bundle: UnsavedBundle): Promise<MentionBundle> {
+  async addManualBundle(bundle: UnsavedBundle, replacedRecordIds: readonly number[]): Promise<MentionBundle> {
+    // SQLite 저장소처럼, 다른 묶음에 이미 든 멘션 위치가 있으면 최소 기록도 지우지 않고 실패한다.
+    this.assertOwnLocations(bundle);
+    for (const recordId of replacedRecordIds) this.records.delete(recordId);
     /** 저장한 묶음. */
-    const saved = { ...cloneBundle(bundle as MentionBundle), id: this.nextBundleId++ };
+    const saved = { ...cloneBundle(bundle as MentionBundle), id: this.nextBundleId++, manual: true };
     this.bundles.set(saved.id, sortedMentions(saved));
+    if (bundle.assignment) this.assignmentTasks.add(JSON.stringify([bundle.projectId, bundle.assignment.taskId]));
     return cloneBundle(saved);
   }
 
@@ -139,11 +165,10 @@ export class MemoryStateStore implements StateStore {
     this.updateAttempt = null;
   }
 
-  /** 묶음의 멘션 위치가 다른 묶음에 이미 들어 있으면 실패한다. 시험 묶음의 멘션 위치는 따로 두므로 서로 견주지 않는다. */
+  /** 묶음의 멘션 위치가 다른 묶음에 이미 들어 있으면 실패한다. */
   private assertOwnLocations(bundle: UnsavedBundle): void {
-    if (bundle.trial) return;
     for (const other of this.bundles.values()) {
-      if (other.id === bundle.id || other.trial) continue;
+      if (other.id === bundle.id) continue;
       /** 다른 묶음의 멘션 위치. */
       const taken = new Set(other.mentions.map(mentionLocationKey));
       if (bundle.mentions.some((mention) => taken.has(mentionLocationKey(mention)))) {

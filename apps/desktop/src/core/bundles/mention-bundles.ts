@@ -3,6 +3,7 @@ import { mentionLocationKey, mentionLocationOf, type Mention, type MentionLocati
 import { isPostBody } from '../flow/mention-place';
 import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
 import { findSecretEvidence } from '../drafts/draft-check';
+import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
@@ -1516,8 +1517,8 @@ function observationOf(result: BundleContextResult): WatchObservation | null {
  *   초안이 없는 묶음(실패, 저장소 확인 필요)은 처리됨의 "담당 해제"로 옮긴다.
  */
 function applyWatch(bundle: MentionBundle, observed: WatchObservation, now: number, postedRanges: PostedAnswerRanges): MentionBundle {
-  /** 새로 찾은 내 답을 더한 기록. */
-  const answers = observed.kind === 'found' ? mergeAnswers(bundle.answers, observed.myAnswers) : bundle.answers;
+  /** 새로 찾은 내 답을 더한 기록. 수동 요청 묶음은 만들기 전에 쓴 답을 판정에서 뺀다. */
+  const answers = observed.kind === 'found' ? mergeAnswers(bundle.answers, observed.myAnswers, bundle.manual ? bundle.createdAt : null) : bundle.answers;
   /** 다시 판정한 멘션. */
   const mentions = judgeAnswered(bundle.mentions, answers, postedRanges).map((mention) => ({
     ...mention,
@@ -1572,12 +1573,26 @@ function mergedNewMentions(bundle: UnsavedBundle, count: number): Partial<Mentio
 }
 
 /** 새로 조회한 내 답으로 기록을 바꾼다. 되돌릴 때 빼기로 기록한 답은 그대로 남기고, Flow에서 지워진 답은 뺀다. */
-function mergeAnswers(recorded: readonly RecordedAnswer[], fetched: readonly MyAnswer[]): RecordedAnswer[] {
+function mergeAnswers(recorded: readonly RecordedAnswer[], fetched: readonly MyAnswer[], manualCreatedAt: number | null = null): RecordedAnswer[] {
   /** 빼기로 기록한 답. */
   const excluded = recorded.filter((answer) => answer.excluded);
   /** 빼기로 기록한 답의 ID. */
   const excludedIds = new Set(excluded.map((answer) => answer.answerId));
-  return [...excluded, ...fetched.filter((answer) => !excludedIds.has(answer.answerId)).map((answer) => ({ ...answer, excluded: false }))];
+  return [
+    ...excluded,
+    ...fetched.filter((answer) => !excludedIds.has(answer.answerId)).map((answer) => ({ ...answer, excluded: isBeforeManualCreation(answer, manualCreatedAt) })),
+  ];
+}
+
+/**
+ * 수동 요청 묶음을 만들기 전에 쓴 답인지 본다. 초안 실행 전에 변화 감시가 먼저 돌아도, 사용자가 알고 고른 옛 답으로 "이미 답함"이 되지 않게 한다.
+ * 시각을 읽을 수 없으면 만들기 전의 답으로 보아 묶음을 지키는 쪽으로 판정한다. `manualCreatedAt`이 `null`이면 일반 묶음이라 빼지 않는다.
+ */
+function isBeforeManualCreation(answer: MyAnswer, manualCreatedAt: number | null): boolean {
+  if (manualCreatedAt === null) return false;
+  /** 답을 쓴 시각. */
+  const at = flowTimeToEpochMs(answer.registeredDateTime);
+  return at === null || at <= manualCreatedAt;
 }
 
 /** 같은 멘션 위치를 한 번씩만 남긴다. 처음 나온 순서다. */

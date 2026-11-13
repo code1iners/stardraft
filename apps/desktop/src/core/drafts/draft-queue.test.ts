@@ -4262,6 +4262,51 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
     expect(executor.requests).toHaveLength(1);
   });
 
+  it('이미 답한 멘션을 저장소 폴더가 사라진 프로젝트에서 고르면 변화 감시가 이미 답함으로 처리하지 않고 저장소 확인 필요로 남긴다', async () => {
+    const { flow, bundles, clock, repos, poll } = await setup();
+    await poll();
+    flow.addReply(POST_ID, '700', { replyId: '800', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085500' });
+    flow.respondToListMentionAlarms([alarm('99')]);
+    const { check } = manualCheckOf(flow, bundles, clock);
+    /** 이미 답한 멘션의 목록 줄. */
+    const [candidate] = await manualCandidatesOf(check);
+    expect(candidate?.answered).toBe(true);
+    rmSync(repos.b, { recursive: true });
+
+    /** 고른 결과. */
+    const { bundleId } = await check.request(candidate!);
+    await settle();
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'repo-check-needed' });
+    await poll();
+
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'repo-check-needed', mentions: [expect.objectContaining({ answered: false })] });
+  });
+
+  it('이미 답한 멘션의 맥락 조회가 실패해도 변화 감시가 이미 답함으로 처리하지 않고 실패로 남기며, 그 뒤 새로 단 답은 일반 묶음처럼 이미 답함이 된다', async () => {
+    const { flow, executor, bundles, clock, poll } = await setup();
+    await poll();
+    flow.addReply(POST_ID, '700', { replyId: '800', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085500' });
+    flow.respondToListMentionAlarms([alarm('99')]);
+    const { check } = manualCheckOf(flow, bundles, clock);
+    /** 이미 답한 멘션의 목록 줄. */
+    const [candidate] = await manualCandidatesOf(check);
+    // 초안 실행 직전의 맥락 조회만 실패한다.
+    flow.failOn(`GET /user/comments/${POST_ID}`, { kind: 'http', status: 500 }, 1);
+
+    /** 고른 결과. */
+    const { bundleId } = await check.request(candidate!);
+    await settle();
+    expect(executor.requests).toEqual([]);
+    expect(bundles.get(bundleId)?.status).toBe('failed');
+    await poll();
+
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'failed', mentions: [expect.objectContaining({ answered: false })] });
+
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: '다시 답했습니다', registerId: ME, registeredDateTime: '20261020090500' });
+    await poll();
+    expect(bundles.get(bundleId)?.status).toBe('already-answered');
+  });
+
   it('무시한 수동 요청 묶음은 기록째 지워지지 않고 처리됨 "무시함"이 되어 되돌릴 수 있다', async () => {
     const { flow, executor, bundles, clock, repos, poll } = await setup();
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
@@ -4897,6 +4942,52 @@ describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
     expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'ready', answers: [{ answerId: '730', excluded: true }] });
     expect(await bundles.startPosting(bundleId)).toBe(true);
     expect(await bundles.checkBeforePost(bundleId)).toBe('passed');
+  });
+
+  it('배정 뒤 이미 답한 업무를 저장소 폴더가 사라진 프로젝트에서 고르면 변화 감시가 이미 답함으로 처리하지 않고 저장소 확인 필요로 남긴다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, clock, stateStore, repos, poll } = env;
+    await poll();
+    await startAssignmentDetection(env);
+    addTask(flow, '201', 'answered', { registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
+    flow.addComment('answered', { commentId: '730', contents: '확인했습니다', registerId: ME, registeredDateTime: '20261020090500' });
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 이미 답한 업무의 목록 줄. */
+    const [candidate] = await assignmentCandidatesOf(check);
+    expect(candidate?.answered).toBe(true);
+    rmSync(repos.b, { recursive: true });
+
+    /** 고른 결과. */
+    const { bundleId } = await check.requestAssignment(candidate!);
+    await settle();
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'repo-check-needed' });
+    await poll();
+
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'repo-check-needed' });
+  });
+
+  it('배정 뒤 이미 답한 업무의 맥락 조회가 실패해도 변화 감시가 이미 답함으로 처리하지 않고 실패로 남긴다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, executor, bundles, clock, stateStore, poll } = env;
+    await poll();
+    await startAssignmentDetection(env);
+    addTask(flow, '201', 'answered', { registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
+    flow.addComment('answered', { commentId: '730', contents: '확인했습니다', registerId: ME, registeredDateTime: '20261020090500' });
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 이미 답한 업무의 목록 줄. */
+    const [candidate] = await assignmentCandidatesOf(check);
+    flow.failOn('GET /user/comments/answered', { kind: 'http', status: 500 }, 1);
+
+    /** 고른 결과. */
+    const { bundleId } = await check.requestAssignment(candidate!);
+    await settle();
+    expect(executor.requests).toEqual([]);
+    expect(bundles.get(bundleId)?.status).toBe('failed');
+    await poll();
+
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'failed' });
   });
 
   it('담당 해제를 확인하면 일반 담당 업무 묶음처럼 생성 전에는 처리됨의 담당 해제로 옮기고, 검토 중에는 게시를 막는다', async () => {

@@ -5,6 +5,8 @@ import { FakeFlowServer, flowEnvelope } from '../fakes/fake-flow-server';
 import { parseWorkerChange } from './worker-change';
 import { HttpFlowApi } from './http-flow-api';
 import assignmentComments from './fixtures/assignment-comments-2026-10-29.json';
+import assignmentActivePost from './fixtures/assignment-active-post-2026-10-29.json';
+import workerAlarms from './fixtures/worker-alarms-2026-10-29.json';
 
 describe('Flow 어댑터: 실제 담당 변경 기록의 보존', () => {
   it('담당 변경 시스템 기록과 이후 본인 답글의 작성자·서버 시각을 별도로 보존한다', async () => {
@@ -825,4 +827,44 @@ it('마스킹한 실제 상세 응답을 담당 업무 구조로 읽는다', asy
     tasks: [{ taskId: 'id-23', workerIds: ['id-4', 'id-5', 'id-1'], completion: 'completed',
       workerNames: ['id-4', 'id-5', 'id-1'].map((userId) => ({ userId, name: '[redacted]' })) }],
   } });
+});
+
+describe('Flow 어댑터: 마스킹한 실응답의 최근 담당 업무 조회', () => {
+  it('실제 WORKER 알림 첫 쪽의 숫자 커서를 다음 쪽 커서로 읽고, 같은 게시글의 알림 여럿을 Flow가 준 순서대로 돌려준다(읽음 상태는 보내지 않음)', async () => {
+    /** 2026-10-29 실응답 첫 쪽에서 사례 게시글의 알림만 남긴 투영본. 투영본에 없던 projectId만 별칭으로 채웠다. */
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: workerAlarms }, { status: 200, body: workerAlarms });
+    const api = connect(server);
+
+    /** 첫 쪽. */
+    const first = await api.listWorkerAlarms(null);
+    await api.listWorkerAlarms('20');
+
+    expect(first).toMatchObject({ ok: true, value: { nextCursor: '20' } });
+    expect(first.ok && first.value.alarms.map(({ alarmId, postId, remarkId, replyId, registeredDateTime }) => [alarmId, postId, remarkId, replyId, registeredDateTime])).toEqual([
+      ['id-13', 'id-14', 'id-15', '-1', '20261029122120'],
+      ['id-16', 'id-14', 'id-17', 'id-18', '20261029122115'],
+      ['id-19', 'id-14', 'id-17', '-1', '20261029120234'],
+      ['id-21', 'id-14', 'id-22', 'id-23', '20261029105140'],
+      ['id-24', 'id-14', 'id-25', '-1', '20261029102448'],
+    ]);
+    expect(server.requests.map((request) => request.url)).toEqual([
+      'https://api.flow.team/user/alarms?filters=WORKER&size=20',
+      'https://api.flow.team/user/alarms?filters=WORKER&size=20&cursor=20',
+    ]);
+  });
+
+  it('내가 유일한 담당자인 요청 상태 업무의 실제 상세를 업무 ID·담당자·요청 상태와 작성자·시각으로 읽는다', async () => {
+    /** 2026-10-29 사례 C 상세의 투영본. 상태 범주(`0`)와 담당자를 기존 상세 사례의 컬럼 구조로 옮겼다. */
+    const server = new FakeFlowServer();
+    server.replyNext({ status: 200, body: flowEnvelope(assignmentActivePost) });
+
+    expect(await connect(server).getPost(assignmentActivePost.postId)).toMatchObject({ ok: true, value: {
+      postId: 'id-5',
+      registerId: 'id-6',
+      registeredDateTime: '20261028151848',
+      editedDateTime: '20261028151907',
+      tasks: [{ taskId: 'id-18', workerIds: ['id-1'], completion: 'active', workerNames: [{ userId: 'id-1', name: '[redacted]' }] }],
+    } });
+  });
 });

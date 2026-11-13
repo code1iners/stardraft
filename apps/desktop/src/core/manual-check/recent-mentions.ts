@@ -1,14 +1,8 @@
 import { mentionLocationKey, type Mention } from '../detection/mention';
-import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
 import { MentionJudge } from '../flow/mention-judgement';
-import type { FlowAlarm, FlowApi, FlowApiFailure, FlowApiResult } from '../ports/flow-api';
-
-/** 최근 멘션 목록을 한 번에 불러오는 개수. 설정에서 바꿀 수 없다. */
-export const RECENT_MENTION_LIMIT = 10;
-
-/** 한 번 불러올 때 넘기는 알림 목록의 최대 쪽 수. 판정을 통과하지 못하는 알림(`@전체` 등)만 이어져도 여기서 멈추고 이어 불러오기로 넘긴다. */
-const MAX_ALARM_PAGES = 10;
+import type { FlowAlarm, FlowApi, FlowApiResult } from '../ports/flow-api';
+import { collectFromAlarms, type AlarmVerdict } from './alarm-walk';
 
 /** 최근 멘션 목록에서 고를 수 있는 멘션 하나. */
 export interface RecentMention {
@@ -44,7 +38,7 @@ export interface RecentMentionPage {
 }
 
 /**
- * 최신 알림부터(`from`이 있으면 그 자리부터) 쪽을 넘기며 판정을 통과한 멘션을 `RECENT_MENTION_LIMIT`건까지 모은다.
+ * 최신 알림부터(`from`이 있으면 그 자리부터) 쪽을 넘기며 판정을 통과한 멘션을 `MANUAL_CHECK_PAGE_SIZE`건까지 모은다.
  * 감지와 같은 판정 규칙이지만 72시간 제한이 없고, 기준점이나 이미 기록한 멘션 위치와 상관없이 모은다. Flow의 읽음 상태는 바꾸지 않는다.
  * 그 글에서만 생기는 실패(서버 오류, 모르는 응답)는 그 알림만 건너뛰고, 모든 글에 같은 실패(키 거부, 연결 실패, 요청 한도)면 그 실패를 돌려준다.
  * `myUserId`는 키 확인 때 얻은 내 사용자 ID, `now`는 멘션의 감지한 시각으로 쓸 시각이다.
@@ -57,63 +51,27 @@ export async function listRecentMentions(
 ): Promise<FlowApiResult<RecentMentionPage>> {
   /** 멘션된 글을 조회해 판정한다. 같은 게시물의 댓글은 한 번만 받는다. */
   const judge = new MentionJudge(api, myUserId);
-  /** 모은 멘션. 최신이 앞이다. */
-  const found: { alarm: FlowAlarm; text: string }[] = [];
-  /** 이미 판정한 멘션 위치. 앞선 불러오기에서 판정한 위치도 넣는다. */
-  const decided = new Set(from?.decidedLocations ?? []);
-  /** 이어 불러올 자리. */
-  let next: RecentMentionCursor | null = null;
-  /** `pageCursor` 쪽을 다시 받아 `afterAlarmId` 뒤부터 이어 갈 자리. 지금까지 판정한 멘션 위치를 함께 넘긴다. */
-  const cursorAt = (pageCursor: string | null, afterAlarmId: string | null): RecentMentionCursor => ({
-    pageCursor,
-    afterAlarmId,
-    decidedLocations: [...decided],
-  });
-
-  // 쪽을 받을 때마다 판정해야 10건을 모은 뒤 더 오래된 쪽을 받지 않는다. walkPages는 쪽마다 바로 답해야 하므로 직접 넘긴다.
-  /** 받을 쪽의 커서. */
-  let cursor = from?.pageCursor ?? null;
-  /** 이 알림까지는 앞서 판정했다. 첫 쪽에만 쓴다. */
-  let after = from?.afterAlarmId ?? null;
-  for (let page = 0; ; page += 1) {
-    if (page === MAX_ALARM_PAGES) {
-      next = cursorAt(cursor, null);
-      break;
-    }
-    /** 이번 쪽. */
-    const result = await api.listMentionAlarms(cursor);
-    if (!result.ok) return result;
-    /** 이번 쪽에서 아직 판정하지 않은 알림. 최신이 앞이다. */
-    const alarms = after === null ? result.value.alarms : result.value.alarms.filter((alarm) => compareAlarmIds(alarm.alarmId, after!) < 0);
-    after = null;
-    /** 이번 쪽에서 판정한 알림 수. */
-    let judged = 0;
-    for (const alarm of alarms) {
-      if (found.length >= RECENT_MENTION_LIMIT) break;
-      judged += 1;
-      /** 멘션 위치. */
-      const location = mentionLocationKey(alarm);
-      if (decided.has(location)) continue;
-      decided.add(location);
+  /** 쪽을 넘기며 판정을 통과한 멘션을 모은 결과. 같은 멘션 위치는 가장 최근 알림 하나만 판정한다. */
+  const walk = await collectFromAlarms(
+    (cursor) => api.listMentionAlarms(cursor),
+    from && { pageCursor: from.pageCursor, afterAlarmId: from.afterAlarmId, decidedKeys: from.decidedLocations },
+    mentionLocationKey,
+    async (alarm): Promise<AlarmVerdict<{ alarm: FlowAlarm; text: string }>> => {
       /** 판정 결과. */
       const judgement = await judge.judge(alarm);
-      if (judgement.kind === 'mention') found.push({ alarm, text: judgement.text });
-      else if (judgement.kind === 'undecided' && isSharedFailure(judgement.failure)) return { ok: false, failure: judgement.failure };
-    }
-    /** 다음 쪽 커서. 같은 커서를 다시 주면 끝으로 본다. */
-    const nextCursor: string | null = result.value.nextCursor === cursor ? null : result.value.nextCursor;
-    if (judged < alarms.length) {
-      // 10건을 채워 이 쪽의 남은 알림을 판정하지 않았다. 다음에는 이 쪽을 다시 받아 마지막으로 판정한 알림 뒤부터 본다.
-      next = cursorAt(cursor, alarms[judged - 1]!.alarmId);
-      break;
-    }
-    if (nextCursor === null) break;
-    cursor = nextCursor;
-    if (found.length >= RECENT_MENTION_LIMIT) {
-      next = cursorAt(cursor, null);
-      break;
-    }
-  }
+      if (judgement.kind === 'mention') return { kind: 'found', value: { alarm, text: judgement.text } };
+      return judgement.kind === 'undecided' ? { kind: 'failed', failure: judgement.failure } : { kind: 'skip' };
+    },
+  );
+  if (!walk.ok) return walk;
+  /** 모은 멘션. 최신이 앞이다. */
+  const found = walk.value.found;
+  /** 이어 불러올 자리. */
+  const next: RecentMentionCursor | null = walk.value.next && {
+    pageCursor: walk.value.next.pageCursor,
+    afterAlarmId: walk.value.next.afterAlarmId,
+    decidedLocations: walk.value.next.decidedKeys,
+  };
 
   /** 내 사용자 ID들. 키 확인 때 얻은 ID와 판정을 통과한 알림의 receiverId다. */
   const myIds = [...new Set([myUserId, ...found.flatMap(({ alarm }) => (alarm.receiverId ? [alarm.receiverId] : []))])];
@@ -132,13 +90,8 @@ export async function listRecentMentions(
   return { ok: true, value: { mentions, next } };
 }
 
-/** 모든 글에 같아 다음 알림을 판정해도 같을 실패인지 본다. 키 거부, 연결 실패, 요청 한도다. */
-function isSharedFailure(failure: FlowApiFailure): boolean {
-  return failure.kind === 'unauthorized' || failure.kind === 'network' || failure.kind === 'rate-limited';
-}
-
 /** 멘션 시각보다 나중에 쓴 답이 있는지 본다. 시각은 Flow 시각끼리 비교하고, 읽을 수 없으면 답하지 않은 것으로 본다. */
-function answeredAfter(mentionTime: string, answers: readonly { registeredDateTime: string }[]): boolean {
+export function answeredAfter(mentionTime: string, answers: readonly { registeredDateTime: string }[]): boolean {
   /** 멘션 시각. */
   const at = flowTimeToEpochMs(mentionTime);
   if (at === null) return false;

@@ -27,7 +27,9 @@ import { FakeFlowServer, flowEnvelope } from '../fakes/fake-flow-server';
 import { MentionJudge } from '../flow/mention-judgement';
 import { createLogger } from '../logging/logger';
 import type { ExecutorOutcome, ExecutorRunRequest } from '../ports/executor';
-import type { FlowAlarm, FlowEmployee } from '../ports/flow-api';
+import type { FlowAlarm, FlowEmployee, FlowTask } from '../ports/flow-api';
+import type { FakeFlowPost } from '../fakes/fake-flow-api';
+import type { StateStore } from '../ports/state-store';
 import { GlobalProblems } from '../problems/global-problems';
 import { FlowAccount } from '../account/flow-account';
 import { MemorySecretStore } from '../fakes/memory-secret-store';
@@ -4101,14 +4103,18 @@ describe('재시작·재시도·재지정 복구', () => {
 /** 하루(밀리초). */
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** 가짜 Flow와 멘션 묶음으로 최근 멘션 확인을 만든다. 쓸 키가 있는지와 Flow가 키를 거부했다고 알린 횟수를 함께 돌려준다. */
-function manualCheckOf(flow: FakeFlowApi, bundles: MentionBundles, clock: FakeClock) {
+/**
+ * 가짜 Flow와 멘션 묶음으로 최근 멘션 확인을 만든다. 쓸 키가 있는지와 Flow가 키를 거부했다고 알린 횟수를 함께 돌려준다.
+ * `stateStore`를 주면 담당 업무 감지 상태를 거기서 읽고, 주지 않으면 담당 업무 감지를 한 적 없는 것으로 본다.
+ */
+function manualCheckOf(flow: FakeFlowApi, bundles: MentionBundles, clock: FakeClock, stateStore?: Pick<StateStore, 'getAssignmentState'>) {
   /** 쓸 키가 있는지 여부와 Flow가 키를 거부했다고 알린 횟수. */
   const env = { hasKey: true, rejected: 0 };
   const check = new ManualMentionCheck({
     bundles,
     connectFlow: () => (env.hasKey ? { api: flow, reportKeyRejected: () => (env.rejected += 1) } : null),
-    myUserId: () => ME,
+    account: () => FAKE_ME,
+    assignmentState: async () => (stateStore ? stateStore.getAssignmentState() : null),
     projectTitle: async (projectId) => (projectId === PROJECT_ID ? '가짜 프로젝트' : null),
     clock,
     logger: createLogger([{ write: () => {} }], clock),
@@ -4436,5 +4442,172 @@ describe('최근 멘션 확인 시트', () => {
     expect(env.shown).toEqual([result!.bundleId]);
     expect(await stateStore.listMinimalRecords()).toEqual([]);
     expect(bundles.state()).toMatchObject([{ id: result!.bundleId, manual: true }]);
+  });
+});
+
+/** 가짜 업무. 기본은 내가 담당자인 요청 상태 업무다. */
+function task(overrides: Partial<FlowTask> = {}): FlowTask {
+  return { taskId: 'task-1', workerIds: [ME], completion: 'active', ...overrides };
+}
+
+/**
+ * 업무 게시글 `postId`를 더하고, 그 본문에 온 WORKER 알림 `alarmId`를 알림 목록 맨 앞에 더한다.
+ * 기본은 08:50에 다른 사람이 만들며 나를 담당자로 지정한 요청 업무이고, 알림은 그 생성 알림이다.
+ */
+function addTask(flow: FakeFlowApi, alarmId: string, postId: string, post: Partial<FakeFlowPost> = {}, alarmOverrides: Partial<FlowAlarm> = {}): void {
+  flow.addPost({
+    postId,
+    title: `업무 ${postId}`,
+    registerId: SENDER,
+    registerName: '업무 작성자',
+    registeredDateTime: '20261020085000',
+    editedDateTime: '20261020085000',
+    textComponents: [{ contents: `${postId} 확인해주세요.`, mentions: [] }],
+    tasks: [task({ taskId: `task-${postId}` })],
+    ...post,
+  });
+  flow.addWorkerAlarm(alarm(alarmId, { postId, remarkId: '-1', registeredDateTime: post.registeredDateTime ?? '20261020085000', ...alarmOverrides }));
+}
+
+describe('최근 멘션 확인: 담당 업무 후보', () => {
+  it('내가 담당자인 요청 상태 업무만 나오고, 진행·완료 업무, 업무가 여럿인 게시글, 내가 담당자가 아닌 업무, 다른 계정의 알림은 나오지 않는다', async () => {
+    const { flow, bundles, clock, stateStore } = await setup();
+    addTask(flow, '201', 'active');
+    addTask(flow, '202', 'in-progress', { tasks: [task({ completion: 'unknown' })] });
+    addTask(flow, '203', 'completed', { tasks: [task({ completion: 'completed' })] });
+    addTask(flow, '204', 'several', { tasks: [task({ taskId: 'several-1' }), task({ taskId: 'several-2' })] });
+    addTask(flow, '205', 'not-mine', { tasks: [task({ workerIds: [OTHER_SENDER] })] });
+    addTask(flow, '206', 'other-account', {}, { receiverId: OTHER_SENDER });
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+
+    /** 불러온 목록. */
+    const list = await check.listAssignments(null);
+
+    expect(list).toMatchObject({ ok: true, next: null });
+    expect(list.ok && list.candidates.map(({ post, taskId, projectTitle }) => [post.postId, taskId, projectTitle])).toEqual([
+      ['active', 'task-active', '가짜 프로젝트'],
+    ]);
+    expect(flow.writes).toEqual([]);
+  });
+
+  it('기능 시작 전 업무, 시작 전 배정, 자기 작성, 배정 근거 없음 업무도 나오고 감지에서 빠진 이유가 붙으며, 근거 없는 업무의 배정 시각은 알림 시각으로 추정한다', async () => {
+    const { flow, bundles, clock, stateStore } = await setup();
+    // 기능 시작 전 알림에 나타난 업무. 생성 시 지정이라 배정도 기능 시작 전이다.
+    addTask(flow, '201', 'before-task');
+    /** 담당 업무 감지. 첫 조회 때를 기능 시작 시각(09:00)으로 남긴다. */
+    const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+    await detection.checkNow();
+    clock.advance(10 * 60_000);
+    // 기능 시작 전(08:55)에 나를 담당자로 더한 기록이 있는 업무. 알림은 뒤에 단 댓글이다.
+    addTask(flow, '202', 'before-assignment', {
+      registeredDateTime: '20261020084000',
+      editedDateTime: '20261020090500',
+      tasks: [task({ taskId: 'task-before-assignment', workerNames: [{ userId: ME, name: FAKE_ME.name }] })],
+    }, { remarkId: '700', registeredDateTime: '20261020090500' });
+    flow.addComment('before-assignment', { commentId: '690', contents: '', registerId: SENDER, registeredDateTime: '20261020085500', systemCode: `S41^^'${FAKE_ME.name}'@$%` });
+    addTask(flow, '203', 'self', { registerId: ME, registerName: FAKE_ME.name, registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
+    // 생성 뒤 수정됐고 담당 변경 기록도 없어 배정 시점을 알 수 없는 업무.
+    addTask(flow, '204', 'no-evidence', { registeredDateTime: '20261020090100', editedDateTime: '20261020090300' }, { remarkId: '700', registeredDateTime: '20261020090400' });
+    addTask(flow, '205', 'fresh', { registeredDateTime: '20261020090200', editedDateTime: '20261020090200' });
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+
+    /** 불러온 목록. */
+    const list = await check.listAssignments(null);
+
+    expect(list.ok && list.candidates.map(({ post, missReasons, assignedAt, assignedAtEstimated }) => [post.postId, missReasons, assignedAt, assignedAtEstimated])).toEqual([
+      ['fresh', [], '20261020090200', false],
+      ['no-evidence', ['no-evidence'], '20261020090400', true],
+      ['self', ['self-authored'], '20261020090100', false],
+      ['before-assignment', ['pre-feature-assignment'], '20261020085500', false],
+      ['before-task', ['pre-feature-task', 'pre-feature-assignment'], '20261020085000', false],
+    ]);
+    expect(bundles.state()).toEqual([]);
+  });
+
+  it('더 보기는 다음 10건을 이어 불러오고 끝에서 멈추며, 같은 게시글의 알림이 여럿이어도 가장 최근 알림 한 줄만 나온다', async () => {
+    const { flow, bundles, clock, stateStore } = await setup();
+    flow.alarmPageSize = 4;
+    // 게시글 0~11. 알림이 오래된 것부터 쌓여 11이 가장 최근이다. 게시글 3과 9에는 나중에 댓글 알림이 또 왔다.
+    for (let index = 0; index < 12; index += 1) addTask(flow, String(300 + index), `task-${index}`);
+    flow.addWorkerAlarm(alarm('320', { postId: 'task-3', remarkId: '700', registeredDateTime: '20261020085500' }));
+    flow.addWorkerAlarm(alarm('321', { postId: 'task-9', remarkId: '701', registeredDateTime: '20261020085600' }));
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+
+    /** 첫 목록. */
+    const first = await check.listAssignments(null);
+    if (!first.ok) throw new Error('첫 목록을 불러오지 못했습니다.');
+    /** 더 보기로 이어 불러온 목록. */
+    const second = await check.listAssignments(first.next);
+    if (!second.ok) throw new Error('이어 불러오지 못했습니다.');
+
+    /** 쪽마다 나온 게시글과 그 줄의 알림. */
+    const rows = [first, second].map((page) => page.candidates.map(({ post, alarm: row }) => `${post.postId}@${row.alarmId}`));
+    expect(rows).toEqual([
+      ['task-9@321', 'task-3@320', 'task-11@311', 'task-10@310', 'task-8@308', 'task-7@307', 'task-6@306', 'task-5@305', 'task-4@304', 'task-2@302'],
+      ['task-1@301', 'task-0@300'],
+    ]);
+    expect(first.next).not.toBeNull();
+    expect(second.next).toBeNull();
+  });
+
+  it('줄 상태는 배정 뒤 내 답이 있으면 "답함", 본문 자리에 묶음이 있으면 그 묶음과 상태, 최소 기록만 남았으면 처리됨이다', async () => {
+    const { flow, bundles, clock, stateStore, executor, repos } = await setup();
+    /** 담당 업무 감지. 첫 조회 때를 기능 시작 시각(09:00)으로 남긴다. */
+    const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+    await detection.checkNow();
+    clock.advance(10 * 60_000);
+    // 감지가 묶음을 만들 업무 둘. 하나는 무시한 뒤 7일이 지나 최소 기록만 남긴다.
+    addTask(flow, '201', 'bundled', { registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
+    addTask(flow, '202', 'archived', { registeredDateTime: '20261020090200', editedDateTime: '20261020090200' });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await detection.checkNow();
+    await settle();
+    /** 감지가 만든 묶음. */
+    const [bundled, archived] = ['bundled', 'archived'].map((postId) => bundles.state().find((bundle) => bundle.postId === postId)!);
+    await bundles.ignore(archived!.id);
+    clock.advance(8 * DAY_MS);
+    await bundles.archiveExpired();
+    // 감지가 아직 보지 않은, 배정 뒤에 내가 답한 업무와 다른 사람만 댓글을 단 업무.
+    addTask(flow, '203', 'others-comment', { registeredDateTime: '20261020090300', editedDateTime: '20261020090300' });
+    flow.addComment('others-comment', { commentId: '720', contents: '저도 궁금합니다', registerId: OTHER_SENDER, registeredDateTime: '20261020090350' });
+    addTask(flow, '204', 'answered', { registeredDateTime: '20261020090400', editedDateTime: '20261020090400' });
+    flow.addComment('answered', { commentId: '730', contents: '확인했습니다', registerId: ME, registeredDateTime: '20261020090500' });
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+
+    /** 불러온 목록. */
+    const list = await check.listAssignments(null);
+    if (!list.ok) throw new Error('목록을 불러오지 못했습니다.');
+
+    expect(list.candidates.map(({ post, answered }) => [post.postId, answered, bundles.assignmentPlaceOf(post.postId)])).toEqual([
+      ['answered', true, { kind: 'none' }],
+      ['others-comment', false, { kind: 'none' }],
+      ['archived', false, { kind: 'record' }],
+      ['bundled', false, { kind: 'bundle', bundleId: bundled!.id, status: 'ready' }],
+    ]);
+  });
+
+  it('불러오지 못하면 키 없음, 키 거부, 연결 실패, 요청 한도를 구분해 돌려주고 키 거부는 "키 확인 필요"로 알리며, 한 게시글에서만 난 실패는 그 업무만 건너뛴다', async () => {
+    const { flow, bundles, clock, stateStore } = await setup();
+    addTask(flow, '201', 'gone');
+    addTask(flow, '202', 'kept');
+    const { check, env } = manualCheckOf(flow, bundles, clock, stateStore);
+
+    env.hasKey = false;
+    expect(await check.listAssignments(null)).toEqual({ ok: false, reason: 'no-key' });
+    env.hasKey = true;
+    flow.failOn('GET /user/alarms/worker', { kind: 'unauthorized' }, 1);
+    expect(await check.listAssignments(null)).toEqual({ ok: false, reason: 'unauthorized' });
+    expect(env.rejected).toBe(1);
+    flow.failOn('GET /user/posts/kept', { kind: 'network' }, 1);
+    expect(await check.listAssignments(null)).toEqual({ ok: false, reason: 'network' });
+    flow.failOn('GET /user/comments/kept', { kind: 'rate-limited', retryAfterMs: 30_000 }, 1);
+    expect(await check.listAssignments(null)).toEqual({ ok: false, reason: 'rate-limited' });
+
+    flow.removePost('gone');
+    /** 지워진 게시글을 건너뛴 목록. */
+    const list = await check.listAssignments(null);
+    expect(list.ok && list.candidates.map(({ post }) => post.postId)).toEqual(['kept']);
+    expect(bundles.state()).toEqual([]);
   });
 });

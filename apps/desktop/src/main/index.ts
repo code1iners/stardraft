@@ -312,12 +312,15 @@ function start(): void {
     globalProblems.onChange(refreshOnboarding);
     agentConnections.onChange(refreshOnboarding);
     workFolders.onChange(refreshOnboarding);
+    /** 담당 업무 감지 상태를 읽을 저장소. 함수 안에서는 `appData`가 null이 아님을 알 수 없어 따로 잡아 둔다. */
+    const assignmentStateStore = appData.stateStore;
     /** 최근 멘션 확인. 감지에서 빠진 멘션까지 지금 키로 최근 멘션을 불러오고, 고른 멘션으로 게시할 수 있는 수동 요청 묶음을 만든다. */
     const manualCheck = new ManualCheckSession({
       check: new ManualMentionCheck({
         bundles: mentionBundles,
         connectFlow: connectCurrentFlow,
-        myUserId: () => flowAccount.state().account?.userId ?? null,
+        account: () => flowAccount.state().account,
+        assignmentState: () => assignmentStateStore.getAssignmentState(),
         projectTitle: (projectId) => repoMappings.projectTitle(projectId),
         clock: systemClock,
         logger,

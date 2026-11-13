@@ -176,9 +176,6 @@ export const QUIT_DURING_COUNTDOWN_TEXT = '앱이 꺼져서 게시하지 않았�
 /** 검토 중 담당자에서 제외된 담당 업무 초안의 상세 머리 한 줄. */
 export const UNASSIGNED_TEXT = '담당자에서 제외되어 게시할 수 없습니다. 다시 담당자로 지정되면 게시할 수 있습니다.';
 
-/** 시험 묶음의 상세 머리 한 줄. 시험 묶음은 게시하지 않는다. */
-export const TRIAL_NOTE = 'Flow에는 아무것도 올라가지 않습니다';
-
 /** 게시 실패 토스트 문구. 예: 게시하지 못했습니다: 김철수님 멘션 */
 export function postFailedToastText(bundle: BundleSnapshot): string {
   return `게시하지 못했습니다: ${bundle.assignment ? '담당 업무 초안' : `${senderLine(bundle.senderNames)}님 멘션`}`;

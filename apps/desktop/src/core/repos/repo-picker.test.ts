@@ -75,7 +75,6 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     runs: [],
     posting: null,
     quitDuringCountdown: false,
-    trial: false,
     manual: false,
     ...overrides,
   };

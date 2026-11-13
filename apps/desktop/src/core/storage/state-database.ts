@@ -301,6 +301,16 @@ export const STATE_MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE mention_bundle ADD COLUMN manual INTEGER NOT NULL DEFAULT 0;
   `,
+  // 22: 시험 폐지. 최근 멘션 확인이 시험을 대신하므로, 앱이 꺼진 채 남아 있던 시험 묶음은 기록째(멘션, 내 답, 대기열 자리) 지우고
+  // 시험 묶음의 멘션 표(`trial_mention`)와 시험 표시 열을 없앤다. 게시할 수 없는 묶음이 목록에 남지 않게 하며, 일반 묶음과 최소 기록은 건드리지 않는다.
+  `
+  DELETE FROM draft_queue WHERE bundle_id IN (SELECT id FROM mention_bundle WHERE trial = 1);
+  DELETE FROM bundle_answer WHERE bundle_id IN (SELECT id FROM mention_bundle WHERE trial = 1);
+  DELETE FROM trial_mention;
+  DELETE FROM mention_bundle WHERE trial = 1;
+  DROP TABLE trial_mention;
+  ALTER TABLE mention_bundle DROP COLUMN trial;
+  `,
 ];
 
 /**
@@ -472,10 +482,6 @@ export class SqliteStateStore implements StateStore {
              SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
                gone, gone_excluded
              FROM mention
-             UNION ALL
-             SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
-               gone, gone_excluded
-             FROM trial_mention
            ) ORDER BY bundle_id, registered_date_time, length(alarm_id), alarm_id`,
         )
         .all() as MentionRow[],
@@ -531,7 +537,6 @@ export class SqliteStateStore implements StateStore {
       runs: readJson<RunRecord[]>(row.runs) ?? [],
       posting: postingRecordOf(readJson<PostingRecord>(row.posting), mentions.get(row.id) ?? []),
       quitDuringCountdown: row.quit_during_countdown === 1,
-      trial: row.trial === 1,
       manual: row.manual === 1,
       ...(row.assignment ? { assignment: JSON.parse(row.assignment) as NonNullable<MentionBundle['assignment']> } : {}),
     }));
@@ -572,12 +577,8 @@ export class SqliteStateStore implements StateStore {
     return this.db.transaction(() => {
       // 최소 기록의 멘션 위치·게시 범위는 외래 키로 함께 지워진다.
       if (replacedRecordId !== null) this.db.prepare('DELETE FROM minimal_record WHERE bundle_id = ?').run(replacedRecordId);
-      return this.writeBundle({ ...bundle, id: null, trial: false, manual: true });
+      return this.writeBundle({ ...bundle, id: null, manual: true });
     })();
-  }
-
-  async addTrialBundle(bundle: UnsavedBundle): Promise<MentionBundle> {
-    return this.db.transaction(() => this.writeBundle({ ...bundle, id: null, trial: true }))();
   }
 
   async saveBundle(bundle: MentionBundle): Promise<void> {
@@ -586,7 +587,7 @@ export class SqliteStateStore implements StateStore {
 
   /**
    * 묶음 한 줄을 넣거나 바꾸고, 그 묶음의 멘션과 내 답을 주어진 값으로 맞춘다. 새 묶음은 ID를 받는다.
-   * 다른 묶음에 이미 든 멘션 위치는 기본 키가 막아 실패한다. 시험 묶음의 멘션은 따로 둬 실제 묶음과 견주지 않는다. 트랜잭션 안에서만 부른다.
+   * 다른 묶음에 이미 든 멘션 위치는 기본 키가 막아 실패한다. 트랜잭션 안에서만 부른다.
    */
   private writeBundle(bundle: UnsavedBundle): MentionBundle {
     /** 묶음 줄의 값. */
@@ -614,7 +615,6 @@ export class SqliteStateStore implements StateStore {
       runs: JSON.stringify(bundle.runs),
       posting: jsonOrNull(bundle.posting),
       quitDuringCountdown: bundle.quitDuringCountdown ? 1 : 0,
-      trial: bundle.trial ? 1 : 0,
       manual: bundle.manual ? 1 : 0,
       assignment: jsonOrNull(bundle.assignment ?? null),
     };
@@ -626,10 +626,10 @@ export class SqliteStateStore implements StateStore {
           .prepare(
             `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
                context, watched_context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting,
-               quit_during_countdown, trial, manual, assignment)
+               quit_during_countdown, manual, assignment)
              VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
                @context, @watchedContext, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting,
-               @quitDuringCountdown, @trial, @manual, @assignment)`,
+               @quitDuringCountdown, @manual, @assignment)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -642,19 +642,17 @@ export class SqliteStateStore implements StateStore {
              context = @context, watched_context = @watchedContext, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, edited_text = @editedText,
              removed_recipients = @removedRecipients, directives = @directives, fixed_requirement = @fixedRequirement,
              regeneration = @regeneration, failure = @failure, runs = @runs, posting = @posting,
-             quit_during_countdown = @quitDuringCountdown, trial = @trial, manual = @manual, assignment = @assignment
+             quit_during_countdown = @quitDuringCountdown, manual = @manual, assignment = @assignment
            WHERE id = @id`,
         )
         .run({ ...values, id });
       if (changes === 0) throw new Error(`저장하지 않은 묶음 ${id}입니다.`);
     }
 
-    /** 묶음의 멘션을 두는 표. */
-    const mentionTable = bundle.trial ? 'trial_mention' : 'mention';
-    this.db.prepare(`DELETE FROM ${mentionTable} WHERE bundle_id = ?`).run(id);
+    this.db.prepare('DELETE FROM mention WHERE bundle_id = ?').run(id);
     /** 멘션 하나를 넣는 문장. */
     const insertMention = this.db.prepare(
-      `INSERT INTO ${mentionTable} (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
+      `INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
          gone, gone_excluded)
        VALUES (@postId, @remarkId, @replyId, @bundleId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt, @text, @answered,
          @gone, @goneExcluded)`,
@@ -752,8 +750,6 @@ export class SqliteStateStore implements StateStore {
     if (bundleIds.length === 0) return;
     /** 묶음의 멘션을 지우는 문장. */
     const deleteMentions = this.db.prepare('DELETE FROM mention WHERE bundle_id = ?');
-    /** 시험 묶음의 멘션을 지우는 문장. */
-    const deleteTrialMentions = this.db.prepare('DELETE FROM trial_mention WHERE bundle_id = ?');
     /** 묶음에 기록한 내 답을 지우는 문장. */
     const deleteAnswers = this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id = ?');
     /** 묶음 줄을 지우는 문장. */
@@ -763,7 +759,6 @@ export class SqliteStateStore implements StateStore {
     this.db.transaction(() => {
       for (const bundleId of bundleIds) {
         deleteMentions.run(bundleId);
-        deleteTrialMentions.run(bundleId);
         deleteAnswers.run(bundleId);
         /** 지운 묶음 줄 수. */
         const { changes } = deleteBundle.run(bundleId);
@@ -931,8 +926,6 @@ interface BundleRow {
   posting: string | null;
   /** 카운트다운 중에 앱이 꺼져 준비됨으로 돌렸으면 1. */
   quit_during_countdown: number;
-  /** 시험 묶음이면 1. */
-  trial: number;
   /** 최근 멘션 확인에서 고른 수동 요청 묶음이면 1. */
   manual: number;
   /** 별도 감지 사유인 담당 업무 자료. */

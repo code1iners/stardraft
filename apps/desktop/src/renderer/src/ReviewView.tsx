@@ -1,5 +1,5 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleSections, ManualTag, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack, TrialLine, TrialTag } from './BundleDetail';
+import { BundleFooter, BundleSections, ManualTag, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
@@ -41,7 +41,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
   /** 보이는 묶음. */
   const { selected, select, movedWhileViewing } = selection;
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
-  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost, endTrial } = useBundleActions(selection);
+  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {
@@ -71,10 +71,8 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                   </div>
                   <RunLine bundle={selected} />
                   <PostStatusLine bundle={selected} />
-                  <TrialLine bundle={selected} />
                 </div>
                 <ManualTag bundle={selected} />
-                <TrialTag bundle={selected} />
                 <StatusTag status={selected.status} />
                 <button type="button" className="btn sm" onClick={handleCollapse}>
                   접어 보기
@@ -91,7 +89,6 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                 onRetry={() => retry(selected.id)}
                 onPost={() => post(selected)}
                 onCancelPost={() => cancelPost(selected.id)}
-                onEndTrial={() => endTrial(selected.id)}
               />
             </>
           ) : (
@@ -164,7 +161,6 @@ function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
                 <span className="list-row-tags">
                   {bundle.assignment && <span className="tag">{assignmentSourceText(bundle)}</span>}
                   <ManualTag bundle={bundle} />
-                  <TrialTag bundle={bundle} />
                   <StatusTag status={bundle.status} />
                 </span>
               </button>

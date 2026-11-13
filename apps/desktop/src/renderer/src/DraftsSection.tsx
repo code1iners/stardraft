@@ -1,7 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { EXTRA_INSTRUCTIONS_MAX_LENGTH, SECRET_PATTERN_MAX_LENGTH, type AppSnapshot, type DraftSettingsSnapshot } from '../../shared/ipc';
 import { ManualCheckButton, ManualCheckSheet } from './ManualCheck';
-import { TrialPickerSheet } from './TrialPicker';
 
 /** "초안" 칸에 넘기는 값. */
 interface DraftsSectionProps {
@@ -146,9 +145,6 @@ export function SecretPatternsField({ draftSettings }: DraftSettingsFieldProps) 
 
 /** 설정 "초안" 칸. 추가 지침, 비밀 파일 패턴, [최근 멘션 확인] 순서다. */
 export function DraftsSection({ snapshot }: DraftsSectionProps) {
-  /** 시험 상태. */
-  const { trial } = snapshot;
-
   return (
     <>
       <ExtraInstructionsField draftSettings={snapshot.draftSettings} />
@@ -159,9 +155,7 @@ export function DraftsSection({ snapshot }: DraftsSectionProps) {
         <ManualCheckButton manualCheck={snapshot.manualCheck} window="settings" />
         {!snapshot.onboarding.detectionStarted && <p className="field-note muted">멘션 감지를 시작한 뒤에 쓸 수 있습니다.</p>}
         {snapshot.onboarding.detectionStarted && !snapshot.manualCheck.canOpen && <p className="field-note muted">Flow 키를 쓸 수 있을 때 열 수 있습니다. 설정 "Flow 계정"에서 키를 확인하세요.</p>}
-        {trial.bundleId !== null && <p className="field-note muted">시험 중인 묶음이 있습니다. 시험을 끝내면 다시 시험할 수 있습니다.</p>}
         {snapshot.manualCheck.sheet?.window === 'settings' && <ManualCheckSheet sheet={snapshot.manualCheck.sheet} />}
-        {trial.picker?.window === 'settings' && <TrialPickerSheet picker={trial.picker} />}
       </div>
     </>
   );

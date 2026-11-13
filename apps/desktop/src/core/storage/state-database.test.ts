@@ -125,7 +125,6 @@ function bundle(mentions: BundledMention[], overrides: Partial<UnsavedBundle> = 
     runs: [],
     posting: null,
     quitDuringCountdown: false,
-    trial: false,
     manual: false,
     ...overrides,
   };
@@ -865,21 +864,21 @@ describe('최소 기록', () => {
 });
 
 describe('다시 켜기', () => {
-  it('카운트다운 중에 앱이 꺼져 준비됨으로 돌린 표시와 시험 묶음 표시를 다시 열어도 그대로 읽는다', async () => {
+  it('카운트다운 중에 앱이 꺼져 준비됨으로 돌린 표시를 다시 열어도 그대로 읽는다', async () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
     await store.saveDetectedBundles(
-      [bundle([mention('101')], { status: 'ready', quitDuringCountdown: true }), bundle([mention('102', { postId: '90000012' })], { status: 'generating', trial: true })],
+      [bundle([mention('101')], { status: 'ready', quitDuringCountdown: true }), bundle([mention('102', { postId: '90000012' })], { status: 'generating' })],
       '102',
     );
 
     /** 다시 연 저장소. */
     const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
-    expect((await reopened.listBundles()).map(({ status, quitDuringCountdown, trial }) => ({ status, quitDuringCountdown, trial }))).toEqual([
-      { status: 'ready', quitDuringCountdown: true, trial: false },
-      { status: 'generating', quitDuringCountdown: false, trial: true },
+    expect((await reopened.listBundles()).map(({ status, quitDuringCountdown }) => ({ status, quitDuringCountdown }))).toEqual([
+      { status: 'ready', quitDuringCountdown: true },
+      { status: 'generating', quitDuringCountdown: false },
     ]);
   });
 
@@ -917,10 +916,9 @@ describe('다시 켜기', () => {
     const secret = (label: string) => `${label} ${'q'.repeat(40)}`;
     await store.saveDetectedBundles(
       [
-        bundle([mention('101', { text: secret('가짜 시험 원문'), senderName: secret('가짜 시험 송신자') })], {
+        bundle([mention('101', { text: secret('가짜 삭제 원문'), senderName: secret('가짜 삭제 송신자') })], {
           status: 'ready',
-          trial: true,
-          editedText: secret('가짜 시험 편집본'),
+          editedText: secret('가짜 삭제 편집본'),
           answers: [{ answerId: '950000001', registeredDateTime: '20261020090000', excluded: false }],
         }),
         bundle([mention('102', { postId: '90000012' })], { status: 'ready' }),
@@ -933,40 +931,62 @@ describe('다시 켜기', () => {
     expect((await store.listBundles()).map(({ id }) => id)).toEqual([2]);
     await expect(store.listMinimalRecords()).resolves.toEqual([]);
     await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
-    for (const label of ['가짜 시험 원문', '가짜 시험 송신자', '가짜 시험 편집본']) {
+    for (const label of ['가짜 삭제 원문', '가짜 삭제 송신자', '가짜 삭제 편집본']) {
       expect(readFileSync(path).includes(Buffer.from(label))).toBe(false);
       expect(readFileSync(`${path}-wal`).includes(Buffer.from(label))).toBe(false);
     }
     db.close();
   });
 
-  it('시험 묶음은 기준점을 옮기지 않고 저장하며, 같은 멘션 위치의 실제 묶음과 함께 둘 수 있고 다시 감지하지 않을 위치로 세지 않는다', async () => {
-    const db = openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0');
+  it('형식 21에서 올리면 남아 있던 시험 묶음은 멘션·내 답·대기열 자리째 지우고 일반 묶음과 최소 기록은 그대로 둔다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 21로 만든 DB. 시험 묶음 표시 열과 시험 멘션 표가 있다. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 21), '0.0.21');
+    /** 묶음 줄을 넣는 문장. 마지막 값이 시험 묶음 표시다. */
+    const insertBundle = old.prepare(
+      `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at, trial)
+       VALUES (?, '-1', '900001', ?, '가짜 게시물', NULL, 1, 1000, NULL, ?)`,
+    );
+    insertBundle.run('90000011', 'ready', 0);
+    insertBundle.run('90000012', 'generating', 1);
+    insertBundle.run('90000013', 'ready', 1);
+    /** 멘션 줄을 넣는 문장. 표 이름만 다르다. */
+    const insertMention = (table: string, bundleId: number, postId: string) =>
+      old
+        .prepare(
+          `INSERT INTO ${table} (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered, gone, gone_excluded)
+           VALUES (?, '-1', '-1', ?, '900001', ?, 'sender@example.test', '보낸 사람', '20261019235000', 1000, '가짜 본문', 0, 0, 0)`,
+        )
+        .run(postId, bundleId, `${bundleId}01`);
+    insertMention('mention', 1, '90000011');
+    insertMention('trial_mention', 2, '90000012');
+    insertMention('trial_mention', 3, '90000013');
+    for (const bundleId of [1, 2, 3]) {
+      old.prepare("INSERT INTO bundle_answer (bundle_id, answer_id, registered_date_time, excluded) VALUES (?, '950000001', '20261020090000', 0)").run(bundleId);
+      old.prepare("INSERT INTO draft_queue (position, bundle_id, priority) VALUES (?, ?, 'user')").run(bundleId, bundleId);
+    }
+    old.prepare("INSERT INTO minimal_record (bundle_id, post_id, remark_id, status, processed_at) VALUES (9, '90000019', '-1', 'ignored', 2000)").run();
+    old.close();
+
+    /** 마지막 형식으로 올린 DB. */
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
     const store = new SqliteStateStore(db);
-    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ready' })], '101');
 
-    /** 저장한 시험 묶음. 실제 묶음과 같은 멘션 위치다. */
-    const trial = await store.addTrialBundle({ ...bundle([mention('101')], { status: 'generating' }), id: null });
-    expect(trial).toMatchObject({ id: 2, trial: true, mentions: [expect.objectContaining({ alarmId: '101' })] });
-    await store.saveBundle({ ...trial, status: 'ready' });
-
-    expect((await store.listBundles()).map(({ id, trial: isTrial, status, mentions }) => [id, isTrial, status, mentions.length])).toEqual([
-      [1, false, 'ready', 1],
-      [2, true, 'ready', 1],
-    ]);
-    await expect(store.getBaselineAlarmId()).resolves.toBe('101');
-
-    // 실제 묶음을 최소 기록으로 옮긴 뒤에도 시험 묶음의 멘션은 다시 감지하지 않을 위치가 아니다.
-    await store.deleteBundles([1]);
-    await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
-    await store.deleteBundles([2]);
-    await expect(store.listBundles()).resolves.toEqual([]);
+    expect((await store.listBundles()).map(({ id, postId, status, mentions }) => [id, postId, status, mentions.length])).toEqual([[1, '90000011', 'ready', 1]]);
+    await expect(store.getDraftQueue()).resolves.toEqual([{ bundleId: 1, priority: 'user' }]);
+    expect((await store.listMinimalRecords()).map(({ bundleId }) => bundleId)).toEqual([9]);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM bundle_answer').get()).toEqual({ count: 1 });
+    // 시험 전용 표와 열은 없어지고, 시험이던 위치는 다시 감지하지 않을 위치로 남지 않는다.
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'trial_mention'").all()).toEqual([]);
+    expect((db.prepare('PRAGMA table_info(mention_bundle)').all() as { name: string }[]).map(({ name }) => name)).not.toContain('trial');
+    await expect(store.hasMentionLocation({ postId: '90000012', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
     db.close();
   });
 
   it('저장하지 않은 묶음이 하나라도 있으면 지우지 못하고 아무것도 바꾸지 않는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
-    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ready', trial: true })], '101');
+    await store.saveDetectedBundles([bundle([mention('101')], { status: 'ready' })], '101');
 
     await expect(store.deleteBundles([1, 9])).rejects.toThrow();
 
@@ -982,7 +1002,7 @@ describe('다시 켜기', () => {
     await expect(store.getDraftQueue()).resolves.toEqual([]);
   });
 
-  it('형식 14에서 올리면 이미 있던 묶음은 시험 묶음이 아니고 카운트다운 중 종료 표시도 없으며, 남긴 대기열은 없다', async () => {
+  it('형식 14에서 올리면 이미 있던 묶음은 카운트다운 중 종료 표시가 없고, 남긴 대기열은 없다', async () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     /** 형식 14로 만든 DB. */
@@ -998,8 +1018,8 @@ describe('다시 켜기', () => {
     /** 마지막 형식으로 올린 저장소. */
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
 
-    expect((await store.listBundles()).map(({ status, quitDuringCountdown, trial }) => ({ status, quitDuringCountdown, trial }))).toEqual([
-      { status: 'posting', quitDuringCountdown: false, trial: false },
+    expect((await store.listBundles()).map(({ status, quitDuringCountdown }) => ({ status, quitDuringCountdown }))).toEqual([
+      { status: 'posting', quitDuringCountdown: false },
     ]);
     await expect(store.getDraftQueue()).resolves.toEqual([]);
   });
@@ -1015,7 +1035,7 @@ describe('수동 요청 묶음', () => {
     /** 저장한 수동 요청 묶음. 기준점 앞의 멘션이다. */
     const saved = await store.addManualBundle(bundle([mention('101')], { status: 'generating', manual: true }), null);
 
-    expect(saved).toMatchObject({ id: 1, manual: true, trial: false, mentions: [expect.objectContaining({ alarmId: '101' })] });
+    expect(saved).toMatchObject({ id: 1, manual: true, mentions: [expect.objectContaining({ alarmId: '101' })] });
     /** 다시 연 저장소. */
     const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
     expect((await reopened.listBundles()).map(({ id, manual, status }) => ({ id, manual, status }))).toEqual([{ id: 1, manual: true, status: 'generating' }]);

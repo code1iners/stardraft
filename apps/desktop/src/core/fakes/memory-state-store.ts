@@ -73,7 +73,7 @@ export class MemoryStateStore implements StateStore {
   async hasMentionLocation(location: MentionLocation): Promise<boolean> {
     /** 찾는 멘션 위치. */
     const key = mentionLocationKey(location);
-    return [...[...this.bundles.values()].filter((bundle) => !bundle.trial), ...this.records.values()].some((item) =>
+    return [...this.bundles.values(), ...this.records.values()].some((item) =>
       item.mentions.some((mention) => mentionLocationKey(mention) === key),
     );
   }
@@ -98,14 +98,7 @@ export class MemoryStateStore implements StateStore {
     this.assertOwnLocations(bundle);
     if (replacedRecordId !== null) this.records.delete(replacedRecordId);
     /** 저장한 묶음. */
-    const saved = { ...cloneBundle(bundle as MentionBundle), id: this.nextBundleId++, trial: false, manual: true };
-    this.bundles.set(saved.id, sortedMentions(saved));
-    return cloneBundle(saved);
-  }
-
-  async addTrialBundle(bundle: UnsavedBundle): Promise<MentionBundle> {
-    /** 저장한 묶음. */
-    const saved = { ...cloneBundle(bundle as MentionBundle), id: this.nextBundleId++ };
+    const saved = { ...cloneBundle(bundle as MentionBundle), id: this.nextBundleId++, manual: true };
     this.bundles.set(saved.id, sortedMentions(saved));
     return cloneBundle(saved);
   }
@@ -171,11 +164,10 @@ export class MemoryStateStore implements StateStore {
     this.updateAttempt = null;
   }
 
-  /** 묶음의 멘션 위치가 다른 묶음에 이미 들어 있으면 실패한다. 시험 묶음의 멘션 위치는 따로 두므로 서로 견주지 않는다. */
+  /** 묶음의 멘션 위치가 다른 묶음에 이미 들어 있으면 실패한다. */
   private assertOwnLocations(bundle: UnsavedBundle): void {
-    if (bundle.trial) return;
     for (const other of this.bundles.values()) {
-      if (other.id === bundle.id || other.trial) continue;
+      if (other.id === bundle.id) continue;
       /** 다른 묶음의 멘션 위치. */
       const taken = new Set(other.mentions.map(mentionLocationKey));
       if (bundle.mentions.some((mention) => taken.has(mentionLocationKey(mention)))) {

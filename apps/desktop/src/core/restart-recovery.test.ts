@@ -112,7 +112,6 @@ function seededBundle(commentId: string, alarmId: string, overrides: Partial<Uns
     runs: [],
     posting: null,
     quitDuringCountdown: false,
-    trial: false,
     manual: false,
     ...overrides,
   };
@@ -158,7 +157,7 @@ async function environment(seed: readonly UnsavedBundle[]) {
 type Environment = Awaited<ReturnType<typeof environment>>;
 
 /**
- * 앱을 켠다. main의 시작 절차와 같은 순서다. 저장한 묶음을 읽고 끊긴 게시와 시험 묶음을 정리한 뒤,
+ * 앱을 켠다. main의 시작 절차와 같은 순서다. 저장한 묶음을 읽고 끊긴 게시를 정리한 뒤,
  * 저장된 키를 읽고 나서 초안 대기열을 시작하고 응답을 받지 못한 게시를 확인한다.
  */
 async function launch({ clock, flow, stateStore, executor, settingsStore, repo }: Environment) {
@@ -516,45 +515,6 @@ describe('끌 때: 편집 중인 초안', () => {
     // 끄기가 끝난 바로 뒤(state.db를 닫는 때)에 이미 저장되어 있다.
     await expect(env.stateStore.listBundles()).resolves.toMatchObject([{ editedText: '재시도는 다섯 번입니다.' }]);
     expect((await launch(env)).bundles.get(1)).toMatchObject({ status: 'ready', editedText: '재시도는 다섯 번입니다.' });
-  });
-});
-
-describe('다시 켜기: 진행 중이던 시험 묶음', () => {
-  it('시험 묶음은 상태와 상관없이 기록째 지우고 처리됨(최소 기록)에도 남기지 않는다. 시험이 아닌 묶음은 그대로다', async () => {
-    const env = await environment([
-      seededBundle('700', '101', { status: 'generating', trial: true }),
-      seededBundle('701', '102', { status: 'ready', trial: true, draft: draftOf('/fake/repo') }),
-      seededBundle('702', '103', { status: 'ready', draft: draftOf('/fake/repo') }),
-    ]);
-
-    const { bundles } = await launch(env);
-
-    expect(bundles.state().map(({ remarkId, trial }) => [remarkId, trial])).toEqual([['702', false]]);
-    expect((await env.stateStore.listBundles()).map(({ remarkId }) => remarkId)).toEqual(['702']);
-    await expect(env.stateStore.listMinimalRecords()).resolves.toEqual([]);
-    await expect(env.stateStore.hasMentionLocation({ postId: POST_ID, remarkId: '700', replyId: '-1' })).resolves.toBe(false);
-    expect(env.executor.requests).toEqual([]);
-  });
-
-  it('시험 묶음을 지우지 못해도 카운트다운 중이던 묶음은 준비됨으로 돌아오고, 다음에 켤 때 다시 지운다', async () => {
-    const env = await environment([
-      seededBundle('700', '101', { status: 'ready', trial: true, draft: draftOf('/fake/repo') }),
-      seededBundle('701', '102', { status: 'posting', draft: draftOf('/fake/repo') }),
-    ]);
-    /** 원래 묶음 지우기. */
-    const deleteBundles = env.stateStore.deleteBundles.bind(env.stateStore);
-    env.stateStore.deleteBundles = async () => {
-      throw new Error('가짜 디스크 오류');
-    };
-
-    const { bundles } = await launch(env);
-    expect(bundles.state().map(({ remarkId, status, trial }) => [remarkId, status, trial])).toEqual([
-      ['700', 'ready', true],
-      ['701', 'ready', false],
-    ]);
-
-    env.stateStore.deleteBundles = deleteBundles;
-    expect((await launch(env)).bundles.state().map(({ remarkId }) => remarkId)).toEqual(['701']);
   });
 });
 

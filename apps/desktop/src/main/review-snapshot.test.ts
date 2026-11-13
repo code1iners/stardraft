@@ -4,7 +4,7 @@ import type { RunRecord } from '../core/drafts/draft';
 import type { BundleContext } from '../core/flow/bundle-context';
 import { POST_BODY_CHAR_LIMIT as CORE_POST_BODY_CHAR_LIMIT } from '../core/drafts/post-body';
 import { POST_BODY_CHAR_LIMIT } from '../shared/ipc';
-import { bundleSnapshot, flowUrlOf, manualCheckSnapshot, reviewSnapshot, trialSnapshot } from './review-snapshot';
+import { bundleSnapshot, flowUrlOf, manualCheckSnapshot, reviewSnapshot } from './review-snapshot';
 
 /** 가짜 멘션. 실제 사람이나 글이 아니다. 기본은 08:50(한국 표준시)에 온 댓글 멘션이다. */
 function mention(alarmId: string, overrides: Partial<BundledMention> = {}): BundledMention {
@@ -55,7 +55,6 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
     runs: [],
     posting: null,
     quitDuringCountdown: false,
-    trial: false,
     manual: false,
     ...overrides,
   };
@@ -131,7 +130,6 @@ describe('묶음 스냅숏', () => {
       quitDuringCountdown: false,
       changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
       manual: false,
-      trial: false,
     });
     expect(snapshot.mentions[0]?.text).toEqual([
       { text: '@테스트 사용자', mention: true },
@@ -338,7 +336,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
         status: 'ready',
         draft: {
           requirement: { text: '실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.', summary: '재시도 횟수' },
-          paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }, { text: '시험 환경은 세 번으로 보입니다.', evidence: [] }] }],
+          paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [1] }, { text: '테스트 환경은 세 번으로 보입니다.', evidence: [] }] }],
           evidence: [
             {
               id: 1,
@@ -367,7 +365,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
         {
           sentences: [
             { text: '다섯 번까지 다시 시도합니다.', evidence: [1], developerTerms: [] },
-            { text: '시험 환경은 세 번으로 보입니다.', evidence: [], developerTerms: [] },
+            { text: '테스트 환경은 세 번으로 보입니다.', evidence: [], developerTerms: [] },
           ],
         },
       ],
@@ -390,7 +388,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
       ],
       autoSelection: null,
       mapping: 'unmapped',
-      editorText: '다섯 번까지 다시 시도합니다. 시험 환경은 세 번으로 보입니다.',
+      editorText: '다섯 번까지 다시 시도합니다. 테스트 환경은 세 번으로 보입니다.',
       edited: false,
       canEdit: true,
       canRegenerate: true,
@@ -758,60 +756,6 @@ describe('문체 검사', () => {
 
     expect(snapshot?.paragraphs[0]?.sentences.map((sentence) => sentence.developerTerms)).toEqual([['maxAttempts'], []]);
     expect(snapshot?.evidence[0]?.developerTerms).toEqual(['application-prod.yml']);
-  });
-});
-
-describe('최근 멘션으로 시험 스냅숏', () => {
-  /** 불러온 멘션 고르기 목록. 첫 줄 앞에 빈 줄이 있는 멘션이다. */
-  const loaded = {
-    picker: {
-      window: 'popover' as const,
-      status: 'loaded' as const,
-      candidates: [
-        {
-          mention: mention('101', { text: '\n  @[테스트 사용자](me@example.test) 배포 언제 되나요?\n둘째 줄' }),
-          postTitle: '가짜 게시물',
-          connectUrl: null,
-          answered: true,
-          projectTitle: '가짜 프로젝트',
-        },
-      ],
-    },
-  };
-
-  it('멘션은 송신자, Flow 프로젝트, 비어 있지 않은 첫 줄(멘션 표기는 이름만), 시각, 답함만 넘기고 사용자 ID는 넘기지 않는다', () => {
-    /** 만든 스냅숏. */
-    const snapshot = trialSnapshot(loaded, null, true);
-
-    expect(snapshot).toEqual({
-      canStart: true,
-      bundleId: null,
-      picker: {
-        window: 'popover',
-        status: 'loaded',
-        candidates: [
-          {
-            alarmId: '101',
-            senderName: '보낸 사람',
-            projectTitle: '가짜 프로젝트',
-            firstLine: '@테스트 사용자 배포 언제 되나요?',
-            at: Date.UTC(2026, 9, 19, 23, 50),
-            answered: true,
-          },
-        ],
-      },
-    });
-    expect(JSON.stringify(snapshot)).not.toContain('example.test');
-  });
-
-  it('감지를 시작했고 시험 묶음이 없어야 시작할 수 있다', () => {
-    expect(trialSnapshot({ picker: null }, null, false).canStart).toBe(false);
-    expect(trialSnapshot({ picker: null }, 3, true)).toEqual({ canStart: false, bundleId: 3, picker: null });
-    expect(trialSnapshot({ picker: { window: 'settings', status: 'failed', reason: 'network' } }, null, true).picker).toEqual({
-      window: 'settings',
-      status: 'failed',
-      reason: 'network',
-    });
   });
 });
 

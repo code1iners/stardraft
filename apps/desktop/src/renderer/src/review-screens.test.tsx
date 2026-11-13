@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppSnapshot, BundleSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot, TrialCandidateSnapshot } from '../../shared/ipc';
+import type { AppSnapshot, BundleSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
 import { DraftsSection } from './DraftsSection';
 import { ManualCheckSheet } from './ManualCheck';
@@ -60,7 +60,6 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     quitDuringCountdown: false,
     changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
     manual: false,
-    trial: false,
     ...overrides,
   };
 }
@@ -115,7 +114,6 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     editor: { choice: null, installed: [], picker: null },
     review: { bundles, sections: SECTIONS, repoPicker: null },
     manualCheck: { canOpen: true, sheet: null },
-    trial: { canStart: true, bundleId: null, picker: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
     ...overrides,
@@ -340,7 +338,7 @@ const READY = bundle(4, {
       {
         sentences: [
           { text: '실제 서비스에서는 다섯 번까지 다시 시도합니다.', evidence: [1], developerTerms: [] },
-          { text: '시험 환경은 세 번으로 보입니다.', evidence: [], developerTerms: [] },
+          { text: '테스트 환경은 세 번으로 보입니다.', evidence: [], developerTerms: [] },
         ],
       },
       { sentences: [{ text: '설정을 바꾸면 다음 배포부터 적용됩니다.', evidence: [1, 2], developerTerms: [] }] },
@@ -373,7 +371,7 @@ const READY = bundle(4, {
     ],
     autoSelection: null,
     mapping: 'unmapped',
-    editorText: '실제 서비스에서는 다섯 번까지 다시 시도합니다. 시험 환경은 세 번으로 보입니다.\n\n설정을 바꾸면 다음 배포부터 적용됩니다.',
+    editorText: '실제 서비스에서는 다섯 번까지 다시 시도합니다. 테스트 환경은 세 번으로 보입니다.\n\n설정을 바꾸면 다음 배포부터 적용됩니다.',
     edited: false,
     canEdit: true,
     canRegenerate: true,
@@ -409,7 +407,7 @@ describe('작은 창: 초안 실행', () => {
     expect(text.indexOf('에이전트가 이해한 요구')).toBeLessThan(text.indexOf('실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.'));
     expect(text.indexOf('실제 서비스에서 재시도를 몇 번 하는지 알고 싶다.')).toBeLessThan(text.indexOf('초안'));
     expect(text).toContain('실제 서비스에서는 다섯 번까지 다시 시도합니다. ①');
-    expect(text).toContain('시험 환경은 세 번으로 보입니다. 근거 없음');
+    expect(text).toContain('테스트 환경은 세 번으로 보입니다. 근거 없음');
     expect(text).toContain('설정을 바꾸면 다음 배포부터 적용됩니다. ① ②');
     expect(text).toContain('근거 2개');
     // 근거와 저장소는 처음에 접혀 있다.
@@ -754,7 +752,7 @@ describe('초안 편집기와 받는 사람', () => {
     expect(html).toContain('aria-label="다른 사람 빼기"');
     expect(text.indexOf('받는 사람 @보낸 사람')).toBeLessThan(text.indexOf('실제 서비스에서는 다섯 번까지 다시 시도합니다. ①'));
     // 받는 사람 표기 59자와 편집기 텍스트 69자.
-    expect(text).toContain('글자 수 128 / 4,000');
+    expect(text).toContain('글자 수 129 / 4,000');
     expect(text).not.toContain('원래 초안으로 되돌리기');
     // 받는 사람을 더하는 기능은 없다.
     expect(text).not.toContain('받는 사람 추가');
@@ -762,11 +760,11 @@ describe('초안 편집기와 받는 사람', () => {
 
   it('편집한 초안은 근거 번호 없이 편집본을 편집기에 보이고 "원래 초안으로 되돌리기"를 둔다', () => {
     /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.')])} />);
-    const text = textOf(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.')])} />);
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n테스트 환경은 다릅니다.')])} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([edited('재시도는 다섯 번입니다.\n\n테스트 환경은 다릅니다.')])} />);
 
     expect(html).toContain('<textarea');
-    expect(html).toContain('재시도는 다섯 번입니다.\n\n시험 환경은 다릅니다.');
+    expect(html).toContain('재시도는 다섯 번입니다.\n\n테스트 환경은 다릅니다.');
     expect(text).not.toContain('①');
     expect(text).not.toContain('근거 없음');
     expect(text).toContain('원래 초안으로 되돌리기');
@@ -788,7 +786,7 @@ describe('초안 편집기와 받는 사람', () => {
     const text = textOf(<PopoverContent snapshot={snapshot([none])} />);
 
     expect(text).toContain('받는 사람 없음 · 멘션 없이 올립니다');
-    expect(text).toContain('글자 수 69 / 4,000');
+    expect(text).toContain('글자 수 70 / 4,000');
   });
 
   it('고칠 수 없는 묶음(처리됨)의 초안은 받는 사람을 뺄 수 없고 되돌리기도 없으며, 편집본은 글로만 보인다', () => {
@@ -896,7 +894,7 @@ describe('근거와 에디터에서 열기', () => {
 
     expect(html).toContain('aria-label="근거 ① 보기"');
     expect(html).toContain('aria-label="근거 ② 보기"');
-    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('시험 환경은 세 번으로 보입니다. 근거 없음');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('테스트 환경은 세 번으로 보입니다. 근거 없음');
   });
 
   it('위치를 찾은 근거마다 "에디터에서 열기"를 두고, 위치를 찾을 수 없는 근거는 끈다', () => {
@@ -1307,74 +1305,21 @@ describe('준비된 뒤의 변화', () => {
   });
 });
 
-describe('최근 멘션으로 시험', () => {
-  /** 준비된 가짜 시험 묶음. */
-  const TRIAL: BundleSnapshot = { ...READY, id: 9, trial: true };
-  /** 멘션 고르기 목록의 가짜 멘션. 둘째는 이미 답한 멘션이다. */
-  const CANDIDATES: TrialCandidateSnapshot[] = [
-    { alarmId: '102', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), answered: false },
-    { alarmId: '101', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), answered: true },
-  ];
-
-  it('멘션 고르기 목록은 송신자·Flow 프로젝트·첫 줄·시각을 보이고, 이미 답한 멘션에 "답함"을 붙이되 고를 수 있다. 연 창에만 뜬다', () => {
-    /** 작은 창에 연 목록. */
-    const trial: AppSnapshot['trial'] = { canStart: true, bundleId: null, picker: { window: 'popover', status: 'loaded', candidates: CANDIDATES } };
-    /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { trial })} />);
-    const text = textOf(<PopoverContent snapshot={snapshot([], { trial })} />);
-
-    expect(text).toContain('시험할 멘션 고르기');
-    expect(text).toContain('보낸 사람');
-    expect(text).toContain('가짜 프로젝트');
-    expect(text).toContain('@테스트 사용자 배포 언제 되나요?');
-    expect(text).toContain('Flow 프로젝트 이름 모름');
-    expect(text.match(/답함/g)).toHaveLength(1);
-    // 고르기 전에는 자동으로 고르지 않고, 이미 답한 멘션도 누를 수 있다.
-    expect(html.match(/class="trial-choice"/g)).toHaveLength(2);
-    expect(html).not.toMatch(/class="trial-choice"[^>]*disabled/);
-    // 설정 창에서 연 목록은 작은 창에 뜨지 않는다.
-    expect(
-      textOf(<PopoverContent snapshot={snapshot([], { trial: { ...trial, picker: { ...trial.picker!, window: 'settings' } } })} />),
-    ).not.toContain('시험할 멘션 고르기');
-  });
-
-  it('불러오는 중, 불러오지 못함, 멘션 없음을 보인다', () => {
-    /** 목록 상태마다 그린 글자. */
-    const textWith = (picker: AppSnapshot['trial']['picker']) => textOf(<PopoverContent snapshot={snapshot([], { trial: { canStart: true, bundleId: null, picker } })} />);
-
-    expect(textWith({ window: 'popover', status: 'loading' })).toContain('최근 멘션을 불러오는 중입니다.');
-    expect(textWith({ window: 'popover', status: 'failed', reason: 'network' })).toContain('Flow에 연결하지 못했습니다');
-    expect(textWith({ window: 'popover', status: 'failed', reason: 'network' })).toContain('다시 불러오기');
-    expect(textWith({ window: 'popover', status: 'loaded', candidates: [] })).toContain('시험할 수 있는 최근 멘션이 없습니다.');
-  });
-
-  it('시험 묶음은 "시험" 표시와 "Flow에는 아무것도 올라가지 않습니다"를 보이고, [게시] 대신 [시험 끝내기]를 둔다. 재생성 메뉴와 [무시]는 그대로다', () => {
+describe('시험 폐지', () => {
+  it('준비된 묶음은 [게시]를 두고 "시험" 표시·안내·[시험 끝내기]는 어느 창에도 없다. 재생성 메뉴와 [무시]는 그대로다', () => {
     /** 작은 창 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([TRIAL])} />);
-    const text = textOf(<PopoverContent snapshot={snapshot([TRIAL])} />);
-
-    expect(html).toContain('<span class="tag trial">시험</span>');
-    expect(text).toContain('Flow에는 아무것도 올라가지 않습니다');
-    expect(text).toContain('시험 끝내기');
-    expect(text).toContain('다시 만들기 ▾');
-    expect(text).toContain('무시');
-    expect(html).not.toMatch(/<button[^>]*>게시<\/button>/);
-
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />);
     /** 펼친 창 HTML. */
-    const expanded = renderToStaticMarkup(<ReviewContent snapshot={snapshot([TRIAL, READY])} initialBundleId={9} />);
-    expect(expanded.match(/<span class="tag trial">시험<\/span>/g)).toHaveLength(2);
-    expect(expanded).toContain('Flow에는 아무것도 올라가지 않습니다');
-    expect(expanded).toContain('시험 끝내기');
+    const expanded = renderToStaticMarkup(<ReviewContent snapshot={snapshot([READY])} initialBundleId={READY.id} />);
 
-    // 실제 묶음에는 붙이지 않는다.
-    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('tag trial');
-    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('Flow에는 아무것도 올라가지 않습니다');
-  });
-
-  it('설정 "초안" 칸에서 연 시험 목록은 설정 칸에 뜬다(시험 쪽 상태는 이 티켓에서 지우지 않는다)', () => {
-    expect(
-      textOf(<DraftsSection snapshot={snapshot([], { trial: { canStart: true, bundleId: null, picker: { window: 'settings', status: 'loading' } } })} />),
-    ).toContain('시험할 멘션 고르기');
+    expect(html).toMatch(/<button[^>]*>게시<\/button>/);
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('다시 만들기 ▾');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).toContain('무시');
+    for (const rendered of [html, expanded]) {
+      expect(rendered).not.toContain('tag trial');
+      expect(rendered).not.toContain('시험 끝내기');
+      expect(rendered).not.toContain('Flow에는 아무것도 올라가지 않습니다');
+    }
   });
 });
 

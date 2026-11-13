@@ -62,7 +62,7 @@ function macWithEditors(): FakeEditorSystem {
 /** 열 파일과 줄. */
 const TARGET = { file: '/fake/work/billing-api/src/main/resources/application-prod.yml', line: 88 };
 
-/** 시험할 에디터 열기와 그 설정 저장소. */
+/** 테스트할 에디터 열기와 그 설정 저장소. */
 function setup(system: EditorSystem, settings: Partial<Settings> = {}) {
   /** 설정 저장소. */
   const settingsStore = new MemorySettingsStore(settings);

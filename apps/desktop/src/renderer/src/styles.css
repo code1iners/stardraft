@@ -1140,7 +1140,7 @@ p.setup-tray-hint {
   color: var(--muted);
 }
 
-/* 작은 창: 대기열 위치, ‹ › 이동, 상태 태그, 펼쳐 보기. */
+/* 작은 창: 대기열 위치, ‹ › 이동, 상태 태그, ⋯ 메뉴. */
 .review-head {
   flex: none;
   display: flex;
@@ -1691,8 +1691,43 @@ button.cite:hover {
   cursor: pointer;
 }
 
-.menu-item:hover {
+.menu-item:hover:not(:disabled) {
   background: var(--surface-2);
+}
+
+.menu-item:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+/* 작은 창 머리의 ⋯ 메뉴: 머리 아래로 펼치고 오른쪽 끝을 맞춘다. */
+.popover-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.popover-menu-trigger:hover,
+.popover-menu-trigger[aria-expanded='true'] {
+  color: var(--text);
+}
+
+.popover-menu-list {
+  top: calc(100% + 4px);
+  bottom: auto;
+  width: 224px;
+}
+
+.menu-reason {
+  margin: 0;
+  padding: 0 8px 6px;
 }
 
 /* 저장소 선택 창: 후보 목록은 창 높이 안에서 스크롤한다. */

@@ -5,6 +5,7 @@ import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, T
 import { DraftsSection } from './DraftsSection';
 import { ManualCheckSheet } from './ManualCheck';
 import { PopoverContent } from './PopoverView';
+import { PopoverMenu, menuKeyAction } from './PopoverMenu';
 import { ReviewContent } from './ReviewView';
 import { nextBundleAfter, resolveSelection } from './useReview';
 
@@ -128,12 +129,13 @@ function textOf(element: React.ReactElement): string {
 }
 
 describe('작은 창: 멘션 묶음', () => {
-  it('대기열 첫 묶음을 대기열 위치, 상태 태그, 펼쳐 보기와 함께 보이고, 원문 영역에 묶인 멘션 전부를 시간순으로 보인다', () => {
+  it('대기열 첫 묶음을 대기열 위치, 상태 태그, ⋯ 메뉴와 함께 보이고, 원문 영역에 묶인 멘션 전부를 시간순으로 보인다', () => {
     const text = textOf(<PopoverContent snapshot={snapshot([bundle(1), bundle(2), ANSWERED])} />);
 
     expect(text).toContain('1 / 2');
     expect(text).toContain('저장소 확인 필요');
-    expect(text).toContain('펼쳐 보기');
+    expect(text).not.toContain('펼쳐 보기');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([bundle(1)])} />)).toContain('aria-label="메뉴 열기"');
     expect(text).toContain('원문');
     expect(text).toContain('멘션 2건');
     expect(text.indexOf('@테스트 사용자 첫 질문입니다')).toBeLessThan(text.indexOf('둘째 질문입니다'));
@@ -221,11 +223,70 @@ describe('작은 창: 멘션 묶음', () => {
     expect(textOf(<PopoverContent snapshot={snapshot([bundle(1, { canOpenInFlow: false })])} />)).not.toContain('Flow에서 열기');
   });
 
-  it('처리되지 않은 묶음이 없으면 빈 화면을 보이고, 처리됨 묶음이 있으면 펼쳐 보기로 목록을 열 수 있다', () => {
-    const text = textOf(<PopoverContent snapshot={snapshot([ANSWERED])} />);
+  it('처리되지 않은 묶음이 없으면 빈 화면을 보이고, 머리에 ⋯ 메뉴와 설정 아이콘을 둔다', () => {
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([ANSWERED])} />);
 
-    expect(text).toContain('아직 멘션이 없습니다.');
-    expect(text).toContain('펼쳐 보기');
+    expect(textOf(<PopoverContent snapshot={snapshot([ANSWERED])} />)).toContain('아직 멘션이 없습니다.');
+    expect(html).toContain('aria-label="메뉴 열기"');
+    expect(html).toContain('aria-label="설정 열기"');
+    expect(html).not.toContain('>펼쳐 보기<');
+  });
+});
+
+describe('작은 창 ⋯ 메뉴', () => {
+  /** 열린 메뉴를 그린 HTML. */
+  function openMenu(manualCheck: ManualCheckSnapshot, canExpand = true): string {
+    return renderToStaticMarkup(<PopoverMenu manualCheck={manualCheck} canExpand={canExpand} onExpand={() => {}} defaultOpen />);
+  }
+
+  /** 메뉴 항목 버튼 태그와 이름. */
+  function itemsOf(html: string): { tag: string; label: string }[] {
+    return [...html.matchAll(/<button([^>]*role="menuitem"[^>]*)>([^<]*)<\/button>/g)].map((match) => ({ tag: match[1] ?? '', label: match[2] ?? '' }));
+  }
+
+  it('닫혀 있으면 항목 없이 열림 상태가 거짓인 트리거만 보인다', () => {
+    const html = renderToStaticMarkup(<PopoverMenu manualCheck={{ canOpen: true, sheet: null }} canExpand onExpand={() => {}} />);
+
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('role="menu"');
+  });
+
+  it('열면 "최근 멘션 확인"과 "펼쳐 보기"가 이 순서로 있고 둘 다 쓸 수 있다', () => {
+    const items = itemsOf(openMenu({ canOpen: true, sheet: null }));
+
+    expect(items.map((item) => item.label)).toEqual(['최근 멘션 확인', '펼쳐 보기']);
+    expect(items.every((item) => !item.tag.includes('disabled'))).toBe(true);
+  });
+
+  it('감지를 시작하지 않았거나 키가 없어 열 수 없으면 "최근 멘션 확인"이 막히고 까닭이 보이며, "펼쳐 보기"는 그대로 쓸 수 있다', () => {
+    const html = openMenu({ canOpen: false, sheet: null });
+    const [check, expand] = itemsOf(html);
+
+    expect(check?.tag).toContain('disabled');
+    expect(expand?.tag).not.toContain('disabled');
+    expect(textOf(<div dangerouslySetInnerHTML={{ __html: html }} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+  });
+
+  it('펼칠 묶음이 없으면 "펼쳐 보기" 항목을 두지 않는다', () => {
+    expect(itemsOf(openMenu({ canOpen: true, sheet: null }, false)).map((item) => item.label)).toEqual(['최근 멘션 확인']);
+  });
+
+  it('키보드: ↓↑는 쓸 수 있는 항목만 돌고 끝에서 이어지며, Home·End는 처음과 끝으로 간다', () => {
+    expect(menuKeyAction('ArrowDown', -1, [true, true])).toEqual({ kind: 'focus', index: 0 });
+    expect(menuKeyAction('ArrowDown', 0, [true, true])).toEqual({ kind: 'focus', index: 1 });
+    expect(menuKeyAction('ArrowDown', 1, [true, true])).toEqual({ kind: 'focus', index: 0 });
+    expect(menuKeyAction('ArrowUp', 0, [true, true])).toEqual({ kind: 'focus', index: 1 });
+    expect(menuKeyAction('ArrowDown', -1, [false, true])).toEqual({ kind: 'focus', index: 1 });
+    expect(menuKeyAction('Home', 1, [true, true])).toEqual({ kind: 'focus', index: 0 });
+    expect(menuKeyAction('End', 0, [true, true])).toEqual({ kind: 'focus', index: 1 });
+  });
+
+  it('키보드: Esc는 트리거로 포커스를 돌려주며 닫고, Tab은 포커스를 두고 닫으며, 다른 키는 무시한다', () => {
+    expect(menuKeyAction('Escape', 0, [true, true])).toEqual({ kind: 'close', restoreFocus: true });
+    expect(menuKeyAction('Tab', 0, [true, true])).toEqual({ kind: 'close', restoreFocus: false });
+    expect(menuKeyAction('a', 0, [true, true])).toBeNull();
+    expect(menuKeyAction('ArrowDown', -1, [false, false])).toBeNull();
   });
 });
 

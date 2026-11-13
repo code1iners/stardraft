@@ -5,6 +5,7 @@ import { SetupChecklist } from './Onboarding';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
 import { ManualCheckButton, ManualCheckSheet } from './ManualCheck';
+import { PopoverMenu } from './PopoverMenu';
 import { RestartConfirm, UpdateBanner } from './UpdatePrompts';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
@@ -80,7 +81,7 @@ interface CompactReviewProps {
 
 /**
  * 작은 창의 묶음 보기. 처리되지 않은 묶음을 가장 오래된 미처리 멘션 순으로 하나씩 보인다.
- * 머리에 대기열 위치, ‹ › 이동, 상태 태그, "펼쳐 보기"가 있고, 무시하면 다음 묶음으로 넘어간다.
+ * 머리에 대기열 위치, ‹ › 이동, 상태 태그, ⋯ 메뉴("최근 멘션 확인"·"펼쳐 보기")가 있고, 무시하면 다음 묶음으로 넘어간다.
  */
 function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
   /** 묶음 상태와 열린 저장소 선택 창. */
@@ -101,7 +102,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
     <>
       {selected ? (
         <>
-          <QueueHead queue={queue} selected={selected} onSelect={select} onExpand={handleExpand} />
+          <QueueHead queue={queue} selected={selected} manualCheck={snapshot.manualCheck} onSelect={select} onExpand={handleExpand} />
           <main className="popover-body review-body">
             <BundleMeta bundle={selected} />
             <BundleSections bundle={selected} windowKind="compact" sections={sections} movedWhileViewing={movedWhileViewing} />
@@ -122,11 +123,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
             <span className="popover-logo" aria-hidden="true" />
             <strong>{snapshot.appName}</strong>
             <span className="spacer" />
-            {bundles.length > 0 && (
-              <button type="button" className="btn sm" onClick={handleExpand}>
-                펼쳐 보기
-              </button>
-            )}
+            <PopoverMenu manualCheck={snapshot.manualCheck} canExpand={bundles.length > 0} onExpand={handleExpand} />
             <SettingsButton />
           </header>
           <EmptyDetection snapshot={snapshot} />
@@ -154,14 +151,16 @@ interface QueueHeadProps {
   queue: readonly BundleSnapshot[];
   /** 보이는 묶음. */
   selected: BundleSnapshot;
+  /** 최근 멘션 확인 상태. ⋯ 메뉴 항목이 막혔는지 가른다. */
+  manualCheck: AppSnapshot['manualCheck'];
   /** 묶음을 고른다. */
   onSelect: (bundleId: number) => void;
-  /** "펼쳐 보기"를 눌렀다. */
+  /** 메뉴에서 "펼쳐 보기"를 골랐다. */
   onExpand: () => void;
 }
 
-/** 작은 창 머리. 대기열 위치(`3 / 4`), ‹ › 이동, 상태 태그, "펼쳐 보기"다. 처리됨 묶음을 보고 있으면 위치 대신 "처리한 묶음"이다. */
-function QueueHead({ queue, selected, onSelect, onExpand }: QueueHeadProps) {
+/** 작은 창 머리. 대기열 위치(`3 / 4`), ‹ › 이동, 상태 태그, ⋯ 메뉴다. 처리됨 묶음을 보고 있으면 위치 대신 "처리한 묶음"이다. */
+function QueueHead({ queue, selected, manualCheck, onSelect, onExpand }: QueueHeadProps) {
   /** 보이는 묶음의 대기열 위치. 처리됨 묶음이면 -1. */
   const index = queue.findIndex((bundle) => bundle.id === selected.id);
   /** 앞 묶음과 다음 묶음. */
@@ -179,9 +178,7 @@ function QueueHead({ queue, selected, onSelect, onExpand }: QueueHeadProps) {
       <span className="spacer" />
       <ManualTag bundle={selected} />
       <StatusTag status={selected.status} />
-      <button type="button" className="btn sm" onClick={onExpand}>
-        펼쳐 보기
-      </button>
+      <PopoverMenu manualCheck={manualCheck} canExpand onExpand={onExpand} />
     </header>
   );
 }

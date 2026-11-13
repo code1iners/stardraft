@@ -1091,6 +1091,19 @@ export class MentionBundles {
   }
 
   /**
+   * 최근 멘션 확인 목록의 담당 업무 줄 태그를 정할 때 쓴다. 업무의 묶음 자리는 게시물 본문이므로, 본문 자리에 묶음이 있으면 가장 최근 묶음을,
+   * 최소 기록만 있으면 `record`를, 없으면 `none`을 돌려준다. 본문 멘션 묶음도 같은 자리라 넣는다.
+   */
+  assignmentPlaceOf(postId: string): ManualPlace {
+    /** 업무 본문 자리. */
+    const place = bundlePlaceKey({ postId, remarkId: '-1' });
+    /** 그 자리의 가장 최근 실제 묶음. */
+    const existing = this.latestBundleAt(place);
+    if (existing) return { kind: 'bundle', bundleId: existing.id, status: existing.status };
+    return this.minimalRecords.some((record) => bundlePlaceKey(record) === place) ? { kind: 'record' } : { kind: 'none' };
+  }
+
+  /**
    * 최근 멘션 확인에서 고른 멘션으로 게시할 수 있는 수동 요청 묶음을 만든다. 멘션 위치로 기존 기록을 찾는다.
    * - 그 위치를 든 묶음이 있으면(처리되지 않았거나 처리한 지 7일 안) 새로 만들지 않고 그 묶음을 돌려준다.
    * - 최소 기록만 남았으면 그 최소 기록을 지우고 새 묶음을 만든다. 기록이 없으면 새 묶음을 만든다.

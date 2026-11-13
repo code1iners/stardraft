@@ -1,0 +1,75 @@
+{
+  "response": {
+    "success": true,
+    "code": 200,
+    "message": "[redacted]",
+    "data": {
+      "alarms": {
+        "hasNext": true,
+        "lastCursor": 20,
+        "alarms": [
+          {
+            "alarmId": "id-13",
+            "alarmType": null,
+            "mentionYn": "N",
+            "workerYn": "Y",
+            "readYn": "Y",
+            "projectId": "id-12",
+            "postId": "id-14",
+            "remarkId": "id-15",
+            "replyId": "-1",
+            "registeredDateTime": "20261029122120"
+          },
+          {
+            "alarmId": "id-16",
+            "alarmType": null,
+            "mentionYn": "N",
+            "workerYn": "Y",
+            "readYn": "Y",
+            "projectId": "id-12",
+            "postId": "id-14",
+            "remarkId": "id-17",
+            "replyId": "id-18",
+            "registeredDateTime": "20261029122115"
+          },
+          {
+            "alarmId": "id-19",
+            "alarmType": "E",
+            "mentionYn": "Y",
+            "workerYn": "Y",
+            "readYn": "Y",
+            "projectId": "id-12",
+            "postId": "id-14",
+            "remarkId": "id-17",
+            "replyId": "-1",
+            "registeredDateTime": "20261029120234"
+          },
+          {
+            "alarmId": "id-21",
+            "alarmType": null,
+            "mentionYn": "Y",
+            "workerYn": "Y",
+            "readYn": "Y",
+            "projectId": "id-12",
+            "postId": "id-14",
+            "remarkId": "id-22",
+            "replyId": "id-23",
+            "registeredDateTime": "20261029105140"
+          },
+          {
+            "alarmId": "id-24",
+            "alarmType": null,
+            "mentionYn": "N",
+            "workerYn": "Y",
+            "readYn": "Y",
+            "projectId": "id-12",
+            "postId": "id-14",
+            "remarkId": "id-25",
+            "replyId": "-1",
+            "registeredDateTime": "20261029102448"
+          }
+        ]
+      }
+    }
+  }
+}

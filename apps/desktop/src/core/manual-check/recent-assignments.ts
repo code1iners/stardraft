@@ -14,13 +14,13 @@ import { answeredAfter } from './recent-mentions';
  */
 export type AssignmentMissReason = 'pre-feature-task' | 'pre-feature-assignment' | 'self-authored' | 'no-evidence';
 
-/** 최근 멘션 확인의 담당 업무 목록에서 고를 수 있는 업무 하나. 묶음 자리는 게시글 본문이다. */
+/** 최근 멘션 확인의 담당 업무 목록에서 고를 수 있는 업무 하나. 묶음 자리는 게시물 본문이다. */
 export interface RecentAssignment {
-  /** 이 게시글에 온 가장 최근 WORKER 알림. */
+  /** 이 게시물에 온 가장 최근 WORKER 알림. */
   alarm: FlowAlarm;
-  /** 목록을 만들 때 조회한 게시글 상세. 업무는 하나뿐이고 내가 담당자인 요청 상태다. */
+  /** 목록을 만들 때 조회한 게시물 상세. 업무는 하나뿐이고 내가 담당자인 요청 상태다. */
   post: FlowPost;
-  /** 게시글의 업무 ID. 게시글 ID와 다르다. */
+  /** 게시물의 업무 ID. 게시물 ID와 다르다. */
   taskId: string;
   /** 배정 시각. Flow 형식(`yyyyMMddHHmmss`)이다. 근거가 있으면 그 서버 시각이고, 없으면 알림 시각이다. */
   assignedAt: string;
@@ -34,7 +34,7 @@ export interface RecentAssignment {
   missReasons: AssignmentMissReason[];
 }
 
-/** 이어 불러오기가 시작할 자리. 앞선 불러오기가 돌려준 값을 그대로 넘긴다. 판정한 자리는 게시글 ID다. */
+/** 이어 불러오기가 시작할 자리. 앞선 불러오기가 돌려준 값을 그대로 넘긴다. 판정한 자리는 게시물 ID다. */
 export type RecentAssignmentCursor = AlarmWalkCursor;
 
 /** 담당 업무 목록의 한 번 불러온 몫. */
@@ -46,7 +46,7 @@ export interface RecentAssignmentPage {
 }
 
 /**
- * 최근 WORKER 알림을 최신부터(`from`이 있으면 그 자리부터) 넘기며 게시글마다 가장 최근 알림 하나를 남기고, 게시글 상세를 조회해 후보를 `MANUAL_CHECK_PAGE_SIZE`건까지 모은다.
+ * 최근 WORKER 알림을 최신부터(`from`이 있으면 그 자리부터) 넘기며 게시물마다 가장 최근 알림 하나를 남기고, 게시물 상세를 조회해 후보를 `MANUAL_CHECK_PAGE_SIZE`건까지 모은다.
  * 후보는 내 계정에 온 알림이고, 업무가 하나뿐이며, 내가 담당자인 요청 상태 업무다. 감지와 달리 기능 시작 전 업무·배정, 자기 작성 업무, 배정 근거 없음도
  * 후보로 두고 그 까닭을 `missReasons`에 남긴다. Flow의 읽음 상태는 바꾸지 않는다.
  * `account`는 키 확인 때 얻은 내 구성원 정보, `state`는 담당 업무 감지 상태다. 다른 계정의 상태이거나 없으면 기능 시작 전 여부를 따지지 않는다.
@@ -63,7 +63,7 @@ export async function listRecentAssignments(
   const walk = await collectFromAlarms(
     (cursor) => api.listWorkerAlarms(cursor),
     from,
-    // 다른 계정에 온 알림은 판정하지 않는다. 그 게시글의 내 알림이 뒤에 있으면 그것으로 판정한다.
+    // 다른 계정에 온 알림은 판정하지 않는다. 그 게시물의 내 알림이 뒤에 있으면 그것으로 판정한다.
     (alarm) => (alarm.receiverId && !isSameFlowUser(alarm.receiverId, account.userId) ? null : alarm.postId),
     (alarm) => judgeAssignment(api, account, mine, alarm),
   );
@@ -71,7 +71,7 @@ export async function listRecentAssignments(
   return { ok: true, value: { assignments: walk.value.found, next: walk.value.next } };
 }
 
-/** 게시글 하나의 가장 최근 WORKER 알림으로 그 업무가 후보인지 판정한다. 상세나 댓글을 받지 못하면 그 실패를 돌려준다. */
+/** 게시물 하나의 가장 최근 WORKER 알림으로 그 업무가 후보인지 판정한다. 상세나 댓글을 받지 못하면 그 실패를 돌려준다. */
 async function judgeAssignment(
   api: FlowApi,
   account: FlowEmployee,
@@ -81,9 +81,9 @@ async function judgeAssignment(
   /** 최신 상세. 작성자와 업무, 담당자, 상태를 본다. */
   const detail = await api.getPost(alarm.postId);
   if (!detail.ok) return { kind: 'failed', failure: detail.failure };
-  /** 방금 조회한 게시글. */
+  /** 방금 조회한 게시물. */
   const post = detail.value;
-  /** 게시글의 유일한 업무. 업무가 여럿이면 어느 업무에 대한 배정인지 모호해 후보가 아니다. */
+  /** 게시물의 유일한 업무. 업무가 여럿이면 어느 업무에 대한 배정인지 모호해 후보가 아니다. */
   const task = post.tasks?.length === 1 ? post.tasks[0]! : undefined;
   if (post.postId !== alarm.postId || !task?.taskId || !task.workerIds?.some((id) => isSameFlowUser(id, account.userId))) return { kind: 'skip' };
   // 진행·피드백·보류·완료와 읽지 못한 상태는 답이 필요한 요청이 아니다.

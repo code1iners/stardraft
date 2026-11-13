@@ -830,9 +830,9 @@ it('마스킹한 실제 상세 응답을 담당 업무 구조로 읽는다', asy
 });
 
 describe('Flow 어댑터: 마스킹한 실응답의 최근 담당 업무 조회', () => {
-  it('실제 WORKER 알림 첫 쪽의 숫자 커서를 다음 쪽 커서로 읽고, 같은 게시글의 알림 여럿을 Flow가 준 순서대로 돌려준다(읽음 상태는 보내지 않음)', async () => {
-    /** 2026-10-29 실응답 첫 쪽에서 사례 게시글의 알림만 남긴 투영본. 투영본에 없던 projectId만 별칭으로 채웠다. */
+  it('실제 WORKER 알림 첫 쪽의 숫자 커서를 다음 쪽 커서로 읽고, 같은 게시물의 알림 여럿을 Flow가 준 순서대로 돌려준다(읽음 상태는 보내지 않음)', async () => {
     const server = new FakeFlowServer();
+    // 2026-10-29 실응답 첫 쪽에서 사례 게시물의 알림만 남긴 투영본이다. 투영본에 없던 projectId만 별칭으로 채웠다.
     server.replyNext({ status: 200, body: workerAlarms }, { status: 200, body: workerAlarms });
     const api = connect(server);
 
@@ -855,8 +855,8 @@ describe('Flow 어댑터: 마스킹한 실응답의 최근 담당 업무 조회'
   });
 
   it('내가 유일한 담당자인 요청 상태 업무의 실제 상세를 업무 ID·담당자·요청 상태와 작성자·시각으로 읽는다', async () => {
-    /** 2026-10-29 사례 C 상세의 투영본. 상태 범주(`0`)와 담당자를 기존 상세 사례의 컬럼 구조로 옮겼다. */
     const server = new FakeFlowServer();
+    // 2026-10-29 사례 C 상세의 투영본이다. 상태 범주(`0`)와 담당자를 기존 상세 사례의 컬럼 구조로 옮겼다.
     server.replyNext({ status: 200, body: flowEnvelope(assignmentActivePost) });
 
     expect(await connect(server).getPost(assignmentActivePost.postId)).toMatchObject({ ok: true, value: {

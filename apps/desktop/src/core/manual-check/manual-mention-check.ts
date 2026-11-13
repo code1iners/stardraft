@@ -155,4 +155,3 @@ export class ManualMentionCheck {
 function loadFailureOf(kind: FlowApiFailure['kind']): ManualCheckLoadFailure {
   return kind === 'unauthorized' || kind === 'network' || kind === 'rate-limited' ? kind : 'unexpected';
 }
-

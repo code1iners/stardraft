@@ -4451,7 +4451,7 @@ function task(overrides: Partial<FlowTask> = {}): FlowTask {
 }
 
 /**
- * 업무 게시글 `postId`를 더하고, 그 본문에 온 WORKER 알림 `alarmId`를 알림 목록 맨 앞에 더한다.
+ * 업무 게시물 `postId`를 더하고, 그 본문에 온 WORKER 알림 `alarmId`를 알림 목록 맨 앞에 더한다.
  * 기본은 08:50에 다른 사람이 만들며 나를 담당자로 지정한 요청 업무이고, 알림은 그 생성 알림이다.
  */
 function addTask(flow: FakeFlowApi, alarmId: string, postId: string, post: Partial<FakeFlowPost> = {}, alarmOverrides: Partial<FlowAlarm> = {}): void {
@@ -4470,7 +4470,7 @@ function addTask(flow: FakeFlowApi, alarmId: string, postId: string, post: Parti
 }
 
 describe('최근 멘션 확인: 담당 업무 후보', () => {
-  it('내가 담당자인 요청 상태 업무만 나오고, 진행·완료 업무, 업무가 여럿인 게시글, 내가 담당자가 아닌 업무, 다른 계정의 알림은 나오지 않는다', async () => {
+  it('내가 담당자인 요청 상태 업무만 나오고, 진행·완료 업무, 업무가 여럿인 게시물, 내가 담당자가 아닌 업무, 다른 계정의 알림은 나오지 않는다', async () => {
     const { flow, bundles, clock, stateStore } = await setup();
     addTask(flow, '201', 'active');
     addTask(flow, '202', 'in-progress', { tasks: [task({ completion: 'unknown' })] });
@@ -4524,10 +4524,10 @@ describe('최근 멘션 확인: 담당 업무 후보', () => {
     expect(bundles.state()).toEqual([]);
   });
 
-  it('더 보기는 다음 10건을 이어 불러오고 끝에서 멈추며, 같은 게시글의 알림이 여럿이어도 가장 최근 알림 한 줄만 나온다', async () => {
+  it('더 보기는 다음 10건을 이어 불러오고 끝에서 멈추며, 같은 게시물의 알림이 여럿이어도 가장 최근 알림 한 줄만 나온다', async () => {
     const { flow, bundles, clock, stateStore } = await setup();
     flow.alarmPageSize = 4;
-    // 게시글 0~11. 알림이 오래된 것부터 쌓여 11이 가장 최근이다. 게시글 3과 9에는 나중에 댓글 알림이 또 왔다.
+    // 게시물 0~11. 알림이 오래된 것부터 쌓여 11이 가장 최근이다. 게시물 3과 9에는 나중에 댓글 알림이 또 왔다.
     for (let index = 0; index < 12; index += 1) addTask(flow, String(300 + index), `task-${index}`);
     flow.addWorkerAlarm(alarm('320', { postId: 'task-3', remarkId: '700', registeredDateTime: '20261020085500' }));
     flow.addWorkerAlarm(alarm('321', { postId: 'task-9', remarkId: '701', registeredDateTime: '20261020085600' }));
@@ -4540,7 +4540,7 @@ describe('최근 멘션 확인: 담당 업무 후보', () => {
     const second = await check.listAssignments(first.next);
     if (!second.ok) throw new Error('이어 불러오지 못했습니다.');
 
-    /** 쪽마다 나온 게시글과 그 줄의 알림. */
+    /** 쪽마다 나온 게시물과 그 줄의 알림. */
     const rows = [first, second].map((page) => page.candidates.map(({ post, alarm: row }) => `${post.postId}@${row.alarmId}`));
     expect(rows).toEqual([
       ['task-9@321', 'task-3@320', 'task-11@311', 'task-10@310', 'task-8@308', 'task-7@307', 'task-6@306', 'task-5@305', 'task-4@304', 'task-2@302'],
@@ -4587,7 +4587,7 @@ describe('최근 멘션 확인: 담당 업무 후보', () => {
     ]);
   });
 
-  it('불러오지 못하면 키 없음, 키 거부, 연결 실패, 요청 한도를 구분해 돌려주고 키 거부는 "키 확인 필요"로 알리며, 한 게시글에서만 난 실패는 그 업무만 건너뛴다', async () => {
+  it('불러오지 못하면 키 없음, 키 거부, 연결 실패, 요청 한도를 구분해 돌려주고 키 거부는 "키 확인 필요"로 알리며, 한 게시물에서만 난 실패는 그 업무만 건너뛴다', async () => {
     const { flow, bundles, clock, stateStore } = await setup();
     addTask(flow, '201', 'gone');
     addTask(flow, '202', 'kept');
@@ -4605,7 +4605,7 @@ describe('최근 멘션 확인: 담당 업무 후보', () => {
     expect(await check.listAssignments(null)).toEqual({ ok: false, reason: 'rate-limited' });
 
     flow.removePost('gone');
-    /** 지워진 게시글을 건너뛴 목록. */
+    /** 지워진 게시물을 건너뛴 목록. */
     const list = await check.listAssignments(null);
     expect(list.ok && list.candidates.map(({ post }) => post.postId)).toEqual(['kept']);
     expect(bundles.state()).toEqual([]);

@@ -2041,6 +2041,29 @@ p.detail-empty {
   max-height: calc(100% - 24px);
 }
 
+/* 확인 시트의 "멘션 | 담당 업무" 탭. 고른 탭은 밑줄과 강조색으로 보인다. */
+.manual-check-tabs {
+  display: flex;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.manual-check-tabs button {
+  padding: 4px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.manual-check-tabs button.on {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .manual-check-choices {
   flex: 1 1 auto;
   min-height: 0;
@@ -2069,6 +2092,7 @@ p.detail-empty {
 }
 
 .manual-check-choice .list-row-top {
+  flex-wrap: wrap;
   justify-content: flex-start;
   align-items: center;
 }

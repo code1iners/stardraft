@@ -179,7 +179,7 @@ function currentReviewSnapshot({ bundles, drafts, posting, reviewSections, repoM
 
 /** 지금 최근 멘션 확인 상태의 스냅숏. */
 function currentManualCheckSnapshot({ manualCheck, bundles }: IpcServices) {
-  return manualCheckSnapshot(manualCheck.state(), manualCheck.canOpen(), (mention) => bundles.manualPlaceOf(mention));
+  return manualCheckSnapshot(manualCheck.state(), manualCheck.canOpen(), (mention) => bundles.manualPlaceOf(mention), (postId) => bundles.assignmentPlaceOf(postId));
 }
 
 /** 참여 Flow 프로젝트 목록에서 Flow 프로젝트를 찾는 함수. 목록을 아직 받지 않았으면 언제나 `null`이다. */
@@ -405,6 +405,9 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'close-manual-check':
       manualCheck.close();
+      return;
+    case 'select-manual-check-tab':
+      await manualCheck.selectTab(command.tab);
       return;
     case 'reload-manual-check':
       await manualCheck.reload();

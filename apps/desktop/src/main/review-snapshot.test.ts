@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ManualCheckState } from '../core/manual-check/manual-check-session';
 import type { BundledMention, MentionBundle } from '../core/bundles/mention-bundle';
 import type { RunRecord } from '../core/drafts/draft';
 import type { BundleContext } from '../core/flow/bundle-context';
@@ -761,11 +762,14 @@ describe('문체 검사', () => {
 
 describe('최근 멘션 확인 스냅숏', () => {
   /** 불러온 확인 시트. 첫 줄 앞에 빈 줄이 있는 멘션 둘이다. 첫째는 답했고, 둘째는 답하지 않았다. */
-  const loaded = {
+  const loaded: ManualCheckState = {
     sheet: {
-      window: 'popover' as const,
-      status: 'loaded' as const,
-      candidates: [
+      window: 'popover',
+      tab: 'mentions',
+      assignments: { status: 'idle' },
+      mentions: {
+        status: 'loaded',
+        candidates: [
         {
           mention: mention('102', { text: '\n  @[테스트 사용자](me@example.test) 배포 언제 되나요?\n둘째 줄' }),
           postTitle: '가짜 게시물',
@@ -774,19 +778,22 @@ describe('최근 멘션 확인 스냅숏', () => {
           projectTitle: '가짜 프로젝트',
         },
         { mention: mention('101', { remarkId: '90000099' }), postTitle: '가짜 게시물', connectUrl: null, answered: false, projectTitle: null },
-      ],
-      hasMore: true,
-      loadingMore: false,
-      moreFailure: null,
+        ],
+        hasMore: true,
+        loadingMore: false,
+        moreFailure: null,
+      },
     },
   };
+  /** 장소마다 기록이 없다고 답하는 조회. */
+  const none = () => ({ kind: 'none' as const });
 
   it('줄은 송신자, Flow 프로젝트, 첫 줄, 시각만 넘기고 사용자 ID와 이어 불러올 커서는 넘기지 않는다', () => {
     /** 만든 스냅숏. */
-    const snapshot = manualCheckSnapshot(loaded, true, () => ({ kind: 'none' }));
+    const snapshot = manualCheckSnapshot(loaded, true, none, none);
 
     expect(snapshot.canOpen).toBe(true);
-    expect(snapshot.sheet).toMatchObject({ window: 'popover', status: 'loaded', hasMore: true, loadingMore: false, moreFailure: null });
+    expect(snapshot.sheet).toMatchObject({ window: 'popover', tab: 'mentions', status: 'loaded', hasMore: true, loadingMore: false, moreFailure: null });
     expect(snapshot.sheet?.status === 'loaded' && snapshot.sheet.rows[0]).toEqual({
       kind: 'mention',
       alarmId: '102',
@@ -795,6 +802,7 @@ describe('최근 멘션 확인 스냅숏', () => {
       firstLine: '@테스트 사용자 배포 언제 되나요?',
       at: Date.UTC(2026, 9, 19, 23, 50),
       tags: [{ kind: 'answered' }],
+      missReasons: [],
     });
     expect(JSON.stringify(snapshot)).not.toContain('example.test');
     expect(JSON.stringify(snapshot)).not.toContain('decidedLocations');
@@ -802,7 +810,7 @@ describe('최근 멘션 확인 스냅숏', () => {
 
   it('줄 태그는 답함, 이미 있는 묶음과 그 상태, 처리됨(최소 기록)이 함께 붙는다', () => {
     /** 줄마다 찾은 기존 기록. 첫째는 묶음, 둘째는 최소 기록이다. */
-    const snapshot = manualCheckSnapshot(loaded, true, (location) => (location.alarmId === '102' ? { kind: 'bundle', bundleId: 7, status: 'posted' } : { kind: 'record' }));
+    const snapshot = manualCheckSnapshot(loaded, true, (location) => (location.alarmId === '102' ? { kind: 'bundle', bundleId: 7, status: 'posted' } : { kind: 'record' }), none);
     /** 줄. */
     const rows = snapshot.sheet?.status === 'loaded' ? snapshot.sheet.rows : [];
 
@@ -811,12 +819,72 @@ describe('최근 멘션 확인 스냅숏', () => {
   });
 
   it('닫혀 있거나 불러오는 중이거나 실패한 시트는 그대로 넘기고, 열 수 있는지는 따로 넘긴다', () => {
-    expect(manualCheckSnapshot({ sheet: null }, false, () => ({ kind: 'none' }))).toEqual({ canOpen: false, sheet: null });
-    expect(manualCheckSnapshot({ sheet: { window: 'settings', status: 'loading' } }, true, () => ({ kind: 'none' })).sheet).toEqual({ window: 'settings', status: 'loading' });
-    expect(manualCheckSnapshot({ sheet: { window: 'settings', status: 'failed', reason: 'rate-limited' } }, true, () => ({ kind: 'none' })).sheet).toEqual({
+    expect(manualCheckSnapshot({ sheet: null }, false, none, none)).toEqual({ canOpen: false, sheet: null });
+    expect(manualCheckSnapshot({ sheet: { window: 'settings', tab: 'mentions', assignments: { status: 'idle' }, mentions: { status: 'loading' } } }, true, none, none).sheet).toEqual({
       window: 'settings',
-      status: 'failed',
-      reason: 'rate-limited',
+      tab: 'mentions',
+      status: 'loading',
+    });
+    expect(
+      manualCheckSnapshot({ sheet: { window: 'settings', tab: 'mentions', assignments: { status: 'idle' }, mentions: { status: 'failed', reason: 'rate-limited' } } }, true, none, none).sheet,
+    ).toEqual({ window: 'settings', tab: 'mentions', status: 'failed', reason: 'rate-limited' });
+  });
+
+  it('지금 보는 탭의 상태만 넘기고, 담당 업무 줄은 작성자·프로젝트·업무 제목·알림 시각과 상태 태그, 감지에서 빠진 이유를 넘긴다', () => {
+    /** 담당 업무 탭을 보는 시트. 멘션 탭은 실패했어도 담당 업무 탭만 보인다. */
+    const state: ManualCheckState = {
+      sheet: {
+        window: 'popover',
+        tab: 'assignments',
+        mentions: { status: 'failed', reason: 'network' },
+        assignments: {
+          status: 'loaded',
+          candidates: [
+            {
+              alarm: { alarmId: '201', projectId: 'project-1', postId: 'post-1', remarkId: '-1', replyId: '-1', receiverId: 'me@example.test', registerId: 'author@example.test', registerName: '알림 보낸 사람', registeredDateTime: '20261019235000' },
+              post: { postId: 'post-1', title: '쿠폰 만료 처리 오류 수정', connectUrl: null, registerId: 'author@example.test', registerName: '업무 작성자', registeredDateTime: '20261019230000', textComponents: [], attachments: [] },
+              taskId: 'task-1',
+              assignedAt: '20261019235000',
+              assignedAtEstimated: true,
+              answers: [],
+              answered: true,
+              missReasons: ['pre-feature-task', 'no-evidence'],
+              projectTitle: '백오피스',
+            },
+          ],
+          hasMore: false,
+          loadingMore: false,
+          moreFailure: null,
+        },
+      },
+    };
+
+    /** 업무 본문 자리를 찾은 게시물. */
+    const places: string[] = [];
+    const snapshot = manualCheckSnapshot(state, true, none, (postId) => {
+      places.push(postId);
+      return { kind: 'bundle', bundleId: 9, status: 'ready' };
+    });
+
+    expect(places).toEqual(['post-1']);
+    expect(snapshot.sheet).toMatchObject({ tab: 'assignments', status: 'loaded', hasMore: false });
+    expect(snapshot.sheet?.status === 'loaded' && snapshot.sheet.rows).toEqual([
+      {
+        kind: 'assignment',
+        alarmId: '201',
+        senderName: '업무 작성자',
+        projectTitle: '백오피스',
+        firstLine: '쿠폰 만료 처리 오류 수정',
+        at: Date.UTC(2026, 9, 19, 14, 50),
+        tags: [{ kind: 'answered' }, { kind: 'bundle', bundleId: 9, status: 'ready' }],
+        missReasons: ['pre-feature-task', 'no-evidence'],
+      },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain('example.test');
+    // 아직 불러오지 않은 담당 업무 탭은 불러오는 중으로 보인다.
+    expect(manualCheckSnapshot({ sheet: { window: 'popover', tab: 'assignments', mentions: { status: 'loading' }, assignments: { status: 'idle' } } }, true, none, none).sheet).toMatchObject({
+      tab: 'assignments',
+      status: 'loading',
     });
   });
 });
@@ -839,6 +907,15 @@ describe('묶음 스냅숏: 담당 해제', () => {
     const snapshot = bundleSnapshot(bundle({ status: 'ready', remarkId: '-1', mentions: [], draft, assignment: { ...assignment, unassignedAt: 5_000 } }), () => PROJECT);
     expect(snapshot.assignment?.blockedByUnassignment).toBe(true);
     expect(snapshot.draft).toMatchObject({ canPost: false, canRegenerate: false, canEdit: true });
+  });
+
+  it('배정 근거 없이 알림 시각으로 대신한 배정 시각은 추정 표시와 함께 넘기고, 근거 시각은 표시 없이 넘긴다', () => {
+    /** 추정 배정 시각의 스냅숏. */
+    const estimated = bundleSnapshot(bundle({ status: 'ready', remarkId: '-1', mentions: [], draft, assignment: { ...assignment, assignedAtEstimated: true } }), () => PROJECT);
+    expect(estimated.assignment).toMatchObject({ assignedAt: Date.UTC(2026, 9, 20, 0, 1), assignedAtEstimated: true });
+    /** 근거 시각의 스냅숏. */
+    const evidenced = bundleSnapshot(bundle({ status: 'ready', remarkId: '-1', mentions: [], draft, assignment }), () => PROJECT);
+    expect(evidenced.assignment?.assignedAtEstimated).toBeUndefined();
   });
 
   it('직접 멘션이 남은 합친 묶음은 담당만 해제돼도 게시할 수 있다', () => {

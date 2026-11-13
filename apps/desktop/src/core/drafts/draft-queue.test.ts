@@ -4330,12 +4330,31 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
 });
 
 /** 가짜 Flow와 멘션 묶음으로 최근 멘션 확인 시트를 만든다. 시트가 보인 묶음 ID와 열 수 있는지 여부도 함께 돌려준다. */
-function manualSessionOf(flow: FakeFlowApi, bundles: MentionBundles, clock: FakeClock) {
+function manualSessionOf(flow: FakeFlowApi, bundles: MentionBundles, clock: FakeClock, stateStore?: Pick<StateStore, 'getAssignmentState'>) {
   /** 열 수 있는지 여부와 시트가 보인 묶음 ID. */
   const env = { canOpen: true, shown: [] as number[] };
-  const { check, env: checkEnv } = manualCheckOf(flow, bundles, clock);
+  const { check, env: checkEnv } = manualCheckOf(flow, bundles, clock, stateStore);
   const session = new ManualCheckSession({ check, canOpen: () => env.canOpen, showBundle: (bundleId) => env.shown.push(bundleId) });
   return { session, env, checkEnv };
+}
+
+/** 지금까지 Flow가 받은 WORKER 알림 조회 횟수. */
+function workerRequestsOf(flow: FakeFlowApi): number {
+  return flow.requests.filter((request) => request.startsWith('GET /user/alarms/worker')).length;
+}
+
+/** 시트가 든 멘션 탭의 불러온 목록. 아직 불러오지 못했으면 빈 배열이다. */
+function mentionRowsOf(session: ManualCheckSession) {
+  /** 멘션 탭의 상태. */
+  const list = session.state().sheet?.mentions;
+  return list?.status === 'loaded' ? list.candidates : [];
+}
+
+/** 시트가 든 담당 업무 탭의 불러온 목록. 아직 불러오지 못했으면 빈 배열이다. */
+function assignmentRowsOf(session: ManualCheckSession) {
+  /** 담당 업무 탭의 상태. */
+  const list = session.state().sheet?.assignments;
+  return list?.status === 'loaded' ? list.candidates : [];
 }
 
 describe('최근 멘션 확인 시트', () => {
@@ -4351,16 +4370,16 @@ describe('최근 멘션 확인 시트', () => {
 
     env.canOpen = true;
     await session.open('popover');
-    /** 처음 열린 시트. */
+    /** 처음 열린 시트. 멘션 탭이 기본이다. */
     const first = session.state().sheet;
-    expect(first).toMatchObject({ window: 'popover', status: 'loaded', hasMore: true, loadingMore: false, moreFailure: null });
-    expect(first?.status === 'loaded' && first.candidates.map((candidate) => candidate.mention.alarmId)).toEqual(['211', '210', '209', '208', '207', '206', '205', '204', '203', '202']);
+    expect(first).toMatchObject({ window: 'popover', tab: 'mentions', mentions: { status: 'loaded', hasMore: true, loadingMore: false, moreFailure: null }, assignments: { status: 'idle' } });
+    expect(mentionRowsOf(session).map((candidate) => candidate.mention.alarmId)).toEqual(['211', '210', '209', '208', '207', '206', '205', '204', '203', '202']);
 
     await session.more();
     /** 더 보기 뒤의 시트. */
     const second = session.state().sheet;
-    expect(second?.status === 'loaded' && second.candidates.map((candidate) => candidate.mention.alarmId).slice(10)).toEqual(['201', '200']);
-    expect(second).toMatchObject({ hasMore: false });
+    expect(mentionRowsOf(session).map((candidate) => candidate.mention.alarmId).slice(10)).toEqual(['201', '200']);
+    expect(second).toMatchObject({ mentions: { hasMore: false } });
     // 끝이면 더 불러오지 않는다.
     await session.more();
     expect(session.state().sheet).toEqual(second);
@@ -4374,14 +4393,14 @@ describe('최근 멘션 확인 시트', () => {
 
     checkEnv.hasKey = false;
     await session.open('settings');
-    expect(session.state().sheet).toEqual({ window: 'settings', status: 'failed', reason: 'no-key' });
+    expect(session.state().sheet).toMatchObject({ window: 'settings', tab: 'mentions', mentions: { status: 'failed', reason: 'no-key' } });
     checkEnv.hasKey = true;
     await session.reload();
-    expect(session.state().sheet).toMatchObject({ window: 'settings', status: 'loaded' });
+    expect(session.state().sheet).toMatchObject({ window: 'settings', mentions: { status: 'loaded' } });
 
     flow.respondToListMentionAlarms({ ok: false, failure: { kind: 'rate-limited', retryAfterMs: 30_000 } });
     await session.more();
-    expect(session.state().sheet).toMatchObject({ status: 'loaded', loadingMore: false, moreFailure: 'rate-limited', hasMore: true });
+    expect(session.state().sheet).toMatchObject({ mentions: { status: 'loaded', loadingMore: false, moreFailure: 'rate-limited', hasMore: true } });
 
     session.close();
     expect(session.state()).toEqual({ sheet: null });
@@ -4430,9 +4449,7 @@ describe('최근 멘션 확인 시트', () => {
     const { session, env } = manualSessionOf(flow, bundles, clock);
 
     await session.open('popover');
-    /** 목록에 보인 줄. */
-    const sheet = session.state().sheet;
-    expect(sheet?.status === 'loaded' && sheet.candidates.map((candidate) => bundles.manualPlaceOf(candidate.mention).kind)).toEqual(['record']);
+    expect(mentionRowsOf(session).map((candidate) => bundles.manualPlaceOf(candidate.mention).kind)).toEqual(['record']);
 
     /** 고른 결과. */
     const result = await session.pick('101');
@@ -4442,6 +4459,88 @@ describe('최근 멘션 확인 시트', () => {
     expect(env.shown).toEqual([result!.bundleId]);
     expect(await stateStore.listMinimalRecords()).toEqual([]);
     expect(bundles.state()).toMatchObject([{ id: result!.bundleId, manual: true }]);
+  });
+
+  it('담당 업무 탭은 처음 열 때만 불러오고, 탭마다 자기 목록과 더 보기를 가진다. 탭을 오가도 다시 불러오지 않는다', async () => {
+    const { flow, bundles, clock, stateStore } = await setup();
+    flow.alarmPageSize = 5;
+    for (let index = 0; index < 12; index += 1) addTask(flow, String(300 + index), `task-${index}`);
+    flow.addAlarm(addThreadMention(flow, '101', '701', '질문', '20261020085000'));
+    const { session } = manualSessionOf(flow, bundles, clock, stateStore);
+
+    await session.open('popover');
+    // 멘션 탭만 불러왔고 담당 업무 탭은 조회하지 않았다.
+    expect(session.state().sheet).toMatchObject({ tab: 'mentions', assignments: { status: 'idle' } });
+    expect(workerRequestsOf(flow)).toBe(0);
+
+    await session.selectTab('assignments');
+    expect(session.state().sheet).toMatchObject({ tab: 'assignments', assignments: { status: 'loaded', hasMore: true } });
+    expect(assignmentRowsOf(session)).toHaveLength(10);
+    /** 처음 조회한 횟수. */
+    const requests = workerRequestsOf(flow);
+    expect(requests).toBeGreaterThan(0);
+
+    // 더 보기는 지금 보는 탭만 이어 불러온다.
+    await session.more();
+    expect(assignmentRowsOf(session)).toHaveLength(12);
+    expect(session.state().sheet).toMatchObject({ assignments: { hasMore: false }, mentions: { status: 'loaded', candidates: [expect.anything()] } });
+
+    /** 탭을 오간 뒤 조회 횟수. */
+    const before = workerRequestsOf(flow);
+    await session.selectTab('mentions');
+    await session.selectTab('assignments');
+    expect(workerRequestsOf(flow)).toBe(before);
+
+    // 시트를 닫았다 다시 열면 담당 업무 탭은 다시 처음 열 때처럼 비어 있다.
+    session.close();
+    await session.open('popover');
+    expect(session.state().sheet).toMatchObject({ tab: 'mentions', assignments: { status: 'idle' } });
+  });
+
+  it('담당 업무 탭의 불러오기 실패는 그 탭에만 남고 [다시 불러오기]로 이어 가며, 멘션 탭에는 영향이 없다', async () => {
+    const { flow, bundles, clock, stateStore } = await setup();
+    addTask(flow, '201', 'active');
+    flow.addAlarm(addThreadMention(flow, '101', '701', '질문', '20261020085000'));
+    const { session } = manualSessionOf(flow, bundles, clock, stateStore);
+
+    await session.open('settings');
+    flow.failOn('GET /user/alarms/worker', { kind: 'rate-limited', retryAfterMs: 30_000 }, 1);
+    await session.selectTab('assignments');
+    expect(session.state().sheet).toMatchObject({ tab: 'assignments', mentions: { status: 'loaded' }, assignments: { status: 'failed', reason: 'rate-limited' } });
+
+    await session.reload();
+    expect(assignmentRowsOf(session).map((candidate) => candidate.post.postId)).toEqual(['active']);
+    expect(mentionRowsOf(session)).toHaveLength(1);
+  });
+
+  it('담당 업무를 고르면 수동 요청 묶음이 만들어지고 시트가 닫히며 그 묶음을 보인다. 이미 묶음이 있는 업무는 그 묶음을 보이고, 다른 탭의 알림 ID는 고를 수 없다', async () => {
+    const { flow, executor, bundles, stateStore, clock, repos } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    addTask(flow, '201', 'active');
+    flow.addAlarm(addThreadMention(flow, '101', '701', '질문', '20261020085000'));
+    const { session, env } = manualSessionOf(flow, bundles, clock, stateStore);
+
+    await session.open('popover');
+    await session.selectTab('assignments');
+    // 멘션 탭의 알림 ID는 담당 업무 탭에서 찾지 않는다.
+    expect(await session.pick('101')).toBeNull();
+    expect(session.state().sheet).not.toBeNull();
+    /** 고른 결과. */
+    const first = await session.pick('201');
+    await settle();
+
+    expect(first?.kind).toBe('created');
+    expect(session.state()).toEqual({ sheet: null });
+    expect(env.shown).toEqual([first!.bundleId]);
+    expect(bundles.get(first!.bundleId)).toMatchObject({ manual: true, status: 'ready', assignment: { taskId: 'task-active' } });
+
+    // 다시 열어 담당 업무 탭에서 같은 업무를 고르면 새로 만들지 않고 그 묶음으로 이동한다.
+    await session.open('popover');
+    await session.selectTab('assignments');
+    expect(bundles.assignmentPlaceOf('active')).toEqual({ kind: 'bundle', bundleId: first!.bundleId, status: 'ready' });
+    expect(await session.pick('201')).toEqual({ kind: 'existing', bundleId: first!.bundleId });
+    expect(env.shown).toEqual([first!.bundleId, first!.bundleId]);
+    expect(bundles.state()).toHaveLength(1);
   });
 });
 

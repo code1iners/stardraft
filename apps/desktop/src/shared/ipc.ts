@@ -377,31 +377,49 @@ export type ManualCheckLoadFailureSnapshot = 'no-key' | 'unauthorized' | 'networ
  */
 export type ManualCheckRowTagSnapshot = { kind: 'answered' } | { kind: 'bundle'; bundleId: number; status: BundleStatusSnapshot } | { kind: 'archived' };
 
-/** 최근 멘션 확인 시트의 줄 하나. */
+/** 최근 멘션 확인 시트의 탭. 멘션이 기본이다. */
+export const MANUAL_CHECK_TABS = ['mentions', 'assignments'] as const;
+
+/** 최근 멘션 확인 시트의 탭 하나. */
+export type ManualCheckTabSnapshot = (typeof MANUAL_CHECK_TABS)[number];
+
+/**
+ * 담당 업무 감지가 자동으로 가져오지 않은 까닭. 담당 업무 줄에 태그로 보인다.
+ * 기능 시작 전 업무, 기능 시작 전 배정, 자기 작성 업무, 배정 근거 없음이다.
+ */
+export type ManualCheckMissReasonSnapshot = 'pre-feature-task' | 'pre-feature-assignment' | 'self-authored' | 'no-evidence';
+
+/** 최근 멘션 확인 시트의 줄 하나. 멘션 줄과 담당 업무 줄이 있다. */
 export interface ManualCheckRowSnapshot {
-  /** 항목 종류. 지금은 멘션만 있고, 담당 업무는 뒤 티켓에서 더한다. */
-  kind: 'mention';
-  /** 고를 때 보내는 알림 ID. */
+  /** 항목 종류. 멘션이거나 담당 업무다. */
+  kind: 'mention' | 'assignment';
+  /** 고를 때 보내는 알림 ID. 지금 보는 탭의 목록에서 찾는다. */
   alarmId: string;
-  /** 송신자 이름. 비어 있을 수 있다. */
+  /** 멘션이면 송신자, 담당 업무면 업무 작성자의 이름. 비어 있을 수 있다. */
   senderName: string;
   /** Flow 프로젝트 이름. 모르면 `null`. */
   projectTitle: string | null;
-  /** 멘션 글의 첫 줄. 멘션 표기는 `@이름`으로 바꿨다. */
+  /** 멘션이면 글의 첫 줄(멘션 표기는 `@이름`), 담당 업무면 업무 제목. */
   firstLine: string;
-  /** 멘션 시각(Unix epoch 밀리초). */
+  /** 멘션이면 멘션 시각, 담당 업무면 가장 최근 알림 시각(Unix epoch 밀리초). */
   at: number;
   /** 줄 상태 태그. 없으면 빈 배열. */
   tags: ManualCheckRowTagSnapshot[];
+  /** 담당 업무 줄에서 감지에서 빠진 이유. 없으면 빈 배열이고, 멘션 줄은 항상 빈 배열이다. */
+  missReasons: ManualCheckMissReasonSnapshot[];
 }
 
-/** 열린 최근 멘션 확인 시트. */
+/**
+ * 열린 최근 멘션 확인 시트. 지금 보는 탭(`tab`)의 목록 상태를 담는다. 다른 탭의 상태는 main이 들고 탭을 바꾸면 그 탭의 상태가 온다.
+ * 담당 업무 탭을 처음 열기 전에는 곧바로 불러오기 시작하므로 `loading`이다.
+ */
 export type ManualCheckSheetSnapshot =
   /** 처음 불러오는 중이다. */
-  | { window: ManualCheckWindowSnapshot; status: 'loading' }
+  | { window: ManualCheckWindowSnapshot; tab: ManualCheckTabSnapshot; status: 'loading' }
   /** 불러왔다. 최신이 앞이다. `hasMore`면 [더 보기]를 보이고, `loadingMore`는 이어 불러오는 중, `moreFailure`는 이어 불러오지 못한 까닭이다. */
   | {
       window: ManualCheckWindowSnapshot;
+      tab: ManualCheckTabSnapshot;
       status: 'loaded';
       rows: ManualCheckRowSnapshot[];
       hasMore: boolean;
@@ -409,7 +427,7 @@ export type ManualCheckSheetSnapshot =
       moreFailure: ManualCheckLoadFailureSnapshot | null;
     }
   /** 불러오지 못했다. */
-  | { window: ManualCheckWindowSnapshot; status: 'failed'; reason: ManualCheckLoadFailureSnapshot };
+  | { window: ManualCheckWindowSnapshot; tab: ManualCheckTabSnapshot; status: 'failed'; reason: ManualCheckLoadFailureSnapshot };
 
 /** 최근 멘션 확인의 상태. */
 export interface ManualCheckSnapshot {
@@ -714,6 +732,10 @@ export interface BundleSnapshot {
     text: BundleMentionSnapshot['text'];
     /** 담당자에서 제외된 것을 확인해 게시와 다시 만들기를 막았는지 여부. 직접 멘션이 남은 합친 묶음은 막지 않아 거짓이다. */
     blockedByUnassignment?: boolean;
+    /** 배정 시각(Unix epoch 밀리초). 모르면 없다. */
+    assignedAt?: number;
+    /** 배정 시각이 배정 근거 없이 알림 시각으로 대신한 추정인지 여부. 참이면 상세가 "추정"으로 보인다. */
+    assignedAtEstimated?: boolean;
   };
   /** 묶음 ID. 명령에 실어 보낸다. */
   id: number;
@@ -1048,11 +1070,13 @@ export type AppCommand =
   | { type: 'open-manual-check'; window: ManualCheckWindowSnapshot }
   /** 확인 시트를 닫는다. */
   | { type: 'close-manual-check' }
-  /** 확인 시트의 목록을 처음부터 다시 불러온다. */
+  /** 확인 시트의 탭을 바꾼다. 담당 업무 탭은 처음 열 때 불러온다. */
+  | { type: 'select-manual-check-tab'; tab: ManualCheckTabSnapshot }
+  /** 확인 시트에서 지금 보는 탭의 목록을 처음부터 다시 불러온다. */
   | { type: 'reload-manual-check' }
-  /** [더 보기]. 확인 시트의 목록을 10건 더 불러온다. */
+  /** [더 보기]. 확인 시트에서 지금 보는 탭의 목록을 10건 더 불러온다. */
   | { type: 'load-more-manual-check' }
-  /** 확인 시트에서 고른 멘션으로 수동 요청 묶음을 만들고 시트를 닫는다. 이미 묶음이 있으면 그 묶음을 연다. 목록에 없는 알림 ID는 main이 받지 않는다. */
+  /** 확인 시트에서 고른 멘션이나 담당 업무로 수동 요청 묶음을 만들고 시트를 닫는다. 이미 묶음이 있으면 그 묶음을 연다. 지금 보는 탭의 목록에 없는 알림 ID는 main이 받지 않는다. */
   | { type: 'pick-manual-check'; alarmId: string }
   /** 추가 지침을 저장한다. 여러 줄 입력이라 칸을 벗어날 때 보낸다. 다음 실행부터 쓴다. */
   | { type: 'set-extra-instructions'; text: string }
@@ -1174,6 +1198,11 @@ function isManualCheckWindow(value: unknown): value is ManualCheckWindowSnapshot
   return typeof value === 'string' && (MANUAL_CHECK_WINDOWS as readonly string[]).includes(value);
 }
 
+/** 최근 멘션 확인 시트의 탭 이름인지 확인한다. */
+function isManualCheckTab(value: unknown): value is ManualCheckTabSnapshot {
+  return (MANUAL_CHECK_TABS as readonly unknown[]).includes(value);
+}
+
 /** 최근 멘션 확인에서 고르는 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
 function isAlarmIdInput(value: unknown): value is string {
   return typeof value === 'string' && /^\d{1,32}$/.test(value);
@@ -1282,6 +1311,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
         : null;
     case 'open-manual-check':
       return isManualCheckWindow(candidate.window) ? { type: 'open-manual-check', window: candidate.window } : null;
+    case 'select-manual-check-tab':
+      return isManualCheckTab(candidate.tab) ? { type: 'select-manual-check-tab', tab: candidate.tab } : null;
     // 아래 인자 없는 명령 묶음에 더하면 유니온이 너무 커져 TypeScript가 맞춰 보지 못하므로, 최근 멘션 확인의 인자 없는 명령은 따로 돌려준다.
     case 'close-manual-check':
     case 'reload-manual-check':

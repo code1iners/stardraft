@@ -14,7 +14,7 @@ import type { MappingMatch } from '../core/repos/repo-mappings';
 import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
 import type { ManualCheckState } from '../core/manual-check/manual-check-session';
-import type { ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
+import type { ManualAssignmentCandidate, ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
 import type {
   BundleMentionSnapshot,
   BundleSnapshot,
@@ -29,6 +29,7 @@ import type {
   RunLineSnapshot,
   ThreadEntrySnapshot,
   ManualCheckRowSnapshot,
+  ManualCheckRowTagSnapshot,
   ManualCheckSnapshot,
   WritingChangeSnapshot,
 } from '../shared/ipc';
@@ -73,32 +74,48 @@ export function reviewSnapshot(
 /** 멘션 위치에 있는 기존 기록을 찾는 함수. */
 export type ManualPlaceLookup = (mention: ManualMentionCandidate['mention']) => ManualPlace;
 
+/** 업무 본문 자리(게시물 ID)에 있는 기존 기록을 찾는 함수. */
+export type ManualAssignmentPlaceLookup = (postId: string) => ManualPlace;
+
 /**
- * 최근 멘션 확인의 상태를 렌더러에 넘길 모양으로 바꾼다. 줄 태그는 지금 묶음 상태로 정하므로 묶음이 바뀌면 태그도 따라 바뀐다.
+ * 최근 멘션 확인의 상태를 렌더러에 넘길 모양으로 바꾼다. 지금 보는 탭의 목록 상태만 넘기고, 담당 업무 탭을 아직 불러오지 않았으면 불러오는 중으로 본다.
+ * 줄 태그는 지금 묶음 상태로 정하므로 묶음이 바뀌면 태그도 따라 바뀐다.
  * 멘션은 송신자, Flow 프로젝트, 첫 줄, 시각만 넘기고 Flow 사용자 ID는 넘기지 않는다.
  */
-export function manualCheckSnapshot(state: ManualCheckState, canOpen: boolean, placeOf: ManualPlaceLookup): ManualCheckSnapshot {
+export function manualCheckSnapshot(state: ManualCheckState, canOpen: boolean, placeOf: ManualPlaceLookup, assignmentPlaceOf: ManualAssignmentPlaceLookup): ManualCheckSnapshot {
   /** 열린 시트. */
   const sheet = state.sheet;
   if (sheet === null) return { canOpen, sheet: null };
-  if (sheet.status !== 'loaded') return { canOpen, sheet: { ...sheet } };
+  /** 시트를 연 창과 지금 탭. */
+  const head = { window: sheet.window, tab: sheet.tab };
+  /** 지금 탭의 목록 상태. */
+  const list = sheet.tab === 'mentions' ? sheet.mentions : sheet.assignments;
+  if (list.status === 'idle' || list.status === 'loading') return { canOpen, sheet: { ...head, status: 'loading' } };
+  if (list.status === 'failed') return { canOpen, sheet: { ...head, status: 'failed', reason: list.reason } };
   return {
     canOpen,
     sheet: {
-      window: sheet.window,
+      ...head,
       status: 'loaded',
-      rows: sheet.candidates.map((candidate) => manualCheckRowSnapshot(candidate, placeOf)),
-      hasMore: sheet.hasMore,
-      loadingMore: sheet.loadingMore,
-      moreFailure: sheet.moreFailure,
+      rows:
+        sheet.tab === 'mentions'
+          ? (sheet.mentions.status === 'loaded' ? sheet.mentions.candidates : []).map((candidate) => manualCheckRowSnapshot(candidate, placeOf))
+          : (sheet.assignments.status === 'loaded' ? sheet.assignments.candidates : []).map((candidate) => manualAssignmentRowSnapshot(candidate, assignmentPlaceOf)),
+      hasMore: list.hasMore,
+      loadingMore: list.loadingMore,
+      moreFailure: list.moreFailure,
     },
   };
 }
 
-/** 최근 멘션 확인 시트의 줄 하나. 태그는 "답함", 기존 묶음(상태), 처리됨 순서다. */
+/** 줄의 기존 기록을 상태 태그로 바꾼다. 묶음은 "이미 묶음 있음"과 그 상태, 최소 기록만 있으면 "처리됨"이다. */
+function placeTags(place: ManualPlace): ManualCheckRowTagSnapshot[] {
+  if (place.kind === 'bundle') return [{ kind: 'bundle', bundleId: place.bundleId, status: place.status }];
+  return place.kind === 'record' ? [{ kind: 'archived' }] : [];
+}
+
+/** 최근 멘션 확인 시트의 멘션 줄 하나. 태그는 "답함", 기존 묶음(상태), 처리됨 순서다. */
 function manualCheckRowSnapshot({ mention, projectTitle, answered }: ManualMentionCandidate, placeOf: ManualPlaceLookup): ManualCheckRowSnapshot {
-  /** 그 멘션 위치의 기존 기록. */
-  const place = placeOf(mention);
   return {
     kind: 'mention',
     alarmId: mention.alarmId,
@@ -106,12 +123,34 @@ function manualCheckRowSnapshot({ mention, projectTitle, answered }: ManualMenti
     projectTitle,
     firstLine: firstLineOf(mention.text),
     at: flowTimeToEpochMs(mention.registeredDateTime) ?? mention.detectedAt,
-    tags: [
-      ...(answered ? [{ kind: 'answered' as const }] : []),
-      ...(place.kind === 'bundle' ? [{ kind: 'bundle' as const, bundleId: place.bundleId, status: place.status }] : []),
-      ...(place.kind === 'record' ? [{ kind: 'archived' as const }] : []),
-    ],
+    tags: [...(answered ? [{ kind: 'answered' as const }] : []), ...placeTags(placeOf(mention))],
+    missReasons: [],
   };
+}
+
+/** 최근 멘션 확인 시트의 담당 업무 줄 하나. 작성자, Flow 프로젝트, 업무 제목, 알림 시각과 "답함", 기존 묶음(상태), 처리됨 태그, 감지에서 빠진 이유를 넘긴다. */
+function manualAssignmentRowSnapshot(
+  { alarm, post, answered, missReasons, projectTitle }: ManualAssignmentCandidate,
+  assignmentPlaceOf: ManualAssignmentPlaceLookup,
+): ManualCheckRowSnapshot {
+  return {
+    kind: 'assignment',
+    alarmId: alarm.alarmId,
+    senderName: post.registerName,
+    projectTitle,
+    firstLine: post.title,
+    at: flowTimeToEpochMs(alarm.registeredDateTime) ?? 0,
+    tags: [...(answered ? [{ kind: 'answered' as const }] : []), ...placeTags(assignmentPlaceOf(post.postId))],
+    missReasons: [...missReasons],
+  };
+}
+
+/** 배정 시각을 상세에 보일 값으로 바꾼다. 시각을 읽을 수 없으면 아무것도 넣지 않고, 추정이면 그 표시를 함께 넣는다. */
+function assignedAtSnapshot(assignment: { assignedAt?: string; assignedAtEstimated?: boolean }): { assignedAt?: number; assignedAtEstimated?: true } {
+  /** 배정 시각. */
+  const assignedAt = assignment.assignedAt ? flowTimeToEpochMs(assignment.assignedAt) : null;
+  if (assignedAt === null) return {};
+  return { assignedAt, ...(assignment.assignedAtEstimated ? { assignedAtEstimated: true as const } : {}) };
 }
 
 /** 멘션 글의 비어 있지 않은 첫 줄. 멘션 표기는 `@이름`으로 바꾼다. */
@@ -165,7 +204,7 @@ export function bundleSnapshot(
     postTitle: bundle.postTitle,
     mentions: shown,
     ...(bundle.assignment
-      ? { assignment: { text: splitMentionMarkup((bundle.watchedContext ?? bundle.context)?.post.contents ?? ''), blockedByUnassignment: isUnassignedBlocked(bundle) } }
+      ? { assignment: { text: splitMentionMarkup((bundle.watchedContext ?? bundle.context)?.post.contents ?? ''), blockedByUnassignment: isUnassignedBlocked(bundle), ...assignedAtSnapshot(bundle.assignment) } }
       : {}),
     senderNames: bundle.assignment ? [bundle.context?.post.authorName || bundle.assignment.authorName] : [...new Set(shown.map((mention) => mention.senderName).filter(Boolean))],
     newMentionCount: bundle.newMentionCount,

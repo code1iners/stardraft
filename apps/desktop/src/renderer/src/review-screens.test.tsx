@@ -1387,13 +1387,29 @@ describe('시험 폐지', () => {
 describe('최근 멘션 확인', () => {
   /** 확인 시트의 가짜 줄. 둘째는 이미 답한 멘션, 셋째는 이미 묶음이 있는 멘션, 넷째는 최소 기록만 남은 멘션이다. */
   const ROWS: ManualCheckRowSnapshot[] = [
-    { kind: 'mention', alarmId: '104', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), tags: [] },
-    { kind: 'mention', alarmId: '103', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), tags: [{ kind: 'answered' }] },
-    { kind: 'mention', alarmId: '102', senderName: '세 번째', projectTitle: '가짜 프로젝트', firstLine: '이미 묶음이 있는 멘션', at: Date.UTC(2026, 9, 9, 2, 0), tags: [{ kind: 'bundle', bundleId: 7, status: 'posted' }] },
-    { kind: 'mention', alarmId: '101', senderName: '네 번째', projectTitle: '가짜 프로젝트', firstLine: '최소 기록만 남은 멘션', at: Date.UTC(2026, 9, 8, 2, 0), tags: [{ kind: 'archived' }] },
+    { kind: 'mention', alarmId: '104', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), tags: [], missReasons: [] },
+    { kind: 'mention', alarmId: '103', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), tags: [{ kind: 'answered' }], missReasons: [] },
+    { kind: 'mention', alarmId: '102', senderName: '세 번째', projectTitle: '가짜 프로젝트', firstLine: '이미 묶음이 있는 멘션', at: Date.UTC(2026, 9, 9, 2, 0), tags: [{ kind: 'bundle', bundleId: 7, status: 'posted' }], missReasons: [] },
+    { kind: 'mention', alarmId: '101', senderName: '네 번째', projectTitle: '가짜 프로젝트', firstLine: '최소 기록만 남은 멘션', at: Date.UTC(2026, 9, 8, 2, 0), tags: [{ kind: 'archived' }], missReasons: [] },
   ];
   /** 이어 불러올 수 있는 확인 시트. */
-  const LOADED: ManualCheckSnapshot['sheet'] = { window: 'popover', status: 'loaded', rows: ROWS, hasMore: true, loadingMore: false, moreFailure: null };
+  const LOADED: NonNullable<ManualCheckSnapshot['sheet']> = { window: 'popover', tab: 'mentions', status: 'loaded', rows: ROWS, hasMore: true, loadingMore: false, moreFailure: null };
+  /** 담당 업무 탭의 가짜 줄. 첫째는 감지에서 빠진 이유가 둘이고 이미 답했으며, 둘째는 이유가 없다. */
+  const ASSIGNMENT_ROWS: ManualCheckRowSnapshot[] = [
+    {
+      kind: 'assignment',
+      alarmId: '301',
+      senderName: '업무 작성자',
+      projectTitle: '백오피스',
+      firstLine: '쿠폰 만료 처리 오류 수정',
+      at: Date.UTC(2026, 9, 18, 9, 0),
+      tags: [{ kind: 'answered' }, { kind: 'bundle', bundleId: 9, status: 'ready' }],
+      missReasons: ['pre-feature-task', 'no-evidence'],
+    },
+    { kind: 'assignment', alarmId: '302', senderName: '다른 작성자', projectTitle: '백오피스', firstLine: '정산 화면 수정', at: Date.UTC(2026, 9, 17, 9, 0), tags: [{ kind: 'archived' }], missReasons: [] },
+  ];
+  /** 담당 업무 탭을 보는 시트. */
+  const ASSIGNMENTS: NonNullable<ManualCheckSnapshot['sheet']> = { ...LOADED, tab: 'assignments', rows: ASSIGNMENT_ROWS, hasMore: false };
 
   /** 그린 HTML에서 [최근 멘션 확인] 버튼. */
   function checkButton(html: string): string | undefined {
@@ -1465,13 +1481,13 @@ describe('최근 멘션 확인', () => {
   });
 
   it('불러오는 중, 불러오지 못한 까닭 네 가지, 멘션 없음을 보인다. 실패하면 [다시 불러오기]가 있다', () => {
-    expect(sheetText({ window: 'popover', status: 'loading' })).toContain('최근 멘션을 불러오는 중입니다.');
-    expect(sheetText({ window: 'popover', status: 'loading' })).not.toContain('다시 불러오기');
-    expect(sheetText({ window: 'popover', status: 'failed', reason: 'no-key' })).toContain('Flow 개인 API 키가 없어');
-    expect(sheetText({ window: 'popover', status: 'failed', reason: 'unauthorized' })).toContain('Flow가 키를 받지 않아');
-    expect(sheetText({ window: 'popover', status: 'failed', reason: 'network' })).toContain('Flow에 연결하지 못했습니다');
-    expect(sheetText({ window: 'popover', status: 'failed', reason: 'rate-limited' })).toContain('Flow 요청이 많습니다');
-    expect(sheetText({ window: 'popover', status: 'failed', reason: 'network' })).toContain('다시 불러오기');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'loading' })).toContain('최근 멘션을 불러오는 중입니다.');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'loading' })).not.toContain('다시 불러오기');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'no-key' })).toContain('Flow 개인 API 키가 없어');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'unauthorized' })).toContain('Flow가 키를 받지 않아');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'network' })).toContain('Flow에 연결하지 못했습니다');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'rate-limited' })).toContain('Flow 요청이 많습니다');
+    expect(sheetText({ window: 'popover', tab: 'mentions', status: 'failed', reason: 'network' })).toContain('다시 불러오기');
     expect(sheetText({ ...LOADED, rows: [], hasMore: false })).toContain('확인할 수 있는 최근 멘션이 없습니다.');
   });
 
@@ -1500,6 +1516,116 @@ describe('최근 멘션 확인', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('시트 위쪽에 "멘션 | 담당 업무" 탭이 있고 멘션 탭이 기본으로 선택된다. 탭마다 안내 문구가 다르다', () => {
+    /** 멘션 탭을 그린 HTML. */
+    const mentions = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: LOADED } })} />);
+    expect(mentions).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>멘션<\/button>/);
+    expect(mentions).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="false"[^>]*>담당 업무<\/button>/);
+    expect(sheetText(LOADED)).not.toContain('알림이 오기 전에 배정된 업무');
+    /** 담당 업무 탭을 그린 HTML. */
+    const assignments = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: ASSIGNMENTS } })} />);
+    expect(assignments).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>담당 업무<\/button>/);
+    // 알림이 없는 업무는 나오지 않는 한계를 안내한다.
+    expect(sheetText(ASSIGNMENTS)).toContain('알림이 오기 전에 배정된 업무나 알림이 없는 업무는 목록에 없습니다');
+    expect(sheetText(ASSIGNMENTS)).toContain('게시 전에는 Flow에 아무것도 올라가지 않습니다');
+  });
+
+  it('담당 업무 줄은 작성자·프로젝트·업무 제목·시각과 상태 태그, 감지에서 빠진 이유 태그를 보이고 모두 고를 수 있다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: ASSIGNMENTS } })} />);
+    /** 그린 글자. */
+    const text = sheetText(ASSIGNMENTS);
+
+    expect(text).toContain('업무 작성자');
+    expect(text).toContain('백오피스');
+    expect(text).toContain('쿠폰 만료 처리 오류 수정');
+    expect(text).toContain('기능 시작 전 업무');
+    expect(text).toContain('배정 근거 없음');
+    expect(text).not.toContain('기능 시작 전 배정');
+    expect(text).not.toContain('자기 작성 업무');
+    expect(text.match(/답함/g)).toHaveLength(1);
+    expect(text).toContain('이미 묶음 있음 준비됨');
+    expect(text.match(/처리됨/g)).toHaveLength(1);
+    // 빠진 이유는 경고색 태그로 보인다.
+    expect(html).toContain('<span class="tag warn">기능 시작 전 업무</span>');
+    expect(html.match(/class="manual-check-choice"/g)).toHaveLength(2);
+    expect(html).not.toMatch(/class="manual-check-choice"[^>]*disabled/);
+    // 멘션 줄에는 빠진 이유 태그가 없다.
+    expect(sheetText(LOADED)).not.toContain('기능 시작 전');
+  });
+
+  it('감지에서 빠진 이유 네 가지가 각자 태그로 보인다', () => {
+    /** 이유 네 가지를 모두 가진 줄. */
+    const row: ManualCheckRowSnapshot = { ...ASSIGNMENT_ROWS[1]!, tags: [], missReasons: ['pre-feature-task', 'pre-feature-assignment', 'self-authored', 'no-evidence'] };
+    /** 그린 글자. */
+    const text = sheetText({ ...ASSIGNMENTS, rows: [row] });
+    for (const label of ['기능 시작 전 업무', '기능 시작 전 배정', '자기 작성 업무', '배정 근거 없음']) expect(text).toContain(label);
+  });
+
+  it('담당 업무 탭은 자기 불러오는 중·실패 문구와 [다시 불러오기], 목록 없음 문구, [더 보기]를 가진다', () => {
+    expect(sheetText({ window: 'popover', tab: 'assignments', status: 'loading' })).toContain('담당 업무를 불러오는 중입니다.');
+    expect(sheetText({ window: 'popover', tab: 'assignments', status: 'loading' })).not.toContain('다시 불러오기');
+    /** 실패한 담당 업무 탭. */
+    const failed = (reason: 'no-key' | 'unauthorized' | 'network' | 'rate-limited' | 'unexpected') => sheetText({ window: 'popover', tab: 'assignments', status: 'failed', reason });
+    expect(failed('no-key')).toContain('Flow 개인 API 키가 없어 담당 업무를 불러오지 못했습니다.');
+    expect(failed('unauthorized')).toContain('Flow가 키를 받지 않아 담당 업무를 불러오지 못했습니다.');
+    expect(failed('network')).toContain('Flow에 연결하지 못했습니다');
+    expect(failed('rate-limited')).toContain('Flow 요청이 많습니다');
+    expect(failed('unexpected')).toContain('담당 업무를 불러오지 못했습니다.');
+    expect(failed('network')).toContain('다시 불러오기');
+    // 실패해도 탭은 그대로 보여 다른 탭으로 옮길 수 있다.
+    expect(failed('network')).toContain('멘션');
+    expect(sheetText({ ...ASSIGNMENTS, rows: [], hasMore: false })).toContain('고를 수 있는 담당 업무가 없습니다.');
+    expect(sheetText({ ...ASSIGNMENTS, hasMore: true })).toContain('더 보기');
+    expect(sheetText(ASSIGNMENTS)).toContain('더 이상 없음');
+    expect(sheetText({ ...ASSIGNMENTS, hasMore: true, moreFailure: 'rate-limited' })).toContain('Flow 요청이 많습니다');
+  });
+
+  it('탭을 누르면 탭 전환 명령을 보내고, 이미 보는 탭은 보내지 않는다. 줄을 고르면 그 알림으로 고르는 명령을 보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 요소 트리에서 조건에 맞는 요소의 속성을 모두 찾는다. */
+      const find = (node: unknown, match: (props: Record<string, unknown>) => boolean): Record<string, unknown>[] => {
+        if (Array.isArray(node)) return node.flatMap((child) => find(child, match));
+        if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+        /** 요소의 속성. */
+        const props = (node as { props: Record<string, unknown> }).props;
+        return [...(match(props) ? [props] : []), ...find(props.children, match)];
+      };
+      /** 멘션 탭을 보는 시트가 그린 요소. */
+      const element = ManualCheckSheet({ sheet: LOADED });
+      /** 탭 단추. */
+      const tabs = find(element, (props) => props.role === 'tab');
+      expect(tabs).toHaveLength(2);
+      (tabs[0]!.onClick as () => void)();
+      expect(send).not.toHaveBeenCalled();
+      (tabs[1]!.onClick as () => void)();
+      expect(send).toHaveBeenLastCalledWith({ type: 'select-manual-check-tab', tab: 'assignments' });
+
+      /** 담당 업무 탭을 보는 시트가 그린 요소의 탭 단추. */
+      const assignmentTabs = find(ManualCheckSheet({ sheet: ASSIGNMENTS }), (props) => props.role === 'tab');
+      (assignmentTabs[0]!.onClick as () => void)();
+      expect(send).toHaveBeenLastCalledWith({ type: 'select-manual-check-tab', tab: 'mentions' });
+      (assignmentTabs[1]!.onClick as () => void)();
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('배정 시각이 추정인 담당 업무 묶음은 상세에서 "추정"으로 표시하고, 근거 시각이나 멘션 묶음에는 표시하지 않는다', () => {
+    /** 추정 배정 시각을 가진 담당 업무 묶음. */
+    const estimated: BundleSnapshot = { ...READY, id: 21, assignment: { text: [], assignedAt: Date.UTC(2026, 9, 20, 0, 1), assignedAtEstimated: true } };
+    /** 근거 시각을 가진 담당 업무 묶음. */
+    const evidenced: BundleSnapshot = { ...READY, id: 22, assignment: { text: [], assignedAt: Date.UTC(2026, 9, 20, 0, 1) } };
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([estimated])} />)).toContain('<span class="tag manual">추정</span>');
+    expect(textOf(<PopoverContent snapshot={snapshot([estimated])} />)).toContain('배정 시각');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([evidenced])} />)).not.toContain('추정');
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('배정 시각');
   });
 
   it('수동 요청 묶음은 상세 머리에 "수동 요청" 태그를 보이고, 자동 감지 묶음에는 붙이지 않는다', () => {

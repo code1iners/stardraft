@@ -124,6 +124,12 @@ export function BundleMeta({ bundle }: BundleProps) {
         <span>{bundle.assignment ? assignmentSourceText(bundle) : BUNDLE_PLACE_LABELS[bundle.place]}</span>
         <span>{formatTime(bundle.lastMentionAt)}</span>
       </p>
+      {bundle.assignment?.assignedAtEstimated && bundle.assignment.assignedAt !== undefined && (
+        <p className="review-meta small muted">
+          <span>배정 시각 {formatTime(bundle.assignment.assignedAt)}</span>
+          <span className="tag manual">추정</span>
+        </p>
+      )}
       <p className="post-line">
         <span>{postLine(bundle)}</span>
         <OpenInFlowButton bundle={bundle} />

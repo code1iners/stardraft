@@ -692,8 +692,8 @@
       {
         "code": "text_below_floor",
         "severity": "warning",
-        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"시험도 실제 에이전트 사용량을 씁니다. Flow에는 게시되지 않습니다.\" renders at 26 px for 12.02 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
-        "text": "시험도 실제 에이전트 사용량을 씁니다. Flow에는 게시되지 않습니다.",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"최근 멘션 확인도 실제 에이전트 사용량을 씁니다. 게시하기 전에는 Flow에 올라가지 않습니다.\" renders at 26 px for 12.02 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "최근 멘션 확인도 실제 에이전트 사용량을 씁니다. 게시하기 전에는 Flow에 올라가지 않습니다.",
         "selector": "#trial > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
         "dataAttributes": {},
         "sourceFile": "compositions/trial.html",
@@ -713,7 +713,7 @@
         "elements": [
           {
             "selector": "#trial > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1)",
-            "text": "시험도 실제 에이전트 사용량을 씁니다. Flow에는 게시되지 않습니다.",
+            "text": "최근 멘션 확인도 실제 에이전트 사용량을 씁니다. 게시하기 전에는 Flow에 올라가지 않습니다.",
             "fontPx": 26,
             "time": 130.217,
             "seconds": 12.02

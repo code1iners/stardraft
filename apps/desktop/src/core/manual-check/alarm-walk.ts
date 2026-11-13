@@ -1,4 +1,5 @@
 import { compareAlarmIds } from '../flow/alarm-id';
+import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { FlowAlarm, FlowAlarmPage, FlowApiFailure, FlowApiResult } from '../ports/flow-api';
 
 /** 최근 멘션 확인 목록을 한 번에 불러오는 개수. 설정에서 바꿀 수 없다. */
@@ -95,4 +96,16 @@ export async function collectFromAlarms<T>(
 /** 모든 글에 같아 다음 알림을 판정해도 같을 실패인지 본다. 키 거부, 연결 실패, 요청 한도다. */
 function isSharedFailure(failure: FlowApiFailure): boolean {
   return failure.kind === 'unauthorized' || failure.kind === 'network' || failure.kind === 'rate-limited';
+}
+
+/** 멘션 시각보다 나중에 쓴 답이 있는지 본다. 시각은 Flow 시각끼리 비교하고, 읽을 수 없으면 답하지 않은 것으로 본다. */
+export function answeredAfter(mentionTime: string, answers: readonly { registeredDateTime: string }[]): boolean {
+  /** 멘션 시각. */
+  const at = flowTimeToEpochMs(mentionTime);
+  if (at === null) return false;
+  return answers.some((answer) => {
+    /** 답을 쓴 시각. */
+    const answeredAt = flowTimeToEpochMs(answer.registeredDateTime);
+    return answeredAt !== null && answeredAt > at;
+  });
 }

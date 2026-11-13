@@ -20,8 +20,8 @@ SCENES = [
  dict(id='edit',start=102,duration=12,title='내가 보낼 문장으로 다듬습니다',lines=['문장을 눌러 동료에게 보낼 표현으로 직접 수정하고, 받는 사람도 확인합니다.','편집하면 초안의 근거 번호는 숨겨집니다. 근거 확인을 먼저 마쳐 두세요.']),
  dict(id='post',start=114,duration=11,title='게시 전, 마지막으로 확인합니다',lines=['내용이 맞으면 게시를 누릅니다.','오 초 동안은 취소할 수 있습니다. 시간이 지나면 내 이름으로 플로우에 게시됩니다.']),
  dict(id='posted',start=125,duration=5,title='동료에게 내 답변이 도착합니다',lines=['게시되는 것은 답변 본문이며, 코드 근거는 포함되지 않습니다.']),
- dict(id='trial',start=130,duration=12,title='혼자라면, 최근 멘션으로 시험합니다',lines=['새 멘션을 기다리지 않고 연습하려면, 최근 멘션으로 시험을 누르세요.','실제 에이전트 사용량은 쓰지만 플로우에는 게시하지 않습니다. 시험 끝내기로 마칩니다.']),
- dict(id='finish',start=142,duration=8,title='근거를 확인하고, 내 답변으로 게시하세요',lines=['설정을 마치고, 근거를 확인하고, 내 답변으로 다듬어 게시하세요.','지금은 최근 멘션으로 시험부터 시작해 보세요.'])
+ dict(id='trial',start=130,duration=12,title='혼자라면, 최근 멘션을 확인합니다',lines=['새 멘션을 기다리지 않고 연습하려면, 최근 멘션 확인을 누르세요.','고른 항목으로 초안을 만들며 실제 에이전트 사용량을 씁니다. 게시하기 전에는 플로우에 아무것도 올라가지 않습니다.']),
+ dict(id='finish',start=142,duration=8,title='근거를 확인하고, 내 답변으로 게시하세요',lines=['설정을 마치고, 근거를 확인하고, 내 답변으로 다듬어 게시하세요.','지금은 최근 멘션 확인부터 시작해 보세요.'])
 ]
 
 
@@ -131,10 +131,10 @@ def content(scene):
         result='<div class="flow-message result-message"><div class="flow-heading">Flow 게시 결과 · 재현 예시</div><div class="flow-author"><span class="avatar mine">민</span><div><b>김민수</b><small>내 명의의 답변</small></div></div><p class="flow-text"><span>@이지원</span><br>재설정 링크는 발급 후 30분간 유효합니다.<br>시간이 지났다면 새 링크를 요청해 주세요.</p></div>'
         animation="tl.fromTo('.flow-text',{opacity:0},{opacity:1,duration:0.35},0.35);"
     elif id=='trial':
-        result=block('trial-empty',image('empty',top=40,width=1120,left=280),0,4.5)+block('trial-ui',image('trial',top=-850),4.5,d-4.5)+cursor('trial-click',960,579,2.4)+'<p class="note">시험도 실제 에이전트 사용량을 씁니다. Flow에는 게시되지 않습니다.</p>'
+        result=block('trial-empty',image('empty',top=40,width=1120,left=280),0,4.5)+block('trial-ui',image('manual-check',top=40,width=1120,left=280),4.5,d-4.5)+cursor('trial-click',960,579,2.4)+'<p class="note">최근 멘션 확인도 실제 에이전트 사용량을 씁니다. 게시하기 전에는 Flow에 올라가지 않습니다.</p>'
         animation="tl.fromTo('#trial-ui .screen-inner',{opacity:0},{opacity:1,duration:0.25},4.5);"
     else:
-        result='<div class="ending"><div class="end-actions"><span>근거 확인</span><i>→</i><span>문장 수정</span><i>→</i><span>게시</span></div><p class="end-trial">지금은 <b>최근 멘션으로 시험</b>부터</p><div class="credits">Music: “Wallpaper” — Kevin MacLeod (incompetech.com)<br>CC BY 4.0 · creativecommons.org/licenses/by/4.0/<br>Excerpted, lowered beneath narration, faded in/out</div></div>'
+        result='<div class="ending"><div class="end-actions"><span>근거 확인</span><i>→</i><span>문장 수정</span><i>→</i><span>게시</span></div><p class="end-trial">지금은 <b>최근 멘션 확인</b>부터</p><div class="credits">Music: “Wallpaper” — Kevin MacLeod (incompetech.com)<br>CC BY 4.0 · creativecommons.org/licenses/by/4.0/<br>Excerpted, lowered beneath narration, faded in/out</div></div>'
         animation="tl.fromTo('.end-actions span',{opacity:0},{opacity:1,duration:0.3,stagger:0.6},0.3);tl.fromTo('.end-trial',{y:24,opacity:0},{y:0,opacity:1,duration:0.5,ease:'power4.out'},2.5);"
     return result,animation
 

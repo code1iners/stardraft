@@ -65,18 +65,12 @@ export class ManualMentionCheck {
    * Flow가 키를 거부하면 "키 확인 필요"로 알린다.
    */
   async listMentions(from: RecentMentionCursor | null): Promise<ManualMentionList> {
-    /** 지금 키로 만든 Flow 연결. */
-    const flow = this.options.connectFlow();
-    /** 내 구성원 정보. */
-    const account = this.options.account();
-    if (!flow || !account) return { ok: false, reason: 'no-key' };
-    /** 불러온 결과. */
-    const loaded = await this.load('mentions', flow, () => listRecentMentions(flow.api, account.userId, this.options.clock.now(), from),
-      (page) => ({ count: page.mentions.length, more: page.next !== null }));
-    if (!loaded.ok) return loaded;
-    /** 목록에 보일 멘션. */
-    const candidates = await this.withProjectTitles(loaded.value.mentions, (recent) => recent.mention.projectId);
-    return { ok: true, candidates, next: loaded.value.next };
+    return this.listWithTitles('mentions', {
+      list: (flow, account) => listRecentMentions(flow.api, account.userId, this.options.clock.now(), from),
+      summary: (page) => ({ count: page.mentions.length, more: page.next !== null }),
+      items: (page) => page.mentions,
+      projectIdOf: (recent) => recent.mention.projectId,
+    });
   }
 
   /**
@@ -84,41 +78,52 @@ export class ManualMentionCheck {
    * 감지에서 빠진 업무도 넣고 그 까닭을 함께 돌려준다. Flow가 키를 거부하면 "키 확인 필요"로 알린다.
    */
   async listAssignments(from: RecentAssignmentCursor | null): Promise<ManualAssignmentList> {
+    return this.listWithTitles('assignments', {
+      list: async (flow, account) => listRecentAssignments(flow.api, account, await this.options.assignmentState(), from),
+      summary: (page) => ({ count: page.assignments.length, more: page.next !== null }),
+      items: (page) => page.assignments,
+      projectIdOf: (recent) => recent.alarm.projectId,
+    });
+  }
+
+  /** 목록에서 고른 멘션으로 수동 요청 묶음을 만든다. 그 멘션 위치에 이미 묶음이 있으면 새로 만들지 않고 그 묶음을 돌려준다. */
+  async request(candidate: RecentMention): Promise<ManualRequestResult> {
+    return this.logged(await this.options.bundles.requestMention(candidate), candidate.mention.alarmId);
+  }
+
+  /** 목록에서 고른 담당 업무로 수동 요청 묶음을 만든다. 그 업무의 본문 자리에 이미 묶음이 있으면 새로 만들지 않고 그 묶음을 돌려준다. */
+  async requestAssignment(candidate: RecentAssignment): Promise<ManualRequestResult> {
+    return this.logged(await this.options.bundles.requestAssignment(candidate), candidate.alarm.alarmId);
+  }
+
+  /** 만들거나 찾은 묶음을 진단 로그에 남기고 그대로 돌려준다. */
+  private logged(result: ManualRequestResult, alarmId: string): ManualRequestResult {
+    this.options.logger.info(result.kind === 'created' ? 'manual-check.requested' : 'manual-check.existing', { bundleId: result.bundleId, alarmId });
+    return result;
+  }
+
+  /**
+   * `kind` 목록을 한 번 불러와 항목마다 Flow 프로젝트 이름을 붙인다. 쓸 키나 내 구성원 정보가 없으면 `no-key`다.
+   * 목록 쪽(`list`)만 멘션과 담당 업무가 다르고, 연결·실패 처리·로그·이름 붙이기는 같다.
+   */
+  private async listWithTitles<Page extends { next: Cursor | null }, Item, Cursor>(
+    kind: 'mentions' | 'assignments',
+    { list, summary, items, projectIdOf }: {
+      list: (flow: FlowConnection, account: FlowEmployee) => Promise<FlowApiResult<Page>>;
+      summary: (page: Page) => { count: number; more: boolean };
+      items: (page: Page) => readonly Item[];
+      projectIdOf: (item: Item) => string;
+    },
+  ): Promise<{ ok: true; candidates: (Item & { projectTitle: string | null })[]; next: Cursor | null } | { ok: false; reason: ManualCheckLoadFailure }> {
     /** 지금 키로 만든 Flow 연결. */
     const flow = this.options.connectFlow();
     /** 내 구성원 정보. */
     const account = this.options.account();
     if (!flow || !account) return { ok: false, reason: 'no-key' };
     /** 불러온 결과. */
-    const loaded = await this.load('assignments', flow, async () =>
-      listRecentAssignments(flow.api, account, await this.options.assignmentState(), from),
-    (page) => ({ count: page.assignments.length, more: page.next !== null }));
+    const loaded = await this.load(kind, flow, () => list(flow, account), summary);
     if (!loaded.ok) return loaded;
-    /** 목록에 보일 업무. */
-    const candidates = await this.withProjectTitles(loaded.value.assignments, (recent) => recent.alarm.projectId);
-    return { ok: true, candidates, next: loaded.value.next };
-  }
-
-  /** 목록에서 고른 멘션으로 수동 요청 묶음을 만든다. 그 멘션 위치에 이미 묶음이 있으면 새로 만들지 않고 그 묶음을 돌려준다. */
-  async request(candidate: RecentMention): Promise<ManualRequestResult> {
-    /** 만들거나 찾은 묶음. */
-    const result = await this.options.bundles.requestMention(candidate);
-    this.options.logger.info(result.kind === 'created' ? 'manual-check.requested' : 'manual-check.existing', {
-      bundleId: result.bundleId,
-      alarmId: candidate.mention.alarmId,
-    });
-    return result;
-  }
-
-  /** 목록에서 고른 담당 업무로 수동 요청 묶음을 만든다. 그 업무의 본문 자리에 이미 묶음이 있으면 새로 만들지 않고 그 묶음을 돌려준다. */
-  async requestAssignment(candidate: RecentAssignment): Promise<ManualRequestResult> {
-    /** 만들거나 찾은 묶음. */
-    const result = await this.options.bundles.requestAssignment(candidate);
-    this.options.logger.info(result.kind === 'created' ? 'manual-check.requested' : 'manual-check.existing', {
-      bundleId: result.bundleId,
-      alarmId: candidate.alarm.alarmId,
-    });
-    return result;
+    return { ok: true, candidates: await this.withProjectTitles(items(loaded.value), projectIdOf), next: loaded.value.next };
   }
 
   /**

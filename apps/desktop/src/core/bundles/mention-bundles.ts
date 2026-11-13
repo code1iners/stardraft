@@ -12,7 +12,7 @@ import { bundleRecipients, draftEditorText, isPostable, postableBody } from '../
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
-import type { RecentMention } from '../trial/recent-mentions';
+import type { RecentMention } from '../manual-check/recent-mentions';
 import { unseenChanges } from './bundle-changes';
 import { isExpired, minimalRecordOf } from './retention';
 import {
@@ -77,6 +77,9 @@ export type RunRepos =
   | Exclude<RepoResolution, { kind: 'missing-folders' }>
   | { kind: 'user'; repos: string[] }
   | { kind: 'auto-selected'; repos: string[]; autoSelection: AutoSelection };
+
+/** 최근 멘션 확인에서 고른 항목의 결과. 새로 만든 수동 요청 묶음이나, 그 위치에 이미 있어 대신 연 묶음의 ID다. */
+export type ManualRequestResult = { kind: 'created' | 'existing'; bundleId: number };
 
 /** 준비됨 묶음을 다시 만드는 사용자 행동. 다시 만들기, 지시를 덧붙여 다시 만들기, 요구 고치기다. */
 export type RegenerationRequest =
@@ -565,6 +568,7 @@ export class MentionBundles {
    * 같은 조회에서 확인한 담당 여부로, 담당 해제로 막힌 담당 업무 묶음은 실행하지 않고 처리됨의 "담당 해제"로 옮긴다. 이미 답함이 앞선다.
    * 쓸 키가 없거나 Flow가 키를 거부했거나 지금 Flow에 닿지 못하면(네트워크 오류, 요청 한도) 묶음을 바꾸지 않고 그렇게 알린다.
    * 생성 중이 아닌 묶음은 바꾸지 않는다. 시험 묶음은 맥락만 저장하고 "이미 답함"은 판정하지 않는다.
+   * 수동 요청 묶음도 "이미 답함"을 판정하지 않는다. 대신 지금 있는 내 답을 판정에서 빼기로 기록해, 준비된 뒤의 변화 감시와 게시 직전 확인은 이 뒤의 새 답만 본다.
    */
   async prepareRun(bundleId: number): Promise<RunPreparation> {
     /** 준비할 묶음. */
@@ -601,12 +605,22 @@ export class MentionBundles {
       const latest = this.bundles.find((item) => item.id === bundleId);
       if (!latest || latest.status !== 'generating') return { kind: 'skipped' };
       // 시험 묶음은 이미 답한 멘션으로도 시험할 수 있게 "이미 답함"을 판정하지 않는다.
-      /** 새로 찾은 내 답을 더한 기록. 시험 묶음은 더하지 않는다. 이 PC가 게시한 글은 판정할 때 그 글이 답한 범위로만 센다. */
-      const answers = latest.trial ? latest.answers : mergeAnswers(latest.answers, result.myAnswers);
+      // 수동 요청 묶음은 사용자가 답을 알고도 고른 것이라 지금 있는 답을 모두 빼기로 기록한다.
+      /**
+       * 새로 찾은 내 답을 더한 기록. 시험 묶음은 더하지 않고, 수동 요청 묶음은 빼기로 기록한다.
+       * 이 PC가 게시한 글은 판정할 때 그 글이 답한 범위로만 센다.
+       */
+      const answers = latest.trial
+        ? latest.answers
+        : latest.manual
+          ? excludeAnswers(latest.answers, result.myAnswers)
+          : mergeAnswers(latest.answers, result.myAnswers);
       /** 다시 판정한 멘션. */
       const mentions = latest.trial ? latest.mentions : judgeAnswered(latest.mentions, answers, this.postedRanges());
-      /** 모든 멘션이 빠졌는지 여부. */
-      const answered = latest.assignment ? !latest.trial && answeredSinceAssignment(latest.assignment, answers) : activeMentions({ mentions }).length === 0;
+      /** 모든 멘션이 빠졌는지 여부. 수동 요청 묶음은 판정하지 않는다. */
+      const answered =
+        !latest.manual &&
+        (latest.assignment ? !latest.trial && answeredSinceAssignment(latest.assignment, answers) : activeMentions({ mentions }).length === 0);
       /** 같은 조회의 담당 여부를 반영한 배정 자료. */
       const assignment = withAssigneeCheck(latest.assignment, result.assigned, this.options.clock.now());
       /** 담당 해제로 실행하지 않는지 여부. 이미 답했으면 이미 답함이 앞선다. */
@@ -1089,6 +1103,53 @@ export class MentionBundles {
   }
 
   /**
+   * 최근 멘션 확인에서 고른 멘션으로 게시할 수 있는 수동 요청 묶음을 만든다. 멘션 위치로 기존 기록을 찾는다.
+   * - 그 위치를 든 묶음이 있으면(처리되지 않았거나 처리한 지 7일 안) 새로 만들지 않고 그 묶음을 돌려준다.
+   * - 최소 기록만 남았으면 그 최소 기록을 지우고 새 묶음을 만든다. 기록이 없으면 새 묶음을 만든다.
+   * 새 묶음은 일반 묶음처럼 저장소 매핑을 확인해 생성 중이나 저장소 확인 필요로 올라오고, 만들 때 "이미 답함"을 판정하지 않는다.
+   * 감지 기준점은 옮기지 않고 묶음과 그 멘션 위치(처리 기록)만 함께 저장하므로, 이후 같은 위치의 알림은 감지가 버린다.
+   */
+  async requestMention({ mention, postTitle, connectUrl }: RecentMention): Promise<ManualRequestResult> {
+    // 7일이 지난 처리됨 묶음은 되돌릴 수 없으므로 먼저 정리해 최소 기록으로 다룬다.
+    await this.archiveExpired();
+    /** 초안 없는 묶음이 갈 상태를 정할 저장소 매핑. */
+    const resolution = (await this.resolveProjects([mention.projectId])).get(mention.projectId);
+    /** 만들거나 찾은 묶음. */
+    const outcome = await this.lane.run(async (): Promise<{ kind: ManualRequestResult['kind']; bundle: MentionBundle }> => {
+      /** 고른 멘션 위치. */
+      const location = mentionLocationKey(mention);
+      /** 그 위치를 든 가장 최근 실제 묶음. 시험 묶음은 따로 두므로 보지 않는다. */
+      const existing = this.bundles
+        .filter((bundle) => !bundle.trial && bundle.mentions.some((item) => mentionLocationKey(item) === location))
+        .sort((a, b) => b.id - a.id)[0];
+      if (existing) return { kind: 'existing', bundle: existing };
+
+      /** 그 위치를 든 최소 기록. 새 묶음과 함께 지운다. */
+      const record = this.minimalRecords.find((item) => item.mentions.some((recorded) => mentionLocationKey(recorded) === location));
+      /** 저장할 수동 요청 묶음. */
+      const bundle: UnsavedBundle = {
+        ...newBundle(mention, this.options.clock.now(), resolution),
+        postTitle,
+        connectUrl,
+        mentions: [{ ...mention, answered: false, gone: false, goneExcluded: false }],
+        manual: true,
+      };
+      /** 저장한 묶음. */
+      const saved = await this.options.stateStore.addManualBundle(bundle, record?.bundleId ?? null);
+      if (record) this.minimalRecords = this.minimalRecords.filter((item) => item.bundleId !== record.bundleId);
+      this.bundles = [...this.bundles, saved];
+      this.options.logger.info('bundle.manual-created', { bundleId: saved.id, status: saved.status, replacedRecord: record?.bundleId ?? null });
+      this.emit();
+      return { kind: 'created', bundle: saved };
+    });
+    if (outcome.kind === 'created') {
+      if (countsForReview(outcome.bundle.status)) this.options.notifier.notify(repoCheckNotification([outcome.bundle]));
+      if (showsContextWithoutDraft(outcome.bundle)) await this.refreshContexts([outcome.bundle.id]);
+    }
+    return { kind: outcome.kind, bundleId: outcome.bundle.id };
+  }
+
+  /**
    * 최근 멘션 하나로 시험 묶음을 만든다. 실제 묶음과 같은 상태로 돌아(저장소 매핑을 확인해 생성 중이나 저장소 확인 필요),
    * 초안 대기열이 감지해서 기다리는 묶음보다 앞에 넣는다. 기준점은 옮기지 않고, 같은 멘션 위치의 실제 묶음이 있어도 따로 둔다.
    * 시험은 한 번에 하나만 하므로 시험 묶음이 이미 있으면 만들지 않고 `null`을, 만들었으면 그 ID를 돌려준다.
@@ -1301,6 +1362,7 @@ function newBundle(mention: Pick<Mention, 'postId' | 'remarkId' | 'projectId'>, 
     posting: null,
     quitDuringCountdown: false,
     trial: false,
+    manual: false,
   };
 }
 

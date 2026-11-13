@@ -297,6 +297,10 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ALTER TABLE minimal_record_answered_new RENAME TO minimal_record_answered;
   CREATE INDEX minimal_record_mention_bundle_id ON minimal_record_mention (bundle_id);
   `,
+  // 21: 최근 멘션 확인. 사용자가 목록에서 골라 만든 수동 요청 묶음인지를 묶음마다 둔다. 이미 있던 묶음은 감지로 만든 것이다.
+  `
+  ALTER TABLE mention_bundle ADD COLUMN manual INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 /**
@@ -528,6 +532,7 @@ export class SqliteStateStore implements StateStore {
       posting: postingRecordOf(readJson<PostingRecord>(row.posting), mentions.get(row.id) ?? []),
       quitDuringCountdown: row.quit_during_countdown === 1,
       trial: row.trial === 1,
+      manual: row.manual === 1,
       ...(row.assignment ? { assignment: JSON.parse(row.assignment) as NonNullable<MentionBundle['assignment']> } : {}),
     }));
   }
@@ -560,6 +565,14 @@ export class SqliteStateStore implements StateStore {
       const saved = bundles.map((bundle) => this.writeBundle(bundle));
       this.writeBaseline(baselineAlarmId);
       return saved;
+    })();
+  }
+
+  async addManualBundle(bundle: UnsavedBundle, replacedRecordId: number | null): Promise<MentionBundle> {
+    return this.db.transaction(() => {
+      // 최소 기록의 멘션 위치·게시 범위는 외래 키로 함께 지워진다.
+      if (replacedRecordId !== null) this.db.prepare('DELETE FROM minimal_record WHERE bundle_id = ?').run(replacedRecordId);
+      return this.writeBundle({ ...bundle, id: null, trial: false, manual: true });
     })();
   }
 
@@ -602,6 +615,7 @@ export class SqliteStateStore implements StateStore {
       posting: jsonOrNull(bundle.posting),
       quitDuringCountdown: bundle.quitDuringCountdown ? 1 : 0,
       trial: bundle.trial ? 1 : 0,
+      manual: bundle.manual ? 1 : 0,
       assignment: jsonOrNull(bundle.assignment ?? null),
     };
     /** 묶음 ID. */
@@ -612,10 +626,10 @@ export class SqliteStateStore implements StateStore {
           .prepare(
             `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
                context, watched_context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting,
-               quit_during_countdown, trial, assignment)
+               quit_during_countdown, trial, manual, assignment)
              VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
                @context, @watchedContext, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting,
-               @quitDuringCountdown, @trial, @assignment)`,
+               @quitDuringCountdown, @trial, @manual, @assignment)`,
           )
           .run(values).lastInsertRowid,
       );
@@ -628,7 +642,7 @@ export class SqliteStateStore implements StateStore {
              context = @context, watched_context = @watchedContext, repo_check = @repoCheck, user_repos = @userRepos, draft = @draft, edited_text = @editedText,
              removed_recipients = @removedRecipients, directives = @directives, fixed_requirement = @fixedRequirement,
              regeneration = @regeneration, failure = @failure, runs = @runs, posting = @posting,
-             quit_during_countdown = @quitDuringCountdown, trial = @trial, assignment = @assignment
+             quit_during_countdown = @quitDuringCountdown, trial = @trial, manual = @manual, assignment = @assignment
            WHERE id = @id`,
         )
         .run({ ...values, id });
@@ -919,6 +933,8 @@ interface BundleRow {
   quit_during_countdown: number;
   /** 시험 묶음이면 1. */
   trial: number;
+  /** 최근 멘션 확인에서 고른 수동 요청 묶음이면 1. */
+  manual: number;
   /** 별도 감지 사유인 담당 업무 자료. */
   assignment: string | null;
 }

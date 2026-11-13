@@ -46,6 +46,12 @@ export interface StateStore {
    */
   saveDetectedBundles(bundles: readonly UnsavedBundle[], baselineAlarmId: string): Promise<MentionBundle[]>;
   /**
+   * 최근 멘션 확인에서 고른 수동 요청 묶음 하나를 저장하고 ID를 받는다. 저장한 묶음은 수동 요청 표시를 가진다.
+   * 기준점과 담당 업무 감지 상태는 바꾸지 않는다. `replacedRecordId`가 있으면 그 최소 기록을 지우고, 묶음 저장과 한 트랜잭션으로 한다.
+   * 다른 묶음에 이미 든 멘션 위치를 주면 실패하고 아무것도 바꾸지 않는다.
+   */
+  addManualBundle(bundle: UnsavedBundle, replacedRecordId: number | null): Promise<MentionBundle>;
+  /**
    * 새 시험 묶음 하나를 저장하고 ID를 받는다. 기준점은 옮기지 않는다. 저장한 묶음을 돌려준다.
    * 시험 묶음의 멘션 위치는 실제 묶음·최소 기록의 멘션 위치와 따로 두어, 같은 위치가 있어도 실패하지 않고 `hasMentionLocation`에도 세지 않는다.
    */

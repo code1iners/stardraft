@@ -573,11 +573,15 @@ export class SqliteStateStore implements StateStore {
     })();
   }
 
-  async addManualBundle(bundle: UnsavedBundle, replacedRecordId: number | null): Promise<MentionBundle> {
+  async addManualBundle(bundle: UnsavedBundle, replacedRecordIds: readonly number[]): Promise<MentionBundle> {
     return this.db.transaction(() => {
       // 최소 기록의 멘션 위치·게시 범위는 외래 키로 함께 지워진다.
-      if (replacedRecordId !== null) this.db.prepare('DELETE FROM minimal_record WHERE bundle_id = ?').run(replacedRecordId);
-      return this.writeBundle({ ...bundle, id: null, manual: true });
+      for (const recordId of replacedRecordIds) this.db.prepare('DELETE FROM minimal_record WHERE bundle_id = ?').run(recordId);
+      /** 저장한 묶음. */
+      const saved = this.writeBundle({ ...bundle, id: null, manual: true });
+      // 전에 처리한 업무면 처리 기록이 옛 묶음을 가리키고 있어 새 묶음으로 바꾼다.
+      if (bundle.assignment) this.db.prepare('INSERT OR REPLACE INTO assignment_record VALUES (?, ?, ?)').run(bundle.projectId, bundle.assignment.taskId, saved.id);
+      return saved;
     })();
   }
 

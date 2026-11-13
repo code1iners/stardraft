@@ -12,6 +12,7 @@ import { bundleRecipients, draftEditorText, isPostable, postableBody } from '../
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
 import { SerialQueue } from '../serial-queue';
+import type { RecentAssignment } from '../manual-check/recent-assignments';
 import type { RecentMention } from '../manual-check/recent-mentions';
 import { unseenChanges } from './bundle-changes';
 import { isExpired, minimalRecordOf } from './retention';
@@ -1111,35 +1112,71 @@ export class MentionBundles {
    * 감지 기준점은 옮기지 않고 묶음과 그 멘션 위치(처리 기록)만 함께 저장하므로, 이후 같은 위치의 알림은 감지가 버린다.
    */
   async requestMention({ mention, postTitle, connectUrl }: RecentMention): Promise<ManualRequestResult> {
+    /** 고른 멘션 위치. */
+    const location = mentionLocationKey(mention);
+    return this.addManual(mention, {
+      existing: () => this.bundles
+        .filter((bundle) => bundle.mentions.some((item) => mentionLocationKey(item) === location))
+        .sort((a, b) => b.id - a.id)[0],
+      replaces: (record) => record.mentions.some((recorded) => mentionLocationKey(recorded) === location),
+      contents: { postTitle, connectUrl, mentions: [{ ...mention, answered: false, gone: false, goneExcluded: false }] },
+    });
+  }
+
+  /**
+   * 최근 멘션 확인에서 고른 담당 업무로 게시할 수 있는 수동 요청 묶음을 만든다. 업무의 묶음 자리인 게시물 본문으로 기존 기록을 찾는다(`assignmentPlaceOf`와 같은 기준).
+   * - 본문 자리에 묶음이 있으면(본문 멘션 묶음 포함, 처리되지 않았거나 처리한 지 7일 안) 새로 만들지 않고 그 묶음을 돌려준다.
+   * - 업무 묶음의 최소 기록만 남았으면 그 최소 기록을 지우고 새 묶음을 만든다. 기록이 없으면 새 묶음을 만든다.
+   *   같은 본문에서 처리한 본문 멘션의 최소 기록은 그 멘션 줄의 기록이라 남긴다. 멘션 위치를 다시 감지하지 않고 멘션 줄이 "처리됨"으로 남게 한다.
+   * 새 묶음은 업무 작성자를 기본 받는 사람으로 둔 담당 업무 묶음이고, 배정 시각이 추정이면 그 사실을 배정 자료에 남긴다. 만들 때 "이미 답함"을 판정하지 않는다.
+   * 담당 업무 감지 상태(기준점, 초기 업무 목록, 후보)는 바꾸지 않고 묶음과 업무 처리 기록만 함께 저장하므로, 이후 같은 업무를 자동 감지가 또 만들지 않는다.
+   */
+  async requestAssignment({ alarm, post, taskId, assignedAt, assignedAtEstimated }: RecentAssignment): Promise<ManualRequestResult> {
+    /** 업무 본문 자리. */
+    const place = bundlePlaceKey({ postId: post.postId, remarkId: '-1' });
+    return this.addManual({ postId: post.postId, remarkId: '-1', projectId: alarm.projectId }, {
+      existing: () => this.latestBundleAt(place),
+      replaces: (record) => bundlePlaceKey(record) === place && record.mentions.length === 0,
+      contents: {
+        postTitle: post.title,
+        connectUrl: post.connectUrl,
+        assignment: { taskId, authorId: post.registerId, authorName: post.registerName, assignedAt, ...(assignedAtEstimated ? { assignedAtEstimated: true } : {}) },
+      },
+    });
+  }
+
+  /**
+   * 최근 멘션 확인에서 고른 항목으로 수동 요청 묶음을 만든다. `existing`이 찾은 묶음이 있으면 새로 만들지 않고 그 묶음을 돌려준다.
+   * 없으면 `replaces`에 맞는 최소 기록을 지우고, `origin`의 자리와 프로젝트에 `contents`를 채운 새 묶음을 함께 저장한다.
+   * 새 묶음은 일반 묶음처럼 저장소 매핑을 확인해 생성 중이나 저장소 확인 필요로 올라온다.
+   */
+  private async addManual(
+    origin: Pick<Mention, 'postId' | 'remarkId' | 'projectId'>,
+    { existing, replaces, contents }: {
+      existing: () => MentionBundle | undefined;
+      replaces: (record: MinimalRecord) => boolean;
+      contents: Pick<MentionBundle, 'postTitle' | 'connectUrl'> & Partial<Pick<MentionBundle, 'mentions' | 'assignment'>>;
+    },
+  ): Promise<ManualRequestResult> {
     // 7일이 지난 처리됨 묶음은 되돌릴 수 없으므로 먼저 정리해 최소 기록으로 다룬다.
     await this.archiveExpired();
     /** 초안 없는 묶음이 갈 상태를 정할 저장소 매핑. */
-    const resolution = (await this.resolveProjects([mention.projectId])).get(mention.projectId);
+    const resolution = (await this.resolveProjects([origin.projectId])).get(origin.projectId);
     /** 만들거나 찾은 묶음. */
     const outcome = await this.lane.run(async (): Promise<{ kind: ManualRequestResult['kind']; bundle: MentionBundle }> => {
-      /** 고른 멘션 위치. */
-      const location = mentionLocationKey(mention);
-      /** 그 위치를 든 가장 최근 묶음. */
-      const existing = this.bundles
-        .filter((bundle) => bundle.mentions.some((item) => mentionLocationKey(item) === location))
-        .sort((a, b) => b.id - a.id)[0];
-      if (existing) return { kind: 'existing', bundle: existing };
+      /** 그 항목의 기존 묶음. */
+      const found = existing();
+      if (found) return { kind: 'existing', bundle: found };
 
-      /** 그 위치를 든 최소 기록. 새 묶음과 함께 지운다. */
-      const record = this.minimalRecords.find((item) => item.mentions.some((recorded) => mentionLocationKey(recorded) === location));
+      /** 새 묶음과 함께 지울 그 항목의 최소 기록 ID. */
+      const replacedRecordIds = new Set(this.minimalRecords.filter(replaces).map((record) => record.bundleId));
       /** 저장할 수동 요청 묶음. */
-      const bundle: UnsavedBundle = {
-        ...newBundle(mention, this.options.clock.now(), resolution),
-        postTitle,
-        connectUrl,
-        mentions: [{ ...mention, answered: false, gone: false, goneExcluded: false }],
-        manual: true,
-      };
+      const bundle: UnsavedBundle = { ...newBundle(origin, this.options.clock.now(), resolution), ...contents, manual: true };
       /** 저장한 묶음. */
-      const saved = await this.options.stateStore.addManualBundle(bundle, record?.bundleId ?? null);
-      if (record) this.minimalRecords = this.minimalRecords.filter((item) => item.bundleId !== record.bundleId);
+      const saved = await this.options.stateStore.addManualBundle(bundle, [...replacedRecordIds]);
+      this.minimalRecords = this.minimalRecords.filter((record) => !replacedRecordIds.has(record.bundleId));
       this.bundles = [...this.bundles, saved];
-      this.options.logger.info('bundle.manual-created', { bundleId: saved.id, status: saved.status, replacedRecord: record?.bundleId ?? null });
+      this.options.logger.info('bundle.manual-created', { bundleId: saved.id, status: saved.status, replacedRecords: [...replacedRecordIds].join(',') || null });
       this.emit();
       return { kind: 'created', bundle: saved };
     });

@@ -4611,3 +4611,237 @@ describe('최근 멘션 확인: 담당 업무 후보', () => {
     expect(bundles.state()).toEqual([]);
   });
 });
+
+describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
+  /** 담당 업무 감지를 한 번 돌려 첫 조회 때(09:00)를 기능 시작 시각으로 남기고 10분 뒤로 간다. */
+  async function startAssignmentDetection({ flow, bundles, clock, stateStore }: Awaited<ReturnType<typeof setup>>) {
+    /** 담당 업무 감지. */
+    const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+    await detection.checkNow();
+    clock.advance(10 * 60_000);
+    return detection;
+  }
+
+  /** 담당 업무 목록의 첫 쪽을 불러온다. 불러오지 못하면 테스트를 멈춘다. */
+  async function assignmentCandidatesOf(check: ManualMentionCheck) {
+    /** 불러온 목록. */
+    const list = await check.listAssignments(null);
+    if (!list.ok) throw new Error(`담당 업무 목록을 불러오지 못했습니다: ${list.reason}`);
+    return list.candidates;
+  }
+
+  it('고른 업무가 업무 작성자를 받는 사람으로 둔 게시할 수 있는 수동 요청 묶음이 되고, 추정 배정 시각을 남기며 담당 업무 감지 상태와 기준점은 그대로다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, clock, stateStore, executor, repos, notifier } = env;
+    // 기능 시작 전 알림에 나타난 업무.
+    addTask(flow, '201', 'before-task');
+    await startAssignmentDetection(env);
+    // 생성 뒤 수정됐고 담당 변경 기록도 없어 배정 시점을 알 수 없는 업무. 감지는 가져오지 않는다.
+    addTask(flow, '202', 'no-evidence', { registeredDateTime: '20261020090100', editedDateTime: '20261020090300' }, { remarkId: '700', registeredDateTime: '20261020090400' });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    /** 고르기 전의 담당 업무 감지 상태. */
+    const stateBefore = await stateStore.getAssignmentState();
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 목록에 보인 업무. 근거 없는 업무가 앞이다. */
+    const candidates = await assignmentCandidatesOf(check);
+    expect(candidates.map(({ post }) => post.postId)).toEqual(['no-evidence', 'before-task']);
+
+    /** 고른 두 업무로 만든 결과. */
+    const results = [await check.requestAssignment(candidates[0]!), await check.requestAssignment(candidates[1]!)];
+    await settle();
+
+    expect(results.map((result) => result.kind)).toEqual(['created', 'created']);
+    /** 만든 두 묶음. */
+    const [estimated, evidenced] = results.map((result) => bundles.get(result.bundleId)!);
+    expect(estimated).toMatchObject({
+      manual: true,
+      status: 'ready',
+      postId: 'no-evidence',
+      remarkId: '-1',
+      postTitle: '업무 no-evidence',
+      mentions: [],
+      assignment: { taskId: 'task-no-evidence', authorId: SENDER, authorName: '업무 작성자', assignedAt: '20261020090400', assignedAtEstimated: true },
+    });
+    expect(evidenced).toMatchObject({ manual: true, status: 'ready', postId: 'before-task' });
+    expect(evidenced?.assignment).toEqual({ taskId: 'task-before-task', authorId: SENDER, authorName: '업무 작성자', assignedAt: '20261020085000' });
+    expect(executor.requests.map((request) => request.input.includes('담당 업무'))).toEqual([true, true]);
+    expect(bundleRecipients(estimated!)).toEqual([{ id: SENDER, name: '업무 작성자' }]);
+    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '담당 업무 초안이 준비됐습니다.', bundleId: estimated!.id });
+    expect(bundles.reviewCount()).toBe(2);
+    expect(await stateStore.getAssignmentState()).toEqual(stateBefore);
+    expect(stateStore.baselineAlarmId).toBe('100');
+
+    expect(await bundles.startPosting(estimated!.id)).toBe(true);
+    expect(await bundles.checkBeforePost(estimated!.id)).toBe('passed');
+    expect(flow.writes).toEqual([]);
+  });
+
+  it('본문 자리에 묶음이 있는 업무는 처리됐어도 7일 안이면 그 묶음을 돌려주고, 최소 기록만 남은 업무는 최소 기록을 지우고 새로 만든다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, clock, stateStore, executor, repos } = env;
+    /** 기능 시작 시각을 남긴 담당 업무 감지. */
+    const detection = await startAssignmentDetection(env);
+    // 감지가 묶음을 만들 업무 둘. 하나는 무시한 뒤 7일이 지나 최소 기록만 남는다.
+    addTask(flow, '201', 'bundled', { registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
+    addTask(flow, '202', 'archived', { registeredDateTime: '20261020090200', editedDateTime: '20261020090200' });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await detection.checkNow();
+    await settle();
+    /** 감지가 만든 묶음. */
+    const [bundled, archived] = ['bundled', 'archived'].map((postId) => bundles.state().find((bundle) => bundle.postId === postId)!);
+    await bundles.ignore(archived!.id);
+    await bundles.ignore(bundled!.id);
+    clock.advance(6 * DAY_MS);
+    await bundles.restore(bundled!.id);
+    await bundles.ignore(bundled!.id);
+    clock.advance(2 * DAY_MS);
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 목록에 보인 두 업무. */
+    const candidates = await assignmentCandidatesOf(check);
+    /** 업무마다 목록 줄. */
+    const [archivedRow, bundledRow] = ['archived', 'bundled'].map((postId) => candidates.find((candidate) => candidate.post.postId === postId)!);
+
+    expect(await check.requestAssignment(bundledRow!)).toEqual({ kind: 'existing', bundleId: bundled!.id });
+    /** 최소 기록만 남은 업무를 고른 결과. */
+    const recreated = await check.requestAssignment(archivedRow!);
+    await settle();
+
+    expect(recreated.kind).toBe('created');
+    expect(recreated.bundleId).not.toBe(archived!.id);
+    expect(await stateStore.listMinimalRecords()).toEqual([]);
+    expect(bundles.get(recreated.bundleId)).toMatchObject({ manual: true, status: 'ready', postId: 'archived', assignment: { taskId: 'task-archived' } });
+    expect(bundles.assignmentPlaceOf('archived')).toEqual({ kind: 'bundle', bundleId: recreated.bundleId, status: 'ready' });
+    expect(executor.requests).toHaveLength(3);
+  });
+
+  it('같은 본문에서 처리한 본문 멘션의 최소 기록은 지우지 않아, 업무를 고른 뒤에도 멘션 줄은 처리됨이다', async () => {
+    const { flow, bundles, clock, stateStore, executor, repos, poll } = await setup();
+    // 나를 멘션한 업무 본문. 본문 멘션으로 먼저 감지해 처리한 뒤 7일이 지나 최소 기록만 남는다.
+    addTask(flow, '201', 'body-task', { textComponents: [{ contents: `${MY_MARKUP} 배포 순서를 정리해주세요.`, mentions: [ME] }] });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101', { postId: 'body-task', remarkId: '-1' }));
+    /** 감지가 만든 본문 멘션 묶음. */
+    const [detected] = bundles.state();
+    expect(detected).toMatchObject({ postId: 'body-task', remarkId: '-1', status: 'ready' });
+    await bundles.ignore(detected!.id);
+    clock.advance(8 * DAY_MS);
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 그 본문의 업무 줄. */
+    const [candidate] = await assignmentCandidatesOf(check);
+
+    /** 고른 결과. */
+    const { kind, bundleId } = await check.requestAssignment(candidate!);
+    await settle();
+
+    expect(kind).toBe('created');
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'ready', mentions: [], assignment: { taskId: 'task-body-task' } });
+    expect((await stateStore.listMinimalRecords()).map((record) => record.bundleId)).toEqual([detected!.id]);
+    expect(bundles.manualPlaceOf(detected!.mentions[0]!)).toEqual({ kind: 'record' });
+  });
+
+  it('수동 요청 뒤에 같은 업무의 알림을 자동 감지가 보아도 묶음을 또 만들지 않고, 그 묶음이 최소 기록만 남은 뒤에도 같다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, clock, stateStore, executor, repos } = env;
+    /** 기능 시작 시각을 남긴 담당 업무 감지. */
+    const detection = await startAssignmentDetection(env);
+    // 기능 시작 뒤 생성 시 지정된 업무 둘. 감지가 아직 보지 않아 감지만 돌면 둘 다 묶음이 된다.
+    addTask(flow, '201', 'fresh', { registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
+    addTask(flow, '202', 'archived', { registeredDateTime: '20261020090200', editedDateTime: '20261020090200' });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 목록에 보인 두 업무. */
+    const candidates = await assignmentCandidatesOf(check);
+    /** 두 업무를 고른 결과. 앞이 `archived`다. */
+    const [archived, fresh] = [await check.requestAssignment(candidates[0]!), await check.requestAssignment(candidates[1]!)];
+    await settle();
+    // 하나는 무시한 뒤 7일이 지나 최소 기록만 남긴다.
+    await bundles.ignore(archived.bundleId);
+    clock.advance(8 * DAY_MS);
+    await bundles.archiveExpired();
+    /** 감지가 보기 전의 남은 묶음. */
+    const before = bundles.state();
+    expect(before.map(({ id, postId }) => [id, postId])).toEqual([[fresh.bundleId, 'fresh']]);
+
+    await detection.checkNow();
+    await settle();
+
+    expect(bundles.state()).toEqual(before);
+    expect(executor.requests).toHaveLength(2);
+  });
+
+  it('배정 뒤 내가 이미 답한 업무도 초안을 만들고 실행 직전에도 이미 답함으로 처리하지 않으며, 게시를 누를 때의 확인을 통과한다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, clock, stateStore, executor, repos } = env;
+    await startAssignmentDetection(env);
+    addTask(flow, '201', 'answered', { registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
+    flow.addComment('answered', { commentId: '730', contents: '확인했습니다', registerId: ME, registeredDateTime: '20261020090500' });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 이미 답한 업무의 목록 줄. */
+    const [candidate] = await assignmentCandidatesOf(check);
+    expect(candidate?.answered).toBe(true);
+
+    /** 고른 결과. */
+    const { bundleId } = await check.requestAssignment(candidate!);
+    await settle();
+
+    expect(executor.requests).toHaveLength(1);
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'ready', answers: [{ answerId: '730', excluded: true }] });
+    expect(await bundles.startPosting(bundleId)).toBe(true);
+    expect(await bundles.checkBeforePost(bundleId)).toBe('passed');
+  });
+
+  it('담당 해제를 확인하면 일반 담당 업무 묶음처럼 생성 전에는 처리됨의 담당 해제로 옮기고, 검토 중에는 게시를 막는다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    const { flow, bundles, clock, stateStore, executor, repos, poll, setConnected } = env;
+    await poll();
+    await startAssignmentDetection(env);
+    /** 업무 둘의 게시물. 담당자만 바꿔 다시 둔다. */
+    const taskPost = (postId: string, workerIds: string[]): Partial<FakeFlowPost> => ({
+      registeredDateTime: '20261020090100', editedDateTime: '20261020090100', tasks: [task({ taskId: `task-${postId}`, workerIds })],
+    });
+    addTask(flow, '201', 'held', taskPost('held', [ME, OTHER_SENDER]));
+    addTask(flow, '202', 'reviewed', taskPost('reviewed', [ME, OTHER_SENDER]));
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 업무마다 목록 줄. */
+    const [reviewedRow, heldRow] = await assignmentCandidatesOf(check);
+
+    setConnected(false);
+    /** 생성을 기다리는 동안 담당에서 빠진 업무. */
+    const held = await check.requestAssignment(heldRow!);
+    expect(bundles.get(held.bundleId)?.status).toBe('generating');
+    addTask(flow, '203', 'held', taskPost('held', [OTHER_SENDER]));
+    setConnected(true);
+    await settle();
+    expect(executor.requests).toEqual([]);
+    expect(bundles.get(held.bundleId)).toMatchObject({ manual: true, status: 'unassigned', draft: null, assignment: { unassignedAt: expect.any(Number) } });
+
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    /** 검토하는 동안 담당에서 빠진 업무. */
+    const reviewed = await check.requestAssignment(reviewedRow!);
+    await settle();
+    expect(bundles.get(reviewed.bundleId)?.status).toBe('ready');
+    addTask(flow, '204', 'reviewed', taskPost('reviewed', [OTHER_SENDER]));
+    await poll();
+    expect(bundles.get(reviewed.bundleId)).toMatchObject({ status: 'ready', assignment: { unassignedAt: expect.any(Number) } });
+    /** 게시 서비스. */
+    const posting = new Posting({ bundles, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }), myUserId: () => ME,
+      clock, logger: createLogger([{ write: () => {} }], clock) });
+    await posting.post(reviewed.bundleId);
+    await settle();
+    clock.advance(5_000);
+    await settle();
+    expect(flow.writes).toEqual([]);
+    expect(bundles.get(reviewed.bundleId)?.status).toBe('ready');
+  });
+});

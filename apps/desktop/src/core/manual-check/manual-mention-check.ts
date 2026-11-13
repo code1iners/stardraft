@@ -37,8 +37,8 @@ export type ManualAssignmentList =
 
 /** 최근 멘션 확인에 필요한 것. */
 export interface ManualMentionCheckOptions {
-  /** 고른 멘션으로 수동 요청 묶음을 만들 멘션 묶음. */
-  bundles: Pick<MentionBundles, 'requestMention'>;
+  /** 고른 멘션이나 담당 업무로 수동 요청 묶음을 만들 멘션 묶음. */
+  bundles: Pick<MentionBundles, 'requestMention' | 'requestAssignment'>;
   /** 지금 키로 Flow 연결을 만든다. 쓸 키가 없으면 `null`. */
   connectFlow: () => FlowConnection | null;
   /** 키 확인 때 얻은 내 구성원 정보. 모르면 `null`. */
@@ -54,7 +54,7 @@ export interface ManualMentionCheckOptions {
 }
 
 /**
- * 최근 멘션 확인. 감지에서 빠진 멘션과 담당 업무까지 최근 항목을 10건씩 불러오고, 사용자가 고른 멘션을 게시할 수 있는 수동 요청 묶음으로 만든다.
+ * 최근 멘션 확인. 감지에서 빠진 멘션과 담당 업무까지 최근 항목을 10건씩 불러오고, 사용자가 고른 멘션이나 담당 업무를 게시할 수 있는 수동 요청 묶음으로 만든다.
  * 목록 창의 열림·탭·로딩 상태는 화면 쪽이 들고, 여기서는 상태를 두지 않는다.
  */
 export class ManualMentionCheck {
@@ -106,6 +106,17 @@ export class ManualMentionCheck {
     this.options.logger.info(result.kind === 'created' ? 'manual-check.requested' : 'manual-check.existing', {
       bundleId: result.bundleId,
       alarmId: candidate.mention.alarmId,
+    });
+    return result;
+  }
+
+  /** 목록에서 고른 담당 업무로 수동 요청 묶음을 만든다. 그 업무의 본문 자리에 이미 묶음이 있으면 새로 만들지 않고 그 묶음을 돌려준다. */
+  async requestAssignment(candidate: RecentAssignment): Promise<ManualRequestResult> {
+    /** 만들거나 찾은 묶음. */
+    const result = await this.options.bundles.requestAssignment(candidate);
+    this.options.logger.info(result.kind === 'created' ? 'manual-check.requested' : 'manual-check.existing', {
+      bundleId: result.bundleId,
+      alarmId: candidate.alarm.alarmId,
     });
     return result;
   }

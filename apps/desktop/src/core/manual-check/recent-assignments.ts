@@ -5,8 +5,7 @@ import type { MyAnswer } from '../flow/mention-judgement';
 import { taskAnswers, taskRemarks } from '../flow/task-remarks';
 import { isSameFlowUser } from '../flow/user-id';
 import type { FlowAlarm, FlowApi, FlowApiResult, FlowEmployee, FlowPost } from '../ports/flow-api';
-import { collectFromAlarms, type AlarmVerdict, type AlarmWalkCursor } from './alarm-walk';
-import { answeredAfter } from './recent-mentions';
+import { answeredAfter, collectFromAlarms, type AlarmVerdict, type AlarmWalkCursor } from './alarm-walk';
 
 /**
  * 담당 업무 감지가 이 업무를 자동으로 가져오지 않은 까닭. 최근 멘션 확인에서는 풀어 주고 줄 태그로 보인다.

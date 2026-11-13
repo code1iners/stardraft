@@ -1,8 +1,7 @@
 import { mentionLocationKey, type Mention } from '../detection/mention';
-import { flowTimeToEpochMs } from '../flow/flow-time';
 import { MentionJudge } from '../flow/mention-judgement';
 import type { FlowAlarm, FlowApi, FlowApiResult } from '../ports/flow-api';
-import { collectFromAlarms, type AlarmVerdict } from './alarm-walk';
+import { answeredAfter, collectFromAlarms, type AlarmVerdict, type AlarmWalkCursor } from './alarm-walk';
 
 /** 최근 멘션 목록에서 고를 수 있는 멘션 하나. */
 export interface RecentMention {
@@ -16,18 +15,8 @@ export interface RecentMention {
   answered: boolean;
 }
 
-/**
- * 이어 불러오기가 시작할 자리. 앞선 불러오기가 돌려준 값을 그대로 넘긴다.
- * 쪽 커서는 Flow가 준 값이라, 그사이 새 알림이 앞에 더 와 쪽이 밀려도 `afterAlarmId`보다 오래된 알림만 보아 같은 알림을 다시 판정하지 않는다.
- */
-export interface RecentMentionCursor {
-  /** 다시 받을 알림 쪽의 커서. 첫 쪽이면 `null`. */
-  pageCursor: string | null;
-  /** 이 알림까지는 앞서 판정했다. 그 쪽을 처음부터 볼 것이면 `null`. */
-  afterAlarmId: string | null;
-  /** 앞서 판정한 멘션 위치(`mentionLocationKey`). 같은 위치의 더 오래된 알림을 다시 넣지 않는다. */
-  decidedLocations: string[];
-}
+/** 이어 불러오기가 시작할 자리. 앞선 불러오기가 돌려준 값을 그대로 넘긴다. 판정한 자리는 멘션 위치(`mentionLocationKey`)다. */
+export type RecentMentionCursor = AlarmWalkCursor;
 
 /** 최근 멘션 목록의 한 번 불러온 몫. */
 export interface RecentMentionPage {
@@ -54,7 +43,7 @@ export async function listRecentMentions(
   /** 쪽을 넘기며 판정을 통과한 멘션을 모은 결과. 같은 멘션 위치는 가장 최근 알림 하나만 판정한다. */
   const walk = await collectFromAlarms(
     (cursor) => api.listMentionAlarms(cursor),
-    from && { pageCursor: from.pageCursor, afterAlarmId: from.afterAlarmId, decidedKeys: from.decidedLocations },
+    from,
     mentionLocationKey,
     async (alarm): Promise<AlarmVerdict<{ alarm: FlowAlarm; text: string }>> => {
       /** 판정 결과. */
@@ -67,11 +56,7 @@ export async function listRecentMentions(
   /** 모은 멘션. 최신이 앞이다. */
   const found = walk.value.found;
   /** 이어 불러올 자리. */
-  const next: RecentMentionCursor | null = walk.value.next && {
-    pageCursor: walk.value.next.pageCursor,
-    afterAlarmId: walk.value.next.afterAlarmId,
-    decidedLocations: walk.value.next.decidedKeys,
-  };
+  const next: RecentMentionCursor | null = walk.value.next;
 
   /** 내 사용자 ID들. 키 확인 때 얻은 ID와 판정을 통과한 알림의 receiverId다. */
   const myIds = [...new Set([myUserId, ...found.flatMap(({ alarm }) => (alarm.receiverId ? [alarm.receiverId] : []))])];
@@ -88,18 +73,6 @@ export async function listRecentMentions(
     });
   }
   return { ok: true, value: { mentions, next } };
-}
-
-/** 멘션 시각보다 나중에 쓴 답이 있는지 본다. 시각은 Flow 시각끼리 비교하고, 읽을 수 없으면 답하지 않은 것으로 본다. */
-export function answeredAfter(mentionTime: string, answers: readonly { registeredDateTime: string }[]): boolean {
-  /** 멘션 시각. */
-  const at = flowTimeToEpochMs(mentionTime);
-  if (at === null) return false;
-  return answers.some((answer) => {
-    /** 답을 쓴 시각. */
-    const answeredAt = flowTimeToEpochMs(answer.registeredDateTime);
-    return answeredAt !== null && answeredAt > at;
-  });
 }
 
 /** 판정을 통과한 알림과 멘션된 글의 내용으로 멘션을 만든다. */

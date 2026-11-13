@@ -4631,6 +4631,7 @@ describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
   }
 
   it('고른 업무가 업무 작성자를 받는 사람으로 둔 게시할 수 있는 수동 요청 묶음이 되고, 추정 배정 시각을 남기며 담당 업무 감지 상태와 기준점은 그대로다', async () => {
+    /** 서비스 검증 환경. */
     const env = await setup();
     const { flow, bundles, clock, stateStore, executor, repos, notifier } = env;
     // 기능 시작 전 알림에 나타난 업무.
@@ -4678,8 +4679,10 @@ describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
   });
 
   it('본문 자리에 묶음이 있는 업무는 처리됐어도 7일 안이면 그 묶음을 돌려주고, 최소 기록만 남은 업무는 최소 기록을 지우고 새로 만든다', async () => {
+    /** 서비스 검증 환경. */
     const env = await setup();
     const { flow, bundles, clock, stateStore, executor, repos } = env;
+    /** 기능 시작 시각을 남긴 담당 업무 감지. */
     const detection = await startAssignmentDetection(env);
     // 감지가 묶음을 만들 업무 둘. 하나는 무시한 뒤 7일이 지나 최소 기록만 남는다.
     addTask(flow, '201', 'bundled', { registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
@@ -4716,9 +4719,37 @@ describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
     expect(executor.requests).toHaveLength(3);
   });
 
+  it('같은 본문에서 처리한 본문 멘션의 최소 기록은 지우지 않아, 업무를 고른 뒤에도 멘션 줄은 처리됨이다', async () => {
+    const { flow, bundles, clock, stateStore, executor, repos, poll } = await setup();
+    // 나를 멘션한 업무 본문. 본문 멘션으로 먼저 감지해 처리한 뒤 7일이 지나 최소 기록만 남는다.
+    addTask(flow, '201', 'body-task', { textComponents: [{ contents: `${MY_MARKUP} 배포 순서를 정리해주세요.`, mentions: [ME] }] });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101', { postId: 'body-task', remarkId: '-1' }));
+    /** 감지가 만든 본문 멘션 묶음. */
+    const [detected] = bundles.state();
+    expect(detected).toMatchObject({ postId: 'body-task', remarkId: '-1', status: 'ready' });
+    await bundles.ignore(detected!.id);
+    clock.advance(8 * DAY_MS);
+    const { check } = manualCheckOf(flow, bundles, clock, stateStore);
+    /** 그 본문의 업무 줄. */
+    const [candidate] = await assignmentCandidatesOf(check);
+
+    /** 고른 결과. */
+    const { kind, bundleId } = await check.requestAssignment(candidate!);
+    await settle();
+
+    expect(kind).toBe('created');
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'ready', mentions: [], assignment: { taskId: 'task-body-task' } });
+    expect((await stateStore.listMinimalRecords()).map((record) => record.bundleId)).toEqual([detected!.id]);
+    expect(bundles.manualPlaceOf(detected!.mentions[0]!)).toEqual({ kind: 'record' });
+  });
+
   it('수동 요청 뒤에 같은 업무의 알림을 자동 감지가 보아도 묶음을 또 만들지 않고, 그 묶음이 최소 기록만 남은 뒤에도 같다', async () => {
+    /** 서비스 검증 환경. */
     const env = await setup();
     const { flow, bundles, clock, stateStore, executor, repos } = env;
+    /** 기능 시작 시각을 남긴 담당 업무 감지. */
     const detection = await startAssignmentDetection(env);
     // 기능 시작 뒤 생성 시 지정된 업무 둘. 감지가 아직 보지 않아 감지만 돌면 둘 다 묶음이 된다.
     addTask(flow, '201', 'fresh', { registeredDateTime: '20261020090100', editedDateTime: '20261020090100' });
@@ -4747,6 +4778,7 @@ describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
   });
 
   it('배정 뒤 내가 이미 답한 업무도 초안을 만들고 실행 직전에도 이미 답함으로 처리하지 않으며, 게시를 누를 때의 확인을 통과한다', async () => {
+    /** 서비스 검증 환경. */
     const env = await setup();
     const { flow, bundles, clock, stateStore, executor, repos } = env;
     await startAssignmentDetection(env);
@@ -4769,6 +4801,7 @@ describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
   });
 
   it('담당 해제를 확인하면 일반 담당 업무 묶음처럼 생성 전에는 처리됨의 담당 해제로 옮기고, 검토 중에는 게시를 막는다', async () => {
+    /** 서비스 검증 환경. */
     const env = await setup();
     const { flow, bundles, clock, stateStore, executor, repos, poll, setConnected } = env;
     await poll();

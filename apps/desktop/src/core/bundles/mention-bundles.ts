@@ -1126,7 +1126,8 @@ export class MentionBundles {
   /**
    * 최근 멘션 확인에서 고른 담당 업무로 게시할 수 있는 수동 요청 묶음을 만든다. 업무의 묶음 자리인 게시물 본문으로 기존 기록을 찾는다(`assignmentPlaceOf`와 같은 기준).
    * - 본문 자리에 묶음이 있으면(본문 멘션 묶음 포함, 처리되지 않았거나 처리한 지 7일 안) 새로 만들지 않고 그 묶음을 돌려준다.
-   * - 최소 기록만 남았으면 그 최소 기록을 지우고 새 묶음을 만든다. 기록이 없으면 새 묶음을 만든다.
+   * - 업무 묶음의 최소 기록만 남았으면 그 최소 기록을 지우고 새 묶음을 만든다. 기록이 없으면 새 묶음을 만든다.
+   *   같은 본문에서 처리한 본문 멘션의 최소 기록은 그 멘션 줄의 기록이라 남긴다. 멘션 위치를 다시 감지하지 않고 멘션 줄이 "처리됨"으로 남게 한다.
    * 새 묶음은 업무 작성자를 기본 받는 사람으로 둔 담당 업무 묶음이고, 배정 시각이 추정이면 그 사실을 배정 자료에 남긴다. 만들 때 "이미 답함"을 판정하지 않는다.
    * 담당 업무 감지 상태(기준점, 초기 업무 목록, 후보)는 바꾸지 않고 묶음과 업무 처리 기록만 함께 저장하므로, 이후 같은 업무를 자동 감지가 또 만들지 않는다.
    */
@@ -1135,7 +1136,7 @@ export class MentionBundles {
     const place = bundlePlaceKey({ postId: post.postId, remarkId: '-1' });
     return this.addManual({ postId: post.postId, remarkId: '-1', projectId: alarm.projectId }, {
       existing: () => this.latestBundleAt(place),
-      replaces: (record) => bundlePlaceKey(record) === place,
+      replaces: (record) => bundlePlaceKey(record) === place && record.mentions.length === 0,
       contents: {
         postTitle: post.title,
         connectUrl: post.connectUrl,
@@ -1167,15 +1168,15 @@ export class MentionBundles {
       const found = existing();
       if (found) return { kind: 'existing', bundle: found };
 
-      /** 그 항목의 최소 기록. 새 묶음과 함께 지운다. */
-      const replaced = new Set(this.minimalRecords.filter(replaces).map((record) => record.bundleId));
+      /** 새 묶음과 함께 지울 그 항목의 최소 기록 ID. */
+      const replacedRecordIds = new Set(this.minimalRecords.filter(replaces).map((record) => record.bundleId));
       /** 저장할 수동 요청 묶음. */
       const bundle: UnsavedBundle = { ...newBundle(origin, this.options.clock.now(), resolution), ...contents, manual: true };
       /** 저장한 묶음. */
-      const saved = await this.options.stateStore.addManualBundle(bundle, [...replaced]);
-      this.minimalRecords = this.minimalRecords.filter((record) => !replaced.has(record.bundleId));
+      const saved = await this.options.stateStore.addManualBundle(bundle, [...replacedRecordIds]);
+      this.minimalRecords = this.minimalRecords.filter((record) => !replacedRecordIds.has(record.bundleId));
       this.bundles = [...this.bundles, saved];
-      this.options.logger.info('bundle.manual-created', { bundleId: saved.id, status: saved.status, replacedRecords: replaced.size });
+      this.options.logger.info('bundle.manual-created', { bundleId: saved.id, status: saved.status, replacedRecords: [...replacedRecordIds].join(',') || null });
       this.emit();
       return { kind: 'created', bundle: saved };
     });

@@ -1077,7 +1077,7 @@ describe('수동 요청 묶음', () => {
     expect((await store.listBundles()).map(({ id }) => id)).toEqual([2]);
   });
 
-  it('담당 업무 수동 요청 묶음은 본문 자리의 최소 기록을 모두 지우고 업무 처리 기록과 함께 저장하며, 다시 열어도 추정 배정 시각 표시가 남고 같은 업무를 다시 만들지 않는다', async () => {
+  it('담당 업무 수동 요청 묶음은 주어진 최소 기록을 지우고 업무 처리 기록과 함께 저장하며, 다시 열어도 추정 배정 시각 표시가 남고 같은 업무를 다시 만들지 않는다', async () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
@@ -1087,7 +1087,7 @@ describe('수동 요청 묶음', () => {
     /** 담당 업무 감지 상태. */
     const state = { accountId: OLD_ACCOUNT.userId, enabledAt: 1_000, baselineReady: true, baselineAlarmId: '300', initialPostIds: ['90000011'], pending: [] };
     await store.setAssignmentState(state);
-    // 같은 본문 자리를 처리하고 최소 기록만 남은 본문 멘션 묶음과 담당 업무 묶음.
+    // 같은 본문 자리를 처리하고 최소 기록만 남은 본문 멘션 묶음과 담당 업무 묶음. 업무 묶음의 최소 기록만 지운다.
     await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 2_000 })], '200');
     /** 처리한 업무. */
     const assignment = { taskId: 'manual-task', authorId: 'author@example.test', authorName: '작성자', assignedAt: '20261020090100' };
@@ -1100,7 +1100,7 @@ describe('수동 요청 묶음', () => {
     /** 근거 없이 알림 시각을 배정 시각으로 쓴 배정 자료. */
     const estimated = { ...assignment, assignedAt: '20261020090400', assignedAtEstimated: true };
     /** 저장한 수동 요청 묶음. */
-    const saved = await store.addManualBundle(bundle([], { status: 'generating', manual: true, assignment: estimated }), [1, 2]);
+    const saved = await store.addManualBundle(bundle([], { status: 'generating', manual: true, assignment: estimated }), [2]);
     db.close();
 
     expect(saved).toMatchObject({ id: 3, manual: true, assignment: estimated });
@@ -1109,7 +1109,7 @@ describe('수동 요청 묶음', () => {
     const reopened = new SqliteStateStore(reopenedDb);
     try {
       expect(await reopened.listBundles()).toMatchObject([{ id: 3, manual: true, status: 'generating', mentions: [], assignment: estimated }]);
-      await expect(reopened.listMinimalRecords()).resolves.toEqual([]);
+      expect((await reopened.listMinimalRecords()).map(({ bundleId }) => bundleId)).toEqual([1]);
       expect(await reopened.addAssignmentBundle(bundle([], { assignment }), OLD_ACCOUNT.userId)).toBeNull();
       await expect(reopened.getBaselineAlarmId()).resolves.toBe('200');
       await expect(reopened.getAssignmentState()).resolves.toEqual(state);

@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppSnapshot, BundleSnapshot, PostStopSnapshot, ReviewSnapshot, TrialCandidateSnapshot } from '../../shared/ipc';
+import type { AppSnapshot, BundleSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot, TrialCandidateSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
 import { DraftsSection } from './DraftsSection';
+import { ManualCheckSheet } from './ManualCheck';
 import { PopoverContent } from './PopoverView';
 import { ReviewContent } from './ReviewView';
 import { nextBundleAfter, resolveSelection } from './useReview';
@@ -58,6 +59,7 @@ function bundle(id: number, overrides: Partial<BundleSnapshot> = {}): BundleSnap
     postFailure: null,
     quitDuringCountdown: false,
     changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
+    manual: false,
     trial: false,
     ...overrides,
   };
@@ -112,6 +114,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     launchAtLogin: true,
     editor: { choice: null, installed: [], picker: null },
     review: { bundles, sections: SECTIONS, repoPicker: null },
+    manualCheck: { canOpen: true, sheet: null },
     trial: { canStart: true, bundleId: null, picker: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
@@ -1313,18 +1316,6 @@ describe('최근 멘션으로 시험', () => {
     { alarmId: '101', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), answered: true },
   ];
 
-  /** 그린 HTML에서 [최근 멘션으로 시험] 버튼. */
-  function trialButton(html: string): string | undefined {
-    return html.match(/<button[^>]*>최근 멘션으로 시험<\/button>/)?.[0];
-  }
-
-  it('감지 중 묶음이 없는 작은 창의 [최근 멘션으로 시험]은 시작할 수 있을 때만 켠다', () => {
-    expect(trialButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([])} />))).not.toContain('disabled');
-    expect(
-      trialButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { trial: { canStart: false, bundleId: null, picker: null } })} />)),
-    ).toContain('disabled');
-  });
-
   it('멘션 고르기 목록은 송신자·Flow 프로젝트·첫 줄·시각을 보이고, 이미 답한 멘션에 "답함"을 붙이되 고를 수 있다. 연 창에만 뜬다', () => {
     /** 작은 창에 연 목록. */
     const trial: AppSnapshot['trial'] = { canStart: true, bundleId: null, picker: { window: 'popover', status: 'loaded', candidates: CANDIDATES } };
@@ -1380,23 +1371,137 @@ describe('최근 멘션으로 시험', () => {
     expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('Flow에는 아무것도 올라가지 않습니다');
   });
 
-  it('설정 "초안" 칸에 [최근 멘션으로 시험]을 두고, 감지 전이거나 시험 중이면 끄고 그 까닭을 보인다', () => {
-    /** 감지를 시작한 스냅숏. */
-    const started = snapshot([]);
-
-    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={started} />))).not.toContain('disabled');
-    /** 감지 전. */
-    const before = snapshot([], { onboarding: { ...started.onboarding, detectionStarted: false }, trial: { canStart: false, bundleId: null, picker: null } });
-    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={before} />))).toContain('disabled');
-    expect(textOf(<DraftsSection snapshot={before} />)).toContain('멘션 감지를 시작한 뒤에 쓸 수 있습니다.');
-    /** 시험 중. */
-    const running = snapshot([TRIAL], { trial: { canStart: false, bundleId: 9, picker: null } });
-    expect(trialButton(renderToStaticMarkup(<DraftsSection snapshot={running} />))).toContain('disabled');
-    expect(textOf(<DraftsSection snapshot={running} />)).toContain('시험 중인 묶음이 있습니다.');
-    // 설정에서 연 목록은 설정 칸에 뜬다.
+  it('설정 "초안" 칸에서 연 시험 목록은 설정 칸에 뜬다(시험 쪽 상태는 이 티켓에서 지우지 않는다)', () => {
     expect(
       textOf(<DraftsSection snapshot={snapshot([], { trial: { canStart: true, bundleId: null, picker: { window: 'settings', status: 'loading' } } })} />),
     ).toContain('시험할 멘션 고르기');
+  });
+});
+
+describe('최근 멘션 확인', () => {
+  /** 확인 시트의 가짜 줄. 둘째는 이미 답한 멘션, 셋째는 이미 묶음이 있는 멘션, 넷째는 최소 기록만 남은 멘션이다. */
+  const ROWS: ManualCheckRowSnapshot[] = [
+    { kind: 'mention', alarmId: '104', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), tags: [] },
+    { kind: 'mention', alarmId: '103', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), tags: [{ kind: 'answered' }] },
+    { kind: 'mention', alarmId: '102', senderName: '세 번째', projectTitle: '가짜 프로젝트', firstLine: '이미 묶음이 있는 멘션', at: Date.UTC(2026, 9, 9, 2, 0), tags: [{ kind: 'bundle', bundleId: 7, status: 'posted' }] },
+    { kind: 'mention', alarmId: '101', senderName: '네 번째', projectTitle: '가짜 프로젝트', firstLine: '최소 기록만 남은 멘션', at: Date.UTC(2026, 9, 8, 2, 0), tags: [{ kind: 'archived' }] },
+  ];
+  /** 이어 불러올 수 있는 확인 시트. */
+  const LOADED: ManualCheckSnapshot['sheet'] = { window: 'popover', status: 'loaded', rows: ROWS, hasMore: true, loadingMore: false, moreFailure: null };
+
+  /** 그린 HTML에서 [최근 멘션 확인] 버튼. */
+  function checkButton(html: string): string | undefined {
+    return html.match(/<button[^>]*>최근 멘션 확인<\/button>/)?.[0];
+  }
+
+  /** 확인 시트를 그린 글자. */
+  function sheetText(sheet: NonNullable<ManualCheckSnapshot['sheet']>): string {
+    return textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet } })} />);
+  }
+
+  it('빈 화면의 [최근 멘션 확인]은 쓸 수 있을 때만 켜고, "시험" 문구는 없다', () => {
+    /** 빈 화면 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([])} />);
+    expect(checkButton(html)).not.toContain('disabled');
+    expect(html).not.toContain('최근 멘션으로 시험');
+    expect(checkButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: false, sheet: null } })} />))).toContain('disabled');
+  });
+
+  it('설정 "초안" 칸에 [최근 멘션 확인]을 두고, 쓸 수 없으면 끄고 그 까닭을 보인다', () => {
+    /** 감지를 시작한 스냅숏. */
+    const started = snapshot([]);
+    expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={started} />))).not.toContain('disabled');
+    /** 감지 전. */
+    const before = snapshot([], { onboarding: { ...started.onboarding, detectionStarted: false }, manualCheck: { canOpen: false, sheet: null } });
+    expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={before} />))).toContain('disabled');
+    expect(textOf(<DraftsSection snapshot={before} />)).toContain('멘션 감지를 시작한 뒤에 쓸 수 있습니다.');
+    // 감지는 시작했지만 키를 쓸 수 없다.
+    /** 키 문제. */
+    const noKey = snapshot([], { manualCheck: { canOpen: false, sheet: null } });
+    expect(checkButton(renderToStaticMarkup(<DraftsSection snapshot={noKey} />))).toContain('disabled');
+    expect(textOf(<DraftsSection snapshot={noKey} />)).toContain('Flow 키를 쓸 수 있을 때 열 수 있습니다.');
+  });
+
+  it('시트는 연 창에만 뜨고, 설정 창에서 연 시트는 설정 칸에 뜬다', () => {
+    expect(sheetText(LOADED)).toContain('확인할 항목 고르기');
+    expect(textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, window: 'settings' } } })} />)).not.toContain('확인할 항목 고르기');
+    expect(textOf(<DraftsSection snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, window: 'settings' } } })} />)).toContain('확인할 항목 고르기');
+  });
+
+  it('줄은 보낸 사람·Flow 프로젝트·첫 줄·시각과 상태 태그를 보이고 모두 고를 수 있다. 안내 문구가 있다', () => {
+    /** 그린 HTML. */
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: LOADED } })} />);
+    /** 그린 글자. */
+    const text = sheetText(LOADED);
+
+    expect(text).toContain('게시 전에는 Flow에 아무것도 올라가지 않습니다');
+    expect(text).toContain('보낸 사람');
+    expect(text).toContain('가짜 프로젝트');
+    expect(text).toContain('@테스트 사용자 배포 언제 되나요?');
+    expect(text).toContain('Flow 프로젝트 이름 모름');
+    expect(text.match(/답함/g)).toHaveLength(1);
+    expect(text).toContain('이미 묶음 있음 게시됨');
+    expect(text.match(/처리됨/g)).toHaveLength(1);
+    expect(html.match(/class="manual-check-choice"/g)).toHaveLength(4);
+    expect(html).not.toMatch(/class="manual-check-choice"[^>]*disabled/);
+  });
+
+  it('[더 보기]는 더 있을 때만 보이고, 이어 불러오는 중에는 눌 수 없다. 끝이면 "더 이상 없음"을 보인다', () => {
+    expect(sheetText(LOADED)).toContain('더 보기');
+    expect(sheetText(LOADED)).not.toContain('더 이상 없음');
+    expect(sheetText({ ...LOADED, hasMore: false })).not.toContain('더 보기');
+    expect(sheetText({ ...LOADED, hasMore: false })).toContain('더 이상 없음');
+    /** 이어 불러오는 중. */
+    const loadingMore = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, loadingMore: true } } })} />);
+    expect(loadingMore.match(/<button[^>]*>더 보기<\/button>/)?.[0]).toContain('disabled');
+    expect(textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, loadingMore: true } } })} />)).toContain('더 불러오는 중입니다.');
+    expect(sheetText({ ...LOADED, moreFailure: 'rate-limited' })).toContain('Flow 요청이 많습니다');
+  });
+
+  it('불러오는 중, 불러오지 못한 까닭 네 가지, 멘션 없음을 보인다. 실패하면 [다시 불러오기]가 있다', () => {
+    expect(sheetText({ window: 'popover', status: 'loading' })).toContain('최근 멘션을 불러오는 중입니다.');
+    expect(sheetText({ window: 'popover', status: 'loading' })).not.toContain('다시 불러오기');
+    expect(sheetText({ window: 'popover', status: 'failed', reason: 'no-key' })).toContain('Flow 개인 API 키가 없어');
+    expect(sheetText({ window: 'popover', status: 'failed', reason: 'unauthorized' })).toContain('Flow가 키를 받지 않아');
+    expect(sheetText({ window: 'popover', status: 'failed', reason: 'network' })).toContain('Flow에 연결하지 못했습니다');
+    expect(sheetText({ window: 'popover', status: 'failed', reason: 'rate-limited' })).toContain('Flow 요청이 많습니다');
+    expect(sheetText({ window: 'popover', status: 'failed', reason: 'network' })).toContain('다시 불러오기');
+    expect(sheetText({ ...LOADED, rows: [], hasMore: false })).toContain('확인할 수 있는 최근 멘션이 없습니다.');
+  });
+
+  it('Esc와 [닫기]는 시트를 닫는 명령을 보내고, 줄을 고르면 그 알림으로 고르는 명령을 보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 시트가 그린 요소. 훅을 쓰지 않아 함수로 직접 부른다. */
+      const element = ManualCheckSheet({ sheet: LOADED });
+      /** 요소 트리에서 조건에 맞는 요소를 모두 찾는다. */
+      const find = (node: unknown, match: (props: Record<string, unknown>) => boolean): Record<string, unknown>[] => {
+        if (Array.isArray(node)) return node.flatMap((child) => find(child, match));
+        if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+        /** 요소의 속성. */
+        const props = (node as { props: Record<string, unknown> }).props;
+        return [...(match(props) ? [props] : []), ...find(props.children, match)];
+      };
+
+      /** Esc를 처리하는 대화상자. */
+      const [dialog] = find(element, (props) => props.role === 'dialog');
+      (dialog!.onKeyDown as (event: { key: string }) => void)({ key: 'a' });
+      expect(send).not.toHaveBeenCalled();
+      (dialog!.onKeyDown as (event: { key: string }) => void)({ key: 'Escape' });
+      expect(send).toHaveBeenLastCalledWith({ type: 'close-manual-check' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('수동 요청 묶음은 상세 머리에 "수동 요청" 태그를 보이고, 자동 감지 묶음에는 붙이지 않는다', () => {
+    /** 수동 요청 묶음. */
+    const manual: BundleSnapshot = { ...READY, id: 12, manual: true };
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([manual])} />)).toContain('<span class="tag manual">수동 요청</span>');
+    expect(renderToStaticMarkup(<ReviewContent snapshot={snapshot([manual, READY])} initialBundleId={12} />).match(/<span class="tag manual">수동 요청<\/span>/g)).toHaveLength(2);
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain('수동 요청');
   });
 });
 

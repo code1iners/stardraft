@@ -298,6 +298,15 @@ describe('렌더러가 보낸 명령 검사', () => {
   });
 
   it('최근 멘션으로 시험 명령은 아는 창, 숫자 알림 ID, 묶음 ID만 받는다', () => {
+    expect(parseAppCommand({ type: 'open-manual-check', window: 'popover', extra: 1 })).toEqual({ type: 'open-manual-check', window: 'popover' });
+    expect(parseAppCommand({ type: 'open-manual-check', window: 'settings' })).toEqual({ type: 'open-manual-check', window: 'settings' });
+    expect(parseAppCommand({ type: 'open-manual-check', window: 'expanded' })).toBeNull();
+    expect(parseAppCommand({ type: 'close-manual-check' })).toEqual({ type: 'close-manual-check' });
+    expect(parseAppCommand({ type: 'reload-manual-check' })).toEqual({ type: 'reload-manual-check' });
+    expect(parseAppCommand({ type: 'load-more-manual-check' })).toEqual({ type: 'load-more-manual-check' });
+    expect(parseAppCommand({ type: 'pick-manual-check', alarmId: '1234567890', extra: 1 })).toEqual({ type: 'pick-manual-check', alarmId: '1234567890' });
+    expect(parseAppCommand({ type: 'pick-manual-check', alarmId: '12a' })).toBeNull();
+    expect(parseAppCommand({ type: 'pick-manual-check', alarmId: 12 })).toBeNull();
     expect(parseAppCommand({ type: 'open-trial-picker', window: 'popover' })).toEqual({ type: 'open-trial-picker', window: 'popover' });
     expect(parseAppCommand({ type: 'open-trial-picker', window: 'settings' })).toEqual({ type: 'open-trial-picker', window: 'settings' });
     expect(parseAppCommand({ type: 'open-trial-picker', window: 'expanded' })).toBeNull();

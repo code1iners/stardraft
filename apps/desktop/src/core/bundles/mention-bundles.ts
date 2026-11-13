@@ -81,6 +81,9 @@ export type RunRepos =
 /** 최근 멘션 확인에서 고른 항목의 결과. 새로 만든 수동 요청 묶음이나, 그 위치에 이미 있어 대신 연 묶음의 ID다. */
 export type ManualRequestResult = { kind: 'created' | 'existing'; bundleId: number };
 
+/** 최근 멘션 확인 목록의 한 줄이 가리키는 위치의 기존 기록. 묶음(상태 포함), 최소 기록만 남음, 없음이다. */
+export type ManualPlace = { kind: 'bundle'; bundleId: number; status: BundleStatus } | { kind: 'record' } | { kind: 'none' };
+
 /** 준비됨 묶음을 다시 만드는 사용자 행동. 다시 만들기, 지시를 덧붙여 다시 만들기, 요구 고치기다. */
 export type RegenerationRequest =
   | { path: 'again' }
@@ -1100,6 +1103,21 @@ export class MentionBundles {
       if (postStopped) this.emitStopped(changed.id, { kind: 'secret-evidence' });
     }
     return discarded;
+  }
+
+  /**
+   * 최근 멘션 확인 목록의 줄 태그를 정할 때 쓴다. 멘션 위치에 묶음이 있으면 가장 최근 묶음을, 최소 기록만 있으면 `record`를, 없으면 `none`을 돌려준다.
+   * `requestMention`이 기존 기록을 찾는 기준과 같다. 시험 묶음은 따로 두므로 보지 않는다.
+   */
+  manualPlaceOf(mention: MentionLocation): ManualPlace {
+    /** 찾을 멘션 위치. */
+    const location = mentionLocationKey(mention);
+    /** 그 위치를 든 가장 최근 실제 묶음. */
+    const existing = this.bundles
+      .filter((bundle) => !bundle.trial && bundle.mentions.some((item) => mentionLocationKey(item) === location))
+      .sort((a, b) => b.id - a.id)[0];
+    if (existing) return { kind: 'bundle', bundleId: existing.id, status: existing.status };
+    return this.minimalRecords.some((item) => item.mentions.some((recorded) => mentionLocationKey(recorded) === location)) ? { kind: 'record' } : { kind: 'none' };
   }
 
   /**

@@ -39,6 +39,7 @@ import { Posting } from '../posting/posting';
 import { openStateDatabase, SqliteStateStore, STATE_MIGRATIONS } from '../storage/state-database';
 import { SELECTION_INSTRUCTIONS } from './repo-selection';
 import { listRecentMentions } from '../manual-check/recent-mentions';
+import { ManualCheckSession } from '../manual-check/manual-check-session';
 import { ManualMentionCheck } from '../manual-check/manual-mention-check';
 
 /** 지금 시각. 2026-10-20 09:00:00 한국 표준시(00:00:00 UTC). */
@@ -4464,5 +4465,121 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
     flow.respondToListMentionAlarms({ ok: false, failure: { kind: 'rate-limited', retryAfterMs: 30_000 } });
     expect(await check.listMentions(null)).toEqual({ ok: false, reason: 'rate-limited' });
     expect(bundles.state()).toEqual([]);
+  });
+});
+
+/** 가짜 Flow와 멘션 묶음으로 최근 멘션 확인 시트를 만든다. 시트가 보인 묶음 ID와 열 수 있는지 여부도 함께 돌려준다. */
+function manualSessionOf(flow: FakeFlowApi, bundles: MentionBundles, clock: FakeClock) {
+  /** 열 수 있는지 여부와 시트가 보인 묶음 ID. */
+  const env = { canOpen: true, shown: [] as number[] };
+  const { check, env: checkEnv } = manualCheckOf(flow, bundles, clock);
+  const session = new ManualCheckSession({ check, canOpen: () => env.canOpen, showBundle: (bundleId) => env.shown.push(bundleId) });
+  return { session, env, checkEnv };
+}
+
+describe('최근 멘션 확인 시트', () => {
+  it('열 수 없으면 열리지 않고, 열면 불러온 뒤 최신순 목록과 더 보기를 보인다. 더 보기는 10건씩 이어 불러오고 끝에서 멈춘다', async () => {
+    const { flow, bundles, clock } = await setup();
+    flow.alarmPageSize = 5;
+    for (let index = 0; index < 12; index += 1) flow.addAlarm(addThreadMention(flow, String(200 + index), String(710 + index), `질문 ${index}`, '20261020085000'));
+    const { session, env } = manualSessionOf(flow, bundles, clock);
+
+    env.canOpen = false;
+    await session.open('popover');
+    expect(session.state()).toEqual({ sheet: null });
+
+    env.canOpen = true;
+    await session.open('popover');
+    /** 처음 열린 시트. */
+    const first = session.state().sheet;
+    expect(first).toMatchObject({ window: 'popover', status: 'loaded', hasMore: true, loadingMore: false, moreFailure: null });
+    expect(first?.status === 'loaded' && first.candidates.map((candidate) => candidate.mention.alarmId)).toEqual(['211', '210', '209', '208', '207', '206', '205', '204', '203', '202']);
+
+    await session.more();
+    /** 더 보기 뒤의 시트. */
+    const second = session.state().sheet;
+    expect(second?.status === 'loaded' && second.candidates.map((candidate) => candidate.mention.alarmId).slice(10)).toEqual(['201', '200']);
+    expect(second).toMatchObject({ hasMore: false });
+    // 끝이면 더 불러오지 않는다.
+    await session.more();
+    expect(session.state().sheet).toEqual(second);
+  });
+
+  it('목록을 불러오지 못하면 까닭을 보이고 [다시 불러오기]로 이어 간다. 더 보기에서 실패해도 이미 불러온 목록은 남는다', async () => {
+    const { flow, bundles, clock } = await setup();
+    flow.alarmPageSize = 5;
+    for (let index = 0; index < 12; index += 1) flow.addAlarm(addThreadMention(flow, String(200 + index), String(710 + index), `질문 ${index}`, '20261020085000'));
+    const { session, checkEnv } = manualSessionOf(flow, bundles, clock);
+
+    checkEnv.hasKey = false;
+    await session.open('settings');
+    expect(session.state().sheet).toEqual({ window: 'settings', status: 'failed', reason: 'no-key' });
+    checkEnv.hasKey = true;
+    await session.reload();
+    expect(session.state().sheet).toMatchObject({ window: 'settings', status: 'loaded' });
+
+    flow.respondToListMentionAlarms({ ok: false, failure: { kind: 'rate-limited', retryAfterMs: 30_000 } });
+    await session.more();
+    expect(session.state().sheet).toMatchObject({ status: 'loaded', loadingMore: false, moreFailure: 'rate-limited', hasMore: true });
+
+    session.close();
+    expect(session.state()).toEqual({ sheet: null });
+    // 닫힌 시트는 다시 불러오지 않는다.
+    await session.reload();
+    expect(session.state()).toEqual({ sheet: null });
+  });
+
+  it('새 멘션을 고르면 수동 요청 묶음이 만들어지고 시트가 닫히며 그 묶음을 보인다. 같은 멘션을 다시 고르면 새로 만들지 않고 그 묶음을 보인다', async () => {
+    const { flow, executor, bundles, stateStore, clock, repos } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    flow.addAlarm(addThreadMention(flow, '101', '701', '닷새 전 질문', '20261015085000'));
+    const { session, env } = manualSessionOf(flow, bundles, clock);
+
+    await session.open('popover');
+    expect(await session.pick('999')).toBeNull();
+    /** 고른 결과. */
+    const first = await session.pick('101');
+    await settle();
+
+    expect(first?.kind).toBe('created');
+    expect(session.state()).toEqual({ sheet: null });
+    expect(env.shown).toEqual([first!.bundleId]);
+    expect(bundles.get(first!.bundleId)).toMatchObject({ manual: true, status: 'ready' });
+    // 수동 요청은 감지 기준점을 옮기지 않는다. 기준점은 setup이 정한 그대로다.
+    expect(stateStore.baselineAlarmId).toBe('100');
+
+    // 다시 열면 그 줄에 기존 묶음이 보이고, 고르면 그 묶음으로 이동한다.
+    await session.open('popover');
+    expect(bundles.manualPlaceOf(bundles.get(first!.bundleId)!.mentions[0]!)).toEqual({ kind: 'bundle', bundleId: first!.bundleId, status: 'ready' });
+    expect(await session.pick('101')).toEqual({ kind: 'existing', bundleId: first!.bundleId });
+    expect(env.shown).toEqual([first!.bundleId, first!.bundleId]);
+    expect(bundles.state()).toHaveLength(1);
+    expect(executor.requests).toHaveLength(1);
+  });
+
+  it('처리한 지 7일이 지나 최소 기록만 남은 줄은 "record"로 보이고, 고르면 최소 기록을 지우고 새 묶음을 만든다', async () => {
+    const { flow, executor, bundles, stateStore, clock, repos, poll } = await setup();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await poll(alarm('101'));
+    const [detected] = bundles.state();
+    await bundles.ignore(detected!.id);
+    clock.advance(8 * DAY_MS);
+    await bundles.archiveExpired();
+    const { session, env } = manualSessionOf(flow, bundles, clock);
+
+    await session.open('popover');
+    /** 목록에 보인 줄. */
+    const sheet = session.state().sheet;
+    expect(sheet?.status === 'loaded' && sheet.candidates.map((candidate) => bundles.manualPlaceOf(candidate.mention).kind)).toEqual(['record']);
+
+    /** 고른 결과. */
+    const result = await session.pick('101');
+    await settle();
+
+    expect(result?.kind).toBe('created');
+    expect(env.shown).toEqual([result!.bundleId]);
+    expect(await stateStore.listMinimalRecords()).toEqual([]);
+    expect(bundles.state()).toMatchObject([{ id: result!.bundleId, manual: true }]);
   });
 });

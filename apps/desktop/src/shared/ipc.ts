@@ -394,6 +394,65 @@ export interface DraftSettingsSnapshot {
   extraSecretPatterns: string[];
 }
 
+/** 최근 멘션 확인 시트를 여는 창. 작은 창의 빈 화면(`popover`)이나 설정 "초안" 칸(`settings`)이다. */
+export const MANUAL_CHECK_WINDOWS = ['popover', 'settings'] as const;
+
+/** 최근 멘션 확인 시트를 여는 창 하나. */
+export type ManualCheckWindowSnapshot = (typeof MANUAL_CHECK_WINDOWS)[number];
+
+/** 최근 멘션을 불러오지 못한 까닭. 쓸 키 없음, 키 거부, 연결 실패, 요청 한도, 그 밖이다. */
+export type ManualCheckLoadFailureSnapshot = 'no-key' | 'unauthorized' | 'network' | 'rate-limited' | 'unexpected';
+
+/**
+ * 줄에 붙는 상태 태그. 여러 개가 함께 붙을 수 있다.
+ * - `answered`: 멘션보다 나중에 쓴 내 답이 묶음 자리에 있다("답함"). 그래도 고를 수 있다.
+ * - `bundle`: 그 위치에 이미 묶음이 있다("이미 묶음 있음"과 그 묶음의 상태). 고르면 그 묶음으로 이동한다.
+ * - `archived`: 처리한 지 7일이 지나 최소 기록만 남았다("처리됨"). 고르면 새 묶음을 만든다.
+ */
+export type ManualCheckRowTagSnapshot = { kind: 'answered' } | { kind: 'bundle'; bundleId: number; status: BundleStatusSnapshot } | { kind: 'archived' };
+
+/** 최근 멘션 확인 시트의 줄 하나. */
+export interface ManualCheckRowSnapshot {
+  /** 항목 종류. 지금은 멘션만 있고, 담당 업무는 뒤 티켓에서 더한다. */
+  kind: 'mention';
+  /** 고를 때 보내는 알림 ID. */
+  alarmId: string;
+  /** 송신자 이름. 비어 있을 수 있다. */
+  senderName: string;
+  /** Flow 프로젝트 이름. 모르면 `null`. */
+  projectTitle: string | null;
+  /** 멘션 글의 첫 줄. 멘션 표기는 `@이름`으로 바꿨다. */
+  firstLine: string;
+  /** 멘션 시각(Unix epoch 밀리초). */
+  at: number;
+  /** 줄 상태 태그. 없으면 빈 배열. */
+  tags: ManualCheckRowTagSnapshot[];
+}
+
+/** 열린 최근 멘션 확인 시트. */
+export type ManualCheckSheetSnapshot =
+  /** 처음 불러오는 중이다. */
+  | { window: ManualCheckWindowSnapshot; status: 'loading' }
+  /** 불러왔다. 최신이 앞이다. `hasMore`면 [더 보기]를 보이고, `loadingMore`는 이어 불러오는 중, `moreFailure`는 이어 불러오지 못한 까닭이다. */
+  | {
+      window: ManualCheckWindowSnapshot;
+      status: 'loaded';
+      rows: ManualCheckRowSnapshot[];
+      hasMore: boolean;
+      loadingMore: boolean;
+      moreFailure: ManualCheckLoadFailureSnapshot | null;
+    }
+  /** 불러오지 못했다. */
+  | { window: ManualCheckWindowSnapshot; status: 'failed'; reason: ManualCheckLoadFailureSnapshot };
+
+/** 최근 멘션 확인의 상태. */
+export interface ManualCheckSnapshot {
+  /** 지금 시트를 열 수 있는지 여부. 감지를 시작했고 쓸 수 있는 Flow 키가 있어야 한다. */
+  canOpen: boolean;
+  /** 열린 시트. 닫혀 있으면 `null`. */
+  sheet: ManualCheckSheetSnapshot | null;
+}
+
 /** 최근 멘션으로 시험의 상태. */
 export interface TrialSnapshot {
   /** 지금 시험을 시작할 수 있는지 여부. 감지를 시작했고 시험 묶음이 없어야 한다. */
@@ -752,6 +811,8 @@ export interface BundleSnapshot {
   quitDuringCountdown: boolean;
   /** 준비된 뒤의 변화 감시가 찾은 변화. 변화가 없으면 모두 0과 거짓이다. */
   changes: BundleChangesSnapshot;
+  /** 최근 멘션 확인으로 만든 수동 요청 묶음인지 여부. 참이면 상세 머리에 "수동 요청" 태그를 보인다. */
+  manual: boolean;
   /** 최근 멘션으로 시험하는 시험 묶음인지 여부. 참이면 "시험" 표시와 안내를 붙이고 [게시] 대신 [시험 끝내기]를 둔다. */
   trial: boolean;
 }
@@ -879,6 +940,8 @@ export interface AppSnapshot {
   editor: EditorSnapshot;
   /** 멘션 묶음과 창마다 영역 펼침 상태. */
   review: ReviewSnapshot;
+  /** 최근 멘션 확인. */
+  manualCheck: ManualCheckSnapshot;
   /** 최근 멘션으로 시험. */
   trial: TrialSnapshot;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
@@ -913,6 +976,8 @@ export type AppEvent =
   | { type: 'editor-changed'; editor: EditorSnapshot }
   /** 멘션 묶음이나 영역 펼침 상태가 바뀌었다. */
   | { type: 'review-changed'; review: ReviewSnapshot }
+  /** 최근 멘션 확인 시트를 열 수 있는지, 시트의 상태가 바뀌었다. */
+  | { type: 'manual-check-changed'; manualCheck: ManualCheckSnapshot }
   /** 시험을 시작할 수 있는지, 시험 묶음, 멘션 고르기 목록이 바뀌었다. */
   | { type: 'trial-changed'; trial: TrialSnapshot }
   /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
@@ -1029,6 +1094,16 @@ export type AppCommand =
   | { type: 'close-editor-picker' }
   /** 설정 "일반"에서 에디터를 고르거나 명령을 직접 지정한다. `null`이면 다음에 열 때 다시 고른다. */
   | { type: 'set-editor'; choice: EditorChoiceSnapshot | null }
+  /** [최근 멘션 확인]. 그 창에 확인 시트를 열고 최근 멘션을 불러온다. 감지 전이거나 쓸 수 있는 Flow 키가 없으면 main이 무시한다. */
+  | { type: 'open-manual-check'; window: ManualCheckWindowSnapshot }
+  /** 확인 시트를 닫는다. */
+  | { type: 'close-manual-check' }
+  /** 확인 시트의 목록을 처음부터 다시 불러온다. */
+  | { type: 'reload-manual-check' }
+  /** [더 보기]. 확인 시트의 목록을 10건 더 불러온다. */
+  | { type: 'load-more-manual-check' }
+  /** 확인 시트에서 고른 멘션으로 수동 요청 묶음을 만들고 시트를 닫는다. 이미 묶음이 있으면 그 묶음을 연다. 목록에 없는 알림 ID는 main이 받지 않는다. */
+  | { type: 'pick-manual-check'; alarmId: string }
   /** [최근 멘션으로 시험]. 그 창에 멘션 고르기 목록을 열고 최근 멘션을 불러온다. 감지 전이거나 시험 묶음이 있으면 main이 무시한다. */
   | { type: 'open-trial-picker'; window: TrialWindowSnapshot }
   /** 멘션 고르기 목록의 최근 멘션을 다시 불러온다. */
@@ -1154,12 +1229,17 @@ function isEditorChoiceInput(value: unknown): value is EditorChoiceSnapshot | nu
   return choice.kind === 'command' && typeof choice.command === 'string' && choice.command.trim() !== '' && choice.command.length <= EDITOR_COMMAND_MAX_LENGTH;
 }
 
+/** 최근 멘션 확인 시트를 여는 창 이름인지 확인한다. */
+function isManualCheckWindow(value: unknown): value is ManualCheckWindowSnapshot {
+  return typeof value === 'string' && (MANUAL_CHECK_WINDOWS as readonly string[]).includes(value);
+}
+
 /** 멘션 고르기 목록을 여는 창 이름인지 확인한다. */
 function isTrialWindow(value: unknown): value is TrialWindowSnapshot {
   return typeof value === 'string' && (TRIAL_WINDOWS as readonly string[]).includes(value);
 }
 
-/** 시험 시작 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
+/** 시험·최근 멘션 확인에서 고르는 명령에 실을 수 있는 알림 ID인지 확인한다. 목록에 있는 알림인지는 main이 본다. */
 function isAlarmIdInput(value: unknown): value is string {
   return typeof value === 'string' && /^\d{1,32}$/.test(value);
 }
@@ -1266,6 +1346,15 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isBundleIdInput(candidate.bundleId) && Number.isSafeInteger(candidate.evidenceIndex) && (candidate.evidenceIndex as number) >= 0
         ? { type: 'open-evidence-in-editor', bundleId: candidate.bundleId, evidenceIndex: candidate.evidenceIndex as number }
         : null;
+    case 'open-manual-check':
+      return isManualCheckWindow(candidate.window) ? { type: 'open-manual-check', window: candidate.window } : null;
+    // 아래 인자 없는 명령 묶음에 더하면 유니온이 너무 커져 TypeScript가 맞춰 보지 못하므로, 최근 멘션 확인의 인자 없는 명령은 따로 돌려준다.
+    case 'close-manual-check':
+    case 'reload-manual-check':
+    case 'load-more-manual-check':
+      return { type: candidate.type };
+    case 'pick-manual-check':
+      return isAlarmIdInput(candidate.alarmId) ? { type: 'pick-manual-check', alarmId: candidate.alarmId } : null;
     case 'open-trial-picker':
       return isTrialWindow(candidate.window) ? { type: 'open-trial-picker', window: candidate.window } : null;
     case 'set-extra-instructions':

@@ -4,7 +4,7 @@ import type { RunRecord } from '../core/drafts/draft';
 import type { BundleContext } from '../core/flow/bundle-context';
 import { POST_BODY_CHAR_LIMIT as CORE_POST_BODY_CHAR_LIMIT } from '../core/drafts/post-body';
 import { POST_BODY_CHAR_LIMIT } from '../shared/ipc';
-import { bundleSnapshot, flowUrlOf, reviewSnapshot, trialSnapshot } from './review-snapshot';
+import { bundleSnapshot, flowUrlOf, manualCheckSnapshot, reviewSnapshot, trialSnapshot } from './review-snapshot';
 
 /** 가짜 멘션. 실제 사람이나 글이 아니다. 기본은 08:50(한국 표준시)에 온 댓글 멘션이다. */
 function mention(alarmId: string, overrides: Partial<BundledMention> = {}): BundledMention {
@@ -130,6 +130,7 @@ describe('묶음 스냅숏', () => {
       postFailure: null,
       quitDuringCountdown: false,
       changes: { newWritingCount: 0, edited: false, goneMentionCount: 0 },
+      manual: false,
       trial: false,
     });
     expect(snapshot.mentions[0]?.text).toEqual([
@@ -810,6 +811,68 @@ describe('최근 멘션으로 시험 스냅숏', () => {
       window: 'settings',
       status: 'failed',
       reason: 'network',
+    });
+  });
+});
+
+describe('최근 멘션 확인 스냅숏', () => {
+  /** 불러온 확인 시트. 첫 줄 앞에 빈 줄이 있는 멘션 둘이다. 첫째는 답했고, 둘째는 답하지 않았다. */
+  const loaded = {
+    sheet: {
+      window: 'popover' as const,
+      status: 'loaded' as const,
+      candidates: [
+        {
+          mention: mention('102', { text: '\n  @[테스트 사용자](me@example.test) 배포 언제 되나요?\n둘째 줄' }),
+          postTitle: '가짜 게시물',
+          connectUrl: null,
+          answered: true,
+          projectTitle: '가짜 프로젝트',
+        },
+        { mention: mention('101', { remarkId: '90000099' }), postTitle: '가짜 게시물', connectUrl: null, answered: false, projectTitle: null },
+      ],
+      hasMore: true,
+      loadingMore: false,
+      moreFailure: null,
+    },
+  };
+
+  it('줄은 송신자, Flow 프로젝트, 첫 줄, 시각만 넘기고 사용자 ID와 이어 불러올 커서는 넘기지 않는다', () => {
+    /** 만든 스냅숏. */
+    const snapshot = manualCheckSnapshot(loaded, true, () => ({ kind: 'none' }));
+
+    expect(snapshot.canOpen).toBe(true);
+    expect(snapshot.sheet).toMatchObject({ window: 'popover', status: 'loaded', hasMore: true, loadingMore: false, moreFailure: null });
+    expect(snapshot.sheet?.status === 'loaded' && snapshot.sheet.rows[0]).toEqual({
+      kind: 'mention',
+      alarmId: '102',
+      senderName: '보낸 사람',
+      projectTitle: '가짜 프로젝트',
+      firstLine: '@테스트 사용자 배포 언제 되나요?',
+      at: Date.UTC(2026, 9, 19, 23, 50),
+      tags: [{ kind: 'answered' }],
+    });
+    expect(JSON.stringify(snapshot)).not.toContain('example.test');
+    expect(JSON.stringify(snapshot)).not.toContain('decidedLocations');
+  });
+
+  it('줄 태그는 답함, 이미 있는 묶음과 그 상태, 처리됨(최소 기록)이 함께 붙는다', () => {
+    /** 줄마다 찾은 기존 기록. 첫째는 묶음, 둘째는 최소 기록이다. */
+    const snapshot = manualCheckSnapshot(loaded, true, (location) => (location.alarmId === '102' ? { kind: 'bundle', bundleId: 7, status: 'posted' } : { kind: 'record' }));
+    /** 줄. */
+    const rows = snapshot.sheet?.status === 'loaded' ? snapshot.sheet.rows : [];
+
+    expect(rows[0]?.tags).toEqual([{ kind: 'answered' }, { kind: 'bundle', bundleId: 7, status: 'posted' }]);
+    expect(rows[1]?.tags).toEqual([{ kind: 'archived' }]);
+  });
+
+  it('닫혀 있거나 불러오는 중이거나 실패한 시트는 그대로 넘기고, 열 수 있는지는 따로 넘긴다', () => {
+    expect(manualCheckSnapshot({ sheet: null }, false, () => ({ kind: 'none' }))).toEqual({ canOpen: false, sheet: null });
+    expect(manualCheckSnapshot({ sheet: { window: 'settings', status: 'loading' } }, true, () => ({ kind: 'none' })).sheet).toEqual({ window: 'settings', status: 'loading' });
+    expect(manualCheckSnapshot({ sheet: { window: 'settings', status: 'failed', reason: 'rate-limited' } }, true, () => ({ kind: 'none' })).sheet).toEqual({
+      window: 'settings',
+      status: 'failed',
+      reason: 'rate-limited',
     });
   });
 });

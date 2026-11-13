@@ -1,5 +1,5 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
-import { BundleFooter, BundleSections, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack, TrialLine, TrialTag } from './BundleDetail';
+import { BundleFooter, BundleSections, ManualTag, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack, TrialLine, TrialTag } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerSheet } from './EditorPickerSheet';
 import { RepoPickerSheet } from './RepoPickerSheet';
@@ -73,6 +73,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                   <PostStatusLine bundle={selected} />
                   <TrialLine bundle={selected} />
                 </div>
+                <ManualTag bundle={selected} />
                 <TrialTag bundle={selected} />
                 <StatusTag status={selected.status} />
                 <button type="button" className="btn sm" onClick={handleCollapse}>
@@ -162,6 +163,7 @@ function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
                 <span className="list-row-sub">{bundle.draft?.requirement.summary || postLine(bundle)}</span>
                 <span className="list-row-tags">
                   {bundle.assignment && <span className="tag">{assignmentSourceText(bundle)}</span>}
+                  <ManualTag bundle={bundle} />
                   <TrialTag bundle={bundle} />
                   <StatusTag status={bundle.status} />
                 </span>

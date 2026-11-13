@@ -1139,6 +1139,12 @@ p.setup-tray-hint {
   color: var(--warn);
 }
 
+/* 수동 요청 묶음의 "수동 요청" 표시. 시험 표시와 달리 경고색이 아니라 옅은 테두리다. */
+.tag.manual {
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
 /* 시험 묶음의 안내 줄. 상세 머리에서 게시 상태 줄과 같은 크기다. */
 p.trial-line {
   margin: 0;
@@ -2006,13 +2012,15 @@ p.detail-empty {
 }
 
 /* 멘션 고르기 목록: 최근 멘션을 한 줄에 하나씩 두고, 목록은 창 높이 안에서 스크롤한다. */
-.sheet.trial-picker {
+.sheet.trial-picker,
+.sheet.manual-check {
   display: flex;
   flex-direction: column;
   max-height: calc(100% - 24px);
 }
 
-.trial-choices {
+.trial-choices,
+.manual-check-choices {
   flex: 1 1 auto;
   min-height: 0;
   margin: 10px 0 0;
@@ -2021,7 +2029,8 @@ p.detail-empty {
   list-style: none;
 }
 
-.trial-choice {
+.trial-choice,
+.manual-check-choice {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -2035,11 +2044,13 @@ p.detail-empty {
   cursor: pointer;
 }
 
-.trial-choice:hover {
+.trial-choice:hover,
+.manual-check-choice:hover {
   background: var(--surface-2);
 }
 
-.trial-choice .list-row-top {
+.trial-choice .list-row-top,
+.manual-check-choice .list-row-top {
   justify-content: flex-start;
   align-items: center;
 }

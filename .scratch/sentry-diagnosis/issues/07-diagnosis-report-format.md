@@ -71,7 +71,7 @@ evidence: [{ id, explanation, repository, path, start_line, end_line }]
 ### 완료
 
 - 진단 보고서를 끝내는 동작은 **완료** 하나다. Flow의 "무시" 같은 별도 동작은 두지 않는다.
-- 완료하면 Flow의 `archiveBundles`처럼 최소 기록(오류 이슈 id·상태·완료 시각 등)만 남기고 본문과 첨부는 앱에서 지운다.
+- 완료하면 Flow의 `archiveBundles`처럼 최소 기록(오류 이슈 id·상태·완료 시각 등)만 남기고 본문과 첨부는 앱에서 지운다. 최소 기록에는 마지막으로 내보낸 파일 경로도 남긴다([다시 진단(지시)과 보고서 수정](19-rediagnosis-and-report-editing.md)).
 - 내보내지 않고 완료하면 "내용이 사라진다"는 확인을 한 번 띄운다.
 - 완료는 Sentry 오류 이슈의 상태(해결·보관)를 바꾸지 않는다.
 

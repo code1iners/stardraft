@@ -235,3 +235,26 @@ API 경로(`/api/0/...`)는 같은 getsentry/sentry 코드에서 나오므로 �
 - 개인 토큰 하나로 미국·독일 지역 조직이 한 번에 나열되는지
 - Internal Integration을 누가 만들고 어떻게 회수하는지
 - 이벤트 응답에서 프레임 `data`(소스맵 정보) 노출 여부, 네이티브 플랫폼의 심볼화 표시
+
+## 추가 확인 (2026-11-24)
+
+[따라잡기와 중복 억제](../issues/16-catch-up-and-dedupe.md) 티켓에서 위 "확인 못 함" 가운데 세 가지를 더 팠다. 기준 커밋은 getsentry/sentry `master` `ffeba13397a32dd30d901c86f3d33ac569c686d1`이다. **코드를 읽은 결과이고 실제 계정으로 호출해 보지 않았다.**
+
+### 환경 필터와 `firstSeen`
+
+- **필터**: `environment`를 주면 `firstSeen` 필터는 그 환경에서 처음 보인 시각(`GroupEnvironment.first_seen`)을 기준으로 한다. 안 주면 오류 이슈 전체의 `Group.first_seen`이다(코드에서 직접 확인: `src/sentry/search/snuba/backend.py` L685-703, L715).
+- **`sort=new`**: 환경 기준으로 바뀌지 않는다. 이벤트에 실린 오류 이슈 전체의 first_seen을 집계한다. 필터 기준과 정렬 기준이 서로 다르다(추론: `src/sentry/search/snuba/executors.py` L1234, L1249, `src/sentry/eventstream/snuba.py` L186-190).
+- **응답의 `firstSeen`**: 최상위 값은 검색 기간·환경 안 이벤트의 가장 이른 시각이고, `lifetime.firstSeen`은 환경을 주면 환경 기준이다(추론: `src/sentry/api/serializers/models/group.py` L1348-1357, L1430-1445, `group_stream.py` L764-771, L883-912).
+
+### 상세 `activity`의 재발 활동
+
+- 재발 활동은 응답에 들어간다. `type`은 `"set_regression"`이고 `id`(문자열)와 `dateCreated`가 있다. `data`에는 `event_id`와 `version`(릴리스가 없으면 `""`)이 있다(코드에서 직접 확인: `src/sentry/issues/endpoints/group_details.py` L385-397, `src/sentry/types/activity.py` L66-78, `src/sentry/event_manager.py` L1848-1872).
+- `activity`는 최근 100개까지만 나온다.
+- 읽기 경로가 둘이다. 기능 플래그 `projects:issue-action-log-activity`와 백필 여부에 따라 `id`가 Activity id이거나 GroupActionLogEntry id이고 `dateCreated`의 출처도 다르다. 프로젝트가 경로를 옮기면 같은 재발의 `id`가 달라질 수 있다. `data.event_id`는 두 경로 모두에 있다(`src/sentry/api/serializers/models/groupactionlogentry.py` L138-242, L413-483, `src/sentry/issues/derived/gate.py` L38-61, `src/sentry/issues/action_log/types.py` L601-608).
+- 확인 못 함: sentry.io에서 어느 경로가 켜져 있는지, 두 경로의 `dateCreated`가 같은 값인지.
+
+### 한도 초과 응답
+
+- 상태 코드는 `429`, 본문은 `{"detail": ...}`이다. 미들웨어는 `Retry-After`를 붙이지 않고 `X-Sentry-Rate-Limit-Limit`·`-Remaining`·`-Reset`(UTC epoch 초)과 동시성 헤더만 붙인다(코드에서 직접 확인: `src/sentry/middleware/ratelimit.py` L203, L222-233).
+- `429` 응답에도 이 헤더가 붙는다는 것은 추론이다. sentry.io 앞단 프록시가 다른 헤더를 붙이는지는 확인 못 함.
+

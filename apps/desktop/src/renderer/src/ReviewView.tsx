@@ -1,8 +1,8 @@
 import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleSections, ManualTag, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
-import { EditorPickerSheet } from './EditorPickerSheet';
-import { RepoPickerSheet } from './RepoPickerSheet';
+import { EditorPickerModal } from './EditorPickerModal';
+import { RepoPickerModal } from './RepoPickerModal';
 import { assignmentSourceText, BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
@@ -113,8 +113,8 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
         onCancelPost={cancelPost}
         onStoppedAction={followStopped}
       />
-      {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
-      {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
+      {repoPicker && <RepoPickerModal picker={repoPicker} bundles={bundles} />}
+      {snapshot.editor.picker && <EditorPickerModal picker={snapshot.editor.picker} />}
     </div>
   );
 }

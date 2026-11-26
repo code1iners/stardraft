@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { isSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from '../../shared/ipc';
-import { AccountSwitchSheet } from './AccountSwitchSheet';
+import { AccountSwitchModal } from './AccountSwitchModal';
 import { AgentSection } from './AgentSection';
 import { DraftsSection } from './DraftsSection';
 import { FlowAccountSection } from './FlowAccountSection';
@@ -44,7 +44,7 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
 
   /** 키 확인의 진행 상태. 스냅숏을 받기 전에는 없다. */
   const keyCheck = snapshot?.flowAccount.keyCheck;
-  /** 다른 계정의 키라서 바꾸기 확인을 기다리는 계정. 확인 시트가 떠 있는 동안 뒤 화면은 누를 수 없다. */
+  /** 다른 계정의 키라서 바꾸기 확인을 기다리는 계정. 확인 창가 떠 있는 동안 뒤 화면은 누를 수 없다. */
   const switchingTo = keyCheck?.status === 'awaiting-confirmation' ? keyCheck.account : null;
 
   return (
@@ -80,7 +80,7 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
           </main>
         </div>
       </div>
-      {switchingTo && <AccountSwitchSheet account={switchingTo} />}
+      {switchingTo && <AccountSwitchModal account={switchingTo} />}
     </>
   );
 }

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
 import { DraftsSection } from './DraftsSection';
-import { ManualCheckSheet } from './ManualCheck';
+import { ManualCheckModal } from './ManualCheck';
 import { PopoverContent } from './PopoverView';
 import { PopoverMenu, menuKeyAction } from './PopoverMenu';
 import { ReviewContent } from './ReviewView';
@@ -1385,14 +1385,14 @@ describe('시험 폐지', () => {
 });
 
 describe('최근 멘션 확인', () => {
-  /** 확인 시트의 가짜 줄. 둘째는 이미 답한 멘션, 셋째는 이미 묶음이 있는 멘션, 넷째는 최소 기록만 남은 멘션이다. */
+  /** 확인 창의 가짜 줄. 둘째는 이미 답한 멘션, 셋째는 이미 묶음이 있는 멘션, 넷째는 최소 기록만 남은 멘션이다. */
   const ROWS: ManualCheckRowSnapshot[] = [
     { kind: 'mention', alarmId: '104', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), tags: [], missReasons: [] },
     { kind: 'mention', alarmId: '103', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), tags: [{ kind: 'answered' }], missReasons: [] },
     { kind: 'mention', alarmId: '102', senderName: '세 번째', projectTitle: '가짜 프로젝트', firstLine: '이미 묶음이 있는 멘션', at: Date.UTC(2026, 9, 9, 2, 0), tags: [{ kind: 'bundle', bundleId: 7, status: 'posted' }], missReasons: [] },
     { kind: 'mention', alarmId: '101', senderName: '네 번째', projectTitle: '가짜 프로젝트', firstLine: '최소 기록만 남은 멘션', at: Date.UTC(2026, 9, 8, 2, 0), tags: [{ kind: 'archived' }], missReasons: [] },
   ];
-  /** 이어 불러올 수 있는 확인 시트. */
+  /** 이어 불러올 수 있는 확인 창. */
   const LOADED: NonNullable<ManualCheckSnapshot['sheet']> = { window: 'popover', tab: 'mentions', status: 'loaded', rows: ROWS, hasMore: true, loadingMore: false, moreFailure: null };
   /** 담당 업무 탭의 가짜 줄. 첫째는 감지에서 빠진 이유가 둘이고 이미 답했으며, 둘째는 이유가 없다. */
   const ASSIGNMENT_ROWS: ManualCheckRowSnapshot[] = [
@@ -1408,7 +1408,7 @@ describe('최근 멘션 확인', () => {
     },
     { kind: 'assignment', alarmId: '302', senderName: '다른 작성자', projectTitle: '백오피스', firstLine: '정산 화면 수정', at: Date.UTC(2026, 9, 17, 9, 0), tags: [{ kind: 'archived' }], missReasons: [] },
   ];
-  /** 담당 업무 탭을 보는 시트. */
+  /** 담당 업무 탭을 보는 모달. */
   const ASSIGNMENTS: NonNullable<ManualCheckSnapshot['sheet']> = { ...LOADED, tab: 'assignments', rows: ASSIGNMENT_ROWS, hasMore: false };
 
   /** 그린 HTML에서 [최근 멘션 확인] 버튼. */
@@ -1416,7 +1416,7 @@ describe('최근 멘션 확인', () => {
     return html.match(/<button[^>]*>최근 멘션 확인<\/button>/)?.[0];
   }
 
-  /** 확인 시트를 그린 글자. */
+  /** 확인 창를 그린 글자. */
   function sheetText(sheet: NonNullable<ManualCheckSnapshot['sheet']>): string {
     return textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet } })} />);
   }
@@ -1453,7 +1453,7 @@ describe('최근 멘션 확인', () => {
     expect(textOf(<DraftsSection snapshot={noKey} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
   });
 
-  it('시트는 연 창에만 뜨고, 설정 창에서 연 시트는 설정 칸에 뜬다', () => {
+  it('모달은 연 창에만 뜨고, 설정 창에서 연 모달은 설정 칸에 뜬다', () => {
     expect(sheetText(LOADED)).toContain('확인할 항목 고르기');
     expect(textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, window: 'settings' } } })} />)).not.toContain('확인할 항목 고르기');
     expect(textOf(<DraftsSection snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, window: 'settings' } } })} />)).toContain('확인할 항목 고르기');
@@ -1500,13 +1500,13 @@ describe('최근 멘션 확인', () => {
     expect(sheetText({ ...LOADED, rows: [], hasMore: false })).toContain('확인할 수 있는 최근 멘션이 없습니다.');
   });
 
-  it('Esc와 [닫기]는 시트를 닫는 명령을 보내고, 줄을 고르면 그 알림으로 고르는 명령을 보낸다', () => {
+  it('Esc와 [닫기]는 모달을 닫는 명령을 보내고, 줄을 고르면 그 알림으로 고르는 명령을 보낸다', () => {
     /** main으로 보낸 명령. */
     const send = vi.fn();
     vi.stubGlobal('window', { stardraft: { send } });
     try {
-      /** 시트가 그린 요소. 훅을 쓰지 않아 함수로 직접 부른다. */
-      const element = ManualCheckSheet({ sheet: LOADED });
+      /** 모달이 그린 요소. 훅을 쓰지 않아 함수로 직접 부른다. */
+      const element = ManualCheckModal({ sheet: LOADED });
       /** 요소 트리에서 조건에 맞는 요소를 모두 찾는다. */
       const find = (node: unknown, match: (props: Record<string, unknown>) => boolean): Record<string, unknown>[] => {
         if (Array.isArray(node)) return node.flatMap((child) => find(child, match));
@@ -1527,7 +1527,7 @@ describe('최근 멘션 확인', () => {
     }
   });
 
-  it('시트 위쪽에 "멘션 | 담당 업무" 탭이 있고 멘션 탭이 기본으로 선택된다. 탭마다 안내 문구가 다르다', () => {
+  it('모달 위쪽에 "멘션 | 담당 업무" 탭이 있고 멘션 탭이 기본으로 선택된다. 탭마다 안내 문구가 다르다', () => {
     /** 멘션 탭을 그린 HTML. */
     const mentions = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: LOADED } })} />);
     expect(mentions).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>멘션<\/button>/);
@@ -1605,8 +1605,8 @@ describe('최근 멘션 확인', () => {
         const props = (node as { props: Record<string, unknown> }).props;
         return [...(match(props) ? [props] : []), ...find(props.children, match)];
       };
-      /** 멘션 탭을 보는 시트가 그린 요소. */
-      const element = ManualCheckSheet({ sheet: LOADED });
+      /** 멘션 탭을 보는 모달이 그린 요소. */
+      const element = ManualCheckModal({ sheet: LOADED });
       /** 탭 단추. */
       const tabs = find(element, (props) => props.role === 'tab');
       expect(tabs).toHaveLength(2);
@@ -1615,8 +1615,8 @@ describe('최근 멘션 확인', () => {
       (tabs[1]!.onClick as () => void)();
       expect(send).toHaveBeenLastCalledWith({ type: 'select-manual-check-tab', tab: 'assignments' });
 
-      /** 담당 업무 탭을 보는 시트가 그린 요소의 탭 단추. */
-      const assignmentTabs = find(ManualCheckSheet({ sheet: ASSIGNMENTS }), (props) => props.role === 'tab');
+      /** 담당 업무 탭을 보는 모달이 그린 요소의 탭 단추. */
+      const assignmentTabs = find(ManualCheckModal({ sheet: ASSIGNMENTS }), (props) => props.role === 'tab');
       (assignmentTabs[0]!.onClick as () => void)();
       expect(send).toHaveBeenLastCalledWith({ type: 'select-manual-check-tab', tab: 'mentions' });
       (assignmentTabs[1]!.onClick as () => void)();

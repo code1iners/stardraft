@@ -1,17 +1,17 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import type { FlowAccountProfile } from '../../shared/ipc';
 
-/** 계정 바꾸기 확인 시트에 넘기는 값. */
-interface AccountSwitchSheetProps {
+/** 계정 바꾸기 확인 창에 넘기는 값. */
+interface AccountSwitchModalProps {
   /** 새로 넣은 키의 계정. */
   account: FlowAccountProfile;
 }
 
 /**
- * 다른 계정의 키를 넣었을 때 지금까지의 기록을 지우기 전에 확인을 받는 시트.
- * 설정 창 위쪽에 붙어 창 전체를 덮고, 고를 때까지 main은 아무것도 바꾸지 않는다.
+ * 다른 계정의 키를 넣었을 때 지금까지의 기록을 지우기 전에 확인을 받는 모달.
+ * 화면 가운데 모달로 뜨고, 고를 때까지 main은 아무것도 바꾸지 않는다.
  */
-export function AccountSwitchSheet({ account }: AccountSwitchSheetProps) {
+export function AccountSwitchModal({ account }: AccountSwitchModalProps) {
   /** 처음 초점을 줄 [취소] 버튼. 기록을 지우는 쪽을 실수로 누르지 않게 한다. */
   const cancelRef = useRef<HTMLButtonElement>(null);
 
@@ -35,9 +35,9 @@ export function AccountSwitchSheet({ account }: AccountSwitchSheetProps) {
   };
 
   return (
-    <div className="sheet-backdrop">
+    <div className="modal-backdrop">
       <div
-        className="sheet"
+        className="modal"
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="account-switch-title"
@@ -47,7 +47,7 @@ export function AccountSwitchSheet({ account }: AccountSwitchSheetProps) {
         <h3 id="account-switch-title">{account.name} 계정의 키입니다</h3>
         <p id="account-switch-body">지금까지의 멘션·초안·기록을 지우고 이 계정으로 처음부터 시작합니다.</p>
         <p className="muted small">작업 폴더, 저장소 매핑, 에이전트, 지침 같은 설정은 그대로 둡니다.</p>
-        <div className="sheet-actions">
+        <div className="modal-actions">
           <button ref={cancelRef} type="button" className="btn" onClick={handleCancel}>
             취소
           </button>

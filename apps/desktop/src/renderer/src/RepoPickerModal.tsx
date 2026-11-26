@@ -6,7 +6,7 @@ import { LINKED_NOTE, linkButtonText, REPO_CHOICE_GROUP_LABELS } from './review-
 const GROUP_ORDER: readonly RepoChoiceGroupSnapshot[] = ['current', 'work-folder', 'mapping', 'added'];
 
 /** 저장소 선택 창에 넘기는 값. */
-interface RepoPickerSheetProps {
+interface RepoPickerModalProps {
   /** 열린 저장소 선택 창. */
   picker: RepoPickerSnapshot;
   /** 묶음 전부. 창을 연 묶음을 찾아 만들기 버튼 문구를 정한다. */
@@ -14,10 +14,10 @@ interface RepoPickerSheetProps {
 }
 
 /**
- * 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓰는 시트로, 창 위쪽에 붙어 창 전체를 덮는다.
+ * 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓰는 모달로, 화면 가운데에 뜬다.
  * 후보를 무리별로 체크 상자와 함께 보이고, 고른 구성으로 초안을 만들거나 저장소 매핑을 덮어쓴다. 체크 상태는 main이 가진다.
  */
-export function RepoPickerSheet({ picker, bundles }: RepoPickerSheetProps) {
+export function RepoPickerModal({ picker, bundles }: RepoPickerModalProps) {
   /** 창을 연 묶음. */
   const bundle = bundles.find((item) => item.id === picker.bundleId);
   /** 고른 후보. */
@@ -51,8 +51,8 @@ export function RepoPickerSheet({ picker, bundles }: RepoPickerSheetProps) {
   };
 
   return (
-    <div className="sheet-backdrop">
-      <div className="sheet repo-picker" role="dialog" aria-modal="true" aria-labelledby="repo-picker-title" onKeyDown={handleKeyDown}>
+    <div className="modal-backdrop">
+      <div className="modal repo-picker" role="dialog" aria-modal="true" aria-labelledby="repo-picker-title" onKeyDown={handleKeyDown}>
         <h3 id="repo-picker-title">저장소 고르기</h3>
         <p className="muted small">고른 저장소를 읽어 초안을 만듭니다. 여러 개를 고를 수 있고, 위에 있는 저장소부터 읽습니다.</p>
         {picker.status === 'loading' ? (
@@ -69,7 +69,7 @@ export function RepoPickerSheet({ picker, bundles }: RepoPickerSheetProps) {
           폴더 직접 고르기
         </button>
         {picker.status === 'ready' && picker.mapping === 'same' && <p className="muted small">{LINKED_NOTE}</p>}
-        <div className="sheet-actions">
+        <div className="modal-actions">
           <span className="small muted repo-picker-count">{checked.length}개 고름</span>
           <button type="button" className="btn" onClick={handleClose}>
             닫기

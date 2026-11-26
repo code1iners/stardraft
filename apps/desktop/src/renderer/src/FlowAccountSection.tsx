@@ -41,7 +41,7 @@ export function FlowAccountSection({ flowAccount, keyNeedsCheck }: FlowAccountSe
   const [failure, setFailure] = useState<FlowKeyCheckFailure | null>(null);
   /** 키 입력 칸. */
   const inputRef = useRef<HTMLInputElement>(null);
-  /** 앞 렌더의 확인 진행 상태. 확인 시트가 닫힌 순간을 알아내는 데 쓴다. */
+  /** 앞 렌더의 확인 진행 상태. 확인 모달이 닫힌 순간을 알아내는 데 쓴다. */
   const previousStatus = useRef(keyCheck.status);
 
   useEffect(function followKeyCheckResults() {
@@ -59,7 +59,7 @@ export function FlowAccountSection({ flowAccount, keyNeedsCheck }: FlowAccountSe
 
   useEffect(
     function refocusInputAfterSwitchCancelled() {
-      // 다른 계정으로 바꾸기를 취소해 시트가 닫히면 키를 고칠 수 있게 입력 칸으로 초점을 돌려준다.
+      // 다른 계정으로 바꾸기를 취소해 모달이 닫히면 키를 고칠 수 있게 입력 칸으로 초점을 돌려준다.
       if (previousStatus.current === 'awaiting-confirmation' && keyCheck.status === 'idle') inputRef.current?.focus();
       previousStatus.current = keyCheck.status;
     },

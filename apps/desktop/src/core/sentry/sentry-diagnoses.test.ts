@@ -273,6 +273,54 @@ describe('진단 완료', () => {
   });
 });
 
+describe('첨부 폴더 정리 대상', () => {
+  it('시작 때 정리에 넘기는 ID에는 첨부가 남아 있어야 하는 진단만 들고, 완료한 진단은 뺀다', async () => {
+    const { diagnoses } = await setup();
+    const waiting = await detect(diagnoses, '101');
+    const ready = await makeReady(diagnoses, '102');
+    const completed = await makeReady(diagnoses, '103');
+    await diagnoses.complete(completed);
+
+    expect(diagnoses.ids().sort()).toEqual([waiting.id, ready].sort());
+  });
+});
+
+describe('첨부 교체 실패', () => {
+  it('앞선 첨부를 새 첨부로 바꾸지 못하면 보고서의 첨부 목록을 비우고 그 수만큼 생략으로 센다', async () => {
+    const env = await setup();
+    const diagnoses = new SentryDiagnoses({
+      store: env.store,
+      notifier: env.notifier,
+      logger: createLogger([{ write: () => {} }], env.clock),
+      clock: env.clock,
+      resolveRepo: async () => ({ kind: 'mapped', path: '/repo' }),
+      replaceAttachments: async () => {
+        throw new Error('폴더를 바꾸지 못함');
+      },
+    });
+    await diagnoses.load();
+    const detected = await detect(diagnoses, '101');
+    const withAttachments: DiagnosisReport = {
+      ...report('success'),
+      attachments: [
+        { name: 'a.png', sizeBytes: 1 },
+        { name: 'b.log', sizeBytes: 2 },
+      ],
+      omittedAttachments: 1,
+    };
+
+    expect(await diagnoses.saveReport(detected.id, withAttachments, [], { kind: 'replace', staged: '/staged' })).toBe(true);
+
+    const saved = diagnoses.get(detected.id);
+    expect(saved?.status).toBe('ready');
+    expect(saved?.report).toMatchObject({ attachments: [], omittedAttachments: 3 });
+    // 다시 열어도 같다.
+    const reopened = env.open();
+    await reopened.load();
+    expect(reopened.get(detected.id)?.report).toMatchObject({ attachments: [], omittedAttachments: 3 });
+  });
+});
+
 describe('완료함 7일', () => {
   it('완료한 진단은 7일이 되기 전까지 완료함에 남고, 7일이 되면 목록에서 사라진다', async () => {
     const { clock, diagnoses, removed } = await setup();

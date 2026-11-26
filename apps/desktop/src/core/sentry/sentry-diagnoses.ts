@@ -124,9 +124,9 @@ export class SentryDiagnoses {
     this.emit();
   }
 
-  /** 지금 목록에 있는 진단 ID. 표에 없는 진단의 첨부 폴더를 치울 때 쓴다. */
+  /** 첨부 폴더가 남아 있어야 하는 진단 ID. 완료한 진단은 첨부를 지우므로 뺀다. 시작 때 이 밖의 첨부 폴더를 치우는 데 쓴다. */
   ids(): number[] {
-    return this.diagnoses.map((item) => item.id);
+    return this.diagnoses.filter((item) => item.status !== 'completed').map((item) => item.id);
   }
 
   /** 진단 전부. ID 순서다. */
@@ -569,7 +569,7 @@ export class SentryDiagnoses {
     return this.options.clock?.now() ?? Date.now();
   }
 
-  /** 진단의 첨부 폴더를 지운다. 실패해도 완료는 되돌리지 않고 로그만 남긴다. 다음 시작 때 표에 없는 폴더로 치워진다. */
+  /** 진단의 첨부 폴더를 지운다. 실패해도 완료는 되돌리지 않고 로그만 남긴다. 다음 시작 때 정리가 완료한 진단의 폴더로 치우고, 그 전에 7일이 지나면 사라질 때 다시 지운다. */
   private async removeAttachmentsOf(id: number): Promise<void> {
     try {
       await this.options.removeAttachments?.(id);
@@ -578,13 +578,22 @@ export class SentryDiagnoses {
     }
   }
 
-  /** 앞선 첨부를 지우고 옮겨 둔 첨부를 넣는다. 실패해도 보고서는 되돌리지 않고 로그만 남긴다. 남은 폴더는 다음 시작 때 치워진다. */
+  /**
+   * 앞선 첨부를 지우고 옮겨 둔 첨부를 넣는다. 실패해도 보고서는 되돌리지 않고 로그만 남기되, 파일이 없는 이름이 남지 않게
+   * 보고서의 첨부 목록을 비우고 그 수를 "첨부 n개 생략"에 더한다. 남은 폴더는 다음 시작 때 치워진다.
+   */
   private async replaceAttachmentsOf(id: number, staged: string): Promise<void> {
     try {
       if (this.options.replaceAttachments) await this.options.replaceAttachments(id, staged);
       else await this.discardStaged(staged);
     } catch (error) {
       this.options.logger.warn('sentry-diagnoses.attachments-replace-failed', errorFields(error));
+      await this.change(id, (diagnosis) => {
+        if (!diagnosis.report || diagnosis.report.attachments.length === 0) return false;
+        diagnosis.report.omittedAttachments += diagnosis.report.attachments.length;
+        diagnosis.report.attachments = [];
+        return true;
+      });
     }
   }
 

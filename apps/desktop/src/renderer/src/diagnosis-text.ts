@@ -1,4 +1,5 @@
 import { AGENT_INFO } from '../../shared/agent-info';
+import { mcpServerFacts } from '../../shared/mcp-servers-text';
 import type { DiagnosisFailureSnapshot, DiagnosisProgressSnapshot, DiagnosisReportSnapshot, DiagnosisRepoWaitSnapshot, DiagnosisSnapshot } from '../../shared/ipc';
 import { evidenceLocation, failureText, formatDuration, formatTime, type RepoWaitText } from './review-text';
 
@@ -198,7 +199,10 @@ export function reportEventFacts(report: DiagnosisReportSnapshot): IssueFact[] {
   ];
 }
 
-/** 보고서의 실행 정보 표. 저장소 경로, HEAD 해시, 커밋하지 않은 변경 유무, 에이전트와 버전, 재현 허용 여부, 걸린 시간, 생성 시각이다. */
+/**
+ * 보고서의 실행 정보 표. 저장소 경로, HEAD 해시, 커밋하지 않은 변경 유무, 에이전트와 버전, 재현 허용 여부, 걸린 시간, 생성 시각이고,
+ * 재현하는 진단이면 실린 MCP 서버와 빠진 서버·까닭이 붙는다.
+ */
 export function reportRunFacts(report: DiagnosisReportSnapshot, now = Date.now()): IssueFact[] {
   /** 실행 정보. */
   const { run } = report;
@@ -210,6 +214,7 @@ export function reportRunFacts(report: DiagnosisReportSnapshot, now = Date.now()
     { label: '재현 허용', value: run.reproductionAllowed ? '허용' : '허용 안 함' },
     { label: '걸린 시간', value: formatDuration(run.durationMs) },
     { label: '생성 시각', value: formatTime(run.createdAt, now) },
+    ...mcpServerFacts(run.mcpServers).map(([label, value]) => ({ label, value })),
   ];
 }
 

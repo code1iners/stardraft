@@ -5,6 +5,7 @@ import type { RunRecord } from '../generation/generation-run';
 import type { Preparation, PrepareContext, RunReading, TargetAdapter, TargetFailure, TargetRun, TargetRunRequest } from '../generation/target-adapter';
 import { errorFields, type LogFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
+import type { AgentId, ReproductionMcp } from '../ports/executor';
 import type { ConnectSentry, SentryApiFailure } from '../ports/sentry-api';
 import type { ReproductionRepoSetting, SettingsStore } from '../ports/settings-store';
 import type { ReproductionCopies } from '../reproduction/reproduction-copies';
@@ -30,6 +31,7 @@ import type { ReportAttachments, SentryDiagnoses } from './sentry-diagnoses';
 import {
   isRediagnosing,
   type DiagnosisRepoCheck,
+  type DiagnosisMcpServers,
   type DiagnosisReport,
   type DiagnosisRunInfo,
   type PriorDiagnosis,
@@ -54,8 +56,8 @@ const COPY_FAILED_METHOD = '재현 사본을 만들지 못해 코드만 읽고 �
 
 /** 결과를 저장할 때 실행 기록으로 채울 칸을 뺀 보고서. 실행 정보의 에이전트·버전·걸린 시간·생성 시각은 저장할 때 채운다. */
 export type PendingDiagnosisReport = Omit<DiagnosisReport, 'run'> & {
-  /** 준비할 때 정한 실행 정보. */
-  run: Pick<DiagnosisRunInfo, 'repository' | 'headCommit' | 'uncommittedChanges' | 'reproductionAllowed'>;
+  /** 준비할 때 정한 실행 정보와, 재현하는 진단이면 실은 MCP 서버. */
+  run: Pick<DiagnosisRunInfo, 'repository' | 'headCommit' | 'uncommittedChanges' | 'reproductionAllowed' | 'mcpServers'>;
   /** 저장할 때 첨부를 어떻게 할지. 보고서에는 남지 않는다. */
   attachmentChange: ReportAttachments;
 };
@@ -72,6 +74,8 @@ export interface SentryReproductionOptions {
   devices: Pick<Simulators, 'snapshot' | 'shutDownNew'>;
   /** 첨부를 옮겨 둘 폴더. */
   attachments: Pick<DiagnosisAttachmentFolders, 'createStaging' | 'discard'>;
+  /** 실행하는 에이전트가 원본 저장소의 사본에서 재현할 때 실을 MCP. 실행마다 그 CLI의 정의를 다시 읽는다. */
+  mcp: (agent: AgentId, sourceRoot: string) => Promise<ReproductionMcp>;
 }
 
 /**
@@ -253,7 +257,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
       base: {
         event: facts,
         priorDiagnosis: prior.info,
-        run: { repository: repo.path, headCommit: git.headCommit, uncommittedChanges: git.uncommittedChanges, reproductionAllowed: setting?.enabled === true },
+        run: { repository: repo.path, headCommit: git.headCommit, uncommittedChanges: git.uncommittedChanges, reproductionAllowed: setting?.enabled === true, mcpServers: null },
       },
     };
     /** 지금 저장소가 재현을 허용하는지 여부. */
@@ -384,7 +388,8 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   }
 
   /**
-   * 재현하는 진단 실행. 실행마다(일시적 실패의 다시 실행 포함) 원본의 새 사본을 만들어 그 안에서 재현 경계로 돌리고,
+   * 재현하는 진단 실행. 실행마다(일시적 실패의 다시 실행 포함) 원본의 새 사본을 만들어 그 안에서 재현 경계로 돌리고, 실행하는 에이전트에 등록된 MCP를 싣는다.
+   * 실은 서버와 빠진 서버·까닭은 보고서의 실행 정보에 이름만 적는다. 일부 서버가 뜨지 않아도 실행은 진행한다.
    * 결과의 첨부는 사본을 지우기 전에 옮겨 둔다. 첫 실행 전에 켜져 있던 시뮬레이터·에뮬레이터를 기록하고,
    * 생성이 끝나면(정리) 새로 켜진 것만 끄고 사본을 뒤에서 지운다. 사본을 만들지 못하면 그 실행은 읽기 전용으로 돌고
    * 재현 칸은 앱이 "불가(환경 실패)"로 채운다.
@@ -416,7 +421,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
       kind: 'diagnosis',
       step: DIAGNOSING_STEP,
       omittedContextItems: 0,
-      request: async (model) => {
+      request: async (model, agent) => {
         session.devicesBefore ??= await reproduction.devices.snapshot().catch((error: unknown) => {
           this.options.logger.warn('sentry-adapter.devices-snapshot-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
           return { ios: [], android: [] };
@@ -431,6 +436,11 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
           this.options.logger.warn('sentry-adapter.copy-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
         }
         if (session.copy === null) return this.readOnlyRequest(input, model);
+        /** 실을 MCP. 정의를 읽지 못하면 서버 없이 진행한다. */
+        const mcp = await reproduction.mcp(agent, input.repository).catch((error: unknown) => {
+          this.options.logger.warn('sentry-adapter.mcp-load-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
+          return { servers: [], env: {}, skipped: [] };
+        });
         /** 지금 설정. */
         const settings = await this.options.settingsStore.load();
         return {
@@ -441,11 +451,11 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
           secretPatterns: [...settings.extraSecretPatterns],
           model,
           timeoutMs: DIAGNOSIS_TIMEOUT_MS,
-          reproduction: { copyRoot: session.copy, sourceRoot: input.repository },
+          reproduction: { copyRoot: session.copy, sourceRoot: input.repository, mcp },
         };
       },
       read: (output) => (session.copyFailed ? readDiagnosisReading(output) : readReproducingReading(output)),
-      check: async (output, request) => {
+      check: async (output, request, report) => {
         /** 사본. 사본을 만들지 못한 실행이면 `null`. */
         const copy = request.reproduction?.copyRoot ?? null;
         // 사본 안에서 돈 에이전트가 근거의 저장소를 사본 경로로 적었으면 원본 경로로 고친다. 원본과 사본은 같은 파일이다.
@@ -495,6 +505,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
               omittedAttachments: staged.omitted,
               attachmentChange: { kind: 'replace', staged: staged.attachments.length > 0 ? session.staged : null },
               ...input.base,
+              run: { ...input.base.run, mcpServers: mcpRunInfo(request.reproduction?.mcp ?? null, report.mcpFailedServers ?? []) },
             },
           },
         };
@@ -577,6 +588,16 @@ function errorKind(error: unknown): Pick<LogFields, 'errorName' | 'errorCode'> {
   /** 오류 칸. */
   const fields = errorFields(error);
   return { errorName: fields.errorName ?? null, errorCode: fields.errorCode ?? null };
+}
+
+/** 실행 정보에 적을 MCP 서버. 연결하지 못한 서버는 실린 서버에서 빼고 "연결 실패"로 적는다. */
+function mcpRunInfo(mcp: ReproductionMcp | null, failed: readonly string[]): DiagnosisMcpServers {
+  /** 실은 서버 이름. */
+  const servers = (mcp?.servers ?? []).map((server) => server.name);
+  return {
+    loaded: servers.filter((name) => !failed.includes(name)),
+    skipped: [...(mcp?.skipped ?? []), ...servers.filter((name) => failed.includes(name)).map((name) => ({ name, reason: 'connection-failed' as const }))],
+  };
 }
 
 /** 재현 칸이 있는 출력인지 본다. */

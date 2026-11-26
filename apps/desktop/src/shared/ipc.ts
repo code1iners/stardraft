@@ -1032,6 +1032,8 @@ export interface DiagnosisReportSnapshot {
     durationMs: number;
     /** 생성 시각(Unix epoch 밀리초). */
     createdAt: number;
+    /** 재현에 실은 MCP 서버와 빠진 서버·까닭. 재현하지 않은 진단은 `null`이다. */
+    mcpServers: DiagnosisMcpServersSnapshot | null;
   };
   /**
    * 같은 오류 이슈의 앞선 진단. 없으면 `null`. 오류 이슈 정보에 적힌다.
@@ -1040,6 +1042,17 @@ export interface DiagnosisReportSnapshot {
   priorDiagnosis: { kind: 'in-review' } | { kind: 'completed'; completedAt: number; exportPath: string | null } | null;
   /** 종류나 한도를 넘어 옮기지 않은 첨부 수. 0보다 크면 "첨부 n개 생략"으로 보인다. */
   omittedAttachments: number;
+}
+
+/** 재현에서 MCP 서버가 빠진 까닭. 꺼 둠, 변수 없음, 변수 충돌, 설정을 옮기지 못함, 연결 실패다. */
+export type McpSkipReasonSnapshot = 'disabled' | 'missing-variable' | 'variable-conflict' | 'unreadable' | 'connection-failed';
+
+/** 보고서 실행 정보의 MCP 서버. 이름과 까닭만 있다. */
+export interface DiagnosisMcpServersSnapshot {
+  /** 실린 서버 이름. */
+  loaded: string[];
+  /** 빠진 서버와 까닭. */
+  skipped: { name: string; reason: McpSkipReasonSnapshot }[];
 }
 
 /** 진단 실패의 까닭. Flow 초안과 같은 빨간 상자에 사유와 마지막 단계로 보인다. */

@@ -26,7 +26,7 @@ const CODEX_LIST = JSON.stringify([
 async function setup(options: { settings?: Partial<Settings>; platform?: NodeJS.Platform; codex?: boolean; files?: string[]; mapped?: string[]; claudeError?: boolean } = {}) {
   const settingsStore = new MemorySettingsStore(options.settings);
   const runner = new FakeProcessRunner();
-  runner.respond('/fake/bin/codex', ['mcp', 'list', '--json'], exited(0, CODEX_LIST));
+  runner.respond('/fake/bin/codex', ['mcp', 'list', '--json', '-c', 'features.plugins=false'], exited(0, CODEX_LIST));
   /** 로그에 쓰인 줄. */
   const logLines: string[] = [];
   const sink: LogSink = { write: (line) => logLines.push(line) };
@@ -187,7 +187,7 @@ describe('재현 도구 권한', () => {
       ['codex', 'codex-web', false],
     ]);
     expect(runner.requests.map((request) => [request.command, request.args, request.cwd])).toEqual([
-      ['/fake/bin/codex', ['mcp', 'list', '--json'], '/fake/app-data'],
+      ['/fake/bin/codex', ['mcp', 'list', '--json', '-c', 'features.plugins=false'], '/fake/app-data'],
     ]);
   });
 
@@ -203,7 +203,7 @@ describe('재현 도구 권한', () => {
 
   it('Codex 목록 명령이 실패해도 Claude Code 목록은 보이고 실패를 알린다. 로그에는 출력 내용이 없다', async () => {
     const { settings, runner, logLines } = await setup();
-    runner.respond('/fake/bin/codex', ['mcp', 'list', '--json'], exited(1, `{"env":"${SECRET}"}`, SECRET));
+    runner.respond('/fake/bin/codex', ['mcp', 'list', '--json', '-c', 'features.plugins=false'], exited(1, `{"env":"${SECRET}"}`, SECRET));
 
     await settings.refreshServers();
 
@@ -243,7 +243,7 @@ describe('재현 도구 권한', () => {
     const { settings, runner } = await setup();
     runner.respond(
       '/fake/bin/codex',
-      ['mcp', 'list', '--json'],
+      ['mcp', 'list', '--json', '-c', 'features.plugins=false'],
       exited(0, JSON.stringify([{ name: 'playwright', enabled: true, transport: { type: 'stdio', command: 'x' } }])),
     );
     await settings.refreshServers();
@@ -297,14 +297,14 @@ describe('재현 도구 권한', () => {
     let release: (() => void) | undefined;
     runner.respond(
       '/fake/bin/codex',
-      ['mcp', 'list', '--json'],
+      ['mcp', 'list', '--json', '-c', 'features.plugins=false'],
       () =>
         new Promise((resolve) => {
           release = () => resolve(exited(0, JSON.stringify([{ name: 'stale', enabled: true, transport: { type: 'stdio', command: 'x' } }])));
         }),
     );
     const first = settings.refreshServers();
-    runner.respond('/fake/bin/codex', ['mcp', 'list', '--json'], exited(0, CODEX_LIST));
+    runner.respond('/fake/bin/codex', ['mcp', 'list', '--json', '-c', 'features.plugins=false'], exited(0, CODEX_LIST));
     await settings.refreshServers();
 
     release?.();

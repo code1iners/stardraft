@@ -1,4 +1,4 @@
-import type { ExecutorRunRequest } from '../ports/executor';
+import type { AgentId, ExecutorReport, ExecutorRunRequest } from '../ports/executor';
 import type { GenerationRunKind, RunFailureReason, RunRecord, TargetKind } from './generation-run';
 
 /**
@@ -55,12 +55,15 @@ export interface TargetRun<T extends TargetTypes, Output = unknown> {
   step: string;
   /** 입력의 맥락에서 길이 상한 때문에 뺀 항목 수. 실행 기록에 남긴다. */
   omittedContextItems: number;
-  /** 이번 실행에 쓸 모델로 실행 요청을 만든다. 지침·입력·출력 스키마·읽을 저장소·시간 상한을 담는다. 설정은 실행마다 새로 읽는다. */
-  request(model: string | null): Promise<TargetRunRequest>;
+  /**
+   * 이번 실행에 쓸 모델과 에이전트로 실행 요청을 만든다. 지침·입력·출력 스키마·읽을 저장소·시간 상한을 담는다. 설정은 실행마다 새로 읽는다.
+   * 에이전트는 그 CLI 자신의 설정을 읽어야 하는 요청(재현에 싣는 MCP 등)만 쓴다.
+   */
+  request(model: string | null, agent: AgentId): Promise<TargetRunRequest>;
   /** 결과 읽기. 구조화 출력의 모양을 읽는다. */
   read(output: unknown): RunReading<Output>;
-  /** 읽은 출력을 검증하고 다음에 할 일을 정한다. `request`는 이 출력을 낸 실행의 요청이다. */
-  check(output: Output, request: TargetRunRequest): Promise<RunCheck<T>>;
+  /** 읽은 출력을 검증하고 다음에 할 일을 정한다. `request`는 이 출력을 낸 실행의 요청이고, `report`는 그 실행에서 실행기가 알려 준 것이다. */
+  check(output: Output, request: TargetRunRequest, report: ExecutorReport): Promise<RunCheck<T>>;
   /**
    * 생성이 끝난 뒤(결과 저장, 실패 기록, 취소, 대기열에 되돌림, 앱 종료 모두) 한 번 부르는 정리. 실행 전후에 만들고 치울 것(재현 사본,
    * 실행이 새로 켠 시뮬레이터 등)이 있는 실행만 둔다. 대기열은 이 정리가 끝난 뒤에 함께 돌 수 없는 자원을 놓는다. 던져도 생성 결과는 바뀌지 않는다.

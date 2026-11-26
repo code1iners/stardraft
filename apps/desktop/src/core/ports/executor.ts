@@ -52,6 +52,50 @@ export interface ReproductionBoundary {
   copyRoot: string;
   /** 사본을 만든 원본 저장소의 절대 경로. 원본 경로로 원본의 비밀 파일을 읽지 못하게 사본과 같은 비밀 패턴으로 막는다. */
   sourceRoot: string;
+  /** 실을 MCP 서버. 없거나 서버가 비어 있으면 MCP를 싣지 않는다. */
+  mcp?: ReproductionMcp | null;
+}
+
+/** 재현에서 MCP 서버가 빠진 까닭. */
+export type McpSkipReason =
+  /** 사용자가 CLI에서 꺼 두었거나 `직접 선택`에서 켜지 않았다. */
+  | 'disabled'
+  /** 정의가 참조한 환경 변수를 로그인 셸에서 찾지 못했다. */
+  | 'missing-variable'
+  /** 정의의 평문 값이 실행 환경의 같은 이름 변수와 겹쳐 환경 변수로 넘길 수 없다(Codex). */
+  | 'variable-conflict'
+  /** 서버 정의를 읽거나 옮기지 못했다(Codex 상세 명령 실패, 헤더 값을 계산하는 명령이 있음). 꺼 둔 도구나 인증을 잃은 채 싣지 않으려고 뺀다. */
+  | 'unreadable'
+  /** CLI가 서버에 연결하지 못했다(뜨지 않음, 로그인 필요 등). */
+  | 'connection-failed';
+
+/** 재현에서 빠진 MCP 서버 하나. 이름과 까닭만 있다. */
+export interface McpServerSkip {
+  /** 서버 이름. */
+  name: string;
+  /** 빠진 까닭. */
+  reason: McpSkipReason;
+}
+
+/**
+ * 재현에 실을 MCP 서버 하나. 정의는 실행하는 CLI의 형식이고 평문 값(환경 변수, 헤더)이 들어 있을 수 있어
+ * 메모리에서만 다룬다. 로그·설정·보고서에 남기지 않는다. 이름은 사용자가 등록한 이름 그대로다(CLI가 저장한 로그인을 이름으로 찾는다).
+ */
+export interface ReproductionMcpServer {
+  /** 서버 이름. */
+  name: string;
+  /** 서버 정의. */
+  definition: Record<string, unknown>;
+}
+
+/** 재현에 실을 MCP. 실행할 때마다 실행하는 CLI의 정의를 다시 읽어 만든다. */
+export interface ReproductionMcp {
+  /** 실을 서버. */
+  servers: ReproductionMcpServer[];
+  /** 실행 환경에 더할 변수. 정의가 참조한 변수의 값(로그인 셸에서 읽음)과, Codex는 정의의 평문 값을 옮긴 변수다. */
+  env: Record<string, string>;
+  /** 싣기 전에 빠진 서버. 연결 실패는 실행이 끝난 뒤 실행기가 알린다. */
+  skipped: McpServerSkip[];
 }
 
 /** 실행 하나의 결과. */
@@ -104,6 +148,8 @@ export interface ExecutorReport {
   model: string | null;
   /** 에이전트가 알려 준 사용량. 결과를 알리지 않고 끝났으면 `null`. */
   usage: ExecutorUsage | null;
+  /** 재현에 실었지만 CLI가 연결하지 못한 MCP 서버 이름. MCP를 싣지 않은 실행에는 없다. */
+  mcpFailedServers?: string[];
 }
 
 /**

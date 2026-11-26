@@ -377,6 +377,44 @@ describe('생성 대기열: 저장과 복원', () => {
   });
 });
 
+describe('생성 대기열: 실행의 요청과 검증', () => {
+  it('요청을 만들 때 실행할 에이전트를 넘기고, 검증에는 그 실행에서 실행기가 알려 준 것을 넘긴다', async () => {
+    const env = setup();
+    /** 요청을 만들 때 받은 에이전트. */
+    const agents: string[] = [];
+    /** 검증에서 받은 실행 보고의 연결 실패 서버. */
+    const reported: (string[] | undefined)[] = [];
+    /** 기본 가짜 실행. */
+    const base = fakeRun();
+    env.second.add(10);
+    env.second.scriptPreparation(10, {
+      kind: 'ready',
+      next: {
+        kind: 'run',
+        run: {
+          ...base,
+          request: async (model, agent) => {
+            agents.push(agent);
+            return base.request(model);
+          },
+          check: async (output, _request, report) => {
+            reported.push(report.mcpFailedServers);
+            return base.check(output);
+          },
+        },
+      },
+    });
+    env.executor.script({ outcome: { type: 'completed', output: { answer: 'a' } }, report: { mcpFailedServers: ['docs'] } });
+
+    await env.createQueue().start();
+    await settle();
+
+    expect(agents).toEqual(['claude-code']);
+    expect(reported).toEqual([['docs']]);
+    expect(env.second.targets.get(10)?.result).toEqual({ answer: 'a' });
+  });
+});
+
 describe('생성 대기열: 병렬 작업 수', () => {
   it('병렬 작업 수만큼 초안을 함께 진행하고, 남은 대상은 자리가 날 때 꺼낸다', async () => {
     const env = setup();

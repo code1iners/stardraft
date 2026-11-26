@@ -2,7 +2,7 @@ import type { AgentPreferencesState } from '../agent/agent-preferences';
 import { suspectsGlobalFailure } from '../agent/run-failures';
 import { errorFields, type Logger } from '../logging/logger';
 import { waitAtMost, type CancelScheduled, type Clock } from '../ports/clock';
-import type { Executor, ExecutorOutcome, ExecutorReport } from '../ports/executor';
+import type { Executor, ExecutorReport } from '../ports/executor';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type {
   GenerationRunKind,
@@ -165,7 +165,7 @@ interface Generation {
 type FailedVerdict = { kind: 'failed'; reason: RunFailureReason; detail: string | null; retry: boolean };
 
 /** 에이전트 실행 한 번의 결과를 읽은 것. */
-type RunVerdict = { kind: 'output'; output: unknown } | FailedVerdict;
+type RunVerdict = { kind: 'output'; output: unknown; report: ExecutorReport } | FailedVerdict;
 
 /** 출력 검증까지 마친 실행의 결과. 쓸 수 있으면 다음 일, 아니면 실패다. `fixes`는 실행 기록에 남길 고친 내용이다. */
 type CheckedRun = { kind: 'passed'; fixes: string[]; next: NextStep<TargetTypes> } | { kind: 'failed'; fixes: string[]; verdict: FailedVerdict };
@@ -776,7 +776,7 @@ export class GenerationQueue {
     const checked: CheckedRun =
       ran.verdict.kind === 'failed'
         ? { kind: 'failed', fixes: ran.record.fixes, verdict: ran.verdict }
-        : await run.check(ran.verdict.output, ran.request).then((check) =>
+        : await run.check(ran.verdict.output, ran.request, ran.verdict.report).then((check) =>
             check.kind === 'passed' ? check : { kind: 'failed' as const, fixes: check.fixes, verdict: failedVerdict(check.reason, null) },
           );
     // 검증하는 사이에 [취소]나 대상이 바뀌어 멈췄을 수 있으므로 기록의 결과는 검증 뒤에 정한다.
@@ -824,7 +824,7 @@ export class GenerationQueue {
       if (!current) return stopAfter(this.requeueFromStart(entry, runs));
       confirmed = null;
       /** 어댑터가 만든 요청. */
-      const request = await run.request(current.model);
+      const request = await run.request(current.model, current.executor.agent);
       /** 실행 한 번의 결과와 실행 기록. */
       const ran = await this.runOnce(entry, current, request, run);
       if (entry.interruption) return stopAfter(this.afterInterruption(entry, [...runs, ran.record]));
@@ -878,7 +878,7 @@ export class GenerationQueue {
     }
 
     /** 결과를 읽은 것. */
-    const verdict: RunVerdict = report ? verdictOf(report.outcome, run) : failedVerdict('app-error', null);
+    const verdict: RunVerdict = report ? verdictOf(report, run) : failedVerdict('app-error', null);
     /** 실행 기록. 앱이 실행을 멈췄으면 그 까닭이 결과다. */
     const record: RunRecord = {
       kind: run.kind,
@@ -998,12 +998,14 @@ function targetKey(target: TargetRef): string {
 }
 
 /** 실행기의 결과를 읽는다. 구조화 출력은 어댑터가 읽는다. 일시적 실패만 다시 실행한다. */
-function verdictOf(outcome: ExecutorOutcome, run: TargetRun<TargetTypes>): RunVerdict {
+function verdictOf(report: ExecutorReport, run: TargetRun<TargetTypes>): RunVerdict {
+  /** 실행 결과. */
+  const outcome = report.outcome;
   switch (outcome.type) {
     case 'completed': {
       /** 어댑터가 읽은 출력. */
       const reading = run.read(outcome.output);
-      return reading.kind === 'output' ? reading : failedVerdict(reading.reason, reading.detail);
+      return reading.kind === 'output' ? { ...reading, report } : failedVerdict(reading.reason, reading.detail);
     }
     case 'invalid-output':
       return failedVerdict('invalid-output', outcome.detail);

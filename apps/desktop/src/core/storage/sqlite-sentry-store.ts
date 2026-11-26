@@ -214,12 +214,23 @@ function diagnosisOf(row: DiagnosisRow): SentryDiagnosis {
   };
 }
 
-/** 저장된 보고서를 읽는다. 앞선 진단 칸이나 첨부 칸이 생기기 전에 저장한 보고서는 앞선 진단과 첨부가 없는 것으로 본다. */
+/**
+ * 저장된 보고서를 읽는다. 앞선 진단 칸, 첨부 칸, 실행 정보의 MCP 칸이 생기기 전에 저장한 보고서는
+ * 앞선 진단과 첨부가 없고 MCP를 싣지 않은 것으로 본다.
+ */
 function reportOf(json: string): DiagnosisReport {
   /** 읽은 보고서. */
-  const report = JSON.parse(json) as Omit<DiagnosisReport, 'priorDiagnosis' | 'attachments' | 'omittedAttachments'> &
-    Partial<Pick<DiagnosisReport, 'priorDiagnosis' | 'attachments' | 'omittedAttachments'>>;
-  return { ...report, priorDiagnosis: report.priorDiagnosis ?? null, attachments: report.attachments ?? [], omittedAttachments: report.omittedAttachments ?? 0 };
+  const report = JSON.parse(json) as Omit<DiagnosisReport, 'priorDiagnosis' | 'attachments' | 'omittedAttachments' | 'run'> &
+    Partial<Pick<DiagnosisReport, 'priorDiagnosis' | 'attachments' | 'omittedAttachments'>> & {
+      run: Omit<DiagnosisReport['run'], 'mcpServers'> & Partial<Pick<DiagnosisReport['run'], 'mcpServers'>>;
+    };
+  return {
+    ...report,
+    run: { ...report.run, mcpServers: report.run.mcpServers ?? null },
+    priorDiagnosis: report.priorDiagnosis ?? null,
+    attachments: report.attachments ?? [],
+    omittedAttachments: report.omittedAttachments ?? 0,
+  };
 }
 
 /** 값을 JSON으로 쓴다. `null`이면 `NULL`이다. */

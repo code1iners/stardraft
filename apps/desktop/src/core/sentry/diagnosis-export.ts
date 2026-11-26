@@ -1,6 +1,7 @@
 import { copyFile, lstat, mkdir, open, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AGENT_INFO } from '../../shared/agent-info';
+import { mcpServerFacts } from '../../shared/mcp-servers-text';
 import type { DiagnosisReport, DiagnosisReproduction, ReproductionImpossibleReason, SentryDiagnosis } from './sentry-diagnosis';
 
 /** 내보낸 보고서 하나. */
@@ -266,6 +267,7 @@ export function reportMarkdown(diagnosis: SentryDiagnosis, report: DiagnosisRepo
       ['재현 허용', run.reproductionAllowed ? '허용' : '허용 안 함'],
       ['걸린 시간', `${Math.round(run.durationMs / 1000)}초`],
       ['생성 시각', dateTimeOf(run.createdAt)],
+      ...mcpServerFacts(run.mcpServers),
     ])}`,
   ];
   return `${sections.join('\n\n')}\n`;

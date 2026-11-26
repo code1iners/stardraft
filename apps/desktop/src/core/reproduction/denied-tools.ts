@@ -44,6 +44,9 @@ export const DENIED_TOOL_SERVERS: readonly DeniedToolServer[] = [
   { id: 'maestro', pattern: /maestro/i, tools: ['run_on_cloud'], sendsExternally: true },
 ];
 
+/** 고정 deny 목록의 모든 도구 이름. 재현에서는 서버 종류를 알아보지 않고 실은 모든 서버에서 이 도구들을 막는다. */
+export const FIXED_DENIED_TOOLS: readonly string[] = [...new Set(DENIED_TOOL_SERVERS.flatMap((server) => server.tools))];
+
 /** 서버 이름과 실행 명령(명령·인수·주소)에서 알아본 고정 deny 서버 종류. 알아보지 못하면 `null`. 값(환경 변수, 헤더)은 보지 않는다. */
 export function deniedServerFor(identity: string): DeniedToolServer | null {
   return DENIED_TOOL_SERVERS.find((server) => server.pattern.test(identity)) ?? null;

@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claudeNotLoggedInStream, claudeStream as stream, fakeClaudeEvent } from '../fakes/fake-claude-stream';
 import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
-import type { ExecutorProgress, ExecutorRunRequest } from '../ports/executor';
+import type { ExecutorProgress, ExecutorRunRequest, ReproductionMcp } from '../ports/executor';
 import type { AgentLaunch, AgentRunReport } from './agent-launch';
 import { ClaudeCodeExecutor } from './claude-code-executor';
 import { NodeProcessRunner } from './node-process-runner';
@@ -222,6 +222,24 @@ const COPY = '/private/var/folders/fake/T/stardraft-reproduction/run-abc';
 /** 사본을 만든 원본 저장소. */
 const SOURCE = '/Users/fake/work/web-app';
 
+/** 스펙 7절 고정 deny 표의 모든 도구를 막는 규칙. */
+const FIXED_DENY_RULES = [
+  'mcp__*__browser_run_code_unsafe',
+  'mcp__*__browser_file_upload',
+  'mcp__*__upload_file',
+  'mcp__*__install_extension',
+  'mcp__*__execute_3p_developer_tool',
+  'mcp__*__mobile_batch_commands',
+  'mcp__*__mobile_uninstall_app',
+  'mcp__*__mobile_clear_app_data',
+  'mcp__*__mobile_login_to_cloud_provider',
+  'mcp__*__mobile_allocate_remote_device',
+  'mcp__*__debug_lldb_command',
+  'mcp__*__xcode_ide_call_tool',
+  'mcp__*__erase_sims',
+  'mcp__*__run_on_cloud',
+];
+
 /** 테스트용 재현하는 진단 요청. 읽을 루트는 사본 하나다. */
 function reproductionRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunRequest {
   return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY, sourceRoot: SOURCE }, ...overrides });
@@ -241,8 +259,9 @@ describe('Claude Code 실행기: 재현 경계', () => {
     expect(flagValue(request, '--permission-prompts')).toBe('none');
     expect(flagValue(request, '--max-turns')).toBe('120');
     expect(request?.args).toEqual(expect.arrayContaining(['--restricted', '--strict-mcp-config', '--no-session-persistence']));
-    // 이 단계에서는 MCP를 싣지 않는다. 엄격 모드에 정의 파일을 넘기지 않으므로 서버가 하나도 없다.
+    // 실을 서버가 없으면 MCP 설정을 넘기지 않는다. 엄격 모드라 사용자 설정의 서버도 실리지 않는다.
     expect(request?.args).not.toContain('--mcp-config');
+    expect(request?.args).not.toContain('--disallowedTools');
     expect(request?.args).not.toContain('--add-dir');
     expect(request?.args).not.toContain('--bare');
   });
@@ -255,6 +274,8 @@ describe('Claude Code 실행기: 재현 경계', () => {
 
     /** `--settings`로 넘긴 설정. */
     const settings: unknown = JSON.parse(flagValue(runner.requests[0], '--settings') ?? 'null');
+    /** 이번 실행의 임시 폴더(실제 경로). 지침과 MCP 정의 파일이 있어 읽지 못하게 막는다. */
+    const runDir = join(realpathSync(tempRoot), basename(dirname(flagValue(runner.requests[0], '--append-system-prompt-file') ?? '')));
     expect(settings).toEqual({
       permissions: {
         allow: ['Bash', 'Edit', 'Write'],
@@ -291,6 +312,9 @@ describe('Claude Code 실행기: 재현 경계', () => {
           `Read(/${SOURCE}/**/.git/**)`,
           `Read(/${SOURCE}/**/company/*.secret)`,
           `Read(/${SOURCE}/**/private-config/)`,
+          `Read(/${runDir}/**)`,
+          // 고정 deny 목록의 도구는 서버 이름과 상관없이 도구 이름 glob으로 막는다.
+          ...FIXED_DENY_RULES,
         ],
       },
       sandbox: {
@@ -299,7 +323,7 @@ describe('Claude Code 실행기: 재현 경계', () => {
         allowUnsandboxedCommands: false,
         network: { allowedDomains: ['*'], allowLocalBinding: true },
         filesystem: {
-          denyRead: ['/**/.env', '/**/.env.*', '~/.ssh', '~/.aws', '~/.npmrc', '~/.netrc', '~/.pypirc'],
+          denyRead: ['/**/.env', '/**/.env.*', '~/.ssh', '~/.aws', '~/.npmrc', '~/.netrc', '~/.pypirc', runDir],
           allowRead: [`${COPY}/**/.env`, `${COPY}/**/.env.*`],
         },
       },
@@ -352,6 +376,98 @@ describe('Claude Code 실행기: 재현 경계', () => {
     const report = await executor.run(reproductionRequest());
 
     expect(report.outcome).toEqual({ type: 'completed', output: { summary: '가짜 요약' } });
+  });
+});
+
+/** 정의에 평문으로 든 가짜 비밀 값. 명령줄 인자에 나오면 안 된다. */
+const MCP_SECRET = 'FAKE-MCP-SECRET-5d1e';
+
+/** 실을 가짜 MCP. 평문 값을 담은 stdio 서버 하나, 변수를 참조하는 원격 서버 하나, 점이 든 이름 하나다. */
+const FAKE_MCP: ReproductionMcp = {
+  servers: [
+    { name: 'playwright', definition: { command: 'npx', args: ['@playwright/mcp'], env: { API_KEY: MCP_SECRET } } },
+    { name: 'docs', definition: { type: 'http', url: 'https://fake.example/mcp', headers: { Authorization: 'Bearer ${DOCS_TOKEN}' } } },
+    { name: 'my.server', definition: { command: 'my-server' } },
+  ],
+  env: { DOCS_TOKEN: 'fake-docs-token' },
+  skipped: [{ name: 'off', reason: 'disabled' }],
+};
+
+describe('Claude Code 실행기: 재현에 MCP 싣기', () => {
+  it('실을 서버의 정의를 사본 밖 임시 파일(0600)로 --mcp-config에 넘기고, 평문 값은 명령줄 인자에 없다. 파일은 실행이 끝나면 지운다', async () => {
+    const { runner, executor } = setup();
+    /** 실행 중에 본 정의 파일의 내용과 권한. */
+    let seen: { content: unknown; mode: number } | null = null;
+    answerCli(runner, async (request) => {
+      /** 정의 파일. */
+      const file = flagValue(request, '--mcp-config') ?? '';
+      seen = { content: JSON.parse(readFileSync(file, 'utf8')), mode: statSync(file).mode & 0o777 };
+      return exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} })));
+    });
+
+    await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    const [request] = runner.requests;
+    /** 정의 파일. */
+    const file = flagValue(request, '--mcp-config') ?? '';
+    // 여러 값을 받는 인수라 맨 뒤에 있다.
+    expect(request?.args.slice(-2)).toEqual(['--mcp-config', file]);
+    expect(file.startsWith(COPY)).toBe(false);
+    expect(seen).toEqual({
+      content: { mcpServers: { playwright: FAKE_MCP.servers[0]?.definition, docs: FAKE_MCP.servers[1]?.definition, 'my.server': { command: 'my-server' } } },
+      mode: 0o600,
+    });
+    expect(request?.args.join(' ')).not.toContain(MCP_SECRET);
+    expect(existsSync(file)).toBe(false);
+    expect(request?.args).toEqual(expect.arrayContaining(['--restricted', '--strict-mcp-config']));
+  });
+
+  it('실은 서버마다 도구 전체를 허용하고 고정 deny 목록은 그대로 걸며, 정의가 참조한 변수를 실행 환경에 더한다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    /** `--settings`로 넘긴 권한. */
+    const permissions = (JSON.parse(flagValue(runner.requests[0], '--settings') ?? '{}') as { permissions: { allow: string[]; deny: string[] } }).permissions;
+    expect(permissions.allow).toEqual(['Bash', 'Edit', 'Write', 'mcp__playwright__*', 'mcp__docs__*', 'mcp__my_server__*']);
+    expect(permissions.deny).toEqual(expect.arrayContaining(FIXED_DENY_RULES));
+    expect(runner.requests[0]?.env).toMatchObject({ DOCS_TOKEN: 'fake-docs-token' });
+  });
+
+  it('init 이벤트에서 연결하지 못한 서버를 알린다. init을 받기 전에 끝나면 연결됐는지 몰라 모두 연결하지 못한 것으로 본다', async () => {
+    const { runner, executor } = setup();
+    /** 서버 상태를 담은 init 이벤트. */
+    const init = JSON.stringify({
+      ...(JSON.parse(fakeClaudeEvent.init()) as object),
+      mcp_servers: [
+        { name: 'playwright', status: 'connected' },
+        { name: 'docs', status: 'needs-auth' },
+      ],
+    });
+    answerCli(runner, exited(0, stream(init, fakeClaudeEvent.result({ structured_output: {} }))));
+
+    const report = await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    expect(report.mcpFailedServers).toEqual(['docs', 'my.server']);
+
+    answerCli(runner, exited(1, '', 'crash'));
+    expect((await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }))).mcpFailedServers).toEqual(['playwright', 'docs', 'my.server']);
+    expect((await executor.run(reproductionRequest())).mcpFailedServers).toBeUndefined();
+  });
+
+  it('읽기 전용 진단과 Flow 초안의 인수 묶음은 그대로다. MCP를 모두 막고 정의 파일을 넘기지 않는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(draftRequest());
+    await executor.run(draftRequest({ kind: 'diagnosis', readRoots: [SOURCE] }));
+
+    for (const request of runner.requests) {
+      expect(flagValue(request, '--disallowedTools')).toBe('mcp__*');
+      expect(flagValue(request, '--tools')).toBe('Read,Glob,Grep');
+      expect(request.args).not.toContain('--mcp-config');
+    }
   });
 });
 

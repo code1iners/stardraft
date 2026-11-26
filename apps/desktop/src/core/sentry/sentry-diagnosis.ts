@@ -1,6 +1,6 @@
 import type { DraftEvidence } from '../drafts/draft';
 import type { GenerationRunKind, RunFailureReason, RunRecord } from '../generation/generation-run';
-import type { AgentId } from '../ports/executor';
+import type { AgentId, McpServerSkip } from '../ports/executor';
 import type { DiagnosisAttachment } from './diagnosis-attachments';
 
 /** 진단을 일으킨 감지의 갈래. 신규와 재발이다. 표에 그대로 남으므로 값을 바꾸지 않는다. */
@@ -208,6 +208,16 @@ export interface DiagnosisRunInfo {
   durationMs: number;
   /** 보고서를 만든 시각(Unix epoch 밀리초). */
   createdAt: number;
+  /** 재현에 실은 MCP 서버와 빠진 서버. 재현하지 않은 진단(읽기 전용 진단)과 이 칸이 생기기 전에 저장한 보고서는 `null`이다. */
+  mcpServers: DiagnosisMcpServers | null;
+}
+
+/** 재현하는 진단에 실은 MCP 서버와 빠진 서버·까닭. 서버 이름만 남기고 정의의 값은 남기지 않는다. */
+export interface DiagnosisMcpServers {
+  /** 실려서 연결된 서버 이름. */
+  loaded: string[];
+  /** 빠진 서버와 까닭(꺼 둠, 변수 없음, 연결 실패 등). */
+  skipped: McpServerSkip[];
 }
 
 /**

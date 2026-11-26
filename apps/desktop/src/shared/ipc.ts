@@ -53,7 +53,7 @@ export const REPO_FOLDER_PATH_MAX_LENGTH = 4096;
 /** 저장소 매핑 명령이 받는 Flow 프로젝트 ID의 최대 길이. */
 export const FLOW_PROJECT_ID_MAX_LENGTH = 64;
 
-/** Sentry 프로젝트 명령이 받는 프로젝트 ID와 환경 이름의 최대 길이. */
+/** Sentry 프로젝트 명령이 받는 프로젝트 ID의 최대 길이. */
 export const SENTRY_PROJECT_ID_MAX_LENGTH = 64;
 
 /** Sentry 프로젝트의 환경 필터 이름의 최대 길이. */

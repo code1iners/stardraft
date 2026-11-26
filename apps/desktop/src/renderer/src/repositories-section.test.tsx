@@ -2,13 +2,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { RepoMappingsSnapshot, SentryProjectsSnapshot } from '../../shared/ipc';
 import { RepositoriesSection, SentryRepoMappingsField } from './RepositoriesSection';
+import { UNSUPPORTED_REPRODUCTION } from './reproduction-fixtures';
 
 /** 등록한 Sentry 프로젝트가 없는 상태. */
 const NO_SENTRY_PROJECTS: SentryProjectsSnapshot = { projects: [], candidates: { status: 'idle' } };
 
 /** 화면을 그린 HTML에서 태그를 지운 글자. */
 function textOf(repoMappings: RepoMappingsSnapshot): string {
-  return renderToStaticMarkup(<RepositoriesSection repoMappings={repoMappings} sentryProjects={NO_SENTRY_PROJECTS} />).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  return renderToStaticMarkup(<RepositoriesSection repoMappings={repoMappings} sentryProjects={NO_SENTRY_PROJECTS} reproduction={UNSUPPORTED_REPRODUCTION} />).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 }
 
 describe('설정 "저장소" 칸', () => {
@@ -26,6 +27,7 @@ describe('설정 "저장소" 칸', () => {
     const markup = renderToStaticMarkup(
       <RepositoriesSection
         sentryProjects={NO_SENTRY_PROJECTS}
+        reproduction={UNSUPPORTED_REPRODUCTION}
         repoMappings={{
           mappings: [{ projectId: '101', title: '매핑된 프로젝트', repos: [{ path: '/fake/work/api', status: 'found' }], missing: false }],
           waiting: [{ projectId: '900002', title: '기다리는 프로젝트', waitingCount: 3 }],
@@ -45,6 +47,7 @@ describe('설정 "저장소" 칸', () => {
     const markup = renderToStaticMarkup(
       <RepositoriesSection
         sentryProjects={NO_SENTRY_PROJECTS}
+        reproduction={UNSUPPORTED_REPRODUCTION}
         repoMappings={{
           mappings: [],
           waiting: [{ projectId: '900002', title: '기다리는 프로젝트', waitingCount: 1 }],
@@ -63,6 +66,7 @@ describe('설정 "저장소" 칸', () => {
       renderToStaticMarkup(
         <RepositoriesSection
           sentryProjects={NO_SENTRY_PROJECTS}
+          reproduction={UNSUPPORTED_REPRODUCTION}
           repoMappings={{
             mappings: [{ projectId: '101', title: '매핑된 프로젝트', repos: [{ path: '/fake/work/api', status: 'missing' }], missing: true }],
             waiting: [{ projectId: '900002', title: '기다리는 프로젝트', waitingCount: 3 }],
@@ -101,7 +105,7 @@ const SENTRY_PROJECTS: SentryProjectsSnapshot = {
 describe('설정 "저장소" 칸의 Flow | Sentry 탭', () => {
   /** 첫 화면(Flow 탭) 마크업. */
   const flowMarkup = (sentryProjects: SentryProjectsSnapshot) =>
-    renderToStaticMarkup(<RepositoriesSection repoMappings={{ mappings: [], waiting: [], projects: { status: 'idle' } }} sentryProjects={sentryProjects} />);
+    renderToStaticMarkup(<RepositoriesSection repoMappings={{ mappings: [], waiting: [], projects: { status: 'idle' } }} sentryProjects={sentryProjects} reproduction={UNSUPPORTED_REPRODUCTION} />);
 
   it('"저장소 매핑" 아래에 Flow와 Sentry 탭이 있고 Flow 탭이 먼저 보인다', () => {
     const markup = flowMarkup(NO_SENTRY_PROJECTS);
@@ -121,6 +125,7 @@ describe('설정 "저장소" 칸의 Flow | Sentry 탭', () => {
       <RepositoriesSection
         repoMappings={{ mappings: [], waiting: [{ projectId: '9', title: '기다림', waitingCount: 1 }], projects: { status: 'idle' } }}
         sentryProjects={NO_SENTRY_PROJECTS}
+        reproduction={UNSUPPORTED_REPRODUCTION}
       />,
     );
 
@@ -164,7 +169,7 @@ describe('설정 "저장소" 칸 Sentry 탭', () => {
 describe('설정 "저장소" 칸: 진단에서 짚은 Sentry 프로젝트', () => {
   it('진단의 [저장소 매핑하기]로 Sentry 프로젝트를 짚어 열면 Sentry 탭이 보이고 그 프로젝트의 줄이 짚인다', () => {
     const markup = renderToStaticMarkup(
-      <RepositoriesSection repoMappings={{ mappings: [], waiting: [], projects: { status: 'idle' } }} sentryProjects={SENTRY_PROJECTS} focusSentryProjectId="12" />,
+      <RepositoriesSection repoMappings={{ mappings: [], waiting: [], projects: { status: 'idle' } }} sentryProjects={SENTRY_PROJECTS} reproduction={UNSUPPORTED_REPRODUCTION} focusSentryProjectId="12" />,
     );
 
     expect(markup).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*>Sentry/);

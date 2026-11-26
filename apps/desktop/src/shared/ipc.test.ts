@@ -446,6 +446,49 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'dismiss-update-banner' })).toBeNull();
   });
 
+  it('재현 명령은 절대 경로 문자열, 아는 방식, 아는 에이전트와 비지 않은 서버 이름만 받는다', () => {
+    expect(parseAppCommand({ type: 'refresh-reproduction-repos', x: 1 })).toEqual({ type: 'refresh-reproduction-repos' });
+    expect(parseAppCommand({ type: 'refresh-reproduction-servers' })).toEqual({ type: 'refresh-reproduction-servers' });
+    expect(parseAppCommand({ type: 'pick-reproduction-env-file-draft' })).toEqual({ type: 'pick-reproduction-env-file-draft' });
+
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: true, envFile: '/fake/dev.env', extra: 1 })).toEqual({
+      type: 'set-reproduction-enabled',
+      repoPath: '/fake/web',
+      enabled: true,
+      envFile: '/fake/dev.env',
+    });
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: true, envFile: null })).toEqual({
+      type: 'set-reproduction-enabled',
+      repoPath: '/fake/web',
+      enabled: true,
+      envFile: null,
+    });
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: false })).toEqual({
+      type: 'set-reproduction-enabled',
+      repoPath: '/fake/web',
+      enabled: false,
+    });
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: 'yes' })).toBeNull();
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '', enabled: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: true, envFile: 7 })).toBeNull();
+
+    expect(parseAppCommand({ type: 'pick-reproduction-env-file', repoPath: '/fake/web' })).toEqual({ type: 'pick-reproduction-env-file', repoPath: '/fake/web' });
+    expect(parseAppCommand({ type: 'pick-reproduction-env-file' })).toBeNull();
+
+    expect(parseAppCommand({ type: 'set-reproduction-tool-mode', mode: 'manual' })).toEqual({ type: 'set-reproduction-tool-mode', mode: 'manual' });
+    expect(parseAppCommand({ type: 'set-reproduction-tool-mode', mode: 'everything' })).toBeNull();
+
+    expect(parseAppCommand({ type: 'set-reproduction-server-enabled', agent: 'codex', name: 'playwright', enabled: true, env: { A: 'b' } })).toEqual({
+      type: 'set-reproduction-server-enabled',
+      agent: 'codex',
+      name: 'playwright',
+      enabled: true,
+    });
+    expect(parseAppCommand({ type: 'set-reproduction-server-enabled', agent: 'gemini', name: 'x', enabled: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-reproduction-server-enabled', agent: 'codex', name: '', enabled: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-reproduction-server-enabled', agent: 'codex', name: 'x'.repeat(201), enabled: true })).toBeNull();
+  });
+
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {
     expect(parseAppCommand({ type: 'open-settings', section: '../../etc' })).toBeNull();
     expect(parseAppCommand({ type: 'run-shell', command: 'rm -rf /' })).toBeNull();

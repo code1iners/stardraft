@@ -12,18 +12,23 @@ import type {
   AppSnapshot,
   ModelChoiceSnapshot,
   ParallelWorkSnapshot,
+  ReproductionSnapshot,
 } from '../../shared/ipc';
 import { ParallelWorkPanel } from './ParallelWorkPanel';
+import { ReproductionPanel } from './ReproductionPanel';
 import { tabId, tabPanelId, UnderlineTabs, type UnderlineTab } from './UnderlineTabs';
 
-/** "에이전트" 칸 안의 탭. `재현` 탭은 재현 설정과 함께 더한다. */
-type AgentTab = 'connection' | 'parallel-work';
+/** "에이전트" 칸 안의 탭. */
+type AgentTab = 'connection' | 'reproduction' | 'parallel-work';
 
-/** "에이전트" 칸 안의 탭 목록. 이 순서로 보인다. */
-const AGENT_TABS: readonly UnderlineTab<AgentTab>[] = [
-  { id: 'connection', label: '연결' },
-  { id: 'parallel-work', label: '병렬 작업' },
-];
+/** "에이전트" 칸 안의 탭 목록. 이 순서로 보인다. `재현` 탭은 재현을 지원하는 OS(macOS)에서만 보인다. */
+function agentTabs(reproductionSupported: boolean): readonly UnderlineTab<AgentTab>[] {
+  return [
+    { id: 'connection', label: '연결' },
+    ...(reproductionSupported ? [{ id: 'reproduction' as const, label: '재현' }] : []),
+    { id: 'parallel-work', label: '병렬 작업' },
+  ];
+}
 
 /** "에이전트" 칸 탭의 id 앞부분. */
 const AGENT_TABS_ID = 'agent';
@@ -152,6 +157,8 @@ interface AgentSectionProps {
   agentPreferences: AgentPreferencesSnapshot;
   /** 병렬 작업 수와 진행 중인 수. */
   parallelWork: ParallelWorkSnapshot;
+  /** 재현 도구 권한과 MCP 서버 목록. `재현` 탭이 그린다. */
+  reproduction: ReproductionSnapshot;
   /** 실행 중인 OS. 터미널 이름과 명령을 고른다. */
   platform: AppSnapshot['platform'];
 }
@@ -165,9 +172,9 @@ function isVisible({ agent, cliFound }: AgentConnectionSnapshot): boolean {
 }
 
 /**
- * 설정 "에이전트" 칸. 칸 안에 `연결` · `병렬 작업` 밑줄 탭을 두고 처음에는 `연결`을 보인다.
+ * 설정 "에이전트" 칸. 칸 안에 `연결` · `재현`(macOS만) · `병렬 작업` 밑줄 탭을 두고 처음에는 `연결`을 보인다.
  */
-export function AgentSection({ agentConnections, agentPreferences, parallelWork, platform }: AgentSectionProps) {
+export function AgentSection({ agentConnections, agentPreferences, parallelWork, reproduction, platform }: AgentSectionProps) {
   /** 지금 보이는 탭. */
   const [tab, setTab] = useState<AgentTab>('connection');
 
@@ -179,10 +186,12 @@ export function AgentSection({ agentConnections, agentPreferences, parallelWork,
   return (
     <>
       <p className="section-lead muted">초안을 만드는 데 쓰는 이 PC의 에이전트입니다.</p>
-      <UnderlineTabs label="에이전트 설정" idPrefix={AGENT_TABS_ID} tabs={AGENT_TABS} selected={tab} onSelect={setTab} />
+      <UnderlineTabs label="에이전트 설정" idPrefix={AGENT_TABS_ID} tabs={agentTabs(reproduction.supported)} selected={tab} onSelect={setTab} />
       <div role="tabpanel" id={tabPanelId(AGENT_TABS_ID, tab)} aria-labelledby={tabId(AGENT_TABS_ID, tab)}>
         {tab === 'connection' ? (
           <ConnectionPanel agentConnections={agentConnections} agentPreferences={agentPreferences} platform={platform} />
+        ) : tab === 'reproduction' && reproduction.supported ? (
+          <ReproductionPanel reproduction={reproduction} />
         ) : (
           <ParallelWorkPanel parallelWork={parallelWork} />
         )}
@@ -195,7 +204,7 @@ export function AgentSection({ agentConnections, agentPreferences, parallelWork,
  * `연결` 탭. 칸을 열면 후보 에이전트마다 CLI를 찾고 버전, 로그인, 작동 확인을 차례로 확인해, Stardraft와 에이전트를 잇는 연결선으로 보인다.
  * 실패하면 그 마디가 끊기고, 명령으로 고칠 수 있으면 그림 카드 네 장을 보인다. 연결되면 그 아래에서 기본 에이전트와 모델을 고른다.
  */
-function ConnectionPanel({ agentConnections, agentPreferences, platform }: Omit<AgentSectionProps, 'parallelWork'>) {
+function ConnectionPanel({ agentConnections, agentPreferences, platform }: Pick<AgentSectionProps, 'agentConnections' | 'agentPreferences' | 'platform'>) {
   return (
     <>
       {agentConnections.filter(isVisible).map((connection) => (

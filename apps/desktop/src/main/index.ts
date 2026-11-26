@@ -1,8 +1,8 @@
 import { AssignmentDetection } from '../core/detection/assignment-detection';
 import { app, dialog, Menu, net, powerMonitor, safeStorage } from 'electron';
 import { autoUpdater } from 'electron-updater';
-import { stat } from 'node:fs/promises';
-import { userInfo } from 'node:os';
+import { readFile, stat } from 'node:fs/promises';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { AgentConnections } from '../core/agent/agent-connections';
 import { AgentPreferences } from '../core/agent/agent-preferences';
@@ -15,6 +15,7 @@ import { SentryDetection } from '../core/sentry/sentry-detection';
 import { DiagnosisAttachmentFolders } from '../core/sentry/diagnosis-attachments';
 import { DiagnosisExports, DiagnosisReportFolder } from '../core/sentry/diagnosis-exports';
 import { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
+import { ReproductionSettings } from '../core/reproduction/reproduction-settings';
 import { SentryProjects } from '../core/sentry/sentry-projects';
 import { SentryTargetAdapter } from '../core/sentry/sentry-target-adapter';
 import { readRepoGitState } from '../core/repos/repo-git-state';
@@ -278,6 +279,41 @@ function start(): void {
     };
     const repoMappings = new RepoMappings({ settingsStore: appData.settingsStore, logger, connectFlow: connectCurrentFlow });
     await repoMappings.load();
+    /** 설정 "저장소" 칸 재현 항목과 "에이전트" 칸 `재현` 탭의 재현 허용, 재현용 환경 파일, 재현 도구 권한. 이 단계에서는 설정만 다루고 실행은 하지 않는다. */
+    const reproduction = new ReproductionSettings({
+      settingsStore: appData.settingsStore,
+      logger,
+      platform: process.platform,
+      // Flow 매핑과 Sentry 매핑의 저장소를 모두 재현 허용 후보로 본다.
+      mappedRepoPaths: () => [
+        ...repoMappings.state().mappings.flatMap((mapping) => mapping.repos.map((repo) => repo.path)),
+        ...sentryProjects.state().projects.flatMap((project) => (project.repo ? [project.repo.path] : [])),
+      ],
+      readClaudeConfig: async () => {
+        /** Claude Code 설정 폴더. */
+        const configDir = process.env.CLAUDE_CONFIG_DIR ?? homedir();
+        try {
+          return JSON.parse(await readFile(join(configDir, '.claude.json'), 'utf8')) as unknown;
+        } catch (error) {
+          // 설정 파일이 없으면 등록한 서버가 없는 것이다.
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+          throw error;
+        }
+      },
+      runner: new NodeProcessRunner(),
+      codexLaunch: () => {
+        /** Codex 연결 확인. */
+        const connection = agentConnections.get('codex');
+        /** Codex CLI 경로. */
+        const cliPath = connection?.state().details.cliPath ?? null;
+        /** 자식 환경. */
+        const env = connection?.processEnv() ?? null;
+        return cliPath !== null && env ? { cliPath, env } : null;
+      },
+      cwd: dataFolderPath(),
+      isFile: async (path) => (await stat(path).catch(() => null))?.isFile() ?? false,
+    });
+    await reproduction.load();
     /** 감지한 멘션 묶음. 작은 창 대기열, 펼친 창 목록, 트레이 표시, 초안 준비됨·저장소 확인 필요 OS 알림이 따른다. */
     const mentionBundles = new MentionBundles({
       stateStore: appData.stateStore,
@@ -520,6 +556,7 @@ function start(): void {
       flowAccount,
       sentryConnection,
       sentryProjects,
+      reproduction,
       sentryDiagnoses,
       diagnosisExports,
       reportFolder,

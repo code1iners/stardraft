@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { SETTINGS_SECTIONS, type AppSnapshot, type OnboardingSnapshot } from '../../shared/ipc';
 import { sectionNeedsSetup, SetupBand } from './Onboarding';
 import { PopoverContent } from './PopoverView';
+import { UNSUPPORTED_REPRODUCTION } from './reproduction-fixtures';
 
 /** 첫 실행의 온보딩 상태. */
 const FIRST_RUN: OnboardingSnapshot = {
@@ -38,6 +39,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
     flowAccount: { account: null, keyCheck: { status: 'idle' } },
     sentry: { connected: false, organizations: [], tokenCheck: { status: 'idle' }, tokenProblem: null },
     sentryProjects: { projects: [], candidates: { status: 'idle' } },
+    reproduction: UNSUPPORTED_REPRODUCTION,
     globalProblem: null,
     agentConnections: [
       {

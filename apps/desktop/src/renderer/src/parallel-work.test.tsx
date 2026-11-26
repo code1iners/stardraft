@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentPreferencesSnapshot } from '../../shared/ipc';
 import { AgentSection } from './AgentSection';
 import { ParallelWorkPanel } from './ParallelWorkPanel';
+import { UNSUPPORTED_REPRODUCTION } from './reproduction-fixtures';
 import { UnderlineTabs } from './UnderlineTabs';
 
 /** 연결된 에이전트가 없는 기본 에이전트·모델 선택. */
@@ -11,7 +12,7 @@ const NO_PREFERENCES: AgentPreferencesSnapshot = { connectedAgents: [], defaultA
 describe('설정 "에이전트" 칸: 탭', () => {
   it('칸 안에 `연결` · `병렬 작업` 밑줄 탭이 있고 처음에는 `연결`이 골라져 있다', () => {
     const html = renderToStaticMarkup(
-      <AgentSection agentConnections={[]} agentPreferences={NO_PREFERENCES} parallelWork={{ count: 1, running: 0 }} platform="darwin" />,
+      <AgentSection agentConnections={[]} agentPreferences={NO_PREFERENCES} parallelWork={{ count: 1, running: 0 }} reproduction={UNSUPPORTED_REPRODUCTION} platform="darwin" />,
     );
     expect(html).toMatch(/<div class="underline-tabs" role="tablist"/);
     expect(html).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>연결<\/button>/);

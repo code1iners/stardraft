@@ -1,6 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { EXTRA_INSTRUCTIONS_MAX_LENGTH, SECRET_PATTERN_MAX_LENGTH, type AppSnapshot, type DraftSettingsSnapshot } from '../../shared/ipc';
-import { ManualCheckButton, ManualCheckSheet } from './ManualCheck';
+import { ManualCheckButton, ManualCheckModal } from './ManualCheck';
 
 /** "초안" 칸에 넘기는 값. */
 interface DraftsSectionProps {
@@ -153,7 +153,7 @@ export function DraftsSection({ snapshot }: DraftsSectionProps) {
         <span className="field-label">최근 멘션 확인</span>
         <p className="field-help muted">자동 감지에서 빠진 멘션을 직접 골라 초안을 만듭니다. 게시 전에는 Flow에 아무것도 올라가지 않습니다.</p>
         <ManualCheckButton manualCheck={snapshot.manualCheck} window="settings" noteClassName="field-note muted" />
-        {snapshot.manualCheck.sheet?.window === 'settings' && <ManualCheckSheet sheet={snapshot.manualCheck.sheet} />}
+        {snapshot.manualCheck.sheet?.window === 'settings' && <ManualCheckModal sheet={snapshot.manualCheck.sheet} />}
       </div>
     </>
   );

@@ -655,38 +655,37 @@ p.setup-tray-hint {
   white-space: nowrap;
 }
 
-/* 확인 시트: 설정 창 위쪽에 붙어 창 전체를 덮는다. */
-.sheet-backdrop {
+/* 확인 모달: 배경을 어둡게 덮고 화면 가운데에 뜬다. */
+.modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 10;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.4);
 }
 
-.sheet {
+.modal {
   width: 420px;
   max-width: calc(100% - 32px);
   padding: 14px 16px;
   border: 1px solid var(--border-strong);
-  border-top: 0;
-  border-radius: 0 0 10px 10px;
+  border-radius: 10px;
   background: var(--surface);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
 }
 
-.sheet h3 {
+.modal h3 {
   margin: 0 0 4px;
   font-size: 14px;
 }
 
-.sheet p {
+.modal p {
   margin: 6px 0 0;
 }
 
-.sheet-actions {
+.modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
@@ -1731,7 +1730,7 @@ button.cite:hover {
 }
 
 /* 저장소 선택 창: 후보 목록은 창 높이 안에서 스크롤한다. */
-.sheet.repo-picker {
+.modal.repo-picker {
   display: flex;
   flex-direction: column;
   max-height: calc(100% - 24px);
@@ -1778,7 +1777,7 @@ button.cite:hover {
   overflow-wrap: anywhere;
 }
 
-.repo-picker .sheet-actions {
+.repo-picker .modal-actions {
   flex-wrap: wrap;
 }
 
@@ -2035,13 +2034,13 @@ p.detail-empty {
 }
 
 /* 최근 멘션 확인 목록: 최근 멘션을 한 줄에 하나씩 두고, 목록은 창 높이 안에서 스크롤한다. */
-.sheet.manual-check {
+.modal.manual-check {
   display: flex;
   flex-direction: column;
   max-height: calc(100% - 24px);
 }
 
-/* 확인 시트의 "멘션 | 담당 업무" 탭. 고른 탭은 밑줄과 강조색으로 보인다. */
+/* 확인 모달의 "멘션 | 담당 업무" 탭. 고른 탭은 밑줄과 강조색으로 보인다. */
 .manual-check-tabs {
   display: flex;
   margin-top: 8px;

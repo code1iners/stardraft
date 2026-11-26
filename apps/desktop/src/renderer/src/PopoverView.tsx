@@ -2,9 +2,9 @@ import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, BundleSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleMeta, BundleSections, ManualTag, StatusTag, ToastStack } from './BundleDetail';
 import { SetupChecklist } from './Onboarding';
-import { EditorPickerSheet } from './EditorPickerSheet';
-import { RepoPickerSheet } from './RepoPickerSheet';
-import { ManualCheckButton, ManualCheckSheet } from './ManualCheck';
+import { EditorPickerModal } from './EditorPickerModal';
+import { RepoPickerModal } from './RepoPickerModal';
+import { ManualCheckButton, ManualCheckModal } from './ManualCheck';
 import { PopoverMenu } from './PopoverMenu';
 import { RestartConfirm, UpdateBanner } from './UpdatePrompts';
 import { useBundleActions, useBundleSelection } from './useReview';
@@ -138,9 +138,9 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
         onCancelPost={cancelPost}
         onStoppedAction={followStopped}
       />
-      {repoPicker && <RepoPickerSheet picker={repoPicker} bundles={bundles} />}
-      {snapshot.editor.picker && <EditorPickerSheet picker={snapshot.editor.picker} />}
-      {snapshot.manualCheck.sheet?.window === 'popover' && <ManualCheckSheet sheet={snapshot.manualCheck.sheet} />}
+      {repoPicker && <RepoPickerModal picker={repoPicker} bundles={bundles} />}
+      {snapshot.editor.picker && <EditorPickerModal picker={snapshot.editor.picker} />}
+      {snapshot.manualCheck.sheet?.window === 'popover' && <ManualCheckModal sheet={snapshot.manualCheck.sheet} />}
     </>
   );
 }
@@ -189,7 +189,7 @@ interface EmptyDetectionProps {
   snapshot: AppSnapshot;
 }
 
-/** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션 확인]을 누르면 이 창에 확인 시트를 연다. */
+/** 감지 중 묶음이 없을 때의 빈 화면. [최근 멘션 확인]을 누르면 이 창에 확인 창를 연다. */
 function EmptyDetection({ snapshot }: EmptyDetectionProps) {
   return (
     <>

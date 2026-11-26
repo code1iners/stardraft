@@ -41,7 +41,7 @@ const MISS_REASON_LABELS: Record<ManualCheckMissReasonSnapshot, string> = {
   'no-evidence': '배정 근거 없음',
 };
 
-/** 시트 안내 문구. 고르기 전에는 Flow에 아무것도 올라가지 않는다. */
+/** 모달 안내 문구. 고르기 전에는 Flow에 아무것도 올라가지 않는다. */
 export const MANUAL_CHECK_NOTE = '고른 항목으로 초안을 만듭니다. 게시 전에는 Flow에 아무것도 올라가지 않습니다.';
 
 /** 담당 업무 탭의 안내 문구. 목록이 알림에서만 나오는 한계를 알린다. */
@@ -54,18 +54,18 @@ export const MANUAL_CHECK_DISABLED_TEXT = '멘션 감지를 시작하고 Flow �
 interface ManualCheckButtonProps {
   /** 최근 멘션 확인 상태. */
   manualCheck: ManualCheckSnapshot;
-  /** 확인 시트를 열 창. */
+  /** 확인 창를 열 창. */
   window: ManualCheckWindowSnapshot;
   /** 막혔을 때 이유 문구에 붙일 클래스. 자리마다 글 스타일이 다르다. */
   noteClassName: string;
 }
 
 /**
- * [최근 멘션 확인]. 감지를 시작했고 쓸 수 있는 Flow 키가 있을 때만 누를 수 있다. 누르면 이 창에 확인 시트를 연다.
+ * [최근 멘션 확인]. 감지를 시작했고 쓸 수 있는 Flow 키가 있을 때만 누를 수 있다. 누르면 이 창에 확인 창를 연다.
  * 막혔을 때는 ⋯ 메뉴와 같은 이유를 버튼 아래 본문 문구로 보인다. 비활성 버튼은 툴팁이 잘 뜨지 않아 툴팁에 맡기지 않는다.
  */
 export function ManualCheckButton({ manualCheck, window: checkWindow, noteClassName }: ManualCheckButtonProps) {
-  /** 확인 시트를 연다. */
+  /** 확인 창를 연다. */
   const handleOpen = () => {
     void window.stardraft.send({ type: 'open-manual-check', window: checkWindow });
   };
@@ -80,18 +80,18 @@ export function ManualCheckButton({ manualCheck, window: checkWindow, noteClassN
   );
 }
 
-/** 확인 시트에 넘기는 값. */
-interface ManualCheckSheetProps {
-  /** 열린 시트. */
+/** 확인 창에 넘기는 값. */
+interface ManualCheckModalProps {
+  /** 열린 모달. */
   sheet: ManualCheckSheetSnapshot;
 }
 
 /**
- * 확인 시트("확인할 항목 고르기"). "멘션 | 담당 업무" 탭으로 나눠 최근 항목을 보낸 사람, Flow 프로젝트, 첫 줄(업무는 제목), 시각과 상태 태그로 보이고,
+ * 확인 창("확인할 항목 고르기"). "멘션 | 담당 업무" 탭으로 나눠 최근 항목을 보낸 사람, Flow 프로젝트, 첫 줄(업무는 제목), 시각과 상태 태그로 보이고,
  * 하나를 고르면 수동 요청 묶음을 만든다. 담당 업무 줄에는 감지에서 빠진 이유 태그가 붙는다. 이미 묶음이 있는 줄을 고르면 그 묶음으로 이동한다. 자동으로 고르지 않는다.
  */
-export function ManualCheckSheet({ sheet }: ManualCheckSheetProps) {
-  /** 시트를 닫는다. */
+export function ManualCheckModal({ sheet }: ManualCheckModalProps) {
+  /** 모달을 닫는다. */
   const handleClose = () => {
     void window.stardraft.send({ type: 'close-manual-check' });
   };
@@ -120,8 +120,8 @@ export function ManualCheckSheet({ sheet }: ManualCheckSheetProps) {
   const object = TAB_OBJECTS[sheet.tab];
 
   return (
-    <div className="sheet-backdrop">
-      <div className="sheet manual-check" role="dialog" aria-modal="true" aria-labelledby="manual-check-title" onKeyDown={handleKeyDown}>
+    <div className="modal-backdrop">
+      <div className="modal manual-check" role="dialog" aria-modal="true" aria-labelledby="manual-check-title" onKeyDown={handleKeyDown}>
         <h3 id="manual-check-title">확인할 항목 고르기</h3>
         <div className="manual-check-tabs" role="tablist" aria-label="확인할 항목 종류">
           {MANUAL_CHECK_TABS.map((tab) => (
@@ -147,7 +147,7 @@ export function ManualCheckSheet({ sheet }: ManualCheckSheetProps) {
         {sheet.status === 'loaded' && sheet.moreFailure && <p className="field-error">{loadFailureText(sheet.moreFailure, object)}</p>}
         {sheet.status === 'loaded' && sheet.loadingMore && <p className="muted">더 불러오는 중입니다.</p>}
         {sheet.status === 'loaded' && !sheet.hasMore && sheet.rows.length > 0 && <p className="muted small">더 이상 없음</p>}
-        <div className="sheet-actions">
+        <div className="modal-actions">
           {sheet.status === 'loaded' && sheet.hasMore && (
             <button type="button" className="btn" disabled={sheet.loadingMore} onClick={handleMore}>
               더 보기
@@ -167,15 +167,15 @@ export function ManualCheckSheet({ sheet }: ManualCheckSheetProps) {
   );
 }
 
-/** 확인 시트의 한 줄에 넘기는 값. */
+/** 확인 창의 한 줄에 넘기는 값. */
 interface ManualCheckChoiceProps {
   /** 보일 줄. */
   row: ManualCheckRowSnapshot;
 }
 
-/** 확인 시트의 한 줄. 누르면 그 항목으로 수동 요청 묶음을 만들거나, 이미 있는 묶음을 연다. */
+/** 확인 창의 한 줄. 누르면 그 항목으로 수동 요청 묶음을 만들거나, 이미 있는 묶음을 연다. */
 function ManualCheckChoice({ row }: ManualCheckChoiceProps) {
-  /** 이 항목을 고른다. main이 시트를 닫는다. */
+  /** 이 항목을 고른다. main이 모달을 닫는다. */
   const handlePick = () => {
     void window.stardraft.send({ type: 'pick-manual-check', alarmId: row.alarmId });
   };

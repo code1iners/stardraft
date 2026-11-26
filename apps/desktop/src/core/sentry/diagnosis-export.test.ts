@@ -44,6 +44,8 @@ function report(reproduction: Partial<DiagnosisReport['reproduction']> = {}): Di
       createdAt: DETECTED_AT + 60_000,
     },
     priorDiagnosis: null,
+    attachments: [],
+    omittedAttachments: 0,
   };
 }
 
@@ -80,6 +82,7 @@ function diagnosis(overrides: Partial<SentryDiagnosis> = {}, projectName = '가�
     lastExport: null,
     directives: [],
     rediagnosisFailure: null,
+    keepReproduction: false,
     ...overrides,
   };
 }
@@ -169,6 +172,14 @@ describe('보고서 내보내기', () => {
     expect(markdown).toContain('- ![화면 1.png](2026-11-26-%EA%B0%80%EC%A7%9C-%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8-WEB-1A/%ED%99%94%EB%A9%B4%201.png)');
     expect(markdown).toContain('- [run.log](');
     expect(existsSync(join(dir, 'run.log'))).toBe(true);
+  });
+
+  it('옮기지 않은 첨부가 있으면 재현 칸에 "첨부 n개 생략"을 적는다', () => {
+    /** 생략한 첨부가 있는 보고서. */
+    const omitted = reportMarkdown(diagnosis(), { ...report(), omittedAttachments: 3 }, 'x', ['run.log']);
+
+    expect(omitted).toMatch(/## 재현[\s\S]*\*\*첨부\*\*\n\n- \[run\.log\]\(x\/run\.log\)\n\n첨부 3개 생략\n\n## 원인과 확신도/);
+    expect(reportMarkdown(diagnosis(), report(), 'x', [])).not.toContain('생략');
   });
 
   it('첨부가 없으면 첨부 폴더를 만들지 않는다', async () => {

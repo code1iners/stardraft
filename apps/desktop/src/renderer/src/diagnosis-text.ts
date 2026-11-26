@@ -128,6 +128,11 @@ export function causeParts(text: string): CausePart[] {
   return parts;
 }
 
+/** 종류나 한도(10개, 합계 20MB)를 넘어 옮기지 않은 첨부의 안내. */
+export function omittedAttachmentsText(count: number): string {
+  return `첨부 ${count}개 생략`;
+}
+
 /** 재현 결과의 이름. 불가면 까닭을 괄호로 붙인다. */
 export function reproductionText(reproduction: DiagnosisReportSnapshot['reproduction']): string {
   if (reproduction.result === 'success') return '성공';
@@ -299,6 +304,8 @@ export const REDIAGNOSE_CHOICES: readonly { choice: RediagnoseChoice; label: str
 export const DIRECTIVE_FORM_TEXT = {
   label: '지시',
   previous: '앞서 덧붙인 지시도 함께 넘깁니다.',
+  reproduce: '재현도 다시 하기',
+  reproduceHelp: '끄면 앞선 재현 결과를 그대로 둡니다.',
   replaceNote: '새 보고서가 나오면 지금 보고서를 바꿉니다. 남기려면 먼저 내보내세요.',
   placeholder: '예: 캐시 쪽 원인도 확인해 주세요.',
 } as const;

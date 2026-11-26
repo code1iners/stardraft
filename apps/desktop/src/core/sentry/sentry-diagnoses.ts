@@ -63,7 +63,18 @@ export interface SentryDiagnosesOptions {
   clock?: Clock;
   /** 완료하거나 완료함에서 사라질 진단의 첨부 폴더를 지운다. 없으면 지우지 않는다. 폴더가 없어도 실패하지 않아야 한다. */
   removeAttachments?: (diagnosisId: number) => Promise<void>;
+  /** 진단의 첨부 폴더를 지운 뒤 옮겨 둔 첨부 폴더를 그 자리에 넣는다. 없으면 옮겨 둔 첨부는 버린다. */
+  replaceAttachments?: (diagnosisId: number, staged: string) => Promise<void>;
+  /** 보고서를 저장하지 못해 넣지 않을 옮겨 둔 첨부 폴더를 지운다. */
+  discardAttachments?: (staged: string) => Promise<void>;
 }
+
+/**
+ * 보고서를 저장할 때 첨부를 어떻게 할지.
+ * - `replace`: 앞선 첨부를 지우고 옮겨 둔 첨부(`staged`, 없으면 `null`)로 바꾼다. 처음 진단과 재현하는 다시 진단이다.
+ * - `keep`: 앞선 첨부를 그대로 둔다. 재현을 끈 다시 진단이 앞선 재현 칸과 첨부를 옮길 때다.
+ */
+export type ReportAttachments = { kind: 'replace'; staged: string | null } | { kind: 'keep' };
 
 /** 하루(밀리초). */
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -162,7 +173,7 @@ export class SentryDiagnoses {
    * 다시 진단이었다면 앞선 보고서와 첨부를 새 것으로 바꾼다. 쌓인 지시는 남기고, 내보낸 기록은 그대로 두되 보고서의 생성 시각이 달라져
    * 내보내지 않은 것으로 본다.
    */
-  async saveReport(id: number, report: DiagnosisReport, runs: readonly RunRecord[]): Promise<boolean> {
+  async saveReport(id: number, report: DiagnosisReport, runs: readonly RunRecord[], attachments: ReportAttachments = { kind: 'replace', staged: null }): Promise<boolean> {
     /** 알릴 진단. 저장하지 못했으면 `null`. */
     let announce: SentryDiagnosis | null = null;
     /** 앞선 보고서를 바꿨는지 여부. */
@@ -171,11 +182,20 @@ export class SentryDiagnoses {
     const saved = await this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'queued') return false;
       replaced = isRediagnosing(diagnosis);
-      Object.assign(diagnosis, { status: 'ready', report, failure: null, rediagnosisFailure: null, runs: [...diagnosis.runs, ...runs] });
+      Object.assign(diagnosis, { status: 'ready', report, failure: null, rediagnosisFailure: null, keepReproduction: false, runs: [...diagnosis.runs, ...runs] });
       announce = structuredClone(diagnosis);
       return true;
     });
-    if (saved && replaced) await this.removeAttachmentsOf(id);
+    // 앞선 첨부를 지운 뒤에 새 첨부를 넣는다. 새 첨부를 진단 폴더에 먼저 넣으면 앞선 첨부와 함께 지워진다.
+    /** 옮겨 둔 첨부. */
+    const staged = attachments.kind === 'replace' ? attachments.staged : null;
+    if (!saved) {
+      if (staged !== null) await this.discardStaged(staged);
+    } else if (attachments.kind === 'replace' && staged !== null) {
+      await this.replaceAttachmentsOf(id, staged);
+    } else if (attachments.kind === 'replace' && replaced) {
+      await this.removeAttachmentsOf(id);
+    }
     if (saved && announce) this.options.notifier.notify(reportReadyNotification(announce));
     return saved;
   }
@@ -189,7 +209,7 @@ export class SentryDiagnoses {
     return this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'queued') return false;
       if (isRediagnosing(diagnosis)) returnToReport(diagnosis, failure, runs);
-      else Object.assign(diagnosis, { status: 'failed', failure, runs: [...diagnosis.runs, ...runs] });
+      else Object.assign(diagnosis, { status: 'failed', failure, keepReproduction: false, runs: [...diagnosis.runs, ...runs] });
       return true;
     });
   }
@@ -246,8 +266,10 @@ export class SentryDiagnoses {
    * `directive`가 `null`이면 지시 없이 다시 진단한다. 앞선 보고서를 넘기지 않고 쌓인 지시를 비운다.
    * 지시를 주면 앞뒤 공백을 떼어 쌓인 지시 끝에 더하고, 앞선 보고서와 쌓인 지시 전부를 넘긴다. 비어 있는 지시는 다시 진단하지 않는다.
    * 검토 대기 보고서가 아니면 아무것도 하지 않고 거짓이다. 지난 다시 진단의 실패 기록은 지운다.
+   * `reproduce`는 지시를 덧붙일 때 고른 "재현도 다시 하기"다. 끄면 그 다시 진단은 읽기 전용으로 돌고 앞선 재현 칸과 첨부를 옮긴다.
+   * 지시 없는 다시 진단은 늘 재현한다(재현 허용이 켜진 저장소에서).
    */
-  async rediagnose(id: number, directive: string | null): Promise<boolean> {
+  async rediagnose(id: number, directive: string | null, { reproduce = true }: { reproduce?: boolean } = {}): Promise<boolean> {
     /** 덧붙일 지시. 지시 없이 다시 진단하면 `null`. */
     const added = directive === null ? null : directive.trim();
     if (added === '') return false;
@@ -259,6 +281,7 @@ export class SentryDiagnoses {
           status: 'queued',
           directives: added === null ? [] : [...diagnosis.directives, added],
           rediagnosisFailure: null,
+          keepReproduction: added !== null && !reproduce,
         });
         return true;
       },
@@ -315,7 +338,7 @@ export class SentryDiagnoses {
     /** 완료했는지 여부. */
     const completed = await this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'failed' && diagnosis.status !== 'ready') return false;
-      Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now, directives: [], rediagnosisFailure: null });
+      Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now, directives: [], rediagnosisFailure: null, keepReproduction: false });
       return true;
     });
     if (completed) await this.removeAttachmentsOf(id);
@@ -527,6 +550,21 @@ export class SentryDiagnoses {
     }
   }
 
+  /** 앞선 첨부를 지우고 옮겨 둔 첨부를 넣는다. 실패해도 보고서는 되돌리지 않고 로그만 남긴다. 남은 폴더는 다음 시작 때 치워진다. */
+  private async replaceAttachmentsOf(id: number, staged: string): Promise<void> {
+    try {
+      if (this.options.replaceAttachments) await this.options.replaceAttachments(id, staged);
+      else await this.discardStaged(staged);
+    } catch (error) {
+      this.options.logger.warn('sentry-diagnoses.attachments-replace-failed', errorFields(error));
+    }
+  }
+
+  /** 넣지 않을 옮겨 둔 첨부를 지운다. 실패하면 로그만 남긴다. */
+  private async discardStaged(staged: string): Promise<void> {
+    await this.options.discardAttachments?.(staged).catch((error: unknown) => this.options.logger.warn('sentry-diagnoses.attachments-discard-failed', errorFields(error)));
+  }
+
   /** 진단 하나. 복사하지 않은 원본이다. */
   private find(id: number): SentryDiagnosis | undefined {
     return this.diagnoses.find((item) => item.id === id);
@@ -566,7 +604,7 @@ export class SentryDiagnoses {
  * 이 실행에서 돌린 실행 기록은 진단의 실행 기록에 더한다.
  */
 function returnToReport(diagnosis: SentryDiagnosis, failure: DiagnosisFailure, runs: readonly RunRecord[]): void {
-  Object.assign(diagnosis, { status: 'ready', rediagnosisFailure: failure, runs: [...diagnosis.runs, ...runs] });
+  Object.assign(diagnosis, { status: 'ready', rediagnosisFailure: failure, keepReproduction: false, runs: [...diagnosis.runs, ...runs] });
 }
 
 /** 저장소 상태에 맞는 진단 상태. */

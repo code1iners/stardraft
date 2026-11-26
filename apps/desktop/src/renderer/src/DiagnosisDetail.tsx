@@ -18,6 +18,7 @@ import {
   diagnosisTabs,
   DIRECTIVE_FORM_TEXT,
   issueFacts,
+  omittedAttachmentsText,
   NO_ATTACHMENTS_TEXT,
   NO_EVIDENCE_TEXT,
   REDIAGNOSE_CHOICES,
@@ -334,7 +335,7 @@ export function DiagnosisTabPanel({ diagnosis, report, tab, highlight = null, on
     case 'evidence':
       return <EvidenceList diagnosis={diagnosis} report={report} highlight={highlight} />;
     case 'attachments':
-      return <AttachmentList attachments={diagnosis.attachments} />;
+      return <AttachmentList attachments={diagnosis.attachments} omitted={report.omittedAttachments} />;
     case 'info':
       return (
         <>
@@ -382,9 +383,9 @@ function DiagnosisFolds({ diagnosis, report }: DiagnosisReportProps) {
       <FoldSection title="남은 의문">
         <TextList items={report.openQuestions} />
       </FoldSection>
-      {diagnosis.attachments.length > 0 && (
+      {(diagnosis.attachments.length > 0 || report.omittedAttachments > 0) && (
         <FoldSection title={`첨부 ${diagnosis.attachments.length}`}>
-          <AttachmentList attachments={diagnosis.attachments} />
+          <AttachmentList attachments={diagnosis.attachments} omitted={report.omittedAttachments} />
         </FoldSection>
       )}
       <FoldSection title="오류 정보">
@@ -492,6 +493,7 @@ function ReproductionBody({ report }: ReportSectionProps) {
       {report.reproduction.method && <p>{report.reproduction.method}</p>}
       {report.reproduction.result !== 'success' && report.reproduction.steps.length > 0 && <p className="small muted">시도한 것</p>}
       <TextList items={report.reproduction.steps} ordered />
+      {report.omittedAttachments > 0 && <p className="small muted">{omittedAttachmentsText(report.omittedAttachments)}</p>}
     </>
   );
 }
@@ -628,19 +630,33 @@ export function EvidenceItems({ diagnosis, report, highlightedIndex, highlighted
 interface AttachmentListProps {
   /** 보고서의 첨부. */
   attachments: readonly DiagnosisAttachmentSnapshot[];
+  /** 종류나 한도를 넘어 옮기지 않은 첨부 수. */
+  omitted: number;
 }
 
-/** 첨부 목록. 첨부가 없으면 빈 상태 글을 보인다. */
-function AttachmentList({ attachments }: AttachmentListProps) {
-  if (attachments.length === 0) return <p className="small muted">{NO_ATTACHMENTS_TEXT}</p>;
+/** 첨부 목록. 첨부가 없으면 빈 상태 글을, 옮기지 않은 첨부가 있으면 "첨부 n개 생략"을 보인다. */
+function AttachmentList({ attachments, omitted }: AttachmentListProps) {
+  /** 생략 안내. */
+  const omittedNote = omitted > 0 && <p className="small muted">{omittedAttachmentsText(omitted)}</p>;
+  if (attachments.length === 0) {
+    return (
+      <>
+        <p className="small muted">{NO_ATTACHMENTS_TEXT}</p>
+        {omittedNote}
+      </>
+    );
+  }
   return (
-    <ul className="diagnosis-list attachment-list">
-      {attachments.map((attachment) => (
-        <li key={attachment.name}>
-          {attachment.name} <span className="small muted">{attachmentSizeText(attachment.sizeBytes)}</span>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="diagnosis-list attachment-list">
+        {attachments.map((attachment) => (
+          <li key={attachment.name}>
+            {attachment.name} <span className="small muted">{attachmentSizeText(attachment.sizeBytes)}</span>
+          </li>
+        ))}
+      </ul>
+      {omittedNote}
+    </>
   );
 }
 
@@ -829,7 +845,13 @@ function ReadyFooter({ diagnosis, send, directivePane: given }: ReadyFooterProps
   if (directivePane.openId === diagnosis.id) {
     return (
       <footer className="review-foot stacked">
-        <RediagnosisForm diagnosisId={diagnosis.id} directives={diagnosis.directives} onClose={directivePane.close} />
+        <RediagnosisForm
+          diagnosisId={diagnosis.id}
+          directives={diagnosis.directives}
+          reproductionAllowed={diagnosis.reproductionAllowed}
+          previousReproductionSucceeded={diagnosis.report?.reproduction.result === 'success'}
+          onClose={directivePane.close}
+        />
       </footer>
     );
   }
@@ -851,27 +873,35 @@ interface RediagnosisFormProps {
   diagnosisId: number;
   /** 앞서 덧붙인 지시. 덧붙인 순서다. */
   directives: readonly string[];
+  /** 저장소가 재현을 허용하는지 여부. 거짓이면 "재현도 다시 하기" 체크가 없다. */
+  reproductionAllowed: boolean;
+  /** 앞선 보고서의 재현이 성공이었는지 여부. 참이면 "재현도 다시 하기"가 꺼진 채로 열린다. */
+  previousReproductionSucceeded: boolean;
   /** 입력을 닫는다. 보내거나 [취소]를 누르면 부른다. */
   onClose: () => void;
 }
 
 /**
  * 지시를 덧붙여 다시 진단하는 입력. 바닥 줄 자리에 펼쳐진다. 위에서 아래로 이름 "지시", 앞서 덧붙인 지시(있을 때), 입력 칸,
- * "새 보고서가 나오면 지금 보고서를 바꿉니다" 안내, [취소] · [다시 진단]이다. 빈 지시로는 보낼 수 없다.
- * "재현도 다시 하기" 체크는 재현을 허용한 저장소에서만 나오는데 재현은 아직 없어 두지 않는다.
+ * 재현을 허용한 저장소면 입력 칸 아래 "재현도 다시 하기" 체크, "새 보고서가 나오면 지금 보고서를 바꿉니다" 안내, [취소] · [다시 진단]이다.
+ * 체크는 앞선 재현이 성공이면 꺼진 채, 실패·불가면 켜진 채 열린다. 빈 지시로는 보낼 수 없다.
  */
-export function RediagnosisForm({ diagnosisId, directives, onClose }: RediagnosisFormProps) {
+export function RediagnosisForm({ diagnosisId, directives, reproductionAllowed, previousReproductionSucceeded, onClose }: RediagnosisFormProps) {
   /** 쓰고 있는 지시. */
   const [text, setText] = useState('');
-  /** 지시를 덧붙여 다시 진단한다. */
+  /** "재현도 다시 하기". */
+  const [reproduce, setReproduce] = useState(!previousReproductionSucceeded);
+  /** 지시를 덧붙여 다시 진단한다. 재현을 허용하지 않은 저장소에서는 재현 선택이 쓰이지 않는다. */
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (text.trim() === '') return;
-    void window.stardraft.send({ type: 'rediagnose-with-directive', diagnosisId, directive: text });
+    void window.stardraft.send({ type: 'rediagnose-with-directive', diagnosisId, directive: text, reproduce: reproductionAllowed && reproduce });
     onClose();
   };
   /** 지시 글이 바뀌었다. */
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value);
+  /** "재현도 다시 하기"를 켜거나 껐다. */
+  const handleReproduceChange = (event: ChangeEvent<HTMLInputElement>) => setReproduce(event.target.checked);
 
   return (
     <form className="regen-form" onSubmit={handleSubmit}>
@@ -896,6 +926,15 @@ export function RediagnosisForm({ diagnosisId, directives, onClose }: Rediagnosi
         autoFocus
         onChange={handleChange}
       />
+      {reproductionAllowed && (
+        <div>
+          <label className="choice-row">
+            <input type="checkbox" checked={reproduce} onChange={handleReproduceChange} />
+            {DIRECTIVE_FORM_TEXT.reproduce}
+          </label>
+          <p className="field-help muted">{DIRECTIVE_FORM_TEXT.reproduceHelp}</p>
+        </div>
+      )}
       <p className="small muted">{DIRECTIVE_FORM_TEXT.replaceNote}</p>
       <div className="regen-actions">
         <button type="button" className="btn" onClick={onClose}>

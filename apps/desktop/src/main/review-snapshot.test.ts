@@ -973,6 +973,7 @@ describe('진단 스냅숏', () => {
       lastExport: null,
       directives: [],
       rediagnosisFailure: null,
+      keepReproduction: false,
       issue: {
         shortId: `WEB-${id}`,
         title: `시험 오류 ${id}`,
@@ -1014,6 +1015,7 @@ describe('진단 스냅숏', () => {
       lastExportedPath: null,
       canOpenInSentry: false,
       attachments: [],
+      reproductionAllowed: false,
       issue: {
         shortId: 'WEB-1',
         culprit: 'app/checkout',
@@ -1030,6 +1032,31 @@ describe('진단 스냅숏', () => {
     });
   });
 
+  it('보고서의 첨부 이름·크기와 생략한 수를 넘기고, 저장소가 지금 재현을 허용하는지(재현도 다시 하기 체크)를 프로젝트로 찾아 넘긴다', () => {
+    /** 재현한 보고서. */
+    const report: NonNullable<SentryDiagnosis['report']> = {
+      summary: '요약',
+      reproduction: { result: 'success', impossibleReason: null, method: '셸로 3번 중 3번', steps: ['pnpm test'] },
+      cause: { text: '원인', confidence: 'high' },
+      improvements: [],
+      openQuestions: [],
+      evidence: [],
+      event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
+      run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: true, durationMs: 1, createdAt: 7 },
+      priorDiagnosis: null,
+      attachments: [{ name: 'screen.png', sizeBytes: 2048 }],
+      omittedAttachments: 2,
+    };
+    const [reproduced, other] = diagnosisSnapshots(
+      [diagnosis(1, { status: 'ready', repoCheck: null, report }), diagnosis(2, { projectId: '22', status: 'queued', repoCheck: null })],
+      () => null,
+      (projectId) => projectId === '11',
+    );
+
+    expect(reproduced).toMatchObject({ attachments: [{ name: 'screen.png', sizeBytes: 2048 }], reproductionAllowed: true, report: { omittedAttachments: 2 } });
+    expect(other).toMatchObject({ attachments: [], reproductionAllowed: false });
+  });
+
   it('다시 진단하는 중이면 앞선 보고서를 보관한 채 대기·진행 중이고, 돌아온 진단은 사유와 쌓인 지시를 넘긴다', () => {
     /** 앞선 보고서. */
     const report: NonNullable<SentryDiagnosis['report']> = {
@@ -1042,6 +1069,8 @@ describe('진단 스냅숏', () => {
       event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
       run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: false, durationMs: 1, createdAt: 7 },
       priorDiagnosis: { kind: 'in-review' },
+      attachments: [],
+      omittedAttachments: 0,
     };
     const [again, running, returned, fresh] = diagnosisSnapshots(
       [
@@ -1074,6 +1103,8 @@ describe('진단 스냅숏', () => {
       event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
       run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: false, durationMs: 1, createdAt: 7 },
       priorDiagnosis: null,
+      attachments: [],
+      omittedAttachments: 0,
     };
     /** 검토 대기 진단. */
     const ready = (lastExport: SentryDiagnosis['lastExport']) => diagnosis(1, { status: 'ready', repoCheck: null, report, lastExport });

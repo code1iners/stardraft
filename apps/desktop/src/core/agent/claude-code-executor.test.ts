@@ -217,6 +217,144 @@ describe('Claude Code 실행기: 인수 묶음', () => {
   });
 });
 
+/** 재현 사본의 실제 경로. */
+const COPY = '/private/var/folders/fake/T/stardraft-reproduction/run-abc';
+/** 사본을 만든 원본 저장소. */
+const SOURCE = '/Users/fake/work/web-app';
+
+/** 테스트용 재현하는 진단 요청. 읽을 루트는 사본 하나다. */
+function reproductionRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunRequest {
+  return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY, sourceRoot: SOURCE }, ...overrides });
+}
+
+describe('Claude Code 실행기: 재현 경계', () => {
+  it('셸과 편집 도구를 열고, 사용자 설정을 끌어오지 않는 플래그는 그대로 두며, 사본을 cwd로 쓴다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest());
+
+    const [request] = runner.requests;
+    expect(request?.cwd).toBe(COPY);
+    expect(flagValue(request, '--tools')).toBe('Read,Glob,Grep,Bash,Edit,Write');
+    expect(flagValue(request, '--permission-mode')).toBe('dontAsk');
+    expect(flagValue(request, '--permission-prompts')).toBe('none');
+    expect(flagValue(request, '--max-turns')).toBe('120');
+    expect(request?.args).toEqual(expect.arrayContaining(['--restricted', '--strict-mcp-config', '--no-session-persistence']));
+    // 이 단계에서는 MCP를 싣지 않는다. 엄격 모드에 정의 파일을 넘기지 않으므로 서버가 하나도 없다.
+    expect(request?.args).not.toContain('--mcp-config');
+    expect(request?.args).not.toContain('--add-dir');
+    expect(request?.args).not.toContain('--bare');
+  });
+
+  it('셸 명령을 OS 샌드박스 안에 가두고, 쓰기는 사본으로, 네트워크와 localhost는 열고, .env 계열만 사본에서 푼다. 다른 비밀 패턴은 사본과 원본 경로 모두에서 막는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest({ secretPatterns: ['company/*.secret', '/private-config/'] }));
+
+    /** `--settings`로 넘긴 설정. */
+    const settings: unknown = JSON.parse(flagValue(runner.requests[0], '--settings') ?? 'null');
+    expect(settings).toEqual({
+      permissions: {
+        allow: ['Bash', 'Edit', 'Write'],
+        // 사본 경로로 좁힌 형식이다. 루트 전체 형식을 샌드박스에 합치면 TLS 인증서와 ~/.npmrc까지 막혀 HTTPS가 깨진다.
+        // 원본 저장소도 같은 패턴으로 막는다. 원본 경로로 원본의 비밀 파일을 읽는 길을 닫는다. 폴더 패턴의 끝 `/`는 그대로 둔다.
+        deny: [
+          `Read(/${COPY}/**/*.pem)`,
+          `Read(/${COPY}/**/*.key)`,
+          `Read(/${COPY}/**/*.p12)`,
+          `Read(/${COPY}/**/*.pfx)`,
+          `Read(/${COPY}/**/*.jks)`,
+          `Read(/${COPY}/**/*.keystore)`,
+          `Read(/${COPY}/**/id_rsa*)`,
+          `Read(/${COPY}/**/id_ed25519*)`,
+          `Read(/${COPY}/**/.npmrc)`,
+          `Read(/${COPY}/**/.pypirc)`,
+          `Read(/${COPY}/**/.netrc)`,
+          `Read(/${COPY}/**/secrets/**)`,
+          `Read(/${COPY}/**/.git/**)`,
+          `Read(/${COPY}/**/company/*.secret)`,
+          `Read(/${COPY}/**/private-config/)`,
+          `Read(/${SOURCE}/**/*.pem)`,
+          `Read(/${SOURCE}/**/*.key)`,
+          `Read(/${SOURCE}/**/*.p12)`,
+          `Read(/${SOURCE}/**/*.pfx)`,
+          `Read(/${SOURCE}/**/*.jks)`,
+          `Read(/${SOURCE}/**/*.keystore)`,
+          `Read(/${SOURCE}/**/id_rsa*)`,
+          `Read(/${SOURCE}/**/id_ed25519*)`,
+          `Read(/${SOURCE}/**/.npmrc)`,
+          `Read(/${SOURCE}/**/.pypirc)`,
+          `Read(/${SOURCE}/**/.netrc)`,
+          `Read(/${SOURCE}/**/secrets/**)`,
+          `Read(/${SOURCE}/**/.git/**)`,
+          `Read(/${SOURCE}/**/company/*.secret)`,
+          `Read(/${SOURCE}/**/private-config/)`,
+        ],
+      },
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        allowUnsandboxedCommands: false,
+        network: { allowedDomains: ['*'], allowLocalBinding: true },
+        filesystem: {
+          denyRead: ['/**/.env', '/**/.env.*', '~/.ssh', '~/.aws', '~/.npmrc', '~/.netrc', '~/.pypirc'],
+          allowRead: [`${COPY}/**/.env`, `${COPY}/**/.env.*`],
+        },
+      },
+    });
+  });
+
+  it('환경 변수는 최소 목록만 넘기고, 프록시를 타게 하는 값과 백그라운드 명령 대기 상한(진단 시간 상한)을 더한다', async () => {
+    const { runner, executor } = setup({
+      cliPath: CLI,
+      env: { ...CHILD_ENV, TMPDIR: '/var/folders/fake/T/', USER: 'fake', SHELL: '/bin/zsh', FAKE_SERVICE_TOKEN: 'fake-secret-value', ANTHROPIC_API_KEY: 'sk-fake-key' },
+      version: '2.1.332',
+    });
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest());
+
+    expect(runner.requests[0]?.env).toEqual({
+      ...CHILD_ENV,
+      TMPDIR: '/var/folders/fake/T/',
+      USER: 'fake',
+      SHELL: '/bin/zsh',
+      NODE_USE_ENV_PROXY: '1',
+      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '1200000',
+    });
+  });
+
+  it('강제로 끝낼 때 자손 프로세스 그룹까지 끝내게 한다. 셸 명령은 명령마다 따로 그룹을 만들어 CLI 그룹 종료로는 남는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest());
+    await executor.run(draftRequest());
+
+    expect(runner.requests[0]?.killDescendants).toBe(true);
+    expect(runner.requests[1]?.killDescendants).toBeFalsy();
+  });
+
+  it('결과를 낸 뒤 백그라운드 명령 때문에 CLI가 끝나지 않으면 남은 프로세스를 끝내고 그 결과를 쓴다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, async (request) => {
+      for (const line of [fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: { summary: '가짜 요약' } })]) request.onStdoutLine?.(line);
+      // 실제 CLI처럼 백그라운드 명령(dev 서버 등)이 끝나기를 기다리며 열려 있다가, 끝내라는 신호를 받아야 끝난다.
+      await new Promise<void>((resolve) => {
+        if (request.signal?.aborted) resolve();
+        else request.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return { kind: 'aborted', stdout: '', stderr: '' };
+    });
+
+    const report = await executor.run(reproductionRequest());
+
+    expect(report.outcome).toEqual({ type: 'completed', output: { summary: '가짜 요약' } });
+  });
+});
+
 describe('Claude Code 실행기: 진행 단계', () => {
   it('도구 사용 이벤트를 "파일 읽는 중: 파일 이름"과 "검색 중: 찾는 말"로 바꿔 알리고, 읽은 파일 수는 읽기 결과가 오면 늘린다. 같은 파일은 한 번, 거부된 읽기는 세지 않는다', async () => {
     const { runner, executor } = setup();

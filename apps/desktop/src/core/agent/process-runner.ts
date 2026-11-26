@@ -16,6 +16,11 @@ export interface ProcessRequest {
   onStdoutLine?: (line: string) => void;
   /** 중단 신호. 오면 프로세스 트리를 끝내고 `aborted`로 끝난다. */
   signal?: AbortSignal;
+  /**
+   * 제한 시간이나 중단 신호로 끝낼 때 자식의 자손이 만든 다른 프로세스 그룹까지 끝낼지 여부.
+   * 셸 명령이나 MCP 서버처럼 자기 그룹을 따로 만드는 자손은 자식의 그룹만 끝내면 남는다. POSIX에서만 쓴다.
+   */
+  killDescendants?: boolean;
 }
 
 /** 자식 프로세스 하나를 띄운 결과. 출력은 길이 상한까지만 담는다. */

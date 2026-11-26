@@ -67,6 +67,8 @@ interface DiagnosisRow {
   directives: string;
   /** 마지막 다시 진단이 실패해 앞선 보고서로 돌아왔다는 기록(JSON). 없으면 `NULL`. */
   rediagnosis_failure: string | null;
+  /** 재현을 끈 다시 진단인지(1) 아닌지(0). */
+  keep_reproduction: number;
 }
 
 /**
@@ -125,6 +127,7 @@ export class SqliteSentryStore implements SentryStore {
           lastExport: null,
           directives: [],
           rediagnosisFailure: null,
+          keepReproduction: false,
         });
       });
     })();
@@ -137,7 +140,7 @@ export class SqliteSentryStore implements SentryStore {
   async updateDiagnosis(diagnosis: SentryDiagnosis): Promise<void> {
     this.db
       .prepare(
-        'UPDATE sentry_diagnosis SET status = ?, repo_check = ?, report = ?, failure = ?, runs = ?, completed_at = ?, last_export = ?, directives = ?, rediagnosis_failure = ? WHERE id = ?',
+        'UPDATE sentry_diagnosis SET status = ?, repo_check = ?, report = ?, failure = ?, runs = ?, completed_at = ?, last_export = ?, directives = ?, rediagnosis_failure = ?, keep_reproduction = ? WHERE id = ?',
       )
       .run(
         diagnosis.status,
@@ -149,6 +152,7 @@ export class SqliteSentryStore implements SentryStore {
         jsonOrNull(diagnosis.lastExport),
         JSON.stringify(diagnosis.directives),
         jsonOrNull(diagnosis.rediagnosisFailure),
+        diagnosis.keepReproduction ? 1 : 0,
         diagnosis.id,
       );
   }
@@ -162,7 +166,7 @@ export class SqliteSentryStore implements SentryStore {
     const blankIssue = JSON.stringify(BLANK_ISSUE);
     /** 줄 하나를 비우는 문장. 완료가 아닌 줄은 건드리지 않는다. */
     const scrub = this.db.prepare(
-      "UPDATE sentry_diagnosis SET issue = ?, report = NULL, failure = NULL, runs = '[]', repo_check = NULL, directives = '[]', rediagnosis_failure = NULL WHERE id = ? AND status = 'completed'",
+      "UPDATE sentry_diagnosis SET issue = ?, report = NULL, failure = NULL, runs = '[]', repo_check = NULL, directives = '[]', rediagnosis_failure = NULL, keep_reproduction = 0 WHERE id = ? AND status = 'completed'",
     );
     this.db.transaction(() => {
       for (const id of ids) scrub.run(blankIssue, id);
@@ -206,14 +210,16 @@ function diagnosisOf(row: DiagnosisRow): SentryDiagnosis {
     lastExport: row.last_export === null ? null : (JSON.parse(row.last_export) as DiagnosisExport),
     directives: JSON.parse(row.directives) as string[],
     rediagnosisFailure: row.rediagnosis_failure === null ? null : (JSON.parse(row.rediagnosis_failure) as DiagnosisFailure),
+    keepReproduction: row.keep_reproduction === 1,
   };
 }
 
-/** 저장된 보고서를 읽는다. 앞선 진단 칸이 생기기 전에 저장한 보고서는 앞선 진단이 없는 것으로 본다. */
+/** 저장된 보고서를 읽는다. 앞선 진단 칸이나 첨부 칸이 생기기 전에 저장한 보고서는 앞선 진단과 첨부가 없는 것으로 본다. */
 function reportOf(json: string): DiagnosisReport {
   /** 읽은 보고서. */
-  const report = JSON.parse(json) as Omit<DiagnosisReport, 'priorDiagnosis'> & { priorDiagnosis?: DiagnosisReport['priorDiagnosis'] };
-  return { ...report, priorDiagnosis: report.priorDiagnosis ?? null };
+  const report = JSON.parse(json) as Omit<DiagnosisReport, 'priorDiagnosis' | 'attachments' | 'omittedAttachments'> &
+    Partial<Pick<DiagnosisReport, 'priorDiagnosis' | 'attachments' | 'omittedAttachments'>>;
+  return { ...report, priorDiagnosis: report.priorDiagnosis ?? null, attachments: report.attachments ?? [], omittedAttachments: report.omittedAttachments ?? 0 };
 }
 
 /** 값을 JSON으로 쓴다. `null`이면 `NULL`이다. */

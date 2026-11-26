@@ -17,6 +17,7 @@ import { withoutAgentApiKeys } from './cli-discovery';
 import { asRecord, failedOutcome, numberOrNull, parseJsonObject } from './executor-output';
 import type { ProcessResult } from './process-runner';
 import { readingFileStep, searchingStep } from './progress-steps';
+import { copySecretPatterns, ENV_FILE_PATTERNS, PERSONAL_SECRET_PATHS, reproductionEnv } from './reproduction-boundary';
 import { withDefaultSecretPatterns } from './secret-patterns';
 
 /**
@@ -54,18 +55,43 @@ export class ClaudeCodeExecutor implements Executor {
 
       /** stream-json을 읽는 쪽. */
       const reader = new ClaudeStreamReader(request.onProgress);
-      /** 프로세스 결과. */
-      const result = await this.options.runner.run({
-        command: launch.cliPath,
-        args: claudeRunArgs(request, instructionsFile, extraRoots),
-        env: withoutAgentApiKeys(launch.env),
-        cwd,
-        timeoutMs: request.timeoutMs,
-        stdin: request.input,
-        onStdoutLine: (line) => reader.push(line),
-        signal: request.signal,
-      });
-      return { outcome: classifyClaudeRun(result, reader), cliVersion: reader.cliVersion, model: reader.model, usage: reader.usage() };
+      /** 재현 경계로 도는지 여부. */
+      const reproducing = request.reproduction != null;
+      // 재현하는 진단은 결과를 낸 뒤에도 백그라운드 명령(dev 서버 등)이 끝나기를 기다리며 CLI가 열려 있으므로, 결과가 오면 남은 프로세스를 끝낸다.
+      /** 결과를 받아 앱이 끝낸 실행을 끊는 장치. 사용자의 중단 신호도 함께 받는다. */
+      const stopAfterResult = new AbortController();
+      /** 결과를 받아 앱이 끝냈는지 여부. */
+      let stoppedAfterResult = false;
+      /** 사용자의 중단 신호를 끊는 장치로 넘긴다. */
+      const forwardAbort = () => stopAfterResult.abort();
+      if (request.signal.aborted) forwardAbort();
+      else request.signal.addEventListener('abort', forwardAbort, { once: true });
+      try {
+        /** 프로세스 결과. */
+        const result = await this.options.runner.run({
+          command: launch.cliPath,
+          args: reproducing ? claudeReproductionArgs(request, instructionsFile) : claudeRunArgs(request, instructionsFile, extraRoots),
+          env: reproducing ? { ...reproductionEnv(withoutAgentApiKeys(launch.env)), ...reproductionExtraEnv(request.timeoutMs) } : withoutAgentApiKeys(launch.env),
+          cwd,
+          timeoutMs: request.timeoutMs,
+          stdin: request.input,
+          onStdoutLine: (line) => {
+            reader.push(line);
+            if (reproducing && reader.result !== null && !stopAfterResult.signal.aborted) {
+              stoppedAfterResult = true;
+              stopAfterResult.abort();
+            }
+          },
+          signal: reproducing ? stopAfterResult.signal : request.signal,
+          ...(reproducing ? { killDescendants: true } : {}),
+        });
+        // 결과를 받아 앱이 끝낸 실행은 스스로 끝난 것처럼 결과 메시지로 가린다.
+        /** 분류할 결과. */
+        const classified: ProcessResult = stoppedAfterResult && result.kind === 'aborted' ? { kind: 'exited', exitCode: 0, stdout: result.stdout, stderr: result.stderr } : result;
+        return { outcome: classifyClaudeRun(classified, reader), cliVersion: reader.cliVersion, model: reader.model, usage: reader.usage() };
+      } finally {
+        request.signal.removeEventListener('abort', forwardAbort);
+      }
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -108,6 +134,70 @@ function claudeRunArgs(request: ExecutorRunRequest, instructionsFile: string, ex
     ...extraRoots.flatMap((dir) => ['--add-dir', dir]),
     ...(request.model === null ? [] : ['--model', request.model]),
   ];
+}
+
+/**
+ * 재현하는 진단의 플래그 묶음(26번 실측의 확정 묶음). 사용자 설정을 끌어오지 않는 플래그는 읽기 전용 묶음과 같고,
+ * 셸과 편집 도구를 열고 셸 명령은 OS 샌드박스 안에서만 돌게 한다. 이 단계에서는 MCP 정의를 넘기지 않아 서버가 하나도 실리지 않는다.
+ * 사본만 읽을 루트이자 cwd라 `--add-dir`은 없다.
+ */
+function claudeReproductionArgs(request: ExecutorRunRequest, instructionsFile: string): string[] {
+  /** 사본 실제 경로와 원본 저장소 경로. */
+  const { copyRoot, sourceRoot } = request.reproduction!;
+  /** 권한 규칙과 샌드박스. */
+  const settings = {
+    // dontAsk에서는 허용 규칙이 있어야 셸과 편집 도구가 돈다(2.1.324부터 샌드박스만으로 셸을 자동 허용하지 않음).
+    permissions: {
+      allow: ['Bash', 'Edit', 'Write'],
+      // 사본과 원본 경로로 좁힌다. 루트 전체 형식을 샌드박스에 합치면 /etc/ssl/cert.pem과 ~/.npmrc까지 막혀 HTTPS가 깨진다.
+      // 원본도 막아야 원본 경로로 원본의 비밀 파일을 읽지 못한다. 원본 `.env`는 아래 샌드박스 규칙이 막는다.
+      deny: [copyRoot, sourceRoot].flatMap((root) => copySecretPatterns(request.secretPatterns).map((pattern) => `Read(/${root}/**/${pattern})`)),
+    },
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      // 네트워크는 샌드박스 프록시를 거친다. 프록시를 쓰지 않는 도구는 나가지 못한다.
+      network: { allowedDomains: ['*'], allowLocalBinding: true },
+      // `.env` 계열은 어디서나 막고 사본 아래만 다시 연다. 더 좁은 경로의 규칙이 이긴다.
+      filesystem: {
+        denyRead: [...ENV_FILE_PATTERNS.map((pattern) => `/**/${pattern}`), ...PERSONAL_SECRET_PATHS],
+        allowRead: ENV_FILE_PATTERNS.map((pattern) => `${copyRoot}/**/${pattern}`),
+      },
+    },
+  };
+  return [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--json-schema',
+    JSON.stringify(request.outputSchema),
+    '--tools',
+    'Read,Glob,Grep,Bash,Edit,Write',
+    '--settings',
+    JSON.stringify(settings),
+    '--permission-mode',
+    'dontAsk',
+    '--permission-prompts',
+    'none',
+    '--restricted',
+    '--strict-mcp-config',
+    '--no-session-persistence',
+    '--max-turns',
+    String(CLAUDE_MAX_TURNS[request.kind]),
+    '--append-system-prompt-file',
+    instructionsFile,
+    ...(request.model === null ? [] : ['--model', request.model]),
+  ];
+}
+
+/**
+ * 재현하는 진단에서 최소 환경 변수에 더하는 값. Node `fetch`가 샌드박스 프록시를 타게 하고(없으면 dev 서버의 API 호출이 실패한다),
+ * 백그라운드 명령을 기다리는 상한을 진단 시간 상한에 맞춘다.
+ */
+function reproductionExtraEnv(timeoutMs: number): Record<string, string> {
+  return { NODE_USE_ENV_PROXY: '1', CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(timeoutMs) };
 }
 
 /**

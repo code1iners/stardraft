@@ -16,6 +16,8 @@ import { DiagnosisAttachmentFolders } from '../core/sentry/diagnosis-attachments
 import { DiagnosisExports, DiagnosisReportFolder } from '../core/sentry/diagnosis-exports';
 import { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
 import { ReproductionSettings } from '../core/reproduction/reproduction-settings';
+import { osascriptCloner, ReproductionCopies } from '../core/reproduction/reproduction-copies';
+import { localPortOpen, Simulators } from '../core/reproduction/simulators';
 import { SentryProjects } from '../core/sentry/sentry-projects';
 import { SentryTargetAdapter } from '../core/sentry/sentry-target-adapter';
 import { readRepoGitState } from '../core/repos/repo-git-state';
@@ -198,6 +200,8 @@ function start(): void {
       logger,
       clock: systemClock,
       removeAttachments: (diagnosisId) => attachmentFolders.remove(diagnosisId),
+      replaceAttachments: (diagnosisId, staged) => attachmentFolders.replace(diagnosisId, staged),
+      discardAttachments: (staged) => attachmentFolders.discard(staged),
       resolveRepo: (projectId) => sentryProjects.resolveRepo(projectId),
       isRegistered: (registration) => sentryProjects.isRegistered(registration),
     });
@@ -366,6 +370,20 @@ function start(): void {
     retention.start();
     /** 진단 보고서의 실행 정보에 적을 커밋하지 않은 변경 유무를 읽는다. */
     const readGitStatus = gitStatusReader(process.platform);
+    /**
+     * 재현하는 진단의 사본. 홈 밖인 OS 임시 폴더에 둔다(Codex 권한 프로필은 홈 아래의 `.env`만 막을 수 있어, 사본의 `.env`를 열려면 사본이 홈 밖이어야 한다).
+     * 앱을 켤 때 지난 실행이 남긴 사본을 비운다. 기다리지 않는다.
+     */
+    const reproductionCopies = new ReproductionCopies({
+      root: join(app.getPath('temp'), 'stardraft-reproduction'),
+      clone: osascriptCloner(new NodeProcessRunner()),
+      logger,
+    });
+    void reproductionCopies.sweep();
+    /** 지금 쓸 수 있는 에이전트 CLI의 자식 환경. 시뮬레이터 정리가 adb를 찾는 데 쓴다. */
+    const agentEnv = () => agentConnections.get('claude-code')?.processEnv() ?? agentConnections.get('codex')?.processEnv() ?? null;
+    /** 재현하는 진단이 새로 켠 시뮬레이터·에뮬레이터 정리. */
+    const simulators = new Simulators({ runner: new NodeProcessRunner(), env: agentEnv, isPortOpen: localPortOpen, logger });
     /** 설정 "에이전트" 칸 `병렬 작업` 탭의 병렬 작업 수. 초안 대기열이 다음 실행을 꺼낼 때마다 읽는다. */
     const parallelWork = new ParallelWork({ settingsStore: appData.settingsStore, logger });
     await parallelWork.load();
@@ -404,6 +422,18 @@ function start(): void {
           ),
           clock: systemClock,
           logger,
+          // 재현 허용이 켜진 저장소(macOS)의 진단은 사본에서 재현한다. 재현하는 진단은 한 번에 하나만 돈다.
+          reproduction: {
+            platform: process.platform,
+            setting: (projectId) => {
+              /** 프로젝트에 매핑된 저장소. */
+              const path = sentryProjects.mappedRepoPath(projectId);
+              return path === null ? null : reproduction.settingFor(path);
+            },
+            copies: reproductionCopies,
+            devices: simulators,
+            attachments: attachmentFolders,
+          },
         }),
       ],
     });

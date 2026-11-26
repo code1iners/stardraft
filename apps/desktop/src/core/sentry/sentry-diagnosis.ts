@@ -1,6 +1,7 @@
 import type { DraftEvidence } from '../drafts/draft';
 import type { GenerationRunKind, RunFailureReason, RunRecord } from '../generation/generation-run';
 import type { AgentId } from '../ports/executor';
+import type { DiagnosisAttachment } from './diagnosis-attachments';
 
 /** 진단을 일으킨 감지의 갈래. 신규와 재발이다. 표에 그대로 남으므로 값을 바꾸지 않는다. */
 export type DiagnosisOrigin = 'new' | 'regression';
@@ -105,10 +106,18 @@ export interface SentryDiagnosis {
    * 새 다시 진단을 시작하거나 성공하거나 완료하면 `null`로 되돌린다.
    */
   rediagnosisFailure: DiagnosisFailure | null;
+  /**
+   * 지시를 덧붙인 다시 진단에서 "재현도 다시 하기"를 껐는지 여부. 참이면 그 다시 진단은 읽기 전용으로 돌고,
+   * 앞선 보고서의 재현 칸과 첨부를 앱이 그대로 옮긴다. 다시 진단이 끝나면(성공, 실패, 취소) 거짓으로 되돌린다.
+   */
+  keepReproduction: boolean;
 }
 
 /** 아직 저장하지 않은 진단. 감지가 만든 진단은 대기나 저장소 대기라 보고서·실패·실행 기록·완료 시각·내보내기 기록·지시가 없다. */
-export type UnsavedDiagnosis = Omit<SentryDiagnosis, 'id' | 'report' | 'failure' | 'runs' | 'completedAt' | 'lastExport' | 'directives' | 'rediagnosisFailure'>;
+export type UnsavedDiagnosis = Omit<
+  SentryDiagnosis,
+  'id' | 'report' | 'failure' | 'runs' | 'completedAt' | 'lastExport' | 'directives' | 'rediagnosisFailure' | 'keepReproduction'
+>;
 
 /**
  * 진단을 실행하기 전에 생기는 실패 사유. Flow 초안의 맥락 조회 실패(`flow-unavailable`)에 해당한다.
@@ -134,6 +143,7 @@ export type DiagnosisConfidence = 'high' | 'medium' | 'low';
 
 /**
  * 재현이 불가한 까닭. 앞의 셋은 에이전트가 적고, 뒤의 둘은 에이전트가 답할 수 없어 앱이 채운다.
+ * 재현 사본을 만들지 못해 읽기 전용으로 돈 진단도 앱이 `env-failed`로 채운다.
  * - `not-allowed`: 재현을 허용하지 않은 진단(읽기 전용 진단). 화면에는 "불가(허용 안 됨)".
  * - `timed-out`: 시간 초과 뒤 재현 없이 다시 시도한 진단. 화면에는 "불가(시간 초과)".
  */
@@ -192,7 +202,7 @@ export interface DiagnosisRunInfo {
   agent: AgentId;
   /** 실행에서 본 에이전트 CLI 버전. 모르면 `null`. */
   cliVersion: string | null;
-  /** 재현 허용 여부. 읽기 전용 진단은 거짓이다. */
+  /** 진단을 시작할 때 저장소의 재현 허용 여부. 재현을 끈 다시 진단처럼 이번에 재현하지 않았어도 저장소가 허용했으면 참이다. Windows는 늘 거짓이다. */
   reproductionAllowed: boolean;
   /** 걸린 시간(밀리초). 첫 실행을 시작한 때부터 마지막 실행이 끝난 때까지다. */
   durationMs: number;
@@ -228,6 +238,10 @@ export interface DiagnosisReport {
   run: DiagnosisRunInfo;
   /** 같은 오류 이슈의 앞선 진단. 없으면 `null`. 이 칸이 생기기 전에 저장한 보고서는 읽을 때 `null`로 본다. */
   priorDiagnosis: PriorDiagnosis | null;
+  /** 재현 첨부. 파일은 앱 데이터의 진단별 폴더에 있다. 이 칸이 생기기 전에 저장한 보고서는 읽을 때 빈 목록으로 본다. */
+  attachments: DiagnosisAttachment[];
+  /** 종류나 한도(10개, 합계 20MB)를 넘어 옮기지 않은 첨부 수. 보고서에 "첨부 n개 생략"으로 적는다. */
+  omittedAttachments: number;
 }
 
 /**

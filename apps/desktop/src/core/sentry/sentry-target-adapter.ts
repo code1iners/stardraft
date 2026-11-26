@@ -2,12 +2,15 @@ import { DIAGNOSING_STEP, FETCHING_SENTRY_EVENT_STEP } from '../agent/progress-s
 import { withDefaultSecretPatterns } from '../agent/secret-patterns';
 import { checkEvidence } from '../drafts/draft-check';
 import type { RunRecord } from '../generation/generation-run';
-import type { Preparation, PrepareContext, RunReading, TargetAdapter, TargetFailure, TargetRun } from '../generation/target-adapter';
-import type { Logger } from '../logging/logger';
+import type { Preparation, PrepareContext, RunReading, TargetAdapter, TargetFailure, TargetRun, TargetRunRequest } from '../generation/target-adapter';
+import { errorFields, type LogFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { ConnectSentry, SentryApiFailure } from '../ports/sentry-api';
-import type { SettingsStore } from '../ports/settings-store';
+import type { ReproductionRepoSetting, SettingsStore } from '../ports/settings-store';
+import type { ReproductionCopies } from '../reproduction/reproduction-copies';
+import type { DeviceSnapshot, Simulators } from '../reproduction/simulators';
 import type { RepoGitState } from '../repos/repo-git-state';
+import { stageReproductionAttachments, type DiagnosisAttachmentFolders } from './diagnosis-attachments';
 import {
   DIAGNOSIS_TIMEOUT_MS,
   diagnosisInputDocument,
@@ -15,12 +18,24 @@ import {
   readDiagnosisOutput,
   readOnlyDiagnosisInstructions,
   readOnlyDiagnosisSchema,
+  readReproducingDiagnosisOutput,
+  reproducingDiagnosisInstructions,
+  reproducingDiagnosisSchema,
   type DiagnosisInstructionContext,
   type DiagnosisOutput,
+  type ReproducingDiagnosisOutput,
 } from './diagnosis-run';
 import type { SentryConnection } from './sentry-connection';
-import type { SentryDiagnoses } from './sentry-diagnoses';
-import { isRediagnosing, type DiagnosisRepoCheck, type DiagnosisReport, type DiagnosisRunInfo, type PriorDiagnosis, type SentryDiagnosis, type SentryFailureReason } from './sentry-diagnosis';
+import type { ReportAttachments, SentryDiagnoses } from './sentry-diagnoses';
+import {
+  isRediagnosing,
+  type DiagnosisRepoCheck,
+  type DiagnosisReport,
+  type DiagnosisRunInfo,
+  type PriorDiagnosis,
+  type SentryDiagnosis,
+  type SentryFailureReason,
+} from './sentry-diagnosis';
 import type { SentryProjects } from './sentry-projects';
 
 /** Sentry 진단의 대상 종류. 생성 대기열 표에 남는 값이라 바꾸지 않는다. */
@@ -31,11 +46,33 @@ const SENTRY_RETRY_DELAY_MS = 60_000;
 /** 요청 한도에 걸려 멈춘 Sentry 어댑터가 기다리는 가장 짧은 시간(밀리초). */
 const MIN_SENTRY_RETRY_DELAY_MS = 1_000;
 
+/** 재현하는 진단이 쥐는 함께 돌 수 없는 자원. 재현하는 진단은 시뮬레이터와 포트를 함께 써서 한 번에 하나만 돈다. */
+const REPRODUCTION_RESOURCE = 'reproduction';
+
+/** 재현 사본을 만들지 못해 읽기 전용으로 돈 진단의 재현 방법 칸. */
+const COPY_FAILED_METHOD = '재현 사본을 만들지 못해 코드만 읽고 진단했습니다.';
+
 /** 결과를 저장할 때 실행 기록으로 채울 칸을 뺀 보고서. 실행 정보의 에이전트·버전·걸린 시간·생성 시각은 저장할 때 채운다. */
 export type PendingDiagnosisReport = Omit<DiagnosisReport, 'run'> & {
   /** 준비할 때 정한 실행 정보. */
   run: Pick<DiagnosisRunInfo, 'repository' | 'headCommit' | 'uncommittedChanges' | 'reproductionAllowed'>;
+  /** 저장할 때 첨부를 어떻게 할지. 보고서에는 남지 않는다. */
+  attachmentChange: ReportAttachments;
 };
+
+/** 재현하는 진단에 필요한 것. 없으면 모든 진단이 읽기 전용으로 돈다. */
+export interface SentryReproductionOptions {
+  /** 지금 OS. macOS(`darwin`)에서만 재현한다. */
+  platform: NodeJS.Platform;
+  /** 프로젝트에 매핑된 저장소의 재현 설정. 매핑이 없거나 설정이 없으면 `null`. 대기열이 꺼낼 때마다 부르므로 바로 답한다. */
+  setting: (projectId: string) => ReproductionRepoSetting | null;
+  /** 재현 사본. */
+  copies: Pick<ReproductionCopies, 'create' | 'remove'>;
+  /** 실행이 새로 켠 시뮬레이터·에뮬레이터 정리. */
+  devices: Pick<Simulators, 'snapshot' | 'shutDownNew'>;
+  /** 첨부를 옮겨 둘 폴더. */
+  attachments: Pick<DiagnosisAttachmentFolders, 'createStaging' | 'discard'>;
+}
 
 /**
  * Sentry 어댑터의 타입 묶음. 시작 표식은 진단을 감지한 시각, 결과는 실행 정보를 채우기 전의 보고서,
@@ -72,13 +109,17 @@ export interface SentryTargetAdapterOptions {
   clock: Clock;
   /** 진단 로그. 오류 제목과 경로는 남기지 않는다. */
   logger: Logger;
+  /** 재현하는 진단에 필요한 것. 없으면 재현하지 않는다. */
+  reproduction?: SentryReproductionOptions;
 }
 
 /**
  * Sentry 어댑터. 생성 대기열에서 Sentry 진단을 맡는다. 감지된 진단은 `auto` 칸에, [다시 시도]한 진단은 `user` 칸에 선다.
  * 준비는 저장소 확인 → 시작 직전 오류 이슈 상태 확인 → 최신 이벤트 받기 → 저장소 git 상태 읽기 순서다.
  * 해결·보관·삭제·병합된 오류 이슈는 조용히 빼고, Sentry에 닿지 못하거나 토큰이 거부되면 진단을 실패로 두지 않고 Sentry 어댑터만 멈춘다.
- * 지금은 모든 진단이 읽기 전용 진단으로 돈다(재현은 재현 허용이 생긴 뒤에 더한다).
+ * 재현 허용이 켜진 저장소(macOS)의 진단은 원본의 사본에서 재현 경계로 돌고(재현하는 진단), 그 밖은 읽기 전용 진단이다.
+ * 재현하는 진단은 한 번에 하나만 돌고, 사본과 실행이 새로 켠 시뮬레이터는 성공·실패·취소와 상관없이 생성이 끝날 때 치운다.
+ * 지시를 덧붙인 다시 진단에서 "재현도 다시 하기"를 껐으면 읽기 전용으로 돌고 앞선 재현 칸과 첨부를 그대로 옮긴다.
  * 다시 진단(대기인데 앞선 보고서를 보관한 진단)도 이 어댑터가 돌린다. 지시를 덧붙였으면 앞선 보고서와 쌓인 지시 전부를, 지시가 없으면 아무것도 넘기지 않는다.
  * 사용자가 요청한 다시 진단은 그사이 Sentry에서 오류 이슈가 해결·보관돼도 조용히 빼지 않고 진단하며, 오류 이슈가 사라졌으면 앞선 보고서로 돌아온다.
  * 같은 오류 이슈의 앞선 진단이 검토 대기 중이면 그 요약·원인·개선 방향을 참고로 넘기고, 완료한 뒤라면 아무것도 넘기지 않는다.
@@ -89,6 +130,9 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   readonly kind = SENTRY_TARGET_KIND;
   /** 준비하는 동안 보일 진행 단계. */
   readonly preparingStep = FETCHING_SENTRY_EVENT_STEP;
+
+  /** 생성을 시작할 때(재현 자원을 쥘 때) 재현하는 진단으로 판단했는지. 진단 ID → 판단. 준비가 꺼내 쓴다. */
+  private readonly startedReproducing = new Map<number, boolean>();
 
   constructor(private readonly options: SentryTargetAdapterOptions) {}
 
@@ -112,10 +156,19 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
     return this.options.connection.onChange(listener);
   }
 
+  exclusiveResource(id: number): string | null {
+    /** 진단. */
+    const diagnosis = this.options.diagnoses.get(id);
+    return diagnosis && this.reproduces(diagnosis) ? REPRODUCTION_RESOURCE : null;
+  }
+
   begin(id: number): number | null {
     /** 실행할 진단. */
     const diagnosis = this.options.diagnoses.get(id);
-    return diagnosis?.status === 'queued' ? diagnosis.detectedAt : null;
+    if (diagnosis?.status !== 'queued') return null;
+    // 대기열은 꺼낼 때 `exclusiveResource`로 재현 자원을 쥐었다. 준비하는 사이 재현 허용이 켜져도 자원 없이 재현하지 않도록 지금 판단을 남긴다.
+    this.startedReproducing.set(id, this.reproduces(diagnosis));
+    return diagnosis.detectedAt;
   }
 
   /** 진단이 대기(진행 중 포함)이고, 감지 시각이 주어졌으면 생성을 시작할 때의 진단과 같은지 본다. 등록 해제나 취소로 빠지면 거짓이다. */
@@ -126,6 +179,9 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   }
 
   async prepare(id: number, _detectedAt: number, context: PrepareContext): Promise<Preparation<SentryTargetTypes>> {
+    /** 생성을 시작할 때의 재현 판단. */
+    const startedReproducing = this.startedReproducing.get(id) ?? false;
+    this.startedReproducing.delete(id);
     /** 실행할 진단. */
     const diagnosis = this.options.diagnoses.get(id);
     if (!diagnosis || diagnosis.status !== 'queued') return { kind: 'skipped' };
@@ -184,30 +240,33 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
     // 지시를 덧붙인 다시 진단만 앞선 보고서와 쌓인 지시를 넘긴다. 지시 없는 다시 진단은 쌓인 지시가 비어 있어 처음부터 한다.
     /** 넘길 직전 결과. */
     const rediagnosis = rediagnosing && diagnosis.report && diagnosis.directives.length > 0 ? { previous: diagnosis.report, directives: diagnosis.directives } : null;
-    return {
-      kind: 'ready',
-      next: {
-        kind: 'run',
-        run: this.readOnlyRun(diagnosis, {
-          repository: repo.path,
-          document: diagnosisInputDocument({
-            repository: repo.path,
-            issue: diagnosis.issue,
-            origin: diagnosis.origin,
-            event: event.value,
-            facts,
-            prior: prior.report,
-            rediagnosis,
-          }),
-          instructionContext: { rediagnosisWithPrevious: rediagnosis !== null, priorDiagnosis: prior.report !== null },
-          base: {
-            event: facts,
-            priorDiagnosis: prior.info,
-            run: { repository: repo.path, headCommit: git.headCommit, uncommittedChanges: git.uncommittedChanges, reproductionAllowed: false },
-          },
-        }),
+    /** 저장소의 재현 설정. 재현하지 않는 OS면 `null`. */
+    const setting = this.reproductionSetting(diagnosis.projectId);
+    /** 입력 문서. 재현하는 진단은 사본 경로를 함께 적는다. */
+    const document = (workspace: string | null) =>
+      diagnosisInputDocument({ repository: repo.path, workspace, issue: diagnosis.issue, origin: diagnosis.origin, event: event.value, facts, prior: prior.report, rediagnosis });
+    /** 실행에 넘길 것. */
+    const input: DiagnosisRunInput = {
+      repository: repo.path,
+      document,
+      instructionContext: { rediagnosisWithPrevious: rediagnosis !== null, priorDiagnosis: prior.report !== null },
+      base: {
+        event: facts,
+        priorDiagnosis: prior.info,
+        run: { repository: repo.path, headCommit: git.headCommit, uncommittedChanges: git.uncommittedChanges, reproductionAllowed: setting?.enabled === true },
       },
     };
+    /** 지금 저장소가 재현을 허용하는지 여부. */
+    const allowed = setting?.enabled === true;
+    // 재현을 끈 다시 진단은 앞선 보고서의 재현 칸과 첨부를 그대로 옮긴다. 그사이 재현 허용을 껐으면 옮기지 않고 불가(허용 안 됨)다.
+    /** 옮길 앞선 재현. */
+    const carried = allowed && rediagnosing && diagnosis.keepReproduction && diagnosis.report ? diagnosis.report : null;
+    /** 이어서 돌릴 실행. 재현은 시작할 때 재현 자원을 쥔 진단만 한다. */
+    const run =
+      allowed && startedReproducing && carried === null && this.options.reproduction
+        ? this.reproducingRun(diagnosis, input, setting.envFile, this.options.reproduction)
+        : this.readOnlyRun(diagnosis, input, carried);
+    return { kind: 'ready', next: { kind: 'run', run } };
   }
 
   /**
@@ -225,7 +284,9 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   }
 
   async save(id: number, _detectedAt: number, pending: PendingDiagnosisReport, runs: readonly RunRecord[]): Promise<boolean> {
-    return this.options.diagnoses.saveReport(id, { ...pending, run: this.runInfo(pending.run, runs) }, runs);
+    /** 첨부를 어떻게 할지와 보고서. */
+    const { attachmentChange, ...report } = pending;
+    return this.options.diagnoses.saveReport(id, { ...report, run: this.runInfo(report.run, runs) }, runs, attachmentChange);
   }
 
   async fail(id: number, _detectedAt: number | null, failure: TargetFailure<SentryFailureReason>, runs: readonly RunRecord[]): Promise<boolean> {
@@ -238,6 +299,18 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
 
   async addRuns(id: number, runs: readonly RunRecord[]): Promise<void> {
     await this.options.diagnoses.addRuns(id, runs);
+  }
+
+  /** 프로젝트 저장소의 재현 설정. 재현하지 않는 OS이거나 재현 준비가 없으면 `null`. */
+  private reproductionSetting(projectId: string): ReproductionRepoSetting | null {
+    /** 재현에 필요한 것. */
+    const reproduction = this.options.reproduction;
+    return reproduction && reproduction.platform === 'darwin' ? reproduction.setting(projectId) : null;
+  }
+
+  /** 이 진단이 재현하는 진단으로 도는지 본다. 재현 허용이 켜진 저장소이고, 재현을 끈 다시 진단이 아니다. */
+  private reproduces(diagnosis: SentryDiagnosis): boolean {
+    return this.reproductionSetting(diagnosis.projectId)?.enabled === true && !(isRediagnosing(diagnosis) && diagnosis.keepReproduction);
   }
 
   /** 쓸 수 있는 토큰. 토큰이 없거나 "토큰 확인 필요"면 `null`. */
@@ -276,59 +349,194 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
 
   /**
    * 읽기 전용 진단 실행. 지금의 초안 실행과 같은 읽기 전용 경계로 돈다(MCP 없음, 묻지 않고 20분에 끊음).
-   * 비밀 파일 패턴은 실행마다 설정에서 새로 읽는다. 받은 결과는 Flow 초안과 같은 근거 위치 검사와 비밀 파일 근거 검사를 거치고,
-   * 재현 칸은 에이전트가 답할 수 없으므로 앱이 "불가(허용 안 됨)"로 채운다.
+   * 비밀 파일 패턴은 실행마다 설정에서 새로 읽는다. 받은 결과는 Flow 초안과 같은 근거 위치 검사와 비밀 파일 근거 검사를 거친다.
+   * 재현 칸은 에이전트가 답할 수 없으므로 앱이 "불가(허용 안 됨)"로 채운다. `carried`가 있으면(재현을 끈 다시 진단) 그 보고서의
+   * 재현 칸과 첨부를 그대로 옮기고 앞선 첨부 폴더를 지우지 않는다.
    */
-  private readOnlyRun(
-    diagnosis: SentryDiagnosis,
-    input: { repository: string; document: string; instructionContext: DiagnosisInstructionContext; base: Pick<PendingDiagnosisReport, 'event' | 'run' | 'priorDiagnosis'> },
-  ): TargetRun<SentryTargetTypes, DiagnosisOutput> {
+  private readOnlyRun(diagnosis: SentryDiagnosis, input: DiagnosisRunInput, carried: DiagnosisReport | null): TargetRun<SentryTargetTypes, DiagnosisOutput> {
     return {
       kind: 'diagnosis',
       step: DIAGNOSING_STEP,
       omittedContextItems: 0,
-      request: async (model) => {
-        /** 지금 설정. */
-        const settings = await this.options.settingsStore.load();
-        return {
-          instructions: readOnlyDiagnosisInstructions(input.base.event.missingData, input.instructionContext),
-          input: input.document,
-          outputSchema: readOnlyDiagnosisSchema(),
-          readRoots: [input.repository],
-          secretPatterns: [...settings.extraSecretPatterns],
-          model,
-          timeoutMs: DIAGNOSIS_TIMEOUT_MS,
-        };
-      },
+      request: async (model) => this.readOnlyRequest(input, model),
       read: readDiagnosisReading,
       check: async (output, request) => {
         /** 근거 검사의 결과. */
-        const check = await checkEvidence(output.evidence, {
-          repositories: [input.repository],
-          secretPatterns: withDefaultSecretPatterns(request.secretPatterns),
-        });
-        if (check.kind === 'secret-evidence') {
-          this.options.logger.warn('sentry-adapter.secret-evidence', { diagnosisId: diagnosis.id });
-          return { kind: 'rejected', fixes: check.fixes, reason: 'secret-evidence' };
-        }
+        const checked = await this.checkedEvidence(diagnosis, output, input.repository, request);
+        if (checked.kind === 'rejected') return checked;
         return {
           kind: 'passed',
-          fixes: check.fixes,
+          fixes: checked.fixes,
           next: {
             kind: 'save',
             result: {
-              summary: output.summary,
-              reproduction: { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
-              cause: output.cause,
-              improvements: output.improvements,
-              openQuestions: output.openQuestions,
-              evidence: check.evidence,
+              ...reportBody(output, checked.evidence),
+              reproduction: carried ? structuredClone(carried.reproduction) : { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
+              attachments: carried ? structuredClone(carried.attachments) : [],
+              omittedAttachments: carried?.omittedAttachments ?? 0,
+              attachmentChange: carried ? { kind: 'keep' } : { kind: 'replace', staged: null },
               ...input.base,
             },
           },
         };
       },
     };
+  }
+
+  /**
+   * 재현하는 진단 실행. 실행마다(일시적 실패의 다시 실행 포함) 원본의 새 사본을 만들어 그 안에서 재현 경계로 돌리고,
+   * 결과의 첨부는 사본을 지우기 전에 옮겨 둔다. 첫 실행 전에 켜져 있던 시뮬레이터·에뮬레이터를 기록하고,
+   * 생성이 끝나면(정리) 새로 켜진 것만 끄고 사본을 뒤에서 지운다. 사본을 만들지 못하면 그 실행은 읽기 전용으로 돌고
+   * 재현 칸은 앱이 "불가(환경 실패)"로 채운다.
+   */
+  private reproducingRun(
+    diagnosis: SentryDiagnosis,
+    input: DiagnosisRunInput,
+    envFile: string | null,
+    reproduction: SentryReproductionOptions,
+  ): TargetRun<SentryTargetTypes, DiagnosisOutput | ReproducingDiagnosisOutput> {
+    /** 이번 생성의 재현 상태. */
+    const session: {
+      /** 지금 실행의 사본. 없거나 지웠으면 `null`. */
+      copy: string | null;
+      /** 지금 실행이 사본을 만들지 못했는지 여부. */
+      copyFailed: boolean;
+      /** 첫 실행 전에 켜져 있던 시뮬레이터·에뮬레이터. 기록하기 전이면 `null`. */
+      devicesBefore: DeviceSnapshot | null;
+      /** 옮겨 둔 첨부 폴더. 없으면 `null`. */
+      staged: string | null;
+    } = { copy: null, copyFailed: false, devicesBefore: null, staged: null };
+    /** 지금 사본을 뒤에서 지운다. */
+    const dropCopy = () => {
+      if (session.copy === null) return;
+      void reproduction.copies.remove(session.copy);
+      session.copy = null;
+    };
+    return {
+      kind: 'diagnosis',
+      step: DIAGNOSING_STEP,
+      omittedContextItems: 0,
+      request: async (model) => {
+        session.devicesBefore ??= await reproduction.devices.snapshot().catch((error: unknown) => {
+          this.options.logger.warn('sentry-adapter.devices-snapshot-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
+          return { ios: [], android: [] };
+        });
+        // 다시 실행은 앞 실행이 고친 사본을 쓰지 않고 새 사본에서 돈다.
+        dropCopy();
+        try {
+          session.copy = await reproduction.copies.create(input.repository, envFile);
+          session.copyFailed = false;
+        } catch (error) {
+          session.copyFailed = true;
+          this.options.logger.warn('sentry-adapter.copy-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
+        }
+        if (session.copy === null) return this.readOnlyRequest(input, model);
+        /** 지금 설정. */
+        const settings = await this.options.settingsStore.load();
+        return {
+          instructions: reproducingDiagnosisInstructions(input.base.event.missingData, input.instructionContext),
+          input: input.document(session.copy),
+          outputSchema: reproducingDiagnosisSchema(),
+          readRoots: [session.copy],
+          secretPatterns: [...settings.extraSecretPatterns],
+          model,
+          timeoutMs: DIAGNOSIS_TIMEOUT_MS,
+          reproduction: { copyRoot: session.copy, sourceRoot: input.repository },
+        };
+      },
+      read: (output) => (session.copyFailed ? readDiagnosisReading(output) : readReproducingReading(output)),
+      check: async (output, request) => {
+        /** 사본. 사본을 만들지 못한 실행이면 `null`. */
+        const copy = request.reproduction?.copyRoot ?? null;
+        // 사본 안에서 돈 에이전트가 근거의 저장소를 사본 경로로 적었으면 원본 경로로 고친다. 원본과 사본은 같은 파일이다.
+        /** 원본 경로로 고친 출력. */
+        const fixed = copy === null ? output : { ...output, evidence: output.evidence.map((item) => (item.repository === copy ? { ...item, repository: input.repository } : item)) };
+        /** 근거 검사의 결과. */
+        const checked = await this.checkedEvidence(diagnosis, fixed, input.repository, request);
+        if (checked.kind === 'rejected') return checked;
+        if (copy === null || !isReproducingOutput(fixed)) {
+          return {
+            kind: 'passed',
+            fixes: checked.fixes,
+            next: {
+              kind: 'save',
+              result: {
+                ...reportBody(fixed, checked.evidence),
+                reproduction: { result: 'impossible', impossibleReason: 'env-failed', method: COPY_FAILED_METHOD, steps: [] },
+                attachments: [],
+                omittedAttachments: 0,
+                attachmentChange: { kind: 'replace', staged: null },
+                ...input.base,
+              },
+            },
+          };
+        }
+        // 사본을 지우기 전에 허용한 종류와 한도 안의 첨부를 옮겨 둔다. 진단 폴더에는 보고서를 저장할 때 넣는다.
+        if (session.staged !== null) await reproduction.attachments.discard(session.staged);
+        session.staged = await reproduction.attachments.createStaging();
+        /** 옮긴 첨부. */
+        const staged = await stageReproductionAttachments({
+          copyRoot: copy,
+          paths: fixed.reproduction.attachments,
+          stagingDir: session.staged,
+          secretPatterns: request.secretPatterns,
+        });
+        /** 에이전트가 쓴 재현 칸. 첨부 경로는 사본 안 경로라 보고서에 남기지 않는다. */
+        const agentReproduction = { result: fixed.reproduction.result, impossibleReason: fixed.reproduction.impossibleReason, method: fixed.reproduction.method, steps: fixed.reproduction.steps };
+        return {
+          kind: 'passed',
+          fixes: checked.fixes,
+          next: {
+            kind: 'save',
+            result: {
+              ...reportBody(fixed, checked.evidence),
+              reproduction: agentReproduction,
+              attachments: staged.attachments,
+              omittedAttachments: staged.omitted,
+              attachmentChange: { kind: 'replace', staged: staged.attachments.length > 0 ? session.staged : null },
+              ...input.base,
+            },
+          },
+        };
+      },
+      release: async () => {
+        // 프로세스는 실행기가 이미 끝냈다. 새로 켠 시뮬레이터를 끄고 끝나기를 기다린 뒤에 다음 재현 진단이 시작한다. 사본 삭제는 기다리지 않는다.
+        dropCopy();
+        if (session.devicesBefore !== null) {
+          await reproduction.devices.shutDownNew(session.devicesBefore).catch((error: unknown) =>
+            this.options.logger.warn('sentry-adapter.devices-shutdown-failed', { diagnosisId: diagnosis.id, ...errorKind(error) }),
+          );
+        }
+        // 보고서를 저장했으면 이미 진단 폴더로 넣어 없는 폴더다.
+        if (session.staged !== null) await reproduction.attachments.discard(session.staged);
+      },
+    };
+  }
+
+  /** 읽기 전용 진단의 실행 요청. 비밀 파일 패턴은 실행마다 설정에서 새로 읽는다. */
+  private async readOnlyRequest(input: DiagnosisRunInput, model: string | null) {
+    /** 지금 설정. */
+    const settings = await this.options.settingsStore.load();
+    return {
+      instructions: readOnlyDiagnosisInstructions(input.base.event.missingData, input.instructionContext),
+      input: input.document(null),
+      outputSchema: readOnlyDiagnosisSchema(),
+      readRoots: [input.repository],
+      secretPatterns: [...settings.extraSecretPatterns],
+      model,
+      timeoutMs: DIAGNOSIS_TIMEOUT_MS,
+    };
+  }
+
+  /** Flow 초안과 같은 근거 위치 검사와 비밀 파일 근거 검사. 비밀 파일을 근거로 들면 결과 전체를 버린다. */
+  private async checkedEvidence(diagnosis: SentryDiagnosis, output: DiagnosisOutput, repository: string, request: TargetRunRequest) {
+    /** 근거 검사의 결과. */
+    const check = await checkEvidence(output.evidence, { repositories: [repository], secretPatterns: withDefaultSecretPatterns(request.secretPatterns) });
+    if (check.kind === 'secret-evidence') {
+      this.options.logger.warn('sentry-adapter.secret-evidence', { diagnosisId: diagnosis.id });
+      return { kind: 'rejected' as const, fixes: check.fixes, reason: 'secret-evidence' as const };
+    }
+    return { kind: 'checked' as const, fixes: check.fixes, evidence: check.evidence };
   }
 
   /** 실행 정보를 채운다. 에이전트와 버전은 마지막 실행, 걸린 시간은 이번 생성의 첫 실행 시작부터 마지막 실행 끝까지다. */
@@ -345,6 +553,42 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
       createdAt: this.options.clock.now(),
     };
   }
+}
+
+/** 준비가 정해 실행에 넘기는 것. */
+interface DiagnosisRunInput {
+  /** 원본 저장소(절대 경로). 근거의 저장소다. */
+  repository: string;
+  /** 입력 문서를 쓴다. 재현하는 진단은 사본 경로를 넘긴다. */
+  document: (workspace: string | null) => string;
+  /** 지침에 더할 구획. */
+  instructionContext: DiagnosisInstructionContext;
+  /** 앱이 채우는 칸. */
+  base: Pick<PendingDiagnosisReport, 'event' | 'run' | 'priorDiagnosis'>;
+}
+
+/** 에이전트가 쓴 보고서 칸. 근거는 위치를 확인한 것이다. */
+function reportBody(output: DiagnosisOutput, evidence: DiagnosisReport['evidence']): Pick<DiagnosisReport, 'summary' | 'cause' | 'improvements' | 'openQuestions' | 'evidence'> {
+  return { summary: output.summary, cause: output.cause, improvements: output.improvements, openQuestions: output.openQuestions, evidence };
+}
+
+/** 로그에 남길 오류 이름과 코드. 오류 문장에는 경로가 들 수 있어 남기지 않는다. */
+function errorKind(error: unknown): Pick<LogFields, 'errorName' | 'errorCode'> {
+  /** 오류 칸. */
+  const fields = errorFields(error);
+  return { errorName: fields.errorName ?? null, errorCode: fields.errorCode ?? null };
+}
+
+/** 재현 칸이 있는 출력인지 본다. */
+function isReproducingOutput(output: DiagnosisOutput | ReproducingDiagnosisOutput): output is ReproducingDiagnosisOutput {
+  return 'reproduction' in output;
+}
+
+/** 재현하는 진단의 구조화 출력을 읽는다. 스키마 모양이 아니면 구조 실패다. */
+function readReproducingReading(output: unknown): RunReading<ReproducingDiagnosisOutput> {
+  /** 앱이 읽은 출력. */
+  const read = readReproducingDiagnosisOutput(output);
+  return read ? { kind: 'output', output: read } : { kind: 'failed', reason: 'invalid-output', detail: '구조화 출력이 재현하는 진단 스키마 모양이 아닙니다.' };
 }
 
 /** 진단 실행의 구조화 출력을 읽는다. 스키마 모양이 아니면 구조 실패다. */

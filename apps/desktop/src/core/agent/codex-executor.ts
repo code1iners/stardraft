@@ -18,6 +18,7 @@ import { asRecord, failedOutcome, numberOrNull, parseJsonObject } from './execut
 import { describeCodexCommand, type CodexCommand } from './codex-commands';
 import type { ProcessResult } from './process-runner';
 import { LISTING_FILES_STEP, readingFileStep, runningCommandStep, searchingStep } from './progress-steps';
+import { copySecretPatterns, ENV_FILE_PATTERNS, PERSONAL_SECRET_PATHS, reproductionEnv } from './reproduction-boundary';
 import { withDefaultSecretPatterns } from './secret-patterns';
 
 /** 실행 계약이 인라인으로 정의하는 Codex 권한 프로필의 이름. */
@@ -63,16 +64,22 @@ export class CodexExecutor implements Executor {
 
       /** JSONL을 읽는 쪽. */
       const reader = new CodexEventReader(request.onProgress);
+      /** 재현 경계로 도는지 여부. */
+      const reproducing = request.reproduction != null;
       /** 프로세스 결과. */
       const result = await this.options.runner.run({
         command: realCli,
-        args: codexRunArgs(request, { realCli, schemaFile, cwd, extraRoots, skipGitRepoCheck: await needsGitRepoCheckSkip(request.kind, cwd) }),
-        env: withoutAgentApiKeys(launch.env),
+        args: reproducing
+          ? codexReproductionArgs(request, { schemaFile, cwd })
+          : codexRunArgs(request, { realCli, schemaFile, cwd, extraRoots, skipGitRepoCheck: await needsGitRepoCheckSkip(request.kind, cwd) }),
+        env: reproducing ? reproductionEnv(withoutAgentApiKeys(launch.env)) : withoutAgentApiKeys(launch.env),
         cwd,
         timeoutMs: request.timeoutMs,
         stdin: request.input,
         onStdoutLine: (line) => reader.push(line),
         signal: request.signal,
+        // MCP 서버와 셸 명령은 CLI와 다른 프로세스 그룹이라 CLI 그룹만 끝내면 남는다.
+        ...(reproducing ? { killDescendants: true } : {}),
       });
       // Codex의 이벤트는 버전과 모델을 알려 주지 않는다. 버전은 실행 직전 확인이 읽은 것이고, 모델은 넘긴 것이다.
       return { outcome: classifyCodexRun(result, reader), cliVersion: launch.version, model: request.model, usage: reader.usage };
@@ -228,6 +235,59 @@ function codexRunArgs(request: ExecutorRunRequest, paths: RunPaths): string[] {
     `developer_instructions=${tomlString(request.instructions)}`,
     ...(request.model === null ? [] : ['-m', request.model]),
     // 입력은 표준 입력으로 넘긴다.
+    '-',
+  ];
+}
+
+/**
+ * 재현하는 진단의 플래그 묶음. 사용자 설정·rules·앱 도구·훅을 끄는 것은 읽기 전용 묶음과 같고, 권한 프로필만 바꾼다(26번 실측의 프로필).
+ * 모든 경로를 읽을 수 있게 두되 홈 아래의 `.env` 계열과 개인 비밀을 막고, 사본(작업 루트)만 쓰기로 열어 `.env` 계열 말고 다른 비밀 패턴과 `.git`을 막는다.
+ * 글롭 경로는 deny만 되므로 사본의 `.env`를 열려면 사본을 홈 밖에 둬야 한다. 홈 밖의 다른 저장소 `.env`는 막지 못한다(알려진 한계).
+ * linked worktree의 `.git`은 파일이라 `**\/.git`도 막는다. 임시 폴더 쓰기는 열지 않는다(같은 임시 폴더의 다른 사본까지 열린다).
+ */
+function codexReproductionArgs(request: ExecutorRunRequest, paths: Pick<RunPaths, 'schemaFile' | 'cwd'>): string[] {
+  /** 홈 아래에서 막을 경로. */
+  const homeDeny = [...ENV_FILE_PATTERNS.map((pattern) => `~/**/${pattern}`), ...PERSONAL_SECRET_PATHS].map((path) => `${tomlString(path)}="deny"`);
+  /** 사본 안과 원본에서 막을 패턴. 글롭 규칙은 끝의 `/` 없이 쓴다. */
+  const patterns = [...copySecretPatterns(request.secretPatterns).map((pattern) => pattern.replace(/\/+$/, '')), '.git'];
+  /** 원본 경로로 원본의 비밀 파일을 읽지 못하게 막는 규칙. 원본 `.env`는 홈 아래면 위 규칙이 막는다. */
+  const sourceDeny = patterns.map((pattern) => `${tomlString(`${request.reproduction!.sourceRoot}/**/${pattern}`)}="deny"`);
+  /** 사본 아래에서 막을 규칙. */
+  const copyDeny = patterns.map((pattern) => `${tomlString(`**/${pattern}`)}="deny"`);
+  /** 파일 시스템 권한. */
+  const filesystem = `{":root"="read", ${[...homeDeny, ...sourceDeny].join(', ')}, ":workspace_roots"={"."="write", ${copyDeny.join(', ')}}}`;
+  return [
+    'exec',
+    '--ignore-user-config',
+    '--ignore-rules',
+    '--ephemeral',
+    '--json',
+    '--output-schema',
+    paths.schemaFile,
+    '-C',
+    paths.cwd,
+    '--skip-git-repo-check',
+    '-c',
+    'web_search="disabled"',
+    '-c',
+    'features.apps=false',
+    '-c',
+    'features.hooks=false',
+    '-c',
+    'features.multi_agent=false',
+    '-c',
+    'features.goals=false',
+    '-c',
+    `default_permissions="${PERMISSION_PROFILE}"`,
+    '-c',
+    `permissions.${PERMISSION_PROFILE}.filesystem=${filesystem}`,
+    '-c',
+    `permissions.${PERMISSION_PROFILE}.workspace_roots={}`,
+    '-c',
+    `permissions.${PERMISSION_PROFILE}.network.enabled=true`,
+    '-c',
+    `developer_instructions=${tomlString(request.instructions)}`,
+    ...(request.model === null ? [] : ['-m', request.model]),
     '-',
   ];
 }

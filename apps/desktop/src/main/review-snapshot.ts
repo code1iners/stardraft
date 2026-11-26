@@ -71,6 +71,7 @@ export function reviewSnapshot(
   repoPicker: RepoPickerState | null,
   countdownOf: CountdownLookup,
   diagnosisProgressOf: DiagnosisProgressLookup = () => null,
+  reproductionAllowedOf: (projectId: string) => boolean = () => false,
 ): ReviewSnapshot {
   /** 프로젝트와 사유별로 기다리는 저장소 대기 묶음 수. 바닥 줄 글의 "기다리는 n건"이다. */
   const waitCounts = new Map<string, number>();
@@ -82,7 +83,7 @@ export function reviewSnapshot(
   }
   return {
     bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf, (item) => waitCounts.get(repoWaitKey(item)) ?? 1)),
-    diagnoses: diagnosisSnapshots(diagnoses, diagnosisProgressOf),
+    diagnoses: diagnosisSnapshots(diagnoses, diagnosisProgressOf, reproductionAllowedOf),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
     repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
   };
@@ -92,7 +93,11 @@ export function reviewSnapshot(
  * 진단을 렌더러에 넘길 모양으로 바꾼다. 저장소 대기는 같은 프로젝트·사유로 기다리는 진단 수를 함께 넘겨 바닥 줄의 "기다리는 오류 n건"이 된다.
  * 대기 진단은 생성 대기열이 진행하고 있으면 진행 중(`running`)으로 넘긴다. 오류 제목은 검토 화면에만 보이고 OS 알림에는 넣지 않는다.
  */
-export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[], progressOf: DiagnosisProgressLookup = () => null): DiagnosisSnapshot[] {
+export function diagnosisSnapshots(
+  diagnoses: readonly SentryDiagnosis[],
+  progressOf: DiagnosisProgressLookup = () => null,
+  reproductionAllowedOf: (projectId: string) => boolean = () => false,
+): DiagnosisSnapshot[] {
   /** 프로젝트와 사유별로 기다리는 진단 수. */
   const waitCounts = new Map<string, number>();
   /** 프로젝트와 사유를 묶는 키. */
@@ -122,8 +127,8 @@ export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[], progre
       exported: hasExportedCurrentReport(diagnosis),
       lastExportedPath: diagnosis.lastExport?.path ?? null,
       canOpenInSentry: openableSentryUrl(issue.permalink) !== null,
-      // 첨부는 재현하는 진단이 만들 때부터 생긴다. 지금 보고서에는 첨부가 없다.
-      attachments: [],
+      attachments: diagnosis.report?.attachments.map((item) => ({ ...item })) ?? [],
+      reproductionAllowed: reproductionAllowedOf(diagnosis.projectId),
       repoWait:
         !isRepoWaiting(diagnosis) || repoCheck === null
           ? null
@@ -171,6 +176,7 @@ function reportSnapshot(report: DiagnosisReport): DiagnosisReportSnapshot {
     },
     run: { ...report.run },
     priorDiagnosis: report.priorDiagnosis && { ...report.priorDiagnosis },
+    omittedAttachments: report.omittedAttachments,
   };
 }
 

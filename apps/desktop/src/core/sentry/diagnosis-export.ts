@@ -206,7 +206,7 @@ function priorDiagnosisFacts(prior: DiagnosisReport['priorDiagnosis']): (readonl
 /**
  * 보고서를 마크다운으로 쓴다. 순서는 제목 → 요약 → 재현 → 원인과 확신도 → 개선 방향 → 근거 → 남은 의문 → 오류 이슈 정보 → 실행 정보다.
  * "시도한 것"은 재현이 실패·불가일 때만 재현 칸에 넣고, 성공이면 최소화한 재현 순서를 넣는다.
- * 첨부가 있으면 재현 칸 끝에 `<보고서 이름>/<파일>` 상대 링크로 건다.
+ * 첨부가 있으면 재현 칸 끝에 `<보고서 이름>/<파일>` 상대 링크로 걸고, 옮기지 않은 첨부가 있으면 "첨부 n개 생략"을 적는다.
  */
 export function reportMarkdown(diagnosis: SentryDiagnosis, report: DiagnosisReport, name: string, attachmentNames: readonly string[]): string {
   /** 오류 이슈 정보. */
@@ -228,7 +228,15 @@ export function reportMarkdown(diagnosis: SentryDiagnosis, report: DiagnosisRepo
   const sections = [
     `# ${oneLine(issue.title || issue.shortId)}`,
     `## 요약\n\n${report.summary}`,
-    ['## 재현', reproductionLines.join('\n'), steps, attachments.length > 0 ? `**첨부**\n\n${attachments.join('\n')}` : ''].filter((part) => part !== '').join('\n\n'),
+    [
+      '## 재현',
+      reproductionLines.join('\n'),
+      steps,
+      attachments.length > 0 ? `**첨부**\n\n${attachments.join('\n')}` : '',
+      report.omittedAttachments > 0 ? `첨부 ${report.omittedAttachments}개 생략` : '',
+    ]
+      .filter((part) => part !== '')
+      .join('\n\n'),
     `## 원인과 확신도\n\n확신도: ${CONFIDENCE_TEXT[report.cause.confidence]}\n\n${report.cause.text}`,
     `## 개선 방향\n\n${bullets(report.improvements)}`,
     `## 근거\n\n${report.evidence.length === 0 ? '없습니다.' : bullets(report.evidence.map(evidenceLine))}`,

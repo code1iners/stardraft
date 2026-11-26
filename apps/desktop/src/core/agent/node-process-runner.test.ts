@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -141,6 +141,38 @@ describe('프로세스 실행기', () => {
     expect(pgrep(`sleep ${marker}`)).toBe(false);
   });
 
+  it.skipIf(!isPosix)('자손까지 끝내게 하면, 중단할 때 자식이 띄운 다른 프로세스 그룹(셸 명령, MCP 서버)까지 끝낸다', async () => {
+    // 자기 프로세스 그룹을 따로 만드는 자손(재현 중 에이전트가 띄운 dev 서버 등)을 흉내 낸다. 자식의 그룹만 끝내면 남는다.
+    /** 남은 자손을 찾을 표지. 다른 프로세스와 겹치지 않는 sleep 시간이다. */
+    const marker = 'sleep 61.2345';
+    /** 자손을 띄우는 가짜 CLI. */
+    const script = join(home, 'spawns-group.sh');
+    writeFileSync(script, `#!/bin/sh\n/usr/bin/perl -e 'setpgrp(0,0); exec("sleep","61.2345")' &\nsleep 0.3\necho started\nwait\n`);
+    chmodSync(script, 0o755);
+    const controller = new AbortController();
+
+    try {
+      const result = await runner.run({
+        command: script,
+        args: [],
+        env: guiEnv(),
+        cwd: home,
+        timeoutMs: 10_000,
+        signal: controller.signal,
+        killDescendants: true,
+        onStdoutLine: (line) => {
+          if (line === 'started') controller.abort();
+        },
+      });
+
+      expect(result.kind).toBe('aborted');
+      expect(await stopsRunningWithin(marker, 2_000)).toBe(true);
+    } finally {
+      // 실패해도 다음 테스트에 남지 않게 치운다.
+      spawnSync('pkill', ['-f', marker], { stdio: 'ignore' });
+    }
+  });
+
   it('이미 중단된 신호를 받으면 띄우지 않는다', async () => {
     const controller = new AbortController();
     controller.abort();
@@ -233,6 +265,27 @@ describe('로그인 셸에서 PATH 읽기', () => {
 
 /** 명령줄에 `pattern`이 든 프로세스가 남아 있는지 본다. */
 function pgrep(pattern: string): boolean {
+  try {
+    execFileSync('pgrep', ['-f', pattern], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** `timeoutMs` 안에 명령줄에 `pattern`이 든 프로세스가 사라지는지 본다. */
+async function stopsRunningWithin(pattern: string, timeoutMs: number): Promise<boolean> {
+  /** 기다림을 그만둘 시각. */
+  const deadline = Date.now() + timeoutMs;
+  while (isRunning(pattern)) {
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return true;
+}
+
+/** 명령줄에 `pattern`이 든 프로세스가 돌고 있는지 본다. */
+function isRunning(pattern: string): boolean {
   try {
     execFileSync('pgrep', ['-f', pattern], { stdio: 'ignore' });
     return true;

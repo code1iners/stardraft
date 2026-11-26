@@ -157,6 +157,8 @@ interface Generation {
   entry: RunningTarget;
   /** 이번 생성에서 남긴 실행 기록. 실행한 순서다. */
   runs: RunRecord[];
+  /** 이번 생성에서 어댑터가 낸 실행. 생성이 끝나면 정리(`release`)를 부른다. */
+  toRelease: Set<TargetRun<TargetTypes>>;
 }
 
 /** 실패한 실행의 결과. `retry`는 일시적 실패라 한 번 더 실행할 실패인지 여부다. */
@@ -684,6 +686,20 @@ export class GenerationQueue {
    * 전역 실패나 어댑터 멈춤이면 대상을 실패로 두지 않고 대기열 맨 앞에 되돌려, 다시 돌 때 처음부터 만든다.
    */
   private async generate(entry: RunningTarget, agent: QueueAgent): Promise<void> {
+    /** 이번 생성에서 어댑터가 낸 실행. 끝나면 정리한다. */
+    const toRelease = new Set<TargetRun<TargetTypes>>();
+    try {
+      await this.generateTarget(entry, agent, toRelease);
+    } finally {
+      // 생성이 어떻게 끝났든 실행의 정리를 마친 뒤에 실행 중에서 빠져, 함께 돌 수 없는 자원이 정리 뒤에 놓인다.
+      for (const run of toRelease) {
+        await run.release?.().catch((error: unknown) => this.options.logger.error('generation.run-release-failed', { kind: entry.kind, targetId: entry.targetId, ...errorFields(error) }));
+      }
+    }
+  }
+
+  /** 대상 하나를 만든다. `toRelease`에 어댑터가 낸 실행을 모은다. */
+  private async generateTarget(entry: RunningTarget, agent: QueueAgent, toRelease: Set<TargetRun<TargetTypes>>): Promise<void> {
     /** 대상의 어댑터. */
     const { adapter } = entry.slot;
     /** 시작 표식. 대상이 더는 생성 중이 아니면 `null`. */
@@ -696,6 +712,7 @@ export class GenerationQueue {
     const connectionChangesBefore = entry.slot.connectionChanges;
     /** 준비의 결과. */
     const prepared = await adapter.prepare(entry.targetId, job, { stopped: () => entry.interruption !== null });
+    if (prepared.kind === 'ready' && prepared.next.kind === 'run') toRelease.add(prepared.next.run);
     if (entry.interruption) return this.afterInterruption(entry, []);
     switch (prepared.kind) {
       case 'skipped':
@@ -710,7 +727,7 @@ export class GenerationQueue {
         this.pauseAdapter(entry.slot, 'retry', prepared.afterMs);
         return this.requeueFromStart(entry, []);
       case 'ready':
-        return this.follow({ entry, runs: [] }, prepared.next, agent);
+        return this.follow({ entry, runs: [], toRelease }, prepared.next, agent);
     }
   }
 
@@ -735,6 +752,7 @@ export class GenerationQueue {
         case 'repo-wait':
           return this.restartUnlessFinished(entry, runs, await adapter.needsRepoCheck(entry.targetId, entry.job, step.wait, runs));
         case 'run': {
+          generation.toRelease.add(step.run);
           /** 실행 다음에 할 일. 앱이 실행을 멈췄거나 대상을 정리했으면 `null`. */
           const after = await this.runStep(generation, step.run, runs.length === 0 ? confirmed : null);
           if (!after) return;

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import type { SentryErrorIssue } from '../ports/sentry-api';
 import type { SentryProjectRegistration } from '../ports/settings-store';
 import { openStateDatabase, STATE_MIGRATIONS } from '../storage/state-database';
 import { SqliteSentryStore } from '../storage/sqlite-sentry-store';
+import { DiagnosisAttachmentFolders } from './diagnosis-attachments';
 import { COMPLETED_RETENTION_MS, SentryDiagnoses } from './sentry-diagnoses';
 import { hasExportedCurrentReport, type DiagnosisReport, type DiagnosisFailure, type SentryDiagnosis } from './sentry-diagnosis';
 
@@ -73,6 +74,8 @@ function report(result: DiagnosisReport['reproduction']['result'] = 'impossible'
     event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
     run: { repository: '/repo', headCommit: null, uncommittedChanges: null, reproductionAllowed: false, agent: 'claude-code', cliVersion: null, durationMs: 1000, createdAt: NOW },
     priorDiagnosis: null,
+    attachments: [],
+    omittedAttachments: 0,
   } as DiagnosisReport;
 }
 
@@ -627,5 +630,89 @@ describe('앞선 진단', () => {
     const other = await detect(diagnoses, '102');
 
     expect(await diagnoses.priorOf(other.id)).toBeNull();
+  });
+});
+
+describe('재현 첨부와 재현도 다시 하기', () => {
+  /** 실제 첨부 폴더를 쓰는 진단 목록을 만든다. */
+  async function setupWithFolders() {
+    const env = await setup();
+    const dataDir = mkdtempSync(join(tmpdir(), 'sentry-attachments-'));
+    tempDirs.push(dataDir);
+    const folders = new DiagnosisAttachmentFolders(dataDir);
+    const diagnoses = new SentryDiagnoses({
+      store: env.store,
+      notifier: env.notifier,
+      logger: createLogger([{ write: () => {} }], env.clock),
+      clock: env.clock,
+      resolveRepo: async () => ({ kind: 'mapped', path: '/repo' }),
+      removeAttachments: (id) => folders.remove(id),
+      replaceAttachments: (id, staged) => folders.replace(id, staged),
+      discardAttachments: (staged) => folders.discard(staged),
+    });
+    await diagnoses.load();
+    /** `files`를 담은 옮겨 둔 첨부 폴더를 만든다. */
+    const staged = async (...files: string[]) => {
+      const dir = await folders.createStaging();
+      for (const file of files) writeFileSync(join(dir, file), file);
+      return dir;
+    };
+    return { ...env, diagnoses, folders, staged };
+  }
+
+  it('처음 진단의 첨부를 진단 폴더에 넣고, 재현하는 다시 진단이 성공하면 앞선 첨부를 지운 뒤 새 첨부를 넣어 새 첨부가 남는다', async () => {
+    const { diagnoses, folders, staged } = await setupWithFolders();
+    const detected = await detect(diagnoses, '101');
+    expect(await diagnoses.saveReport(detected.id, report('failure'), [], { kind: 'replace', staged: await staged('old.png') })).toBe(true);
+    expect(await folders.list(detected.id)).toEqual(['old.png']);
+    await diagnoses.rediagnose(detected.id, null);
+
+    expect(await diagnoses.saveReport(detected.id, report('success'), [], { kind: 'replace', staged: await staged('new.png', 'server.log') })).toBe(true);
+
+    expect(await folders.list(detected.id)).toEqual(['new.png', 'server.log']);
+  });
+
+  it('지시를 덧붙이며 재현도 다시 하기를 끄면 그 다시 진단은 앞선 재현 칸과 첨부를 옮기기로 표시되고, 성공해도 앞선 첨부가 그대로 남는다', async () => {
+    const { diagnoses, folders, staged, open } = await setupWithFolders();
+    const detected = await detect(diagnoses, '101');
+    await diagnoses.saveReport(detected.id, report('success'), [], { kind: 'replace', staged: await staged('shot.png') });
+
+    await diagnoses.rediagnose(detected.id, '원인을 더 자세히', { reproduce: false });
+    expect(diagnoses.get(detected.id)?.keepReproduction).toBe(true);
+    // 앱을 다시 켜도 고른 값이 남는다.
+    const reopened = open();
+    await reopened.load();
+    expect(reopened.get(detected.id)?.keepReproduction).toBe(true);
+
+    expect(await diagnoses.saveReport(detected.id, report('success'), [], { kind: 'keep' })).toBe(true);
+
+    expect(await folders.list(detected.id)).toEqual(['shot.png']);
+    expect(diagnoses.get(detected.id)?.keepReproduction).toBe(false);
+  });
+
+  it('지시 없는 다시 진단은 늘 재현하고, 재현을 끈 다시 진단이 실패해 돌아와도 표시를 되돌린다', async () => {
+    const { diagnoses } = await setupWithFolders();
+    const id = (await detect(diagnoses, '101')).id;
+    await diagnoses.saveReport(id, report('success'), []);
+
+    await diagnoses.rediagnose(id, null, { reproduce: false });
+    expect(diagnoses.get(id)?.keepReproduction).toBe(false);
+    await diagnoses.markFailed(id, CANCELLED, []);
+
+    await diagnoses.rediagnose(id, '다시', { reproduce: false });
+    await diagnoses.markFailed(id, CANCELLED, []);
+    expect(diagnoses.get(id)?.keepReproduction).toBe(false);
+  });
+
+  it('그사이 취소돼 보고서를 저장하지 못하면 옮겨 둔 첨부를 버린다', async () => {
+    const { diagnoses, folders, staged } = await setupWithFolders();
+    const id = (await detect(diagnoses, '101')).id;
+    await diagnoses.markFailed(id, CANCELLED, []);
+    const dir = await staged('a.png');
+
+    expect(await diagnoses.saveReport(id, report('success'), [], { kind: 'replace', staged: dir })).toBe(false);
+
+    expect(existsSync(dir)).toBe(false);
+    expect(await folders.list(id)).toEqual([]);
   });
 });

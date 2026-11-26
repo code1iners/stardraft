@@ -219,16 +219,18 @@ describe('렌더러가 보낸 명령 검사', () => {
     }
   });
 
-  it('[다시 진단] 명령은 진단 ID를, 지시를 덧붙인 [다시 진단] 명령은 진단 ID와 지시 글을 받는다', () => {
+  it('[다시 진단] 명령은 진단 ID를, 지시를 덧붙인 [다시 진단] 명령은 진단 ID와 지시 글, 재현도 다시 하기를 받는다', () => {
     expect(parseAppCommand({ type: 'rediagnose', diagnosisId: 7, directive: '무시됨' })).toEqual({ type: 'rediagnose', diagnosisId: 7 });
     for (const diagnosisId of [0, -1, 2.5, '7', undefined]) expect(parseAppCommand({ type: 'rediagnose', diagnosisId })).toBeNull();
-    expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId: 7, directive: '캐시를 먼저 의심해 줘' })).toEqual({
+    expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId: 7, directive: '캐시를 먼저 의심해 줘', reproduce: false })).toEqual({
       type: 'rediagnose-with-directive',
       diagnosisId: 7,
       directive: '캐시를 먼저 의심해 줘',
+      reproduce: false,
     });
-    for (const diagnosisId of [0, 2.5, '7', undefined]) expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId, directive: '지시' })).toBeNull();
-    for (const directive of [undefined, 3, null, 'x'.repeat(100_000)]) expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId: 7, directive })).toBeNull();
+    for (const diagnosisId of [0, 2.5, '7', undefined]) expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId, directive: '지시', reproduce: true })).toBeNull();
+    for (const directive of [undefined, 3, null, 'x'.repeat(100_000)]) expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId: 7, directive, reproduce: true })).toBeNull();
+    for (const reproduce of [undefined, 'true', 1]) expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId: 7, directive: '지시', reproduce })).toBeNull();
   });
 
   it('진단의 [Sentry에서 열기] 명령은 진단 ID만 받고, 주소는 렌더러가 싣지 못한다', () => {

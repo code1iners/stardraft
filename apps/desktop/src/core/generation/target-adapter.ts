@@ -61,6 +61,11 @@ export interface TargetRun<T extends TargetTypes, Output = unknown> {
   read(output: unknown): RunReading<Output>;
   /** 읽은 출력을 검증하고 다음에 할 일을 정한다. `request`는 이 출력을 낸 실행의 요청이다. */
   check(output: Output, request: TargetRunRequest): Promise<RunCheck<T>>;
+  /**
+   * 생성이 끝난 뒤(결과 저장, 실패 기록, 취소, 대기열에 되돌림, 앱 종료 모두) 한 번 부르는 정리. 실행 전후에 만들고 치울 것(재현 사본,
+   * 실행이 새로 켠 시뮬레이터 등)이 있는 실행만 둔다. 대기열은 이 정리가 끝난 뒤에 함께 돌 수 없는 자원을 놓는다. 던져도 생성 결과는 바뀌지 않는다.
+   */
+  release?(): Promise<void>;
 }
 
 /** 준비나 실행 뒤에 이어서 할 일. 대기열이 실행 기록과 함께 어댑터의 저장·실패 기록·저장소 대기 기록을 부른다. */

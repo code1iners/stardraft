@@ -4,7 +4,7 @@ export type AgentId = 'claude-code' | 'codex';
 /**
  * 에이전트 실행의 종류. 초안 실행은 초안을 쓴다. 진단 실행은 Sentry 오류 이슈의 진단 보고서를 쓴다.
  * 점검 실행(화면 이름 "작동 확인")은 로그인과 실행 계약이 실제로 도는지 최소 스키마로 확인한다.
- * 실행기는 이 값으로 턴 상한을 정하고, 진단 실행도 지금은 초안 실행과 같은 읽기 전용 경계로 돈다.
+ * 실행기는 이 값으로 턴 상한을 정한다. 진단 실행은 요청에 재현 경계(`reproduction`)가 있을 때만 재현 경계로 돌고, 아니면 초안 실행과 같은 읽기 전용 경계로 돈다.
  */
 export type RunKind = 'draft' | 'diagnosis' | 'check';
 
@@ -38,6 +38,18 @@ export interface ExecutorRunRequest {
   signal: AbortSignal;
   /** 진행 단계가 바뀔 때마다 부른다. */
   onProgress: (progress: ExecutorProgress) => void;
+  /** 재현 경계로 돌릴 때만 있다. 없으면 읽기 전용 경계로 돈다. */
+  reproduction?: ReproductionBoundary | null;
+}
+
+/**
+ * 재현하는 진단의 경계. 셸과 사본 쓰기, 네트워크를 열고 사용자 설정은 끌어오지 않는다.
+ * `.env` 계열만 사본에서 읽게 하고, 다른 비밀 파일 패턴과 저장소 밖 개인 비밀은 계속 막는다. 환경 변수는 최소 목록만 넘긴다.
+ * 이때 `readRoots`는 사본 하나이고 실행의 cwd다.
+ */
+export interface ReproductionBoundary {
+  /** 사본의 실제 경로(심볼릭 링크를 푼 절대 경로). 쓰기는 이 아래만 허용한다. */
+  copyRoot: string;
 }
 
 /** 실행 하나의 결과. */

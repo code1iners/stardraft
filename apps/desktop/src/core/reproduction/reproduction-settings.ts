@@ -154,6 +154,16 @@ export class ReproductionSettings {
     };
   }
 
+  /**
+   * 저장소의 재현 허용과 재현용 환경 파일. 진단을 시작할 때 쓴다. 재현을 지원하지 않는 OS이거나 설정한 적 없으면 `null`.
+   * 환경 파일이 없어졌는지는 보지 않는다(없으면 사본을 만들지 못해 그 진단의 재현이 불가(환경 실패)가 된다).
+   */
+  settingFor(path: string): { enabled: boolean; envFile: string | null } | null {
+    /** 저장소의 설정. */
+    const setting = this.supported ? this.repos[path] : undefined;
+    return setting ? { enabled: setting.enabled, envFile: setting.envFile ?? null } : null;
+  }
+
   /** 상태가 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);

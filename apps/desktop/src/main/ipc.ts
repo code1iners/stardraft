@@ -207,6 +207,9 @@ export function registerIpc(services: IpcServices): void {
   services.globalProblems.onChange(broadcastManualCheck);
   services.repoMappings.onChange(broadcastReview);
   services.repoPicker.onChange(broadcastReview);
+  // 진단 상세의 "재현도 다시 하기" 체크는 저장소의 재현 허용과 Sentry 매핑을 따른다.
+  services.reproduction.onChange(broadcastReview);
+  services.sentryProjects.onChange(broadcastReview);
   services.draftSettings.onChange(() =>
     services.windows.broadcast({ type: 'draft-settings-changed', draftSettings: draftSettingsSnapshot(services.draftSettings.state()) }),
   );
@@ -231,7 +234,7 @@ export function registerIpc(services: IpcServices): void {
 }
 
 /** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서, 게시 카운트다운은 게시에서 읽는다. */
-function currentReviewSnapshot({ bundles, sentryDiagnoses, drafts, posting, reviewSections, repoMappings, repoPicker }: IpcServices) {
+function currentReviewSnapshot({ bundles, sentryDiagnoses, drafts, posting, reviewSections, repoMappings, repoPicker, sentryProjects, reproduction }: IpcServices) {
   return reviewSnapshot(
     bundles.state(),
     sentryDiagnoses.list(),
@@ -242,6 +245,11 @@ function currentReviewSnapshot({ bundles, sentryDiagnoses, drafts, posting, revi
     repoPicker.state(),
     (bundleId) => posting.countdownEndsAt(bundleId),
     (diagnosisId) => diagnosisProgress(drafts, diagnosisId),
+    (projectId) => {
+      /** 프로젝트에 매핑된 저장소. */
+      const path = sentryProjects.mappedRepoPath(projectId);
+      return path !== null && reproduction.settingFor(path)?.enabled === true;
+    },
   );
 }
 
@@ -520,7 +528,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'rediagnose-with-directive':
       await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), async () => {
-        await services.sentryDiagnoses.rediagnose(command.diagnosisId, command.directive);
+        await services.sentryDiagnoses.rediagnose(command.diagnosisId, command.directive, { reproduce: command.reproduce });
       });
       return;
     case 'complete-diagnosis':

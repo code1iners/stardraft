@@ -470,6 +470,55 @@ describe('생성 대기열: 병렬 작업 수', () => {
     expect(env.second.status(11)).toBe('saved');
   });
 
+  it('실행의 정리(재현 사본·시뮬레이터 정리 등)는 결과를 저장하거나 실패·취소한 뒤 한 번 돌고, 함께 돌 수 없는 자원은 정리가 끝난 뒤에 놓인다', async () => {
+    const env = setup();
+    env.setParallel(2);
+    env.second.exclusive.set(10, 'reproduction');
+    env.second.exclusive.set(11, 'reproduction');
+    /** 정리를 부른 대상과 그때 대상 상태. */
+    const released: string[] = [];
+    /** 첫 정리를 끝내는 함수. */
+    let finishRelease = () => {};
+    env.second.scriptPreparation(10, {
+      kind: 'ready',
+      next: {
+        kind: 'run',
+        run: {
+          ...fakeRun(),
+          release: () => {
+            released.push(`10:${String(env.second.status(10))}`);
+            return new Promise<void>((resolve) => (finishRelease = resolve));
+          },
+        },
+      },
+    });
+    env.second.scriptPreparation(11, {
+      kind: 'ready',
+      next: { kind: 'run', run: { ...fakeRun(), release: async () => void released.push(`11:${String(env.second.status(11))}`) } },
+    });
+    const finishFirst = env.holds();
+    env.holds();
+    env.second.add(10);
+    env.second.add(11);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    finishFirst({ type: 'completed', output: 'repro-1' });
+    await settle();
+    // 결과를 저장한 뒤 정리를 부르고, 정리가 끝날 때까지 다음 재현 대상은 시작하지 않는다.
+    expect(released).toEqual(['10:saved']);
+    expect(env.second.prepared).toEqual([10]);
+
+    finishRelease();
+    await settle();
+    expect(env.second.prepared).toEqual([10, 11]);
+    await queue.cancel({ kind: 'second', targetId: 11 });
+    await settle();
+    // 취소해도 정리를 부른다.
+    expect(released).toEqual(['10:saved', '11:failed']);
+  });
+
   it('전역 실패로 대기열이 멈춰도 함께 돌던 실행은 끊기지 않고, 성공하면 저장되며 실패하면 같은 판정을 거쳐 대기열로 돌아간다', async () => {
     const env = setup();
     env.setParallel(3);

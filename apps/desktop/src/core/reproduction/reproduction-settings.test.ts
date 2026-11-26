@@ -74,6 +74,17 @@ describe('저장소별 재현 허용', () => {
     expect(changes.count).toBeGreaterThan(0);
   });
 
+  it('진단을 시작할 때 저장소의 재현 허용과 환경 파일을 바로 읽는다. 설정한 적 없거나 재현을 지원하지 않는 OS면 없다', async () => {
+    const { settings } = await setup();
+    expect(settings.settingFor('/fake/work/web-app')).toBeNull();
+
+    await settings.setRepoEnabled('/fake/work/web-app', true, '/fake/envs/dev.env');
+
+    expect(settings.settingFor('/fake/work/web-app')).toEqual({ enabled: true, envFile: '/fake/envs/dev.env' });
+    const windows = await setup({ platform: 'win32', settings: { reproductionRepos: { '/fake/work/web-app': { enabled: true, envFile: null } } } });
+    expect(windows.settings.settingFor('/fake/work/web-app')).toBeNull();
+  });
+
   it('환경 파일 없이 켜면 지정 안 함으로 저장된다', async () => {
     const { settings, settingsStore } = await setup();
 

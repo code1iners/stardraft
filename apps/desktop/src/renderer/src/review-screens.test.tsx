@@ -1741,6 +1741,7 @@ describe('펼친 창: 진단', () => {
       lastExportedPath: null,
       canOpenInSentry: true,
       attachments: [],
+      reproductionAllowed: false,
       issue: {
         shortId: `WEB-${id}`,
         culprit: 'app/checkout',
@@ -1826,6 +1827,7 @@ describe('펼친 창: 진단', () => {
       createdAt: DETECTED_AT,
     },
     priorDiagnosis: null,
+    omittedAttachments: 0,
   };
 
   it('대기 진단의 상세는 `진행`에 "앞에 n개가 있습니다."를 보이고 바닥 줄에 [취소]가 있다', () => {
@@ -2105,6 +2107,11 @@ describe('펼친 창: 진단', () => {
     const text = textOf(<DiagnosisTabPanel diagnosis={withFiles} report={REPORT} tab="attachments" />);
     expect(text).toContain('screen.png 2.0KB run.log 12B');
     expect(text).not.toContain('첨부가 없습니다.');
+    expect(text).not.toContain('생략');
+
+    // 종류나 한도를 넘어 옮기지 않은 첨부가 있으면 그 수를 적는다.
+    expect(textOf(<DiagnosisTabPanel diagnosis={withFiles} report={{ ...REPORT, omittedAttachments: 2 }} tab="attachments" />)).toContain('첨부 2개 생략');
+    expect(textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={{ ...REPORT, omittedAttachments: 1 }} tab="attachments" />)).toContain('첨부 1개 생략');
   });
 
   it('정보 탭은 오류 정보와 진단 정보를 보인다', () => {
@@ -2209,9 +2216,11 @@ describe('펼친 창: 진단', () => {
       expect(renderToStaticMarkup(footer)).not.toContain('다시 진단');
     });
 
-    it('지시 입력은 위에서 아래로 이름, 앞서 덧붙인 지시 안내와 목록, 입력 칸, 새 보고서 안내, [취소] · [다시 진단]이고 재현 체크는 없다', () => {
+    it('재현을 허용하지 않은 저장소의 지시 입력은 위에서 아래로 이름, 앞서 덧붙인 지시 안내와 목록, 입력 칸, 새 보고서 안내, [취소] · [다시 진단]이고 재현 체크는 없다', () => {
       /** 그린 HTML. */
-      const markup = renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={['더 짧게', '캐시를 먼저 의심해 줘']} onClose={() => {}} />);
+      const markup = renderToStaticMarkup(
+        <RediagnosisForm diagnosisId={9} directives={['더 짧게', '캐시를 먼저 의심해 줘']} reproductionAllowed={false} reproducedBefore={false} onClose={() => {}} />,
+      );
       /** 글자만. */
       const text = textIn(markup);
 
@@ -2227,7 +2236,21 @@ describe('펼친 창: 진단', () => {
     });
 
     it('앞서 덧붙인 지시가 없으면 그 안내와 목록을 보이지 않는다', () => {
-      expect(textIn(renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={[]} onClose={() => {}} />))).not.toContain('앞서 덧붙인 지시');
+      expect(
+        textIn(renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={[]} reproductionAllowed={false} reproducedBefore={false} onClose={() => {}} />)),
+      ).not.toContain('앞서 덧붙인 지시');
+    });
+
+    it('재현을 허용한 저장소면 입력 칸과 새 보고서 안내 사이에 "재현도 다시 하기" 체크와 도움말이 있고, 앞선 재현이 성공이면 꺼진 채, 실패·불가면 켜진 채 열린다', () => {
+      /** 앞선 재현이 성공한 지시 입력. */
+      const succeeded = renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={[]} reproductionAllowed reproducedBefore onClose={() => {}} />);
+      /** 앞선 재현이 실패·불가인 지시 입력. */
+      const failed = renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={[]} reproductionAllowed reproducedBefore={false} onClose={() => {}} />);
+
+      expect(textIn(succeeded)).toMatch(/^ 지시 재현도 다시 하기 끄면 앞선 재현 결과를 그대로 둡니다\. 새 보고서가 나오면 지금 보고서를 바꿉니다\. 남기려면 먼저 내보내세요\. 취소 다시 진단 $/);
+      expect(succeeded.indexOf('type="checkbox"')).toBeGreaterThan(succeeded.indexOf('<textarea'));
+      expect(succeeded).toMatch(/<input type="checkbox"(?![^>]*checked)[^>]*>/);
+      expect(failed).toMatch(/<input type="checkbox"[^>]*checked=""[^>]*>/);
     });
 
     it('바닥 줄은 지시 입력을 연 진단에서만 지시 입력으로 펼쳐진다', () => {

@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -19,6 +20,8 @@ import type { SentryProjectRegistration } from '../ports/settings-store';
 import { GlobalProblems } from '../problems/global-problems';
 import { openStateDatabase, STATE_MIGRATIONS } from '../storage/state-database';
 import { SqliteSentryStore } from '../storage/sqlite-sentry-store';
+import { ReproductionCopies } from '../reproduction/reproduction-copies';
+import { DiagnosisAttachmentFolders } from './diagnosis-attachments';
 import { DIAGNOSIS_TIMEOUT_MS } from './diagnosis-run';
 import { SentryConnection } from './sentry-connection';
 import { SentryDiagnoses } from './sentry-diagnoses';
@@ -185,7 +188,19 @@ function reportOutput(repository: string, evidencePath = 'src/fake.ts') {
  * 토큰을 연결하고 프로젝트를 등록한 Sentry 어댑터와 생성 대기열을 만든다. Sentry API와 실행기만 가짜이고,
  * Sentry 연결·프로젝트 등록·진단 목록·진단 저장소(SQLite)는 실제 모듈이다. 저장소에는 `src/fake.ts`와 `.env`가 있다.
  */
-async function setup({ mapped = true } = {}) {
+/** 재현 허용을 흉내 내는 설정. */
+interface ReproductionFixture {
+  /** 저장소의 재현 허용. */
+  enabled: boolean;
+  /** 재현용 환경 파일 내용. 없으면 지정하지 않은 것이다. */
+  envFile?: string | null;
+  /** OS. 기본은 macOS다. */
+  platform?: NodeJS.Platform;
+  /** 사본 만들기가 실패하는지 여부. */
+  failClone?: boolean;
+}
+
+async function setup({ mapped = true, reproduction = null }: { mapped?: boolean; reproduction?: ReproductionFixture | null } = {}) {
   const clock = new FakeClock(NOW);
   /** 로그 줄. */
   const logged: string[] = [];
@@ -225,6 +240,8 @@ async function setup({ mapped = true } = {}) {
     onUnregistered: (projectId) => diagnoses!.removeProject(projectId),
   });
   await projects.load();
+  /** 진단 첨부 폴더. */
+  const folders = new DiagnosisAttachmentFolders(makeDir());
   diagnoses = new SentryDiagnoses({
     store,
     notifier,
@@ -232,11 +249,31 @@ async function setup({ mapped = true } = {}) {
     clock,
     resolveRepo: (projectId) => projects.resolveRepo(projectId),
     isRegistered: (item) => projects.isRegistered(item),
+    removeAttachments: (id) => folders.remove(id),
+    replaceAttachments: (id, staged) => folders.replace(id, staged),
+    discardAttachments: (staged) => folders.discard(staged),
   });
   await diagnoses.load();
   const executor = new FakeExecutor('claude-code');
   /** 지금 그 자리에 있는 것으로 보는 내보낸 파일 경로. */
   const existingExports = new Set<string>();
+  /** 재현 사본을 두는 폴더. */
+  const copiesRoot = join(makeDir(), 'copies');
+  /** 재현용 환경 파일. */
+  const envFile = reproduction?.envFile == null ? null : join(makeDir(), 'reproduction.env');
+  if (envFile !== null) writeFileSync(envFile, reproduction!.envFile!);
+  /** 재현 허용. 테스트가 바꿀 수 있다. */
+  const reproductionState = { enabled: reproduction?.enabled ?? false };
+  /** 가짜 시뮬레이터. 켜진 기기 목록과 끈 기기를 기록한다. */
+  const devices = { booted: ['USER-SIM'], shutDown: [] as string[] };
+  const copies = new ReproductionCopies({
+    root: copiesRoot,
+    clone: async (from, to, names) => {
+      if (reproduction?.failClone) throw new Error('clonefile 실패');
+      for (const name of names) await cp(join(from, name), join(to, name), { recursive: true });
+    },
+    logger,
+  });
   const adapter = new SentryTargetAdapter({
     diagnoses,
     projects,
@@ -247,13 +284,28 @@ async function setup({ mapped = true } = {}) {
     exportFileExists: async (path) => existingExports.has(path),
     clock,
     logger,
+    reproduction: {
+      platform: reproduction?.platform ?? 'darwin',
+      setting: () => ({ enabled: reproductionState.enabled, envFile }),
+      copies,
+      devices: {
+        snapshot: async () => ({ ios: [...devices.booted], android: [] }),
+        shutDownNew: async (before) => {
+          for (const udid of devices.booted.filter((item) => !before.ios.includes(item))) devices.shutDown.push(udid);
+          devices.booted = devices.booted.filter((item) => before.ios.includes(item));
+        },
+      },
+      attachments: folders,
+    },
   });
   const flow = new PassingFlowAdapter();
+  /** 병렬 작업 수. */
+  const parallel = { count: 1 };
   const queue = new GenerationQueue({
     adapters: [flow, adapter],
     agent: () => ({ executor, model: null, confirmForRun: async () => true }),
     onAgentChange: () => () => {},
-    parallelWork: { count: () => 1, onChange: () => () => {} },
+    parallelWork: { count: () => parallel.count, onChange: () => () => {} },
     store: new MemoryQueueStore(),
     clock,
     logger,
@@ -270,7 +322,28 @@ async function setup({ mapped = true } = {}) {
   };
   /** 진단 하나를 오류 이슈 ID로 찾는다. */
   const byIssue = (issueId: string) => diagnoses.list().find((item) => item.issueId === issueId);
-  return { clock, api, logged, connection, projects, diagnoses, store, executor, queue, flow, repo, detect, byIssue, settingsStore, existingExports };
+  return {
+    clock,
+    api,
+    logged,
+    connection,
+    projects,
+    diagnoses,
+    store,
+    executor,
+    queue,
+    flow,
+    repo,
+    detect,
+    byIssue,
+    settingsStore,
+    existingExports,
+    folders,
+    copiesRoot,
+    devices,
+    parallel,
+    reproductionState,
+  };
 }
 
 describe('Sentry 어댑터: 읽기 전용 진단', () => {
@@ -860,5 +933,253 @@ describe('Sentry 어댑터: 앞선 진단 참고', () => {
     await diagnoseToReady(env, '101');
 
     expect(env.byIssue('101')!.report!.priorDiagnosis).toBeNull();
+  });
+});
+
+/** 재현하는 진단의 출력. 재현 칸과 사본 안 첨부 경로가 더해진다. */
+function reproducingOutput(repository: string, reproduction: Record<string, unknown> = {}) {
+  return {
+    ...reportOutput(repository),
+    reproduction: {
+      result: 'success',
+      impossible_reason: null,
+      method: '개발 서버에 빈 주문 목록 요청 3번 중 3번',
+      steps: ['pnpm dev', '빈 주문 목록으로 /orders 요청'],
+      attachments: [],
+      ...reproduction,
+    },
+  };
+}
+
+/** 사본 폴더 안의 사본. 지우기는 기다리지 않으므로 잠시 기다리며 본다. */
+async function copiesLeft(root: string): Promise<string[]> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    /** 남은 사본. */
+    const left = existsSync(root) ? readdirSync(root) : [];
+    if (left.length === 0) return left;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return existsSync(root) ? readdirSync(root) : [];
+}
+
+describe('Sentry 어댑터: 재현하는 진단', () => {
+  it('재현 허용이 켜진 저장소의 진단은 원본의 사본에서 재현 경계로 돈다. 사본에는 .git이 없고 재현용 환경 파일이 .env가 된다', async () => {
+    const env = await setup({ reproduction: { enabled: true, envFile: 'FAKE=staging\n' } });
+    mkdirSync(join(env.repo, '.git'));
+    writeFileSync(join(env.repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await env.detect('101');
+    /** 실행 중에 본 사본의 내용. */
+    let seen: { entries: string[]; env: string } | null = null;
+    env.executor.script({
+      outcome: { type: 'completed', output: reproducingOutput(env.repo) },
+      during: (request) => {
+        /** 사본. */
+        const copy = request.reproduction!.copyRoot;
+        seen = { entries: readdirSync(copy).sort(), env: readFileSync(join(copy, '.env'), 'utf8') };
+      },
+    });
+
+    await env.queue.start();
+    await settle();
+
+    /** 실행기가 받은 요청. */
+    const request = env.executor.requests[0]!;
+    expect(request.reproduction?.copyRoot.startsWith(env.copiesRoot.replace(/^\/var\//, '/private/var/'))).toBe(true);
+    expect(request.readRoots).toEqual([request.reproduction!.copyRoot]);
+    expect(request.instructions).toContain('피드백 루프');
+    expect(request.instructions).not.toContain(EXTRA_INSTRUCTIONS);
+    expect(Object.keys((request.outputSchema as { properties: object }).properties)).toContain('reproduction');
+    expect(request.input).toContain(`# 재현 사본\n- ${request.reproduction!.copyRoot}`);
+    expect(seen).toEqual({ entries: ['.env', 'src'], env: 'FAKE=staging\n' });
+    // 원본은 바뀌지 않는다.
+    expect(readFileSync(join(env.repo, '.env'), 'utf8')).toBe('FAKE=1\n');
+    expect(env.byIssue('101')!.report).toMatchObject({
+      reproduction: { result: 'success', impossibleReason: null, method: '개발 서버에 빈 주문 목록 요청 3번 중 3번', steps: ['pnpm dev', '빈 주문 목록으로 /orders 요청'] },
+      run: { repository: env.repo, reproductionAllowed: true },
+      evidence: [{ repository: env.repo, path: 'src/fake.ts', located: true }],
+    });
+    // 끝나면 사본을 지운다.
+    expect(await copiesLeft(env.copiesRoot)).toEqual([]);
+  });
+
+  it('에이전트가 근거의 저장소를 사본 경로로 적어도 원본 저장소로 고쳐 위치를 확인한다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    await env.detect('101');
+    /** 사본 경로로 적은 결과. */
+    let finish!: (outcome: ExecutorOutcome) => void;
+    env.executor.script({
+      outcome: new Promise<ExecutorOutcome>((resolve) => (finish = resolve)),
+      during: (request) => finish({ type: 'completed', output: reproducingOutput(request.reproduction!.copyRoot) }),
+    });
+
+    await env.queue.start();
+    await settle();
+
+    expect(env.byIssue('101')!.report!.evidence).toEqual([expect.objectContaining({ repository: env.repo, path: 'src/fake.ts', located: true })]);
+  });
+
+  it('재현 결과·방법·순서와 첨부가 보고서에 실린다. 허용한 종류와 한도 안의 첨부만 진단별 폴더로 옮기고 나머지는 생략한 수로 적는다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    await env.detect('101');
+    /** 결과를 낼 함수. */
+    let finish!: (outcome: ExecutorOutcome) => void;
+    env.executor.script({
+      outcome: new Promise<ExecutorOutcome>((resolve) => (finish = resolve)),
+      during: (request) => {
+        /** 사본. */
+        const copy = request.reproduction!.copyRoot;
+        mkdirSync(join(copy, 'repro'));
+        writeFileSync(join(copy, 'repro', 'orders.png'), 'png');
+        writeFileSync(join(copy, 'repro', 'server.log'), 'TypeError: 시험 오류 메시지\n');
+        writeFileSync(join(copy, 'repro', 'fix.patch'), 'diff');
+        finish({
+          type: 'completed',
+          output: reproducingOutput(env.repo, { result: 'failure', attachments: ['repro/orders.png', join(copy, 'repro/server.log'), 'repro/fix.patch', '.env'] }),
+        });
+      },
+    });
+
+    await env.queue.start();
+    await settle();
+
+    /** 저장된 진단. */
+    const diagnosis = env.byIssue('101')!;
+    expect(diagnosis.report).toMatchObject({
+      reproduction: { result: 'failure' },
+      attachments: [
+        { name: 'orders.png', sizeBytes: 3 },
+        { name: 'server.log', sizeBytes: Buffer.byteLength('TypeError: 시험 오류 메시지\n') },
+      ],
+      omittedAttachments: 2,
+    });
+    expect(await env.folders.list(diagnosis.id)).toEqual(['orders.png', 'server.log']);
+    expect(await copiesLeft(env.copiesRoot)).toEqual([]);
+  });
+
+  it('실행 전에 켜져 있던 시뮬레이터는 그대로 두고 실행이 새로 켠 것만 끈다. 실패해도, 취소해도 사본을 지우고 정리한다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    await env.detect('101', '102');
+    env.executor.script({
+      outcome: { type: 'failed', reason: 'agent-error', detail: '가짜 실패' },
+      during: () => void env.devices.booted.push('NEW-SIM-1'),
+    });
+    env.executor.script({ outcome: 'wait-for-abort', during: () => void env.devices.booted.push('NEW-SIM-2') });
+
+    await env.queue.start();
+    await settle();
+    expect(env.byIssue('101')!.status).toBe('failed');
+    expect(env.devices.shutDown).toEqual(['NEW-SIM-1']);
+
+    await env.queue.cancel({ kind: SENTRY_TARGET_KIND, targetId: env.byIssue('102')!.id });
+    await settle();
+
+    expect(env.byIssue('102')!.failure?.reason).toBe('cancelled');
+    expect(env.devices.shutDown).toEqual(['NEW-SIM-1', 'NEW-SIM-2']);
+    expect(env.devices.booted).toEqual(['USER-SIM']);
+    expect(await copiesLeft(env.copiesRoot)).toEqual([]);
+  });
+
+  it('재현하는 진단은 한 번에 하나만 돌고, 그사이 읽기 전용 진단과 초안은 진행된다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    env.parallel.count = 3;
+    await env.detect('101', '102');
+    env.executor.script({ outcome: 'wait-for-abort' });
+
+    await env.queue.start();
+    env.flow.add(1);
+    await settle();
+
+    expect(env.executor.requests).toHaveLength(1);
+    expect(env.flow.saved).toEqual([1]);
+    expect(env.queue.progress({ kind: SENTRY_TARGET_KIND, targetId: env.byIssue('102')!.id })).toEqual({ status: 'waiting' });
+
+    env.executor.script({ outcome: { type: 'completed', output: reproducingOutput(env.repo) } });
+    await env.queue.cancel({ kind: SENTRY_TARGET_KIND, targetId: env.byIssue('101')!.id });
+    await settle();
+    expect(env.executor.requests).toHaveLength(2);
+    expect(env.byIssue('102')!.status).toBe('ready');
+  });
+
+  it('재현 허용이 꺼진 저장소와 Windows의 진단은 읽기 전용 그대로이고 사본을 만들지 않는다. 실행 정보의 재현 허용은 저장소 설정을 따른다', async () => {
+    for (const fixture of [{ enabled: false }, { enabled: true, platform: 'win32' as const }]) {
+      const env = await setup({ reproduction: fixture });
+      await env.detect('101');
+      env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+      await env.queue.start();
+      await settle();
+
+      expect(env.executor.requests[0]!.reproduction ?? null).toBeNull();
+      expect(env.executor.requests[0]!.readRoots).toEqual([env.repo]);
+      expect(existsSync(env.copiesRoot)).toBe(false);
+      expect(env.byIssue('101')!.report).toMatchObject({ reproduction: { result: 'impossible', impossibleReason: 'not-allowed' }, run: { reproductionAllowed: false } });
+      await env.queue.stop();
+    }
+  });
+
+  it('사본을 만들지 못하면 코드만 읽고 진단하고, 재현 칸은 앱이 불가(환경 실패)로 채운다', async () => {
+    const env = await setup({ reproduction: { enabled: true, failClone: true } });
+    await env.detect('101');
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+    await env.queue.start();
+    await settle();
+
+    expect(env.executor.requests[0]!.reproduction ?? null).toBeNull();
+    expect(env.executor.requests[0]!.readRoots).toEqual([env.repo]);
+    expect(env.byIssue('101')!.report).toMatchObject({ reproduction: { result: 'impossible', impossibleReason: 'env-failed' }, run: { reproductionAllowed: true } });
+  });
+});
+
+describe('Sentry 어댑터: 재현도 다시 하기', () => {
+  /** 재현에 성공하고 첨부 하나를 남긴 검토 대기 보고서를 만든다. */
+  async function readyWithReproduction(env: Awaited<ReturnType<typeof setup>>): Promise<number> {
+    await env.detect('101');
+    /** 결과를 낼 함수. */
+    let finish!: (outcome: ExecutorOutcome) => void;
+    env.executor.script({
+      outcome: new Promise<ExecutorOutcome>((resolve) => (finish = resolve)),
+      during: (request) => {
+        writeFileSync(join(request.reproduction!.copyRoot, 'first.png'), 'png');
+        finish({ type: 'completed', output: reproducingOutput(env.repo, { attachments: ['first.png'] }) });
+      },
+    });
+    await env.queue.start();
+    await settle();
+    return env.byIssue('101')!.id;
+  }
+
+  it('지시를 덧붙이며 재현도 다시 하기를 끄면 읽기 전용으로 돌고, 앞선 재현 칸과 첨부를 그대로 옮긴다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    const id = await readyWithReproduction(env);
+    env.executor.script({ outcome: { type: 'completed', output: { ...reportOutput(env.repo), summary: '지시를 반영한 요약입니다.' } } });
+
+    await env.queue.changeByUser({ kind: SENTRY_TARGET_KIND, targetId: id }, async () => void (await env.diagnoses.rediagnose(id, '원인을 더 자세히', { reproduce: false })));
+    await settle();
+
+    /** 다시 진단의 요청. */
+    const request = env.executor.requests[1]!;
+    expect(request.reproduction ?? null).toBeNull();
+    expect(Object.keys((request.outputSchema as { properties: object }).properties)).not.toContain('reproduction');
+    expect(env.byIssue('101')!.report).toMatchObject({
+      summary: '지시를 반영한 요약입니다.',
+      reproduction: { result: 'success', method: '개발 서버에 빈 주문 목록 요청 3번 중 3번' },
+      attachments: [{ name: 'first.png', sizeBytes: 3 }],
+      run: { reproductionAllowed: true },
+    });
+    expect(await env.folders.list(id)).toEqual(['first.png']);
+  });
+
+  it('지시 없는 다시 진단과 재현도 다시 하기를 켠 다시 진단은 다시 재현하고 재현 칸과 첨부를 새 결과로 바꾼다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    const id = await readyWithReproduction(env);
+    env.executor.script({ outcome: { type: 'completed', output: reproducingOutput(env.repo, { result: 'failure' }) } });
+
+    await env.queue.changeByUser({ kind: SENTRY_TARGET_KIND, targetId: id }, async () => void (await env.diagnoses.rediagnose(id, null)));
+    await settle();
+
+    expect(env.executor.requests[1]!.reproduction).not.toBeNull();
+    expect(env.byIssue('101')!.report).toMatchObject({ reproduction: { result: 'failure' }, attachments: [] });
+    expect(await env.folders.list(id)).toEqual([]);
   });
 });

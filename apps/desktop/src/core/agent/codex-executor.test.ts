@@ -257,6 +257,59 @@ describe('Codex 실행기: 인수 묶음', () => {
   });
 });
 
+describe('Codex 실행기: 재현 경계', () => {
+  /** 재현 사본의 실제 경로. 홈 밖(임시 폴더)에 둔다. */
+  const COPY = '/private/var/folders/fake/T/stardraft-reproduction/run-abc';
+
+  /** 테스트용 재현하는 진단 요청. */
+  function reproductionRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunRequest {
+    return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY }, ...overrides });
+  }
+
+  it('사용자 설정과 rules를 끌어오지 않고, 권한 프로필에서 사본만 쓰기로 열고 네트워크를 연다. 사본에는 .git이 없어 git 확인을 건너뛴다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
+
+    await executor.run(reproductionRequest({ secretPatterns: ['company/*.secret'] }));
+
+    const [request] = runner.requests;
+    expect(request?.cwd).toBe(COPY);
+    expect(flagValue(request, '-C')).toBe(COPY);
+    expect(request?.args).toEqual(expect.arrayContaining(['--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check']));
+    /** `-c`로 넘긴 설정 값. */
+    const configs = request!.args.filter((_, index) => request!.args[index - 1] === '-c');
+    expect(configs).toContain(
+      'permissions.stardraft.filesystem={":root"="read", "~/**/.env"="deny", "~/**/.env.*"="deny", "~/.ssh"="deny", "~/.aws"="deny", "~/.npmrc"="deny", "~/.netrc"="deny", "~/.pypirc"="deny", ' +
+        '":workspace_roots"={"."="write", "**/*.pem"="deny", "**/*.key"="deny", "**/*.p12"="deny", "**/*.pfx"="deny", "**/*.jks"="deny", "**/*.keystore"="deny", ' +
+        '"**/id_rsa*"="deny", "**/id_ed25519*"="deny", "**/.npmrc"="deny", "**/.pypirc"="deny", "**/.netrc"="deny", "**/secrets/**"="deny", "**/.git/**"="deny", ' +
+        '"**/company/*.secret"="deny", "**/.git"="deny"}}',
+    );
+    expect(configs).toContain('permissions.stardraft.network.enabled=true');
+    expect(configs).toContain('permissions.stardraft.workspace_roots={}');
+    // 임시 폴더 쓰기를 열면 같은 임시 폴더의 다른 사본도 열린다.
+    expect(configs.some((config) => config.includes(':tmpdir'))).toBe(false);
+    expect(configs).toEqual(expect.arrayContaining(['features.apps=false', 'features.hooks=false', 'web_search="disabled"']));
+    // 이 단계에서는 MCP를 싣지 않는다.
+    expect(configs.some((config) => config.startsWith('mcp_servers'))).toBe(false);
+  });
+
+  it('환경 변수는 최소 목록만 넘기고, 강제로 끝낼 때 자손 프로세스 그룹(MCP 서버, 셸 명령)까지 끝내게 한다', async () => {
+    const { runner, executor } = setup(() => ({
+      cliPath: linkedCli,
+      env: { ...CHILD_ENV, TMPDIR: '/var/folders/fake/T/', CODEX_HOME: '/Users/fake/.codex', FAKE_SERVICE_TOKEN: 'fake-secret-value' },
+      version: '0.172.0',
+    }));
+    answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
+
+    await executor.run(reproductionRequest());
+    await executor.run(draftRequest());
+
+    expect(runner.requests[0]?.env).toEqual({ PATH: CHILD_ENV.PATH, HOME: CHILD_ENV.HOME, LANG: CHILD_ENV.LANG, TMPDIR: '/var/folders/fake/T/', CODEX_HOME: '/Users/fake/.codex' });
+    expect(runner.requests[0]?.killDescendants).toBe(true);
+    expect(runner.requests[1]?.killDescendants).toBeFalsy();
+  });
+});
+
 describe('Codex 실행기: 진행 단계와 결과', () => {
   it('명령 이벤트를 진행 단계 한 줄로 바꾼다. 파일 읽기는 파일 이름, 내용 검색은 검색어, 파일 이름 찾기는 패턴, 그 밖의 명령은 명령 줄을 보인다', async () => {
     const { runner, executor } = setup();

@@ -477,6 +477,11 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ALTER TABLE sentry_diagnosis ADD COLUMN directives TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE sentry_diagnosis ADD COLUMN rediagnosis_failure TEXT;
   `,
+  // 29: 재현하는 진단. 지시를 덧붙인 다시 진단에서 "재현도 다시 하기"를 껐는지(앞선 재현 칸과 첨부를 그대로 옮길지)를 둔다.
+  // 기존 줄은 그런 다시 진단이 없어 0이다. 보고서의 첨부 목록은 보고서 JSON 안에 있어 열을 더하지 않는다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN keep_reproduction INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 /** 계정에 매이는 대기열 줄의 종류. Flow 초안만 계정에 매이고, 다른 종류(진단 등)는 계정과 무관하다. */

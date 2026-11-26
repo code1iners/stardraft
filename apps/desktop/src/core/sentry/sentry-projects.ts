@@ -231,6 +231,11 @@ export class SentryProjects {
     };
   }
 
+  /** 등록한 프로젝트에 매핑된 저장소 경로. 폴더가 있는지는 보지 않는다. 등록이나 매핑이 없으면 `null`. */
+  mappedRepoPath(projectId: string): string | null {
+    return this.registered[projectId] ? (this.mappings[projectId]?.[0] ?? null) : null;
+  }
+
   /** 등록한 프로젝트. 등록한 순서다. 감지가 이 순서로 하나씩 조회한다. */
   registrations(): SentryProjectRegistration[] {
     return Object.values(this.registered).map((registration) => ({ ...registration, levels: [...registration.levels] }));

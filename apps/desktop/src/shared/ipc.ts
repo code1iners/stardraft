@@ -1038,6 +1038,8 @@ export interface DiagnosisReportSnapshot {
    * `in-review`는 앞선 보고서가 검토 대기 중이었던 것, `completed`는 완료한 뒤의 재발이다(완료한 시각과 마지막으로 내보낸 파일 경로, 없으면 `null`).
    */
   priorDiagnosis: { kind: 'in-review' } | { kind: 'completed'; completedAt: number; exportPath: string | null } | null;
+  /** 종류나 한도를 넘어 옮기지 않은 첨부 수. 0보다 크면 "첨부 n개 생략"으로 보인다. */
+  omittedAttachments: number;
 }
 
 /** 진단 실패의 까닭. Flow 초안과 같은 빨간 상자에 사유와 마지막 단계로 보인다. */
@@ -1109,6 +1111,8 @@ export interface DiagnosisSnapshot {
   canOpenInSentry: boolean;
   /** 보고서의 첨부 파일. 보고서가 없으면 비어 있다. 첨부는 재현하는 진단이 만들므로 읽기 전용 진단의 보고서에는 없다. */
   attachments: DiagnosisAttachmentSnapshot[];
+  /** 이 진단의 저장소가 지금 재현을 허용하는지 여부(macOS). 참일 때만 지시 입력에 "재현도 다시 하기" 체크가 보인다. */
+  reproductionAllowed: boolean;
   /** 오류 정보. 감지할 때 오류 이슈 목록에서 받은 값이다. */
   issue: {
     /** 짧은 ID. 없으면 빈 문자열. */
@@ -1366,8 +1370,11 @@ export type AppCommand =
   | { type: 'retry-diagnosis'; diagnosisId: number }
   /** 검토 대기 보고서를 지시 없이 [다시 진단]한다. 앞선 보고서를 넘기지 않고 쌓인 지시를 비운다. 생성 대기열의 `user` 칸에 선다. */
   | { type: 'rediagnose'; diagnosisId: number }
-  /** 검토 대기 보고서를 지시를 덧붙여 다시 진단한다. 앞선 보고서와 쌓인 지시 전부를 넘긴다. 생성 대기열의 `user` 칸에 선다. */
-  | { type: 'rediagnose-with-directive'; diagnosisId: number; directive: string }
+  /**
+   * 검토 대기 보고서를 지시를 덧붙여 다시 진단한다. 앞선 보고서와 쌓인 지시 전부를 넘긴다. 생성 대기열의 `user` 칸에 선다.
+   * `reproduce`는 "재현도 다시 하기"다. 끄면 읽기 전용으로 돌고 앞선 재현 칸과 첨부를 그대로 옮긴다. 재현을 허용하지 않은 저장소에서는 쓰이지 않는다.
+   */
+  | { type: 'rediagnose-with-directive'; diagnosisId: number; directive: string; reproduce: boolean }
   /** 진단을 [완료]한다. 진단 실패와 검토 대기 보고서가 대상이고, 최소 기록만 남기고 본문과 첨부를 지운다. Sentry에는 요청하지 않는다. */
   | { type: 'complete-diagnosis'; diagnosisId: number }
   /** 검토 대기 보고서를 설정의 폴더에 마크다운 파일로 내보낸다. 끝나면 `diagnosis-exported`나 `diagnosis-export-failed`로 알린다. 상태는 바뀌지 않는다. */
@@ -1800,8 +1807,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
         ? { type: 'regenerate-with-directive', bundleId: candidate.bundleId, directive: candidate.directive }
         : null;
     case 'rediagnose-with-directive':
-      return isDiagnosisIdInput(candidate.diagnosisId) && isRegenerationTextInput(candidate.directive)
-        ? { type: 'rediagnose-with-directive', diagnosisId: candidate.diagnosisId, directive: candidate.directive }
+      return isDiagnosisIdInput(candidate.diagnosisId) && isRegenerationTextInput(candidate.directive) && typeof candidate.reproduce === 'boolean'
+        ? { type: 'rediagnose-with-directive', diagnosisId: candidate.diagnosisId, directive: candidate.directive, reproduce: candidate.reproduce }
         : null;
     case 'fix-requirement':
       return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.requirement)

@@ -6,7 +6,7 @@
 
 **Blocked by:** 42
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] 재현하는 진단에만 MCP가 실린다. 읽기 전용 진단과 Flow 초안의 인수 묶음은 그대로다.
 - [x] 실행하는 CLI 자신의 정의만 실린다. Claude Code는 사용자·로컬·프로젝트 범위를 로컬 > 프로젝트 > 사용자 순서로 하나씩, Codex는 사용자 설정의 정의다. 사용자가 꺼 둔 서버, 플러그인 MCP, 커넥터는 실리지 않는다.
@@ -58,7 +58,7 @@
   - 로그인이 안 된 서버는 "연결 실패"로 적히고, 그 서버 없이 실행이 진행되는 것은 확인했다.
   - Codex는 `--ignore-user-config` 때문에 사용자의 `mcp_oauth_credentials_store` 설정이 적용되지 않는다(기본 `auto`). 상세 명령 출력에 OAuth `scopes` 같은 칸이 없어 옮기지 못한다. 저장 방식을 바꾼 사용자는 재사용이 안 될 수 있다(추론).
 - 검증
-  - `pnpm lint`, `pnpm typecheck` 통과. desktop 테스트 91개 파일 1862개가 통과했다(core·shared·main·renderer).
+  - 마지막 변경 뒤 `pnpm lint`, `pnpm typecheck`가 통과했고, desktop 전체 테스트 97개 파일 1931개도 모두 통과했다. 통합 브랜치에는 새 커밋이 없어 병합할 것이 없었다.
   - 전체 실행에서 실패한 것은 결정 #6의 환경성 실패뿐이다: desktop `zsh rc 멈춤 5초`, site `index-page.test.ts`.
   - 실기(이 PC, Claude Code 2.1.332, 모델 haiku): 임시 폴더에 가짜 원본 저장소를 만들었다. 가짜 MCP stdio 서버 `probe`의 도구는 `safe_echo`와 `browser_run_code_unsafe`이고, 호출을 파일에 기록한다. 가짜 서버 `needs-var`는 없는 변수를 참조한다. 이 둘을 등록한 임시 Claude 설정과 임시 홈의 `.profile`(토큰 export)로 `ReproductionMcpLoader` → 실제 APFS 사본 → `ClaudeCodeExecutor`의 재현하는 진단(재현 지침·스키마)을 한 번 돌렸다. 결과:
     - `needs-var`는 "변수 없음"으로 빠지고 `probe`만 실렸다.

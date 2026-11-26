@@ -66,6 +66,7 @@ describe('설정 "Sentry" 칸', () => {
     expect(text).toContain('토큰 확인 필요');
     expect(text).toContain(message);
     expect(text).toContain('토큰 다시 입력');
+    expect(text).not.toContain('org:read 확인됨');
     expect(text).not.toContain('✓ 연결됨');
   });
 

@@ -9,7 +9,7 @@ import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { AccountRecords } from '../core/account/account-records';
 import { FlowAccount, type FlowAccountRecords } from '../core/account/flow-account';
 import { HttpSentryApi } from '../core/sentry/http-sentry-api';
-import { SentryConnection } from '../core/sentry/sentry-connection';
+import { SentryConnection, type SentryConnectionState } from '../core/sentry/sentry-connection';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { BundleRetention } from '../core/bundles/retention';
 import { RepoWaitMonitor } from '../core/bundles/repo-wait-monitor';
@@ -343,7 +343,7 @@ function start(): void {
       setupInputs: () => ({
         // Flow 계정은 감지할 대상(선택)이다. 필수 설정은 에이전트 연결 하나다.
         keyVerified: flowAccount.state().account !== null && !globalProblems.has('flow-key'),
-        sentryConnected: sentryConnection.state().connected && sentryConnection.state().problem === null,
+        sentryConnected: isSentryUsable(sentryConnection.state()),
         // 하나라도 연결되면 연결됨이다. 시작할 때 연결 확인이 돌기 전도 확인 중으로 본다.
         agent: agentConnections.setupStatus(),
       }),
@@ -574,6 +574,11 @@ async function prepareQuit(): Promise<void> {
   } catch (error) {
     logger.error('app.quit-cleanup-failed', errorFields(error));
   }
+}
+
+/** 토큰을 연결했고 "토큰 확인 필요"가 없어 Sentry를 쓸 수 있는지 본다. */
+function isSentryUsable({ connected, problem }: SentryConnectionState): boolean {
+  return connected && problem === null;
 }
 
 /** 계정 기록을 오가는 일. 연결을 마치기 전에 불리면 앱의 순서가 틀린 것이라 던진다. */

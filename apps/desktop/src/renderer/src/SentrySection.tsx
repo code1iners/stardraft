@@ -178,7 +178,9 @@ function TokenCard({ sentry, problemMessage, onEdit, onDisconnect }: TokenCardPr
             <strong>조직 {names.length}개</strong>
             {names.length > 0 && ` · ${names.join(', ')}`}
           </div>
-          <div className="muted small">권한: org:read 확인됨 · event:read는 프로젝트를 추가할 때 확인합니다</div>
+          <div className="muted small">
+            {problemMessage ? '권한: 토큰을 다시 확인해야 합니다' : '권한: org:read 확인됨 · event:read는 프로젝트를 추가할 때 확인합니다'}
+          </div>
         </div>
         {problemMessage ? <span className="danger-text small">토큰 확인 필요</span> : <span className="ok-text small">✓ 연결됨</span>}
         <button type="button" className="btn sm" onClick={onEdit}>

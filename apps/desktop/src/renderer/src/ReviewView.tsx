@@ -73,7 +73,7 @@ export function ReviewContent({ snapshot, initialBundleId = null }: ReviewConten
                   <PostStatusLine bundle={selected} />
                 </div>
                 <ManualTag bundle={selected} />
-                <StatusTag status={selected.status} />
+                <StatusTag status={selected.status} repoCheck={selected.repoCheck} />
                 <button type="button" className="btn sm" onClick={handleCollapse}>
                   접어 보기
                 </button>
@@ -161,7 +161,7 @@ function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
                 <span className="list-row-tags">
                   {bundle.assignment && <span className="tag">{assignmentSourceText(bundle)}</span>}
                   <ManualTag bundle={bundle} />
-                  <StatusTag status={bundle.status} />
+                  <StatusTag status={bundle.status} repoCheck={bundle.repoCheck} />
                 </span>
               </button>
             ))}

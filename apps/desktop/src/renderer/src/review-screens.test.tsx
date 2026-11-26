@@ -437,6 +437,7 @@ const READY = bundle(4, {
     edited: false,
     canEdit: true,
     canRegenerate: true,
+    repoUndetermined: false,
     recipients: [{ name: '보낸 사람' }, { name: '다른 사람' }],
     postBodyPrefixLength: 59,
     canPost: true,
@@ -652,6 +653,39 @@ describe('저장소 확인 필요와 자동 선택', () => {
     expect(text).toContain('저장소를 골라 만들기');
   });
 
+  it('매핑도 고른 저장소도 없어 기다리는 묶음은 "저장소 매핑 필요" 태그와 사유를 보이고, 폴더가 없어 멈춘 묶음은 "저장소 확인 필요" 태그를 보인다', () => {
+    /** 저장소 매핑 필요 묶음. */
+    const unmapped = bundle(30, { repoCheck: { kind: 'unmapped' } });
+    /** 폴더가 없어 멈춘 묶음. */
+    const missing = bundle(31, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false } });
+
+    expect(popoverText(unmapped)).toContain('저장소 매핑 필요');
+    expect(popoverText(unmapped)).not.toContain('저장소 확인 필요');
+    expect(popoverText(unmapped)).toContain('이 Flow 프로젝트에 연결한 저장소가 없음');
+    expect(popoverText(unmapped)).toContain('저장소를 골라 만들기');
+    expect(popoverText(missing)).toContain('저장소 확인 필요');
+    expect(popoverText(missing)).toContain('연결된 저장소 폴더를 찾을 수 없음');
+  });
+
+  it('저장소가 정해지지 않은 초안은 알림 줄에 까닭을 알리고, 다시 만들기와 지시를 덧붙여 다시 만들기를 끄며 다른 저장소로 다시 만들기는 둔다. 게시와 무시는 된다', () => {
+    /** 저장소가 정해지지 않은 초안. */
+    const undetermined = bundle(32, { ...READY, id: 32, draft: { ...READY.draft!, repoUndetermined: true, canRegenerate: false } });
+    /** 마크업. */
+    const markup = popoverMarkup(undetermined);
+    /** 글자. */
+    const text = popoverText(undetermined);
+
+    expect(text).toContain('이 초안에 쓸 저장소가 정해지지 않아 다시 만들 수 없습니다. 프로젝트에 저장소를 매핑하거나 "다른 저장소로 다시 만들기"를 쓰세요.');
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>다시 만들기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>지시를 덧붙여 다시 만들기<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*disabled[^>]*>다른 저장소로 다시 만들기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>다른 저장소로 다시 만들기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>무시<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*disabled[^>]*>게시<\/button>/);
+    // 매핑이 있는 초안에는 이 안내가 없다.
+    expect(popoverText(bundle(33, { ...READY, id: 33 }))).not.toContain('저장소가 정해지지 않아');
+  });
+
   it('작업 폴더에서 저장소를 찾지 못한 묶음은 그 사유와 작업 폴더를 확인하라는 안내를 보인다', () => {
     /** 후보가 없던 묶음. */
     const none = bundle(15, { repoCheck: { kind: 'no-candidates' } });
@@ -755,10 +789,8 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     /** 열린 저장소 선택 창. */
     const picker = {
       bundleId: READY.id,
-      status: 'ready' as const,
       choices: [
         { name: 'billing-api', path: '/fake/work/billing-api', group: 'current' as const, checked: true },
-        { name: 'team/billing-web', path: '/fake/work/team/billing-web', group: 'work-folder' as const, checked: false },
         { name: 'tool', path: '/fake/other/tool', group: 'mapping' as const, checked: true },
         { name: 'extra', path: '/fake/elsewhere/extra', group: 'added' as const, checked: true },
       ],
@@ -771,7 +803,7 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
 
     expect(text).toContain('저장소 고르기');
     expect(text).toContain('지금 쓰는 저장소 billing-api /fake/work/billing-api');
-    expect(text).toContain('작업 폴더에서 찾은 저장소 team/billing-web /fake/work/team/billing-web');
+    expect(text).not.toContain('작업 폴더에서 찾은 저장소');
     expect(text).toContain('다른 매핑에 쓰인 저장소 tool /fake/other/tool');
     expect(text).toContain('직접 고른 폴더 extra /fake/elsewhere/extra');
     expect(markup.match(/type="checkbox" checked=""/g)).toHaveLength(3);
@@ -781,20 +813,18 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     expect(text).toContain('3개 고름');
   });
 
-  it('저장소 확인 필요 묶음의 선택 창은 "이 저장소로 만들기"이고, 고른 것이 없으면 만들기와 연결을 끈다. 훑는 동안에는 찾는 중이라고 보인다', () => {
-    /** 저장소 확인 필요 묶음. */
-    const check = bundle(21, { repoCheck: { kind: 'no-candidates' } });
+  it('저장소 매핑 필요 묶음의 선택 창은 "이 저장소로 만들기"이고, 고른 것이 없으면 만들기와 연결을 끈다', () => {
+    /** 저장소 매핑 필요 묶음. */
+    const check = bundle(21, { repoCheck: { kind: 'unmapped' } });
     /** 아무것도 고르지 않은 창. */
     const markup = popoverMarkup(check, {
       bundleId: 21,
-      status: 'ready',
-      choices: [{ name: 'billing-api', path: '/fake/work/billing-api', group: 'work-folder', checked: false }],
+      choices: [{ name: 'billing-api', path: '/fake/work/billing-api', group: 'mapping', checked: false }],
       mapping: 'unmapped',
     });
 
     expect(markup).toMatch(/<button[^>]*disabled[^>]*>이 저장소로 만들기<\/button>/);
     expect(markup).toMatch(/<button[^>]*disabled[^>]*>이 Flow 프로젝트에 연결<\/button>/);
-    expect(textIn(popoverMarkup(check, { bundleId: 21, status: 'loading' }))).toContain('작업 폴더에서 저장소를 찾는 중입니다.');
   });
 });
 

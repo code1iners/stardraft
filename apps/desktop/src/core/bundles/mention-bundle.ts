@@ -13,7 +13,7 @@ export type BundleStatus =
   | 'generating'
   /** 준비됨. 초안이 있고 사용자 행동을 기다린다. */
   | 'ready'
-  /** 저장소 확인 필요. 초안 없이 저장소를 골라 달라고 기다린다. */
+  /** 저장소 대기. 초안 없이 저장소 매핑 필요나 저장소 확인 필요로 기다린다. 사유는 묶음의 `repoCheck`에 있다. */
   | 'repo-check-needed'
   /** 게시 중. 게시 취소 카운트다운(5초)이나 게시 요청 중이다. 게시 기록이 없으면 카운트다운 중이다. */
   | 'posting'
@@ -90,6 +90,14 @@ export function canPickRepos(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
 }
 
+/**
+ * 저장소가 정해지지 않은 초안인지 본다. 초안은 있는데 사용자가 고른 저장소도 Flow 프로젝트의 저장소 매핑(`mapped`)도 없다.
+ * 자동 선택으로 만든 기존 초안이나, 매핑으로 만든 뒤 매핑을 지운 초안이다. 이 초안은 검토와 게시는 되지만 다시 만들 저장소가 없다.
+ */
+export function isRepoUndetermined(bundle: Pick<MentionBundle, 'draft' | 'userRepos'>, mapped: boolean): boolean {
+  return bundle.draft !== null && bundle.userRepos === null && !mapped;
+}
+
 /** 초안을 편집하고 받는 사람을 뺄 수 있는 상태인지 본다. 준비됨과 게시 실패다. */
 export function canEditDraft(status: BundleStatus): boolean {
   return status === 'ready' || status === 'post-failed';
@@ -119,10 +127,13 @@ export function countsForReview(status: BundleStatus): boolean {
 }
 
 /**
- * 저장소 확인 필요의 사유. 자동 선택이 생기기 전에 저장소 매핑이 없어 저장소 확인 필요가 된 묶음은 사유가 없다(`null`).
+ * 저장소 대기(`repo-check-needed`)의 사유. 저장소 매핑 필요(`unmapped`)와 저장소 확인 필요(`missing-folders`)가 지금의 두 상태다.
+ * 나머지(`no-candidates`, `unsure`, `unrelated`, 사유 없음 `null`)는 자동 선택 때 멈춘 옛 묶음에만 있고, 앱을 켤 때 한 번 다시 판정해 두 상태로 옮긴다.
  */
 export type RepoCheck =
-  /** 저장소 매핑에 연결된 폴더 가운데 없는 것이 있다. 화면 사유는 "연결된 저장소 폴더를 찾을 수 없음"이다. */
+  /** 저장소 매핑 필요. 매핑도 사용자가 고른 저장소도 없어 기다린다. 그 Flow 프로젝트에 매핑이 저장되면 저절로 생성 중이 된다. */
+  | { kind: 'unmapped' }
+  /** 저장소 확인 필요. 정해 둔 저장소(매핑이나 사용자가 고른 구성)에 연결된 폴더 가운데 없는 것이 있다. 화면 사유는 "연결된 저장소 폴더를 찾을 수 없음"이다. */
   | {
       kind: 'missing-folders';
       /** 찾을 수 없는 폴더의 절대 경로. */

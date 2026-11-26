@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { bundleChanges, type BundleChanges } from '../core/bundles/bundle-changes';
-import { activeMentions, canEditDraft, canRegenerate, isRestorable, isUnassignedBlocked, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
+import { activeMentions, canEditDraft, canRegenerate, isRepoUndetermined, isRestorable, isUnassignedBlocked, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
 import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
@@ -165,7 +165,6 @@ function firstLineOf(text: string): string {
 
 /** 저장소 선택 창의 상태를 렌더러에 넘길 모양으로 바꾼다. */
 function repoPickerSnapshot(picker: RepoPickerState): RepoPickerSnapshot {
-  if (picker.status === 'loading') return { ...picker };
   return { ...picker, choices: picker.choices.map((choice) => ({ ...choice })) };
 }
 
@@ -248,6 +247,8 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
   const recipients = bundleRecipients(bundle);
   /** 문체 검사에서 뺄 단어. */
   const source = bundleSourceWords(bundle);
+  /** 저장소가 정해지지 않은 초안인지 여부. 고른 저장소도 저장소 매핑도 없다. 다시 만들 수 있는 준비됨 묶음에서만 알린다. */
+  const repoUndetermined = bundle.status === 'ready' && isRepoUndetermined(bundle, mapping !== 'unmapped');
   return {
     requirement: { ...draft.requirement },
     paragraphs: draft.paragraphs.map((paragraph) => ({
@@ -269,7 +270,8 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
     editorText: bundle.editedText ?? draftEditorText(draft),
     edited: bundle.editedText !== null,
     canEdit: canEditDraft(bundle.status),
-    canRegenerate: canRegenerate(bundle.status) && !isUnassignedBlocked(bundle),
+    canRegenerate: canRegenerate(bundle.status) && !isUnassignedBlocked(bundle) && !repoUndetermined,
+    repoUndetermined,
     recipients: recipients.map(({ name }) => ({ name })),
     // 빈 편집기 텍스트의 게시 본문이 곧 받는 사람 표기와 이어 붙이는 공백이다.
     postBodyPrefixLength: postBody(recipients, '').length,
@@ -284,6 +286,8 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
  */
 function repoCheckSnapshot(repoCheck: RepoCheck, chosenByUser: boolean): RepoCheckSnapshot {
   switch (repoCheck.kind) {
+    case 'unmapped':
+      return { kind: repoCheck.kind };
     case 'missing-folders':
       return { kind: repoCheck.kind, paths: [...repoCheck.paths], chosenByUser };
     case 'no-candidates':

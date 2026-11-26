@@ -9,6 +9,7 @@ import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { FlowAccount } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { BundleRetention } from '../core/bundles/retention';
+import { RepoWaitMonitor } from '../core/bundles/repo-wait-monitor';
 import { EditorOpener } from '../core/editors/editor-opener';
 import { collectBundleContext } from '../core/flow/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
@@ -22,7 +23,6 @@ import { ParallelWork } from '../core/generation/parallel-work';
 import { Onboarding } from '../core/onboarding/onboarding';
 import { Posting } from '../core/posting/posting';
 import type { FlowConnection } from '../core/ports/flow-api';
-import { findSelectionScope } from '../core/repos/repo-candidates';
 import { RepoMappings } from '../core/repos/repo-mappings';
 import { RepoPicker } from '../core/repos/repo-picker';
 import { WorkFolders } from '../core/repos/work-folders';
@@ -65,6 +65,8 @@ let drafts: DraftQueue | null = null;
 let posting: Posting | null = null;
 /** 처리됨 목록 정리. 끝낼 때 다음 정리를 멈춘다. */
 let retention: BundleRetention | null = null;
+/** 저장소 대기 묶음의 자동 재개. 끝낼 때 다음 확인을 멈춘다. */
+let repoWait: RepoWaitMonitor | null = null;
 /** 앱 내 업데이트. 끝낼 때 다음 확인을 멈춘다. 소스 실행에서는 없다. */
 let appUpdate: InAppUpdate | null = null;
 /** 앱 내 업데이트의 다시 시작. 작은 창이 닫히면 다시 시작 확인 화면을 거둔다. 소스 실행에서는 없다. */
@@ -225,6 +227,14 @@ function start(): void {
     bundles = mentionBundles;
     // 앱이 꺼지며 끊긴 묶음을 정리한다. 카운트다운 중이던 게시는 준비됨으로 돌린다.
     await mentionBundles.recoverAfterRestart().catch((error: unknown) => logger.error('bundle.restart-recovery-failed', errorFields(error)));
+    // 자동 선택 때문에 멈췄던 묶음을 저장소 매핑 기준으로 한 번 다시 판정한다. 대기열을 시작하기 전에 해야 옛 묶음이 선택 실행을 타지 않는다.
+    await mentionBundles.reconcileRepoStates().catch((error: unknown) => logger.error('bundle.repo-state-reconcile-failed', errorFields(error)));
+    // 저장소 매핑 필요·저장소 확인 필요 묶음이 읽을 저장소를 얻었는지 앱을 켤 때, 매핑이 바뀔 때, 절전에서 깰 때, 폴더 없음이 있는 동안 60초마다 확인해 재개한다.
+    /** 저장소 대기 묶음을 재개하는 감시. 앱을 켤 때 시작하고, 매핑이 바뀔 때와 절전에서 깰 때 지금 확인한다. */
+    const repoWaitMonitor = new RepoWaitMonitor({ bundles: mentionBundles, clock: systemClock, logger });
+    repoWait = repoWaitMonitor;
+    repoWaitMonitor.start();
+    repoMappings.onChange(() => repoWaitMonitor.checkNow());
     // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
     retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
     retention.start();
@@ -256,11 +266,10 @@ function start(): void {
     /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. 패턴을 추가하면 실행 중인 실행을 다시 돌리고 게시하지 않은 초안을 다시 검사한다. */
     const draftSettings = new DraftSettings({ settingsStore: appData.settingsStore, logger, drafts: draftQueue, bundles: mentionBundles });
     await draftSettings.load();
-    /** 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. 창을 열 때마다 설정의 작업 폴더를 새로 훑는다. */
+    /** 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. */
     const repoPicker = new RepoPicker({
       bundle: (bundleId) => mentionBundles.get(bundleId),
       mappings: repoMappings,
-      findWorkFolderRepos: async () => (await findSelectionScope((await appData!.settingsStore.load()).workFolders)).candidates,
       regenerate: (bundleId, repos) => draftQueue.regenerateWithRepos(bundleId, repos),
     });
     mentionBundles.onChange(() => repoPicker.bundlesChanged());
@@ -453,6 +462,7 @@ function start(): void {
     powerMonitor.on('resume', () => {
       void mentionDetection.checkNow();
       retention?.cleanUpNow();
+      repoWait?.checkNow();
       void inAppUpdate?.checkIfDue();
     });
 
@@ -523,6 +533,7 @@ async function prepareQuit(): Promise<void> {
   // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
   detection?.stop();
   retention?.stop();
+  repoWait?.stop();
   appUpdate?.stop();
   migrationBackups?.stop();
   try {

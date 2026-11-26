@@ -10,7 +10,7 @@ const ACCOUNT = { name: '가상 사용자', division: '', email: 'user@example.t
 /** 세 확인 창의 렌더링 결과. */
 const MODALS = {
   '계정 바꾸기': renderToStaticMarkup(<AccountSwitchModal account={ACCOUNT} />),
-  '저장소 선택': renderToStaticMarkup(<RepoPickerModal picker={{ bundleId: 1, status: 'loading' }} bundles={[]} />),
+  '저장소 선택': renderToStaticMarkup(<RepoPickerModal picker={{ bundleId: 1, choices: [], mapping: 'unmapped' }} bundles={[]} />),
   '에디터 선택': renderToStaticMarkup(<EditorPickerModal picker={{ editors: [{ appId: 'a', name: '가상 에디터' }] }} />),
 };
 

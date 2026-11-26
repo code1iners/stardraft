@@ -7,7 +7,6 @@ import type { Draft } from '../drafts/draft';
 import { FakeClock } from '../fakes/fake-clock';
 import { MemorySettingsStore } from '../fakes/memory-settings-store';
 import { createLogger } from '../logging/logger';
-import type { RepoCandidate } from './repo-candidates';
 import { RepoMappings } from './repo-mappings';
 import { RepoPicker } from './repo-picker';
 
@@ -80,8 +79,8 @@ function bundle(overrides: Partial<MentionBundle> = {}): MentionBundle {
   };
 }
 
-/** 가짜 설정 저장소 위의 저장소 매핑과 저장소 선택 창을 만든다. 작업 폴더의 후보와 묶음은 테스트가 준다. */
-async function setup(options: { bundle: MentionBundle; workFolderRepos?: RepoCandidate[]; repoMappings?: Record<string, string[]> }) {
+/** 가짜 설정 저장소 위의 저장소 매핑과 저장소 선택 창을 만든다. 묶음과 매핑은 테스트가 준다. */
+async function setup(options: { bundle: MentionBundle; repoMappings?: Record<string, string[]> }) {
   const settingsStore = new MemorySettingsStore({ repoMappings: options.repoMappings ?? {} });
   const mappings = new RepoMappings({ settingsStore, logger: createLogger([], new FakeClock()), connectFlow: () => null });
   await mappings.load();
@@ -93,7 +92,6 @@ async function setup(options: { bundle: MentionBundle; workFolderRepos?: RepoCan
   const picker = new RepoPicker({
     bundle: (bundleId) => (current.bundle.id === bundleId ? current.bundle : null),
     mappings,
-    findWorkFolderRepos: async () => options.workFolderRepos ?? [],
     regenerate: async (bundleId, repos) => {
       regenerated.push({ bundleId, repos: [...repos] });
     },
@@ -102,62 +100,37 @@ async function setup(options: { bundle: MentionBundle; workFolderRepos?: RepoCan
 }
 
 describe('저장소 선택 창의 후보', () => {
-  it('준비됨 묶음은 지금 쓰는 저장소를 체크해 맨 앞에 두고, 작업 폴더에서 찾은 저장소와 매핑에 쓰인 저장소를 체크하지 않은 후보로 보인다', async () => {
+  it('준비됨 묶음은 지금 쓰는 저장소를 체크해 맨 앞에 두고, 다른 Flow 프로젝트의 매핑에 쓰인 저장소를 체크하지 않은 후보로 보인다. 작업 폴더 무리는 없다', async () => {
     const [api, web, batch, other] = [await repo('work/api'), await repo('work/web'), await repo('work/batch'), await repo('other/tool')];
     const { picker } = await setup({
       bundle: bundle({ status: 'ready', draft: draft([web, api]) }),
-      workFolderRepos: [
-        { name: 'api', path: api },
-        { name: 'batch', path: batch },
-        { name: 'web', path: web },
-      ],
       repoMappings: { [OTHER_PROJECT_ID]: [other, batch] },
     });
 
-    await picker.open(7);
+    picker.open(7);
 
     expect(picker.state()).toEqual({
       bundleId: 7,
-      status: 'ready',
       choices: [
         { name: 'web', path: web, group: 'current', checked: true },
         { name: 'api', path: api, group: 'current', checked: true },
-        { name: 'batch', path: batch, group: 'work-folder', checked: false },
         { name: 'tool', path: other, group: 'mapping', checked: false },
+        { name: 'batch', path: batch, group: 'mapping', checked: false },
       ],
       mapping: 'unmapped',
     });
   });
 
-  it('저장소 확인 필요 묶음은 에이전트가 짚은 후보를 지금 쓰는 저장소로 체크한다. 짚은 것이 없으면 아무것도 체크하지 않는다', async () => {
-    const [api, web] = [await repo('work/api'), await repo('work/web')];
-    /** 작업 폴더의 후보. */
-    const candidates = [
-      { name: 'api', path: api },
-      { name: 'web', path: web },
-    ];
-    const { picker, current } = await setup({
-      bundle: bundle({ repoCheck: { kind: 'unsure', reason: '알 수 없습니다.', candidates, picked: [web] } }),
-      workFolderRepos: candidates,
-    });
+  it('저장소 매핑 필요 묶음은 체크한 후보 없이 열린다. 다른 프로젝트의 매핑이 없으면 후보도 없다', async () => {
+    const other = await repo('other/tool');
+    const withMapping = await setup({ bundle: bundle({ repoCheck: { kind: 'unmapped' } }), repoMappings: { [OTHER_PROJECT_ID]: [other] } });
+    const empty = await setup({ bundle: bundle({ repoCheck: { kind: 'unmapped' } }) });
 
-    await picker.open(7);
-    expect(picker.state()).toMatchObject({
-      choices: [
-        { name: 'web', path: web, group: 'current', checked: true },
-        { name: 'api', path: api, group: 'work-folder', checked: false },
-      ],
-    });
+    withMapping.picker.open(7);
+    empty.picker.open(7);
 
-    current.bundle = bundle({ repoCheck: { kind: 'no-candidates' } });
-    await picker.open(7);
-    expect(picker.state()).toMatchObject({
-      choices: [
-        { path: api, group: 'work-folder', checked: false },
-        { path: web, group: 'work-folder', checked: false },
-      ],
-      mapping: 'unmapped',
-    });
+    expect(withMapping.picker.state()).toMatchObject({ choices: [{ name: 'tool', path: other, group: 'mapping', checked: false }], mapping: 'unmapped' });
+    expect(empty.picker.state()).toMatchObject({ choices: [], mapping: 'unmapped' });
   });
 
   it('연결된 폴더가 사라진 묶음은 남은 매핑 저장소를 체크하고, 사라진 폴더는 후보에 넣지 않는다', async () => {
@@ -169,7 +142,7 @@ describe('저장소 선택 창의 후보', () => {
       repoMappings: { [PROJECT_ID]: [gone, api] },
     });
 
-    await picker.open(7);
+    picker.open(7);
 
     expect(picker.state()).toMatchObject({ choices: [{ name: 'api', path: api, group: 'current', checked: true }], mapping: 'different' });
   });
@@ -181,7 +154,7 @@ describe('저장소 선택 창의 후보', () => {
       repoMappings: { [PROJECT_ID]: [own], [OTHER_PROJECT_ID]: [other] },
     });
 
-    await picker.open(7);
+    picker.open(7);
 
     expect(picker.state()).toMatchObject({
       choices: [
@@ -194,49 +167,47 @@ describe('저장소 선택 창의 후보', () => {
   it('생성 중이거나 처리됨 묶음은 열지 않는다', async () => {
     const { picker, current } = await setup({ bundle: bundle({ status: 'generating' }) });
 
-    await picker.open(7);
+    picker.open(7);
     expect(picker.state()).toBeNull();
 
     current.bundle = bundle({ status: 'ignored' });
-    await picker.open(7);
+    picker.open(7);
     expect(picker.state()).toBeNull();
   });
 });
 
 describe('저장소 선택 창에서 고르기', () => {
   it('여러 개를 고르고 뺄 수 있고, 후보에 없는 경로는 받지 않는다', async () => {
-    const [api, web] = [await repo('work/api'), await repo('work/web')];
+    const [api, web, other] = [await repo('work/api'), await repo('work/web'), await repo('other/web')];
     const { picker } = await setup({
       bundle: bundle({ status: 'ready', draft: draft([api]) }),
-      workFolderRepos: [
-        { name: 'api', path: api },
-        { name: 'web', path: web },
-      ],
+      repoMappings: { [OTHER_PROJECT_ID]: [other] },
     });
-    await picker.open(7);
+    picker.open(7);
 
-    picker.setChecked(web, true);
+    picker.setChecked(other, true);
     picker.setChecked(api, false);
+    picker.setChecked(web, true);
     picker.setChecked(join(root, 'not-a-choice'), true);
 
     expect(picker.state()).toMatchObject({
       choices: [
         { path: api, checked: false },
-        { path: web, checked: true },
+        { path: other, checked: true },
       ],
     });
   });
 
   it('"폴더 직접 고르기"로 고른 폴더는 체크한 채 후보 끝에 더한다. 이미 후보면 체크만 한다', async () => {
     const [api, extra] = [await repo('work/api'), await repo('elsewhere/extra')];
-    const { picker } = await setup({ bundle: bundle({ repoCheck: { kind: 'no-candidates' } }), workFolderRepos: [{ name: 'api', path: api }] });
-    await picker.open(7);
+    const { picker } = await setup({ bundle: bundle({ repoCheck: { kind: 'unmapped' } }), repoMappings: { [OTHER_PROJECT_ID]: [api] } });
+    picker.open(7);
 
     picker.addFolders([extra, api]);
 
     expect(picker.state()).toMatchObject({
       choices: [
-        { name: 'api', path: api, group: 'work-folder', checked: true },
+        { name: 'api', path: api, group: 'mapping', checked: true },
         { name: 'extra', path: extra, group: 'added', checked: true },
       ],
     });
@@ -246,12 +217,9 @@ describe('저장소 선택 창에서 고르기', () => {
     const [api, web, batch] = [await repo('work/api'), await repo('work/web'), await repo('work/batch')];
     const { picker, regenerated } = await setup({
       bundle: bundle({ status: 'ready', draft: draft([web]) }),
-      workFolderRepos: [
-        { name: 'api', path: api },
-        { name: 'batch', path: batch },
-      ],
+      repoMappings: { [OTHER_PROJECT_ID]: [api, batch] },
     });
-    await picker.open(7);
+    picker.open(7);
     picker.setChecked(web, false);
 
     await picker.generate();
@@ -271,23 +239,22 @@ describe('저장소 선택 창의 연결 버튼', () => {
     const [api, web, old] = [await repo('work/api'), await repo('work/web'), await repo('work/old')];
     const { picker, settingsStore } = await setup({
       bundle: bundle({ status: 'ready', draft: draft([api]) }),
-      workFolderRepos: [{ name: 'web', path: web }],
-      repoMappings: { [PROJECT_ID]: [old] },
+      repoMappings: { [PROJECT_ID]: [old], [OTHER_PROJECT_ID]: [web] },
     });
-    await picker.open(7);
+    picker.open(7);
     picker.setChecked(web, true);
     expect(picker.state()).toMatchObject({ mapping: 'different' });
 
     await picker.link();
 
-    expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [api, web] });
-    expect(picker.state()).toMatchObject({ status: 'ready', mapping: 'same' });
+    expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [api, web], [OTHER_PROJECT_ID]: [web] });
+    expect(picker.state()).toMatchObject({ mapping: 'same' });
   });
 
   it('고른 것이 없으면 연결하지 않는다', async () => {
     const api = await repo('work/api');
-    const { picker, settingsStore } = await setup({ bundle: bundle({ repoCheck: { kind: 'no-candidates' } }), repoMappings: { [PROJECT_ID]: [api] } });
-    await picker.open(7);
+    const { picker, settingsStore } = await setup({ bundle: bundle({ repoCheck: { kind: 'unmapped' } }), repoMappings: { [PROJECT_ID]: [api] } });
+    picker.open(7);
 
     await picker.link();
 
@@ -306,7 +273,7 @@ describe('저장소 영역의 연결 버튼', () => {
     await picker.linkBundle(7);
     expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [web, api], [OTHER_PROJECT_ID]: [old] });
 
-    current.bundle = bundle({ repoCheck: { kind: 'no-candidates' } });
+    current.bundle = bundle({ repoCheck: { kind: 'unmapped' } });
     await picker.linkBundle(7);
     expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [web, api], [OTHER_PROJECT_ID]: [old] });
   });
@@ -316,11 +283,11 @@ describe('저장소 선택 창 닫기', () => {
   it('닫으면 상태가 없어지고, 묶음이 더는 고를 수 없는 상태가 되면 저절로 닫힌다', async () => {
     const api = await repo('work/api');
     const { picker, current } = await setup({ bundle: bundle({ status: 'ready', draft: draft([api]) }) });
-    await picker.open(7);
+    picker.open(7);
     picker.close();
     expect(picker.state()).toBeNull();
 
-    await picker.open(7);
+    picker.open(7);
     current.bundle = bundle({ status: 'ignored', draft: draft([api]) });
     picker.bundlesChanged();
     expect(picker.state()).toBeNull();

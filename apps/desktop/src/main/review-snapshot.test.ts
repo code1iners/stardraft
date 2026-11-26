@@ -81,6 +81,8 @@ function run(overrides: Partial<RunRecord> = {}): RunRecord {
 }
 
 /** 가짜 Flow 프로젝트 정보. */
+/** 저장소 매핑이 있는 프로젝트의 매핑 조회. 초안의 구성이 매핑과 같다고 답한다. */
+const MAPPED = () => 'same' as const;
 const PROJECT = { title: '가짜 프로젝트', projectUrl: 'https://fake.flow.test/project/900001' };
 
 describe('묶음 스냅숏', () => {
@@ -357,6 +359,8 @@ describe('묶음 스냅숏: 초안 실행', () => {
         runs: [run({ result: 'invalid-output', startedAt: 1_000, finishedAt: 9_000 }), run({ omittedContextItems: 3 })],
       }),
       () => PROJECT,
+      undefined,
+      MAPPED,
     );
 
     expect(snapshot).toMatchObject({ status: 'ready', group: 'awaiting-review', generation: null, failure: null, repoCheck: null });
@@ -388,11 +392,12 @@ describe('묶음 스냅숏: 초안 실행', () => {
         { name: 'billing-web', path: '/fake/work/billing-web' },
       ],
       autoSelection: null,
-      mapping: 'unmapped',
+      mapping: 'same',
       editorText: '다섯 번까지 다시 시도합니다. 테스트 환경은 세 번으로 보입니다.',
       edited: false,
       canEdit: true,
       canRegenerate: true,
+      repoUndetermined: false,
       recipients: [{ name: '보낸 사람' }],
       // `@[보낸 사람](sender@example.test)` 29자와 공백 하나.
       postBodyPrefixLength: 30,
@@ -435,6 +440,42 @@ describe('묶음 스냅숏: 초안 실행', () => {
     expect(
       bundleSnapshot(bundle({ userRepos: ['/fake/work/gone'], repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).repoCheck,
     ).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true });
+  });
+});
+
+describe('묶음 스냅숏: 저장소 대기', () => {
+  /** 저장소 하나로 만든 초안. */
+  const draft = {
+    requirement: { text: '재시도 횟수를 알고 싶다.', summary: '재시도 횟수' },
+    paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [] }] }],
+    evidence: [],
+    repositories: ['/fake/work/web'],
+    autoSelection: null,
+    createdAt: 144_000,
+  };
+
+  it('매핑도 고른 저장소도 없어 기다리는 묶음은 저장소 매핑 필요 사유를 넘기고, 폴더가 없으면 저장소 확인 필요 사유를 넘긴다', () => {
+    expect(bundleSnapshot(bundle({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } }), () => null).repoCheck).toEqual({ kind: 'unmapped' });
+    expect(bundleSnapshot(bundle({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }), () => null).repoCheck).toMatchObject({
+      kind: 'missing-folders',
+    });
+  });
+
+  it('고른 저장소도 저장소 매핑도 없는 초안은 저장소가 정해지지 않은 초안이라 다시 만들 수 없다고 넘긴다. 매핑이 있거나 고른 저장소가 있으면 아니다', () => {
+    /** 저장소가 정해지지 않은 초안의 스냅숏. */
+    const undetermined = bundleSnapshot(bundle({ status: 'ready', draft }), () => null, undefined, () => 'unmapped').draft;
+    /** 매핑이 있는 초안의 스냅숏. */
+    const mapped = bundleSnapshot(bundle({ status: 'ready', draft }), () => null, undefined, MAPPED).draft;
+    /** 고른 저장소로 만든 초안의 스냅숏. 매핑이 없어도 저장소가 정해져 있다. */
+    const chosen = bundleSnapshot(bundle({ status: 'ready', draft, userRepos: ['/fake/work/web'] }), () => null, undefined, () => 'unmapped').draft;
+
+    /** 무시한 묶음의 스냅숏. 처리됨 묶음은 다시 만들 수 없다는 안내를 따로 하지 않는다. */
+    const ignored = bundleSnapshot(bundle({ status: 'ignored', processedAt: 20_000, draft }), () => null, undefined, () => 'unmapped').draft;
+
+    expect(ignored?.repoUndetermined).toBe(false);
+    expect(undetermined).toMatchObject({ repoUndetermined: true, canRegenerate: false, canPost: true, canEdit: true });
+    expect(mapped).toMatchObject({ repoUndetermined: false, canRegenerate: true });
+    expect(chosen).toMatchObject({ repoUndetermined: false, canRegenerate: true });
   });
 });
 
@@ -539,7 +580,6 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     /** 열린 창. */
     const picker = {
       bundleId: 7,
-      status: 'ready' as const,
       choices: [{ name: 'web', path: '/fake/work/web', group: 'current' as const, checked: true }],
       mapping: 'same' as const,
     };
@@ -693,7 +733,7 @@ describe('게시', () => {
     );
 
     expect(ignored.postFailure).toBeNull();
-    expect(bundleSnapshot(bundle({ status: 'ready', draft, mentions }), () => null).draft?.canRegenerate).toBe(true);
+    expect(bundleSnapshot(bundle({ status: 'ready', draft, mentions }), () => null, undefined, MAPPED).draft?.canRegenerate).toBe(true);
   });
 
   it('카운트다운 중에 앱이 꺼져 준비됨으로 돌아온 묶음은 그렇다고 넘기고 게시할 수 있다. 준비됨이 아니게 되면 넘기지 않는다', () => {
@@ -923,6 +963,8 @@ describe('묶음 스냅숏: 담당 해제', () => {
     const snapshot = bundleSnapshot(
       bundle({ status: 'ready', remarkId: '-1', mentions: [mention('101', { remarkId: '-1' })], draft, assignment: { ...assignment, unassignedAt: 5_000 } }),
       () => PROJECT,
+      undefined,
+      MAPPED,
     );
     expect(snapshot.assignment?.blockedByUnassignment).toBe(false);
     expect(snapshot.draft).toMatchObject({ canPost: true, canRegenerate: true });

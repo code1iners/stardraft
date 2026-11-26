@@ -177,7 +177,7 @@ function QueueHead({ queue, selected, manualCheck, onSelect, onExpand }: QueueHe
       <span className="queue-pos">{index >= 0 ? `${index + 1} / ${queue.length}` : '처리한 묶음'}</span>
       <span className="spacer" />
       <ManualTag bundle={selected} />
-      <StatusTag status={selected.status} />
+      <StatusTag status={selected.status} repoCheck={selected.repoCheck} />
       <PopoverMenu manualCheck={manualCheck} canExpand onExpand={onExpand} />
     </header>
   );

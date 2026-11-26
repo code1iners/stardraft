@@ -610,8 +610,13 @@ export interface DraftSnapshot {
   edited: boolean;
   /** 편집기를 고치고 받는 사람을 뺄 수 있는지 여부. 준비됨과 게시 실패 묶음만 참이다. */
   canEdit: boolean;
-  /** 요구를 고쳐 다시 만들 수 있는지 여부(망치 아이콘). 준비됨 묶음만 참이다. */
+  /** 요구를 고쳐 다시 만들 수 있는지 여부(망치 아이콘). 준비됨 묶음만 참이다. 저장소가 정해지지 않은 초안은 거짓이다. */
   canRegenerate: boolean;
+  /**
+   * 저장소가 정해지지 않은 초안인지 여부. 사용자가 고른 저장소도 Flow 프로젝트의 저장소 매핑도 없다.
+   * 참이면 "다시 만들기"와 "지시를 덧붙여 다시 만들기"가 꺼지고 "다른 저장소로 다시 만들기"만 된다. 게시와 무시는 된다.
+   */
+  repoUndetermined: boolean;
   /** 받는 사람. 처음 멘션한 순서다. 사용자 ID는 main이 가지고 있다. */
   recipients: RecipientSnapshot[];
   /**
@@ -638,8 +643,8 @@ export const POST_BODY_CHAR_LIMIT = 4_000;
  */
 export type MappingMatchSnapshot = 'unmapped' | 'same' | 'different';
 
-/** 저장소 선택 창의 후보 무리. 지금 쓰는 저장소, 작업 폴더에서 찾은 저장소, 매핑에 쓰인 저장소, "폴더 직접 고르기"로 더한 폴더 순서다. */
-export type RepoChoiceGroupSnapshot = 'current' | 'work-folder' | 'mapping' | 'added';
+/** 저장소 선택 창의 후보 무리. 지금 쓰는 저장소, 다른 매핑에 쓰인 저장소, "폴더 직접 고르기"로 더한 폴더 순서다. */
+export type RepoChoiceGroupSnapshot = 'current' | 'mapping' | 'added';
 
 /** 저장소 선택 창의 후보 하나. */
 export interface RepoChoiceSnapshot {
@@ -654,11 +659,14 @@ export interface RepoChoiceSnapshot {
 }
 
 /** 열린 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. */
-export type RepoPickerSnapshot =
-  /** 작업 폴더를 훑고 있다. */
-  | { bundleId: number; status: 'loading' }
-  /** 후보를 보이고 있다. `mapping`은 체크한 구성을 그 묶음 Flow 프로젝트의 저장소 매핑과 견준 것이다. */
-  | { bundleId: number; status: 'ready'; choices: RepoChoiceSnapshot[]; mapping: MappingMatchSnapshot };
+export interface RepoPickerSnapshot {
+  /** 창을 연 묶음 ID. */
+  bundleId: number;
+  /** 후보. */
+  choices: RepoChoiceSnapshot[];
+  /** 체크한 구성을 그 묶음 Flow 프로젝트의 저장소 매핑과 견준 것. */
+  mapping: MappingMatchSnapshot;
+}
 
 /** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"처럼 보인다. 비용은 넘기지 않는다. */
 export interface RunLineSnapshot {
@@ -710,8 +718,10 @@ export interface FailureSnapshot {
   runKind: GenerationRunKindSnapshot | null;
 }
 
-/** 저장소 확인 필요의 사유. */
+/** 저장소 대기의 사유. 저장소 매핑 필요(`unmapped`)와 저장소 확인 필요(`missing-folders`)가 지금의 두 상태이고, 나머지는 자동 선택 때 멈춘 옛 묶음의 사유다. */
 export type RepoCheckSnapshot =
+  /** 저장소 매핑 필요. 매핑도 사용자가 고른 저장소도 없어 기다린다. */
+  | { kind: 'unmapped' }
   /**
    * 연결된 저장소 폴더를 찾을 수 없음. `paths`는 찾을 수 없는 폴더의 절대 경로다.
    * `chosenByUser`면 저장소 매핑이 아니라 저장소 선택 창에서 고른 구성의 폴더라 "고른 저장소 폴더를 찾을 수 없음"으로 보인다.

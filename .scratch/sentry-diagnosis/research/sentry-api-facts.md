@@ -4,7 +4,7 @@
 - 티켓: [01 Sentry 오류 이슈 감지와 인증 조사](../issues/01-sentry-detection-auth-research.md)
 - 출처 범위: docs.sentry.io(API 문서 `https://docs.sentry.io/api/` 하위와, 같은 사이트의 검색 문법·토큰·웹훅 문서), getsentry/sentry 저장소 코드. 블로그·서드파티 글은 쓰지 않았다.
 - 코드 인용은 조사 시점의 `master` 커밋 `303713e42286b191f567931ef9999c4c3a9373ef`에 고정했다. 아래에서 `src/...`는 `https://github.com/getsentry/sentry/blob/303713e42286b191f567931ef9999c4c3a9373ef/src/...`를 줄인 것이다.
-- **검증 수준: 아래 "실측 (2026-11-26)" 절에 적은 것을 뺀 모든 항목이 "문서 근거"다.** 실측 절은 실제 sentry.io 계정으로 읽기 호출을 한 결과이고, 본문과 다르면 실측 절이 우선한다. 코드에서 읽은 것은 "코드 근거"로 따로 표시했다. sentry.io에 배포된 버전이 이 커밋과 같다는 보장은 없다.
+- **검증 수준: 아래 "실측 (2026-11-26)" 절에 적은 것을 뺀 모든 항목이 "문서 근거"다.** 실측 절은 실제 sentry.io 계정으로 읽기 호출과 시험 이벤트 실측을 한 결과이고, 본문과 다르면 실측 절이 우선한다. 코드에서 읽은 것은 "코드 근거"로 따로 표시했다. sentry.io에 배포된 버전이 이 커밋과 같다는 보장은 없다.
 - 용어: GLOSSARY.md를 따른다. **오류 이슈**는 Sentry의 issue(내부 이름 Group), **이벤트**는 그 오류 이슈에 묶인 개별 발생 하나다.
 
 ## 요약 (이후 결정 티켓용)
@@ -25,7 +25,7 @@
    - 재발: `query=is:regressed` + `sort=date`
 2. **`is:new`·`is:regressed`는 문서 표에는 없지만 코드에서 유효한 검색 값이다.** 오류 이슈의 `substatus`(new·regressed·ongoing·escalating 등)로 바뀐다(코드 근거). 응답에도 `substatus` 필드가 있다.
 3. **둘 다 7일 뒤 자동으로 `ongoing`으로 바뀐다**(코드 근거). 그래서 앱이 7일 넘게 꺼져 있었다면 `is:new`·`is:regressed`로는 놓친 것을 찾을 수 없다. 신규는 `firstSeen` 체크포인트로 따라잡을 수 있지만, **재발은 목록 API에 "재발 시각" 필드가 없어** 7일이 지난 재발은 목록만으로 되찾을 수 없다.
-4. **재발 중복 억제 키:** 오류 이슈 id만으로는 부족하다(같은 오류 이슈가 해결→재발을 여러 번 겪는다). 오류 이슈 상세의 `activity`에 `set_regression` 활동이 남고, 그 `data`에 재발을 일으킨 `event_id`와 `version`이 들어간다(코드 근거, 문서 예시에는 이 활동이 안 나온다). **`(오류 이슈 id, set_regression 활동 id 또는 dateCreated)`**를 키로 쓰는 안이 가장 근거가 있다.
+4. **재발 중복 억제 키:** 오류 이슈 id만으로는 부족하다(같은 오류 이슈가 해결→재발을 여러 번 겪는다). 오류 이슈 상세의 `activity`에 `set_regression` 활동이 남고, 그 `data`에 재발을 일으킨 `event_id`와 `version`이 들어간다(코드 근거, 문서 예시에는 이 활동이 안 나온다). **`(오류 이슈 id, set_regression 활동 id 또는 dateCreated)`**를 키로 쓰는 안이 가장 근거가 있다. (실측 2026-11-26: `set_regression`의 `data.event_id`가 재발을 일으킨 이벤트 ID와 같았다. 스펙 5절은 `(오류 이슈 ID, 그 이벤트 ID)`를 키로 정했다. 아래 "실측" 절.)
 5. **재발은 "해결됨" 상태에서만 생긴다.** 보관(archived)된 오류 이슈가 다시 늘면 재발이 아니라 `escalating`이다. 또 "다음 릴리스에서 해결"로 처리됐는데 이벤트가 그 릴리스보다 오래된 릴리스에서 오면 재발로 치지 않는다(코드 근거).
 6. **호출 수:** 프로젝트 수와 무관하게 폴링 한 바퀴는 목록 호출 2회(+쪽 넘김)이고, 새로 잡힌 오류 이슈마다 최신 이벤트 1회, 재발마다 상세 1회가 더해진다. 오류 이슈 목록 GET의 한도는 사용자당 초당 10회, 조직당 초당 20회다(코드 근거). 문서는 "폴링은 금방 rate limit에 걸린다"고 경고한다.
 7. **진단 데이터:** `GET /api/0/organizations/{org}/issues/{issue_id}/events/latest/` 하나로 스택트레이스·breadcrumbs·request·user·contexts·release·tags·platform을 받는다. **`environment`와 `level`은 이벤트 응답의 최상위 필드가 아니라 `tags` 배열 안에 있다.**
@@ -260,7 +260,12 @@ API 경로(`/api/0/...`)는 같은 getsentry/sentry 코드에서 나오므로 �
 
 ## 실측 (2026-11-26)
 
-[Sentry API 실측](../issues/25-sentry-api-live-check.md) 티켓에서 실제 sentry.io 계정(미국 지역 조직 둘, 개인 토큰 scope `org:read`·`event:read`)으로 **읽기 호출만** 해 본 결과다. 응답에서 조직·프로젝트 이름, 오류 원문, 이슈 ID는 뺐다. 실측 프로젝트는 JavaScript(Next.js) 프로젝트이고 오류 이슈 20개(미해결 18, 해결 2)가 있었다. 시험 이벤트는 보내지 못했다(아래 "막힌 것").
+[Sentry API 실측](../issues/25-sentry-api-live-check.md) 티켓에서 실제 sentry.io 계정(미국 지역 조직 둘)으로 호출해 본 결과다. 응답에서 조직·프로젝트 이름, 오류 원문, 이슈 ID, 이벤트 ID는 뺐다. 실측 프로젝트는 JavaScript(Next.js) 프로젝트이고 오류 이슈 20개(미해결 18, 해결 2)가 있었다.
+
+두 번에 나눠 했다.
+
+1. 개인 토큰 scope `org:read`·`event:read`로 **읽기 호출만** 했다(아래 "확인한 것").
+2. 사용자가 `event:write`·`project:read`를 더한 새 토큰을 만든 뒤, 프로젝트 키 조회로 DSN을 얻어 **시험 이벤트 세 개**를 보내고 해결 처리까지 했다(아래 "시험 이벤트로 확인한 것"). 이 토큰으로 프로젝트 키 조회는 200이었다.
 
 ### 확인한 것
 
@@ -269,7 +274,7 @@ API 경로(`/api/0/...`)는 같은 getsentry/sentry 코드에서 나오므로 �
 | 신규 조회 | `query=is:unresolved firstSeen:>{ISO-8601}` + `sort=new`가 200이고 기대한 오류 이슈만 돌려준다. `>`와 `>=` 모두 된다. 초 단위로 자른 기준 시각과 마이크로초가 붙은 실제 처음 보인 시각을 비교해도 어긋나지 않았다. 기준 시각 형식은 `Z`, `+00:00`, 밀리초 `.000Z`, 시간대 없음 모두 받았다 |
 | URL 인코딩 | 쿼리에 날 `>`를 넣으면 **Sentry 앞단이 JSON이 아닌 HTML 400을 돌려준다.** `%3E`로 인코딩해야 한다. `[`·`]`는 HTTP 클라이언트가 해석하지 않게 해야 한다 |
 | `is:new` | 200이고 응답의 `substatus`가 `new`인 것만 나온다 |
-| `is:regressed` | 문법은 200으로 받는다. 이 프로젝트에 재발 이슈가 없어 빈 목록이었다. **재발을 돌려주는지는 확인 못 함** |
+| `is:regressed` | 문법은 200으로 받는다. 기존 오류 이슈에는 재발이 없어 빈 목록이었다. 재발을 돌려주는지는 아래 "시험 이벤트로 확인한 것"에서 확인했다 |
 | 레벨 목록 | `level:[error,fatal]`이 된다. 거르는지도 확인했다(`[fatal,warning]`은 0건, `[error,warning]`은 error만). `OR`·`AND`는 400이고 "목록을 쓰라"는 안내가 온다. 위 "확인 못 함 목록"의 레벨 목록 항목은 해소됐다 |
 | 환경 | `environment=<이름>` 파라미터로 거른다. 환경 이름은 프로젝트 목록의 `environments`와 같았다. 이슈가 없는 환경은 0건 |
 | 응답 필드 | 목록 응답에 `status`, `substatus`, `level`, `issueCategory`, `firstSeen`, `lastSeen`, `count`, `lifetime`이 있다. 최상위 `firstSeen`은 초 단위, `lifetime.firstSeen`은 마이크로초 단위다 |
@@ -278,24 +283,45 @@ API 경로(`/api/0/...`)는 같은 getsentry/sentry 코드에서 나오므로 �
 | 최신 이벤트의 위치 | 문서 근거 표와 같다. `entries[]`에 `exception`·`breadcrumbs`·`request`·`debugmeta`, 최상위에 `release`(객체), `tags`, `platform`, `user`, `contexts`, `dateCreated`가 있다. 스택트레이스는 `exception.data.values[].stacktrace.frames[]`(프레임에 `filename`, `absPath`, `lineNo`, `colNo`, `function`, `inApp`, `context`), breadcrumbs는 `breadcrumbs.data.values[]`다 |
 | 환경·레벨 | 최상위 `environment`·`level` 필드는 **없다.** `tags` 배열에서 `key`가 `environment`, `level`인 항목의 `value`다. `release` 태그도 따로 있다 |
 | 소스맵 흔적 | 프레임에 `data` 필드는 **없다.** 소스맵을 거친 프레임은 `map`, `origFilename`, `origAbsPath`가 채워지고, 예외 값에 `rawStacktrace`가 붙는다. 위 "소스맵 적용 여부 구분"에서 짚은 `data.symbolicated`는 이 응답에 나오지 않았다. 판별은 프레임의 `map`·`origFilename`과 `rawStacktrace` 유무로 한다 |
-| 조직 목록 | `sentry.io`와 `us.sentry.io` 모두 두 조직을 돌려준다. 각 조직에 `links.regionUrl`(여기서는 둘 다 `https://us.sentry.io`)과 `links.organizationUrl`이 있다. `de.sentry.io`는 0건(200)이다. 지역 주소로 부르면 그 지역 조직만 나온다 |
+| 조직 목록 | `sentry.io`와 `us.sentry.io` 모두 두 조직을 돌려준다(새 토큰으로 다시 불러도 같았다). 각 조직에 `links.regionUrl`(여기서는 둘 다 `https://us.sentry.io`)과 `links.organizationUrl`이 있다. `de.sentry.io`는 0건(200)이다. 지역 주소로 부르면 그 지역 조직만 나온다 |
 | 한도 헤더 | 정상(200) 응답마다 `X-Sentry-Rate-Limit-Limit`, `-Remaining`, `-Reset`, `-ConcurrentLimit`, `-ConcurrentRemaining`이 붙는다. `Reset`은 UTC epoch 초이고 그 창의 끝 시각이다(실측 때 현재 시각 근처의 값). **`Retry-After`는 어떤 응답에도 없었다** |
 | 엔드포인트별 한도 | 같은 토큰으로 본 `Limit`(초당): 조직·프로젝트 목록 40, 오류 이슈 목록 10, 최신 이벤트 15, **오류 이슈 상세 5.** 동시 요청 한도는 모두 25. 위 "한도와 비용"의 목록 10과 일치한다 |
 | 권한 부족 응답 | scope가 모자라면 403이고 `WWW-Authenticate: Bearer error="insufficient_scope", scope="..."` 헤더가 **필요한 scope 이름을 알려 준다.** 연결 확인에서 "빠진 scope를 짚어 알린다"에 쓸 수 있다. 실측에서 `project:read` 없이 프로젝트 키 조회를 불렀을 때 `project:admin project:read project:write`가 왔다 |
 
+### 시험 이벤트로 확인한 것
+
+시험 이벤트는 모두 같은 `fingerprint`(시험 전용 값)로 한 오류 이슈에 묶었다. 예외 타입과 메시지에 시험용이라는 표시를 넣고 태그 `stardraft_test:yes`를 붙였다. 레벨은 `error`, 환경은 시험 전용 이름 둘(아래 A·B)을 썼다. 보낸 순서는 다음과 같다.
+
+1. 기준 시각 t0를 잡고 환경 A로 이벤트 1을 보냈다. 몇 초 안에 새 오류 이슈가 생겼다(`status: unresolved`, `substatus: new`, `issueCategory: error`).
+2. 기준 시각 t1(이벤트 1 뒤)을 잡고 같은 오류 이슈로 묶이는 이벤트 2를 환경 B로 보냈다.
+3. 오류 이슈를 해결 처리했다(`PUT /api/0/organizations/{org}/issues/?id={id}` + `{"status":"resolved"}`, 200).
+4. 같은 오류 이슈로 묶이는 이벤트 3을 환경 A로 보냈다. 오류 이슈가 `unresolved`/`regressed`로 돌아왔다.
+5. 다시 해결 처리했다. 마지막 상태는 `resolved`이고 활동은 `set_resolved` → `set_regression` → `set_resolved` → `first_seen` 순(최신이 앞)이다.
+
+| 항목 | 결과 |
+| :- | :- |
+| 신규 조회 | `is:unresolved firstSeen:>{t0} level:[error,fatal]`가 시험 오류 이슈를 돌려준다(환경 없이, 환경 A로). 환경 `production`으로는 나오지 않는다 |
+| **환경 기준 처음 보인 시각** | **환경 기준이다.** 환경 B로 부르면 목록의 `firstSeen`이 이벤트 2의 시각이고 환경 A나 환경 없이 부르면 이벤트 1의 시각이다. `firstSeen:>{t1}`은 환경 B로만 이 오류 이슈를 돌려주고 환경 A나 환경 없이는 돌려주지 않는다. 다른 환경에서 먼저 생긴 오류 이슈가 등록한 환경에 처음 나타나면 신규로 잡힌다(스펙 사용자 이야기 14와 맞다). 환경을 주면 `lifetime.firstSeen`도 그 환경 기준 값이었다 |
+| **`is:regressed`** | 재발한 오류 이슈를 돌려준다. 목록 응답의 `status`는 `unresolved`, `substatus`는 `regressed`, `firstSeen`은 처음 이벤트 그대로다 |
+| **재발 활동과 이벤트 ID** | 오류 이슈 상세 `activity`에 `type: "set_regression"` 항목이 생긴다. `data`는 `{"version": "", "event_id": "<32자리 16진수>"}`이고 **`data.event_id`가 이벤트 3(재발을 일으킨 이벤트)의 ID와 같았다.** `dateCreated`는 마이크로초가 붙은 ISO-8601이고 이벤트 3을 받은 직후 시각이다. `version`은 release가 없어 빈 문자열이었다. 스펙 5절의 재발 키 `(오류 이슈 ID, 재발을 일으킨 이벤트 ID)`를 그대로 쓸 수 있고, 낮춘 규칙은 필요 없다 |
+| 해결 처리 활동 | 해결 처리는 `set_resolved` 활동(`data: {}`)으로 남는다. 해결 처리 응답 본문은 `{"status": "resolved", "inbox": null, "statusDetails": {}}`다. 해결된 오류 이슈의 상세 `substatus`는 `null`이다 |
+| **재발과 환경 필터** | `is:regressed`에 환경을 주면 **그 환경에서 재발했는지가 아니라 그 환경의 이벤트가 있는 오류 이슈인지로 거른다.** 재발은 환경 A의 이벤트로 일어났는데 환경 B로 불러도 이 오류 이슈가 나왔다. `production`으로는 나오지 않았다. 재발은 오류 이슈 하나에 하나인 `substatus`라서 환경별로 나뉘지 않는다 |
+| **없는 환경 이름** | 조직에 없는 환경 이름을 `environment`로 주면 오류 이슈 목록이 **`404`**와 `{"detail": "The requested resource does not exist"}`를 돌려준다. 이벤트가 하나도 들어오지 않은 환경 이름도 같다(환경 B를 이벤트 2 전에 부르면 404였다). 프로젝트가 없을 때의 404와 본문으로 구분되지 않는다 |
+| 집계 지연 | 이벤트를 받은 직후 오류 이슈 상세의 `count`가 한동안 이전 값이었다. 상태(`status`·`substatus`)와 활동은 몇 초 안에 바뀌었다 |
+
+**구현 티켓에 영향**
+
+- 재발 키는 스펙 5절 그대로 `set_regression` 활동의 `data.event_id`로 잡는다. 재발 시각은 그 활동의 `dateCreated`다.
+- 재발 조회의 환경 필터는 "그 환경에서 재발했다"를 보장하지 않는다. 환경 A로 등록한 프로젝트도 환경 B에서 일어난 재발을 진단 대상으로 잡는다. 재발을 일으킨 이벤트의 환경을 알려면 `data.event_id`로 이벤트를 따로 불러야 한다. 스펙은 재발 조회에 환경을 쿼리 파라미터로 거는 것까지만 정했으므로 스펙과 어긋나지는 않지만, 사용자 이야기 5("운영 환경의 심각한 오류만")와 어긋날 수 있어 사용자에게 알렸다(티켓 Comments).
+- `environment`의 404는 "프로젝트 접근 불가"와 같은 응답이다. 스펙은 환경을 프로젝트 목록의 `environments`에서 고르게 하므로 정상 흐름에서는 생기지 않는다. 다만 가짜 Sentry API와 어댑터 테스트에 이 경우를 넣어 두면 접근 불가로 잘못 표시하는 경로를 확인할 수 있다.
+
 ### 확인 못 함
 
-- **재발 활동**: 이 프로젝트에 재발한 이슈가 없어 `set_regression` 활동, 그 `data.event_id`, `is:regressed`가 재발을 돌려주는지 모두 확인 못 했다. 확인하려면 오류 이슈를 해결 처리하고 같은 이슈를 다시 일으켜야 한다(아래 "막힌 것").
-- **환경 기준 처음 보인 시각**: 이 프로젝트의 오류 이슈는 모두 환경 하나(`production`)에서만 나서 `environment`를 줘도 결과가 같았다. 환경 기준인지 전체 기준인지 구분하지 못했다. 같은 이슈가 서로 다른 환경에서 나는 시험 이벤트가 필요하다.
-- **지역이 다른 조직**: 계정에 독일 지역 조직이 없다. 한 주소로 모든 지역 조직이 나오는지는 확인 못 했다. 관찰한 것은 `sentry.io`가 미국 조직을 모두 돌려주고 `de.sentry.io`가 0건이라는 것까지다.
+- **지역이 다른 조직**: 확인 못 함(해당 조직 없음). 계정의 조직 둘이 모두 미국 지역이다. 새 토큰으로 다시 불러도 `sentry.io`·`us.sentry.io`는 두 조직(`links.regionUrl`은 둘 다 `https://us.sentry.io`), `de.sentry.io`는 0건(200)이었다. 한 주소로 모든 지역 조직이 나오는지는 독일 조직이 있는 계정에서만 볼 수 있다. 스펙 4절은 조직마다 `regionUrl`을 저장해 쓰므로 이 사실에 기대지 않고, 조직별 `regionUrl`이 응답에 있다는 것은 확인했다.
 - **`429` 응답**: 일부러 한도를 넘기지 않았다. `429`의 헤더 구성은 "추가 확인(2026-11-24)"의 코드 근거 그대로이고 실측하지 않았다. 정상 응답에 한도 헤더가 붙는다는 것만 확인했다.
-- `activity` 두 읽기 경로 중 sentry.io에서 어느 쪽이 켜져 있는지, 두 경로의 `dateCreated`가 같은지.
+- `activity` 두 읽기 경로 중 sentry.io에서 어느 쪽이 켜져 있는지, 두 경로의 `dateCreated`가 같은지. 오류 이슈 상세의 `activity`에 `set_regression`이 보인다는 것까지 확인했다.
 
-### 막힌 것: 시험 이벤트를 보낼 수 없다
+### 실측이 프로젝트에 남긴 것
 
-재발 활동과 환경 기준 처음 보인 시각은 시험 이벤트가 있어야 확인된다. 지금 가진 토큰과 허락 범위로는 두 가지가 모자란다.
-
-1. **이벤트를 보낼 주소(DSN)**: 토큰에 `project:read`가 없어 프로젝트 키 조회가 403이다. DSN은 재현 저장소의 `.env`에만 있는데, 이 티켓은 그 파일을 쓰도록 허락받지 않았다.
-2. **해결 처리**: 오류 이슈를 해결로 바꾸는 호출은 `event:write`가 필요하다. 토큰에 없고, 이 세션에서 쓸 수 있는 다른 Sentry 도구도 없다. 재발을 만들려면 해결 처리가 꼭 필요하고, 시험 이벤트를 끝낸 뒤 정리(해결 처리)에도 필요하다. 정리할 수 없는 시험 이벤트를 회사 프로젝트에 보내지 않았다.
-
-따라서 스펙 5절의 재발 키 결정(이벤트 ID)과 낮춘 규칙 가운데 어느 쪽을 쓸지는 아직 정해지지 않았다.
+- 시험 오류 이슈 하나(해결됨 상태). 태그 `stardraft_test:yes`로 찾을 수 있다.
+- 시험 전용 환경 이름 둘이 프로젝트 환경 목록에 더해졌다(`stardraft-test-a`, `stardraft-test-b`). 환경을 숨기는 호출은 허락 범위(해결 처리로 정리) 밖이라 하지 않았다. Sentry 프로젝트 설정의 환경 화면에서 숨길 수 있다.

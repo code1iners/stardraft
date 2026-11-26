@@ -46,6 +46,8 @@ export function SettingsView({ initialSection, initialProjectId = null, initialS
   const [focusProjectId, setFocusProjectId] = useState<string | null>(initialProjectId);
   /** 저장소 매핑 `Sentry` 탭에서 짚어 보일 Sentry 프로젝트 ID. 짚지 않으면 `null`. */
   const [focusSentryProjectId, setFocusSentryProjectId] = useState<string | null>(initialSentryProjectId);
+  /** 칸 요청을 받은 횟수. 같은 프로젝트를 다시 짚어도 저장소 칸을 새로 그려 짚은 탭과 줄로 돌아가게 한다. */
+  const [sectionRequests, setSectionRequests] = useState(0);
 
   useEffect(function followSectionRequests() {
     return window.stardraft.onEvent((event) => {
@@ -53,6 +55,7 @@ export function SettingsView({ initialSection, initialProjectId = null, initialS
       setSection(event.section);
       setFocusProjectId(event.projectId ?? null);
       setFocusSentryProjectId(event.sentryProjectId ?? null);
+      setSectionRequests((count) => count + 1);
     });
   }, []);
 
@@ -98,6 +101,7 @@ export function SettingsView({ initialSection, initialProjectId = null, initialS
             )}
             {section === 'repositories' && snapshot && (
               <RepositoriesSection
+                key={sectionRequests}
                 repoMappings={snapshot.repoMappings}
                 sentryProjects={snapshot.sentryProjects}
                 focusProjectId={focusProjectId}

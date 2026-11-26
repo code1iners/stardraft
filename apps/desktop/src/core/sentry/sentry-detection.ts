@@ -171,7 +171,9 @@ export class SentryDetection {
 
   /** 프로젝트 하나의 신규와 재발을 조회하고, 성공하면 진단 대상과 체크포인트를 함께 저장한다. */
   private async pollProject(api: SentryApi, token: string, organization: SentryOrganization, registration: SentryProjectRegistration): Promise<ProjectOutcome> {
+    /** 시각과 로그. */
     const { clock, logger } = this.options;
+    /** 조회할 프로젝트 ID. */
     const { projectId } = registration;
     /** 조회를 시작한 시각. 성공하면 새 체크포인트가 된다. */
     const startedAt = clock.now();

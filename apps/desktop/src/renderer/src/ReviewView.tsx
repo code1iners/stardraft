@@ -50,8 +50,8 @@ export function ReviewContent({ snapshot, initialBundleId = null, initialDiagnos
   const { bundles, diagnoses, sections, repoPicker } = snapshot.review;
   /** 고른 묶음. */
   const selection = useBundleSelection(bundles, initialBundleId);
-  /** 고른 묶음과 묶음을 고르는 함수. */
-  const { select: selectBundle, movedWhileViewing } = selection;
+  /** 보이는 묶음이 보는 사이 처리됨으로 옮겨졌는지 여부. */
+  const { movedWhileViewing } = selection;
   /** 고른 진단 ID. 묶음을 고르면 `null`이다. */
   const [diagnosisId, setDiagnosisId] = useState<number | null>(initialDiagnosisId);
 
@@ -66,13 +66,16 @@ export function ReviewContent({ snapshot, initialBundleId = null, initialDiagnos
   const shownDiagnosis = diagnoses.find((item) => item.id === diagnosisId) ?? (selection.selected === null ? (diagnoses[0] ?? null) : null);
   /** 보이는 묶음. 진단을 보이는 동안은 없다. */
   const selected = shownDiagnosis === null ? selection.selected : null;
-  /** 묶음을 고른다. 진단 선택은 푼다. */
+  /** 묶음을 고른다. 목록 줄과 토스트가 묶음을 고르면 진단 선택은 풀어 그 묶음이 보이게 한다. */
   const select = (bundleId: number) => {
     setDiagnosisId(null);
-    selectBundle(bundleId);
+    selection.select(bundleId);
   };
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
-  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions(selection);
+  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions({
+    select,
+    leave: selection.leave,
+  });
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {

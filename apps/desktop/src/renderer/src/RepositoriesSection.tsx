@@ -40,17 +40,9 @@ interface RepositoriesSectionProps {
  * 매핑이 없어 기다리는 프로젝트를 탭 맨 위에 보인다. 매핑이 없는 프로젝트가 있는 탭에는 점이 찍힌다.
  */
 export function RepositoriesSection({ repoMappings, sentryProjects, focusProjectId = null, focusSentryProjectId = null }: RepositoriesSectionProps) {
-  /** 보이는 탭. Sentry 프로젝트를 짚었으면 `Sentry` 탭이다. */
+  /** 보이는 탭. Sentry 프로젝트를 짚었으면 `Sentry` 탭이다. 짚기 요청마다 설정 창이 이 칸을 새로 그려 다시 정한다. */
   const [tab, setTab] = useState<MappingTab>(focusSentryProjectId === null ? 'flow' : 'sentry');
 
-  /** 마지막으로 탭에 반영한 짚기. */
-  const [shownFocus, setShownFocus] = useState({ flow: focusProjectId, sentry: focusSentryProjectId });
-  // 열린 창에서 다른 프로젝트를 짚으면 그 서비스의 탭으로 옮긴다. 이전 렌더의 짚기와 견주는 것이라 렌더 중에 바꾼다.
-  if (shownFocus.flow !== focusProjectId || shownFocus.sentry !== focusSentryProjectId) {
-    setShownFocus({ flow: focusProjectId, sentry: focusSentryProjectId });
-    if (focusSentryProjectId !== null) setTab('sentry');
-    else if (focusProjectId !== null) setTab('flow');
-  }
 
   useEffect(function refreshOnOpen() {
     // 칸을 열 때마다 연결된 폴더와 참여 Flow 프로젝트 목록, 등록한 Sentry 프로젝트에 닿는지를 다시 확인한다.

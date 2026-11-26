@@ -7,14 +7,23 @@ const NEW_ISSUE_EVENT_ID = '';
 
 /** `sentry_diagnosis` 한 줄. */
 interface DiagnosisRow {
+  /** 진단 ID. */
   id: number;
+  /** 등록한 Sentry 프로젝트 ID. */
   project_id: string;
+  /** 오류 이슈 ID. */
   issue_id: string;
+  /** 신규인지 재발인지. */
   origin: DiagnosisOrigin;
+  /** 재발을 일으킨 이벤트 ID. 신규면 `NULL`. */
   regression_event_id: string | null;
+  /** 감지한 시각(Unix epoch 밀리초). */
   detected_at: number;
+  /** 상태. */
   status: DiagnosisStatus;
+  /** 저장소 대기 사유(JSON). 저장소 대기가 아니면 `NULL`. */
   repo_check: string | null;
+  /** 오류 이슈 정보(JSON). */
   issue: string;
 }
 

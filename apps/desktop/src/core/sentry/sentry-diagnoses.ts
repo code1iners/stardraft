@@ -95,7 +95,7 @@ export class SentryDiagnoses {
 
   /**
    * 한 프로젝트의 조회 결과를 저장한다. 이미 기록한 중복 억제 키는 건너뛰고, 같은 오류 이슈의 진단이 대기나 저장소 대기로 있으면
-   * 새 진단을 만들지 않고 키만 기록한다(스펙 5절 표). 새 진단은 지금 저장소 상태에 따라 대기나 저장소 대기가 된다.
+   * 새 진단을 만들지 않고 키만 기록한다. 새 진단은 지금 저장소 상태에 따라 대기나 저장소 대기가 된다.
    * 체크포인트, 키, 진단은 한 트랜잭션으로 저장한다. 조회하는 사이에 등록이 풀렸으면 아무것도 저장하지 않는다.
    */
   async record({ registration, checkpoint, detectedAt, detected }: ProjectDetection): Promise<void> {
@@ -241,7 +241,7 @@ function sameKey(a: DetectionKey, b: DetectionKey): boolean {
   return a.issueId === b.issueId && a.eventId === b.eventId;
 }
 
-/** 저장소 대기 OS 알림. 스펙 13절의 문구다. */
+/** 저장소 대기 OS 알림. 본문에는 프로젝트 이름만 넣는다. */
 function repoWaitNotification(first: SentryDiagnosis): AppNotification {
   /** 본문에 쓸 프로젝트 이름. */
   const project = first.issue.projectName || '이 프로젝트';

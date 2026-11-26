@@ -94,6 +94,7 @@ export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[]): Diagn
   return diagnoses.map((diagnosis): DiagnosisSnapshot => {
     /** 같은 프로젝트·사유로 기다리는 진단 수. */
     const waitingCount = waitCounts.get(waitKey(diagnosis)) ?? 1;
+    /** 오류 이슈 정보와 저장소 대기 사유. */
     const { issue, repoCheck } = diagnosis;
     return {
       id: diagnosis.id,

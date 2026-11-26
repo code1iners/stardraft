@@ -786,12 +786,15 @@ async function pickSingleFolder(windows: AppWindows): Promise<string | null> {
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
-/** core의 Sentry 프로젝트 상태를 렌더러에 넘길 모양으로 바꾼다. 조직·프로젝트 slug와 등록 시각은 화면에 쓰지 않으므로 넘기지 않는다. */
 /** 지금 등록한 Sentry 프로젝트와 프로젝트마다 매핑을 기다리는 진단 수. */
 function currentSentryProjectsSnapshot({ sentryProjects, sentryDiagnoses }: IpcServices): SentryProjectsSnapshot {
   return sentryProjectsSnapshot(sentryProjects.state(), (projectId) => sentryDiagnoses.waitingForMapping(projectId));
 }
 
+/**
+ * core의 Sentry 프로젝트 상태를 렌더러에 넘길 모양으로 바꾼다. 조직·프로젝트 slug와 등록 시각은 화면에 쓰지 않으므로 넘기지 않는다.
+ * `waitingCountOf`는 프로젝트마다 저장소 매핑을 기다리는 진단 수다.
+ */
 function sentryProjectsSnapshot(state: SentryProjectsState, waitingCountOf: (projectId: string) => number): SentryProjectsSnapshot {
   return {
     projects: state.projects.map(({ registration, access, repo }) => ({

@@ -90,7 +90,7 @@ export function isRepoWaiting(diagnosis: Pick<SentryDiagnosis, 'status'>): boole
 }
 
 /**
- * 같은 오류 이슈에 새 재발이 왔을 때 새 진단을 만들지 않고 키만 기록하는 상태(스펙 5절 표의 첫 줄).
+ * 같은 오류 이슈에 새 재발이 왔을 때 새 진단을 만들지 않고 키만 기록하는 상태.
  * 저장소 대기와 대기다. 진행 중은 그 상태를 만드는 단계가 더한다.
  */
 export function absorbsRegression(status: DiagnosisStatus): boolean {

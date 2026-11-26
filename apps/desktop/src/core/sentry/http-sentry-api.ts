@@ -124,14 +124,14 @@ export class HttpSentryApi implements SentryApi {
   }
 
   /**
-   * 신규 조회: `query=is:unresolved firstSeen:>{ISO} level:…`, `sort=new`. 25번 실측대로 `>`와 `[`·`]`는 인코딩해서 보낸다
+   * 신규 조회: `query=is:unresolved firstSeen:>{ISO} level:…`, `sort=new`. `>`와 `[`·`]`는 인코딩해서 보낸다
    * (날 `>`를 넣으면 Sentry 앞단이 HTML 400을 준다).
    */
   async listNewErrorIssues(organization: SentryOrganization, filter: SentryIssueFilter, firstSeenAfter: number): Promise<SentryApiResult<SentryErrorIssue[]>> {
     return this.listErrorIssues(organization, filter, `is:unresolved firstSeen:>${new Date(firstSeenAfter).toISOString()} ${levelQuery(filter.levels)}`, 'new');
   }
 
-  /** 재발 조회: `query=is:regressed level:…`, `sort=date`. 환경 필터는 그 환경의 이벤트가 있는 오류 이슈인지로 거른다(25번 실측). */
+  /** 재발 조회: `query=is:regressed level:…`, `sort=date`. 환경 필터는 그 환경에서 재발했는지가 아니라 그 환경의 이벤트가 있는 오류 이슈인지로 거른다. */
   async listRegressedErrorIssues(organization: SentryOrganization, filter: SentryIssueFilter): Promise<SentryApiResult<SentryErrorIssue[]>> {
     return this.listErrorIssues(organization, filter, `is:regressed ${levelQuery(filter.levels)}`, 'date');
   }
@@ -265,7 +265,7 @@ function failureOf(status: number, headers: Headers): SentryApiFailure {
   return { kind: 'http', status };
 }
 
-/** 레벨 필터의 검색 쿼리. 하나면 `level:error`, 여럿이면 25번 실측에서 확인한 목록 문법 `level:[error,fatal]`이다. */
+/** 레벨 필터의 검색 쿼리. 하나면 `level:error`, 여럿이면 목록 문법 `level:[error,fatal]`이다(`OR`은 Sentry가 거부한다). */
 function levelQuery(levels: readonly string[]): string {
   return levels.length === 1 ? `level:${levels[0]}` : `level:[${levels.join(',')}]`;
 }

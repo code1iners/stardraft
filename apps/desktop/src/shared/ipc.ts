@@ -901,7 +901,6 @@ export const REVIEW_SECTIONS = ['original', 'requirement', 'draft', 'evidence', 
 /** 접고 펴는 상세 영역 하나. */
 export type ReviewSection = (typeof REVIEW_SECTIONS)[number];
 
-/** 작은 창과 펼친 창이 그릴 멘션 묶음 상태. */
 /** 진단의 상태. 이 단계에서는 대기와 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)만 있다. */
 export type DiagnosisStatusSnapshot = 'queued' | 'repo-check-needed';
 
@@ -955,6 +954,7 @@ export interface DiagnosisSnapshot {
   };
 }
 
+/** 작은 창과 펼친 창이 그릴 멘션 묶음과 진단 상태. */
 export interface ReviewSnapshot {
   /** 묶음. 처리되지 않은 묶음이 작은 창 대기열 순서(가장 오래된 미처리 멘션 순)로 먼저 오고, 처리됨 묶음이 최근에 처리한 것부터 뒤에 온다. */
   bundles: BundleSnapshot[];
@@ -1389,6 +1389,11 @@ function isBundleIdInput(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
+/** 진단 ID인지 확인한다. 진단 ID는 `sentry_diagnosis` 행의 ID라 양의 정수다. */
+function isDiagnosisIdInput(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
 /** 초안 편집 명령에 실을 수 있는 편집기 텍스트인지 확인한다. 빈 텍스트도 받는다. */
 function isDraftTextInput(value: unknown): value is string {
   return typeof value === 'string' && value.length <= DRAFT_TEXT_MAX_LENGTH;
@@ -1549,7 +1554,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'cancel-posting':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
     case 'open-sentry-repo-mapping':
-      return isBundleIdInput(candidate.diagnosisId) ? { type: 'open-sentry-repo-mapping', diagnosisId: candidate.diagnosisId } : null;
+      return isDiagnosisIdInput(candidate.diagnosisId) ? { type: 'open-sentry-repo-mapping', diagnosisId: candidate.diagnosisId } : null;
     case 'expand-review':
     case 'collapse-review':
       return candidate.bundleId === null || isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;

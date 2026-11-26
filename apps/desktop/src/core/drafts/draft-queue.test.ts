@@ -33,6 +33,7 @@ import type { FlowAlarm, FlowEmployee, FlowTask } from '../ports/flow-api';
 import type { FakeFlowPost } from '../fakes/fake-flow-api';
 import type { StateStore } from '../ports/state-store';
 import { GlobalProblems } from '../problems/global-problems';
+import { AccountRecords } from '../account/account-records';
 import { FlowAccount } from '../account/flow-account';
 import { MemorySecretStore } from '../fakes/memory-secret-store';
 import { RepoMappings } from '../repos/repo-mappings';
@@ -3705,14 +3706,15 @@ describe('재시작·재시도·재지정 복구', () => {
     });
     await bundles.load();
     await bundles.recoverAfterRestart();
-    /** 설정 창의 Flow 계정. 앱처럼 다른 계정이 연결되면 묶음을 새 기록으로 다시 읽는다. */
+    /** 계정 기록을 오가는 일. 대기열과 게시를 만든 뒤에 정한다. */
+    let records: AccountRecords | null = null;
+    /** 설정 창의 Flow 계정. 앱처럼 다른 계정의 키로 바꾸면 지금 계정의 기록을 보관하고 새 계정의 기록으로 이어 간다. */
     const flowAccount = new FlowAccount({ connectFlow: () => flow, secretStore: new MemorySecretStore(), stateStore, clock, logger,
+      records: { isStored: (userId) => records!.isStored(userId), switchTo: (account) => records!.switchTo(account), resume: () => records!.resume() },
       problems: new GlobalProblems({ notifier: new RecordingNotifier(), clock, logger, notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }) }) });
     await flowAccount.load();
     flowAccount.onChange(({ account: connected }) => {
-      if (!connected || connected.userId === me.userId) return;
-      me = connected;
-      void bundles.load();
+      if (connected) me = connected;
     });
     const drafts = new DraftQueue({
       bundles,
@@ -3731,6 +3733,7 @@ describe('재시작·재시도·재지정 복구', () => {
     const assignments = new AssignmentDetection({ stateStore, bundles, clock, connectFlow });
     const detection = new MentionDetection({ assignments, stateStore, bundles, clock, logger, connectFlow });
     const posting = new Posting({ bundles, connectFlow, myUserId: () => me.userId, clock, logger });
+    records = new AccountRecords({ bundles, drafts, posting, stateStore, settingsStore, logger });
     /** 앱을 끈다. 폴링과 대기열을 멈추고 DB를 닫는다. */
     const quit = async () => {
       detection.stop();
@@ -3939,7 +3942,7 @@ describe('재시작·재시도·재지정 복구', () => {
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     await nextPoll(clock);
     expect(first.bundles.state()).toMatchObject([{ status: 'ready', assignment: { taskId: 'recovery-task-id' } }]);
-    // 켜 둔 앱에서 다른 사람의 키를 확인하고 계정 바꾸기를 승인하면 기록을 지우고 새 계정으로 시작한다.
+    // 켜 둔 앱에서 다른 사람의 키를 확인하고 계정 바꾸기를 승인하면 지금 계정의 기록을 보관하고 새 계정으로 시작한다.
     flow.respondToGetMe({ ok: true, value: next });
     expect(await first.flowAccount.checkKey('next-key')).toMatchObject({ kind: 'needs-confirmation' });
     await first.flowAccount.confirmSwitch();

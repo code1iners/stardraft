@@ -92,8 +92,8 @@ export type FlowKeyCheckState =
   | { status: 'checking' }
   /** 요청 한도에 걸려 잠시 뒤 자동으로 다시 확인한다. */
   | { status: 'waiting-retry' }
-  /** 다른 계정의 키라서, 지금까지의 기록을 지우고 바꿀지 확인을 기다린다. */
-  | { status: 'awaiting-confirmation'; account: FlowAccountProfile };
+  /** 다른 계정의 키라서, 지금 계정의 기록을 보관하고 바꿀지 확인을 기다린다. `stored`는 그 계정의 기록을 보관해 두었는지 여부다. */
+  | { status: 'awaiting-confirmation'; account: FlowAccountProfile; stored: boolean };
 
 /** 키 확인이 실패한 이유. */
 export type FlowKeyCheckFailure = 'unauthorized' | 'network' | 'rate-limited' | 'unexpected' | 'save-failed';
@@ -948,7 +948,7 @@ export type AppCommand =
   | { type: 'open-folder'; folder: AppFolder }
   /** 붙여 넣은 Flow 개인 API 키를 확인한다. 성공하면 main이 키를 저장한다. */
   | { type: 'check-flow-key'; apiKey: string }
-  /** 다른 계정의 키로 바꾸는 것을 확인했다. 지금까지의 기록을 지우고 새 계정으로 시작한다. */
+  /** 다른 계정의 키로 바꾸는 것을 확인했다. 지금 계정의 기록을 보관하고 새 계정의 기록으로 바꾼다. */
   | { type: 'confirm-flow-account-switch' }
   /** 진행 중인 키 확인이나 확인을 기다리는 계정 바꾸기를 그만둔다. */
   | { type: 'cancel-flow-key-check' }

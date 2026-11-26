@@ -94,9 +94,9 @@ export interface GenerationQueueOptions {
 
 /**
  * 앱이 실행을 멈춘 까닭. `user`는 [취소], `target-changed`는 대상이 바뀜, `secret-patterns-changed`는 비밀 파일 패턴 추가,
- * `app-quit`은 앱 종료다.
+ * `app-quit`은 앱 종료, `account-left`는 그 대상의 계정을 떠남(그 종류의 대상만 앱을 끈 것처럼 멈춤)이다.
  */
-type Interruption = 'user' | 'target-changed' | 'secret-patterns-changed' | 'app-quit';
+type Interruption = 'user' | 'target-changed' | 'secret-patterns-changed' | 'app-quit' | 'account-left';
 
 /** 자리의 순서. 작을수록 앞이다. */
 const PRIORITY_ORDER: Readonly<Record<QueuePriority, number>> = { resume: 0, user: 1, auto: 2 };
@@ -145,6 +145,8 @@ interface RunningTarget extends TargetRef {
   filesRead: number;
   /** 마지막으로 시작한 실행 단계의 종류. 실행 단계를 시작하기 전이면 `null`. 실패에 남긴다. */
   runKind: GenerationRunKind | null;
+  /** 생성이 끝나(실행 기록까지 남기고) 실행 중에서 빠지면 풀리는 약속. */
+  finished: Promise<void>;
 }
 
 /** 대상 하나를 만드는 생성 한 번. */
@@ -201,6 +203,11 @@ export class GenerationQueue {
   private readonly runTasks = new Set<Promise<void>>();
   /** 마지막으로 남긴 대기열의 JSON. 대기열이 바뀐 때만 다시 남긴다. */
   private savedQueueJson: string | null = null;
+  /**
+   * 계정을 바꾸는 동안 멈춘 종류. 그 종류의 대상은 대기열에 넣지 않고 시작하지 않는다.
+   * 멈춘 동안은 대기열을 남기지 않아, 떠나는 계정의 줄을 들어오는 계정의 것으로 덮지 않게 한다.
+   */
+  private readonly suspendedKinds = new Set<TargetKind>();
   /** 어댑터와 에이전트 연결 구독을 끊는 함수. */
   private readonly unsubscribes: (() => void)[] = [];
   /** 진행이 바뀔 때 부를 함수. */
@@ -262,7 +269,8 @@ export class GenerationQueue {
     if (before !== 'started') return;
 
     // 멈춘 뒤에는 대기열을 다시 남기지 않으므로, 끊은 실행이 끝나 실행 중인 대상이 비기 전에 지금 대기열을 남긴다.
-    this.saveQueue(this.currentQueue());
+    // 계정을 바꾸는 중이면 떠난 계정의 줄은 이미 남겼고 어느 계정의 줄인지 정해지지 않았으므로 남기지 않는다.
+    if (this.suspendedKinds.size === 0) this.saveQueue(this.currentQueue());
     for (const entry of this.running) this.interrupt(entry, 'app-quit');
     if (this.runTasks.size > 0) await waitAtMost(this.options.clock, Promise.all(this.runTasks).then(() => {}), QUIT_RECORD_WAIT_MS);
   }
@@ -337,6 +345,48 @@ export class GenerationQueue {
     }
   }
 
+  /**
+   * 계정을 떠날 때 `kind`의 대상 생성을 멈춘다. 그 종류에 한해 앱을 끈 것과 같다.
+   * 지금 대기열을 그대로 남겨(그 계정의 줄은 저장소가 계정에 맨다) 돌아왔을 때 그 순서와 자리로 돌게 하고,
+   * 기다리던 그 종류의 대상은 대기열에서 빼며, 실행 중인 실행은 끊어 실행 기록을 남기기를 최대 5초 기다린다. 다른 종류의 대상은 그대로 돈다.
+   * `resumeKind`를 부를 때까지 그 종류의 대상은 넣지 않고 대기열도 남기지 않는다.
+   */
+  async suspendKind(kind: TargetKind): Promise<void> {
+    if (this.suspendedKinds.has(kind)) return;
+    if (this.status === 'started') await this.persistQueue(this.currentQueue());
+    this.suspendedKinds.add(kind);
+    if (this.status !== 'started') return;
+
+    this.waiting = this.waiting.filter((queued) => queued.kind !== kind);
+    /** 끊을 실행. */
+    const stopping = this.running.filter((entry) => entry.kind === kind);
+    for (const entry of stopping) this.interrupt(entry, 'account-left');
+    this.emit();
+    if (stopping.length > 0) await waitAtMost(this.options.clock, Promise.all(stopping.map((entry) => entry.finished)).then(() => {}), QUIT_RECORD_WAIT_MS);
+  }
+
+  /**
+   * 계정을 바꾼 뒤 `kind`의 대상 생성을 다시 돌린다. 들어온 계정이 떠날 때 남긴 대기열의 그 종류 줄을 그 순서와 자리로 먼저 넣고,
+   * 그 밖의 생성 중 대상은 화면 순서로 끝에 넣는다. 다시 켤 때와 같다.
+   */
+  async resumeKind(kind: TargetKind): Promise<void> {
+    if (!this.suspendedKinds.has(kind)) return;
+    if (this.status !== 'started') {
+      this.suspendedKinds.delete(kind);
+      return;
+    }
+    /** 들어온 계정이 남긴 대기열. 읽지 못하면 없는 것으로 보고 화면 순서로 넣는다. */
+    const saved = await this.options.store.getGenerationQueue().catch((error: unknown) => {
+      this.options.logger.error('generation.saved-queue-read-failed', errorFields(error));
+      return [];
+    });
+    this.suspendedKinds.delete(kind);
+    if (this.status !== 'started') return;
+    for (const queued of saved) if (queued.kind === kind) this.enqueue(queued, queued.priority);
+    this.sync();
+    this.saveQueueIfChanged();
+  }
+
   /** 대상 상태에 대기열을 맞추고, 실행 중인 대상이 바뀌었으면 실행을 멈춘다. */
   private sync(): void {
     if (this.status !== 'started') return;
@@ -345,6 +395,7 @@ export class GenerationQueue {
     /** 어댑터마다 생성 중 대상. 화면 순서다. */
     const generating = new Map([...this.slots].map(([kind, slot]) => [kind, slot.adapter.generatingTargets()]));
     // 생성 중이 아니게 된 대상(취소함, 저장소 대기 등)과 모르는 종류의 대상은 빼고, 새로 생성 중이 된 대상은 그 까닭에 맞는 자리에 넣는다.
+    // 계정을 바꾸는 동안 멈춘 종류의 대상은 `enqueue`가 넣지 않는다.
     // 사용자가 요청한 대상은 감지해서 기다리는 대상보다 앞에 든다.
     this.waiting = this.waiting.filter((queued) => generating.get(queued.kind)?.includes(queued.targetId) === true);
     for (const [kind, targetIds] of generating) {
@@ -358,6 +409,7 @@ export class GenerationQueue {
       }
     }
     // 실행 중인 대상이 바뀌었거나(새 멘션이 합쳐짐 등) 생성 중이 아니게 되었으면 실행을 멈춘다. 생성 중으로 남았으면 처음부터 다시 만든다.
+    // 계정을 떠나며 끊은 실행은 먼저 정한 까닭(`account-left`)이 남는다.
     for (const entry of this.running) if (!this.isStillGenerating(entry)) this.interrupt(entry, 'target-changed');
     if (this.waitingOrder() !== before) this.emit();
     this.pump();
@@ -365,7 +417,7 @@ export class GenerationQueue {
 
   /** 대상을 대기열의 `priority` 자리 맨 뒤에 넣는다. 이미 기다리고 있으면 그대로 둔다. */
   private enqueue(target: TargetRef, priority: QueuePriority): void {
-    if (this.isWaiting(target)) return;
+    if (this.isWaiting(target) || this.suspendedKinds.has(target.kind)) return;
     /** 이 대상 뒤에 설 첫 대상의 위치. 없으면 맨 뒤다. */
     const index = this.waiting.findIndex((queued) => PRIORITY_ORDER[queued.priority] > PRIORITY_ORDER[priority]);
     this.waiting.splice(index === -1 ? this.waiting.length : index, 0, { kind: target.kind, targetId: target.targetId, priority });
@@ -430,9 +482,9 @@ export class GenerationQueue {
     return [...running, ...this.waiting];
   }
 
-  /** 대기열이 돌고 있고 마지막으로 남긴 뒤에 바뀌었으면 남긴다. */
+  /** 대기열이 돌고 있고 마지막으로 남긴 뒤에 바뀌었으면 남긴다. 계정을 바꾸는 동안은 남기지 않는다. */
   private saveQueueIfChanged(): void {
-    if (this.status !== 'started') return;
+    if (this.status !== 'started' || this.suspendedKinds.size > 0) return;
     /** 지금 대기열. */
     const queue = this.currentQueue();
     if (JSON.stringify(queue) === this.savedQueueJson) return;
@@ -441,8 +493,13 @@ export class GenerationQueue {
 
   /** 대기열을 남긴다. 남기지 못하면 로그만 남기고, 다시 켤 때 화면 순서로 넣는다. */
   private saveQueue(queue: readonly QueuedTarget[]): void {
+    void this.persistQueue(queue);
+  }
+
+  /** 대기열을 남기고 끝나기를 기다릴 수 있게 한다. 남기지 못하면 로그만 남긴다. */
+  private persistQueue(queue: readonly QueuedTarget[]): Promise<void> {
     this.savedQueueJson = JSON.stringify(queue);
-    this.options.store.setGenerationQueue(queue).catch((error: unknown) => this.options.logger.error('generation.queue-save-failed', errorFields(error)));
+    return this.options.store.setGenerationQueue(queue).catch((error: unknown) => this.options.logger.error('generation.queue-save-failed', errorFields(error)));
   }
 
   /** 다음 대상을 시작할 수 있는지 본다. 다른 대상을 시작하는 중이거나, 실행 자리가 다 찼거나, 시작할 수 있는 대상이 없으면 거짓이다. */
@@ -470,7 +527,7 @@ export class GenerationQueue {
     return this.waiting.findIndex((queued) => {
       /** 대상의 어댑터. */
       const slot = this.slots.get(queued.kind);
-      if (slot === undefined || slot.paused.size > 0 || !slot.adapter.connectionUsable()) return false;
+      if (slot === undefined || slot.paused.size > 0 || this.suspendedKinds.has(queued.kind) || !slot.adapter.connectionUsable()) return false;
       // 다시 만들려고 대기열에 되돌린 대상은 앞 실행이 정리를 마칠 때까지 꺼내지 않는다. 같은 대상이 두 번 돌지 않게 한다.
       if (this.runningEntry(queued)) return false;
       /** 이 대상이 쓸 함께 돌 수 없는 자원. */
@@ -494,6 +551,8 @@ export class GenerationQueue {
     /** 대상의 어댑터. 시작할 수 있는 대상은 어댑터가 있다. */
     const slot = this.slots.get(next!.kind)!;
 
+    /** 생성이 끝났다고 알리는 함수. */
+    let markFinished = () => {};
     /** 실행하는 대상. */
     const entry: RunningTarget = {
       kind: next!.kind,
@@ -507,6 +566,9 @@ export class GenerationQueue {
       step: slot.adapter.preparingStep,
       filesRead: 0,
       runKind: null,
+      finished: new Promise((resolve) => {
+        markFinished = resolve;
+      }),
     };
     this.running.push(entry);
     this.emit();
@@ -518,6 +580,7 @@ export class GenerationQueue {
     } finally {
       this.running = this.running.filter((running) => running !== entry);
       this.emit();
+      markFinished();
     }
   }
 
@@ -820,6 +883,7 @@ export class GenerationQueue {
         await this.requeueFromStart(entry, runs);
         return;
       case 'app-quit':
+      case 'account-left':
         await entry.slot.adapter.addRuns(entry.targetId, runs);
         return;
       case null:
@@ -840,6 +904,7 @@ export class GenerationQueue {
       await adapter.fail(entry.targetId, null, failureOf(entry, 'cancelled', null), []);
       return;
     }
+    // 계정을 떠나 멈춘 종류면 넣지 않는다(`enqueue`가 막는다). 돌아오면 남긴 대기열로 다시 선다.
     if (this.status === 'started' && adapter.isGenerating(entry.targetId, null)) this.enqueue(entry, 'resume');
   }
 
@@ -934,6 +999,7 @@ function runResultOf(interruption: Interruption | null, verdict: { kind: 'output
       return 'bundle-changed';
     case 'secret-patterns-changed':
     case 'app-quit':
+    case 'account-left':
       return interruption;
     case null:
       return verdict.kind === 'output' ? 'succeeded' : verdict.reason;

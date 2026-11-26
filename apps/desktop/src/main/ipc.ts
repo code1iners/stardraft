@@ -689,7 +689,7 @@ function flowAccountSnapshot(state: FlowAccountState): FlowAccountSnapshot {
     account: state.account && accountProfile(state.account),
     keyCheck:
       state.keyCheck.status === 'awaiting-confirmation'
-        ? { status: 'awaiting-confirmation', account: accountProfile(state.keyCheck.account) }
+        ? { status: 'awaiting-confirmation', account: accountProfile(state.keyCheck.account), stored: state.keyCheck.stored }
         : { status: state.keyCheck.status },
   };
 }

@@ -13,7 +13,7 @@ import type { FlowEmployee } from '../ports/flow-api';
 import { GlobalProblems } from '../problems/global-problems';
 import { DEFAULT_SETTINGS, type Settings } from '../ports/settings-store';
 import { openAppData, type AppData } from '../storage/app-data';
-import { FlowAccount } from './flow-account';
+import { FlowAccount, type FlowAccountRecords } from './flow-account';
 
 /** 테스트마다 만드는 임시 데이터 폴더. */
 let dataDir: string;
@@ -58,16 +58,29 @@ async function setup({ failDecrypt = false }: { failDecrypt?: boolean } = {}) {
   if (result.kind !== 'ready') throw new Error(result.message);
   opened = result;
 
-  const flowAccount = new FlowAccount({
+  /** 계정 기록을 이어 간 때 지금 쓰던 키. 새 계정의 키를 쓰게 된 뒤에 이어 가는지 본다. */
+  const resumedWithKey: (string | null)[] = [];
+  /** 상태 저장소만으로 계정 기록을 오가는 일. 묶음·대기열·게시의 멈춤과 재개는 다른 테스트가 본다. */
+  const records: FlowAccountRecords = {
+    isStored: (userId) => result.stateStore.isStoredAccount(userId),
+    switchTo: async (account) => {
+      await result.stateStore.switchAccount(account, { now: clock.now(), secretPatterns: [] });
+    },
+    resume: async () => {
+      resumedWithKey.push(flowAccount.apiKey());
+    },
+  };
+  const flowAccount: FlowAccount = new FlowAccount({
     connectFlow: (apiKey) => new HttpFlowApi({ apiKey, fetch: server.fetch, clock }),
     secretStore: result.secretStore,
     stateStore: result.stateStore,
+    records,
     clock,
     logger: silentLogger,
     problems,
   });
   await flowAccount.load();
-  return { clock, server, encryption, notifier, problems, data: result, flowAccount };
+  return { clock, server, encryption, notifier, problems, data: result, flowAccount, resumedWithKey };
 }
 
 describe('Flow 계정 연결', () => {
@@ -265,14 +278,14 @@ describe('계정 비교', () => {
 
     await expect(flowAccount.checkKey('fake-key-other')).resolves.toEqual({ kind: 'needs-confirmation', account: OTHER });
 
-    expect(flowAccount.state()).toEqual({ account: FAKE_ME, keyCheck: { status: 'awaiting-confirmation', account: OTHER } });
+    expect(flowAccount.state()).toEqual({ account: FAKE_ME, keyCheck: { status: 'awaiting-confirmation', account: OTHER, stored: false } });
     await expect(data.secretStore.readFlowApiKey()).resolves.toEqual({ kind: 'found', value: 'fake-key-1' });
     await expect(data.stateStore.getAccount()).resolves.toEqual(FAKE_ME);
     await expect(data.stateStore.getBaselineAlarmId()).resolves.toBe('1001');
   });
 
-  it('다른 계정으로 바꾸는 것을 확인하면 state.db의 기록을 지우고 새 계정으로 시작하며, settings.json은 그대로 둔다', async () => {
-    const { server, data, flowAccount } = await setup();
+  it('다른 계정으로 바꾸는 것을 확인하면 지금 계정의 기록을 보관하고 새 계정으로 시작하며, 새 키를 쓰게 된 뒤 기록을 이어 가고, settings.json은 그대로 둔다', async () => {
+    const { server, data, flowAccount, resumedWithKey } = await setup();
     server.addAccount('fake-key-1', FAKE_ME);
     server.addAccount('fake-key-other', OTHER);
     await flowAccount.checkKey('fake-key-1');
@@ -292,7 +305,26 @@ describe('계정 비교', () => {
     await expect(data.secretStore.readFlowApiKey()).resolves.toEqual({ kind: 'found', value: 'fake-key-other' });
     await expect(data.stateStore.getAccount()).resolves.toEqual(OTHER);
     await expect(data.stateStore.getBaselineAlarmId()).resolves.toBeNull();
+    await expect(data.stateStore.isStoredAccount(FAKE_ME.userId)).resolves.toBe(true);
     await expect(data.settingsStore.load()).resolves.toEqual(settings);
+    expect(resumedWithKey).toEqual(['fake-key-other']);
+  });
+
+  it('보관해 둔 계정의 키면 보관한 계정으로 확인을 기다리고, 바꾸면 그 계정의 기록이 돌아온다', async () => {
+    const { server, data, flowAccount } = await setup();
+    server.addAccount('fake-key-1', FAKE_ME);
+    server.addAccount('fake-key-other', OTHER);
+    await flowAccount.checkKey('fake-key-1');
+    await data.stateStore.setBaselineAlarmId('1001');
+    await flowAccount.checkKey('fake-key-other');
+    await flowAccount.confirmSwitch();
+
+    await expect(flowAccount.checkKey('fake-key-1')).resolves.toEqual({ kind: 'needs-confirmation', account: FAKE_ME });
+    expect(flowAccount.state().keyCheck).toEqual({ status: 'awaiting-confirmation', account: FAKE_ME, stored: true });
+    await expect(flowAccount.confirmSwitch()).resolves.toEqual({ kind: 'connected' });
+
+    await expect(data.stateStore.getAccount()).resolves.toEqual(FAKE_ME);
+    await expect(data.stateStore.getBaselineAlarmId()).resolves.toBe('1001');
   });
 
   it('다른 계정으로 바꾸기를 취소하면 옛 키와 계정, 상태가 그대로이고, 그 뒤에 온 확인은 아무것도 바꾸지 않는다', async () => {
@@ -332,13 +364,13 @@ describe('계정 비교', () => {
 
     await expect(first).resolves.toEqual({ kind: 'connected' });
     await expect(second).resolves.toEqual({ kind: 'needs-confirmation', account: OTHER });
-    expect(flowAccount.state()).toEqual({ account: FAKE_ME, keyCheck: { status: 'awaiting-confirmation', account: OTHER } });
+    expect(flowAccount.state()).toEqual({ account: FAKE_ME, keyCheck: { status: 'awaiting-confirmation', account: OTHER, stored: false } });
     await expect(data.secretStore.readFlowApiKey()).resolves.toEqual({ kind: 'found', value: 'fake-key-1' });
     await expect(data.stateStore.getAccount()).resolves.toEqual(FAKE_ME);
   });
 
   it('새 계정을 state.db에 남기지 못하면 저장 실패로 끝나고, 옛 키를 되돌려 옛 키와 계정을 그대로 둔다', async () => {
-    const { server, data, flowAccount } = await setup();
+    const { server, data, flowAccount, resumedWithKey } = await setup();
     server.addAccount('fake-key-1', FAKE_ME);
     server.addAccount('fake-key-other', OTHER);
     await flowAccount.checkKey('fake-key-1');
@@ -350,6 +382,8 @@ describe('계정 비교', () => {
 
     expect(flowAccount.state()).toEqual({ account: FAKE_ME, keyCheck: { status: 'idle' } });
     await expect(data.secretStore.readFlowApiKey()).resolves.toEqual({ kind: 'found', value: 'fake-key-1' });
+    // 떠나며 멈춘 옛 계정의 기록은 옛 키로 다시 이어 간다.
+    expect(resumedWithKey).toEqual(['fake-key-1']);
   });
 
   it('처음 연결하는 계정을 state.db에 남기지 못하면 저장 실패로 끝나고, 새 키도 남기지 않는다', async () => {

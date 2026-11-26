@@ -178,7 +178,7 @@ export class MentionDetection {
 
     /** 이미 본 가장 큰 alarmId. */
     const baseline = await this.options.stateStore.getBaselineAlarmId();
-    if (baseline === null) return this.setFreshBaseline(flow);
+    if (baseline === null) return this.setFreshBaseline(flow, account.userId);
 
     /** 기준점 뒤의 새 알림. 72시간보다 먼저 온 알림은 모으지 않는다. */
     const collected = await listMentionAlarmsAfter(flow.api, baseline, this.options.clock.now() - LOOKBACK_MS);
@@ -255,22 +255,23 @@ export class MentionDetection {
   }
 
   /**
-   * 기준점이 없다(다른 계정의 키로 바꿔 기록을 비움). 첫 실행처럼 가장 최근 알림의 alarmId를 기준점으로 잡고,
-   * 과거 멘션은 가져오지 않는다. 기록을 비웠으므로 트레이 검토 수도 다시 센다.
+   * 기준점이 없다(처음 넣는 계정, 30일이 지나 기록을 지운 계정). 첫 실행처럼 가장 최근 알림의 alarmId를 기준점으로 잡고,
+   * 과거 멘션은 가져오지 않는다.
    */
-  private async setFreshBaseline(flow: FlowConnection): Promise<NextPoll> {
+  private async setFreshBaseline(flow: FlowConnection, userId: string): Promise<NextPoll> {
     /** 가장 최근 쪽의 알림 목록. */
     const page = await flow.api.listMentionAlarms(null);
     if (!page.ok) return this.nextAfterFailure(flow, page.failure);
 
-    await this.options.stateStore.setBaselineAlarmId(latestAlarmId(page.value.alarms) ?? '0');
+    // 조회하는 사이에 다른 계정으로 바뀌었으면 그 계정의 기준점을 덮지 않는다.
+    await this.options.stateStore.setBaselineAlarmId(latestAlarmId(page.value.alarms) ?? '0', userId);
     this.options.logger.info('detection.baseline-set', { alarmCount: page.value.alarms.length });
     return NEXT_INTERVAL;
   }
 
   /** 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 묶음이 트레이 검토 수를 바꾸고 OS 알림을 띄운다. */
   private async save(mentions: Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baseline: string, userId: string): Promise<void> {
-    // 조회하는 사이에 다른 계정의 키로 바뀌어 기록을 비웠으면, 옛 계정의 결과를 남기지 않는다.
+    // 조회하는 사이에 다른 계정의 키로 바뀌었으면, 옛 계정의 결과를 새 계정의 기록에 남기지 않는다. 묶음도 줄 안에서 한 번 더 본다.
     /** 지금 계정. */
     const current = await this.options.stateStore.getAccount();
     if (!current || !isSameFlowUser(current.userId, userId)) {
@@ -278,7 +279,7 @@ export class MentionDetection {
       return;
     }
 
-    await this.options.bundles.addDetected(mentions, lookups, baseline);
+    await this.options.bundles.addDetected(mentions, lookups, baseline, userId);
   }
 
   /** 알림 하나를 판정한다. 이미 기록한 멘션 위치에서 다시 온 알림은 글을 조회하지 않고 버린다(최소 기록 입구). */

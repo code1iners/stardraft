@@ -691,3 +691,47 @@ describe('멘션 묶음: 저장소 대기 알림과 트레이 수', () => {
     expect(bundles.reviewCount()).toBe(2);
   });
 });
+
+describe('계정을 바꾸는 사이의 감지 결과', () => {
+  it('저장소 매핑을 확인하는 사이에 다른 계정으로 바뀌면, 떠난 계정의 감지 결과를 새 계정의 기록에 넣지 않는다', async () => {
+    const clock = new FakeClock(NOW);
+    const stateStore = new MemoryStateStore();
+    stateStore.account = { ...FAKE_ME };
+    /** 저장소 매핑 확인을 풀어 주는 함수. */
+    let releaseResolve: (resolution: RepoResolution) => void = () => {};
+    const bundles = new MentionBundles({
+      stateStore,
+      notifier: new RecordingNotifier(),
+      clock,
+      logger: createLogger([], clock),
+      findMyAnswers: async () => [],
+      collectContext: async () => null,
+      resolveRepos: () => new Promise<RepoResolution>((resolve) => (releaseResolve = resolve)),
+    });
+    await bundles.load();
+    /** 떠나는 계정에서 판정을 통과한 가짜 멘션. */
+    const mention = {
+      postId: POST_ID,
+      remarkId: '700',
+      replyId: '-1',
+      projectId: '900001',
+      alarmId: '101',
+      senderId: SENDER,
+      senderName: '보낸 사람',
+      registeredDateTime: '20261020085000',
+      detectedAt: NOW,
+      text: `${MY_MARKUP} 가짜 질문`,
+    };
+
+    /** 매핑 확인에서 멈춘 감지 저장. */
+    const detected = bundles.addDetected([mention], new Map(), '101', ME);
+    await new Promise((resolve) => setImmediate(resolve));
+    await bundles.switchAccount({ userId: 'next@example.test', name: '다음 사용자', division: '', email: 'next@example.test' }, []);
+    releaseResolve({ kind: 'unmapped' });
+    await detected;
+
+    expect(bundles.state()).toEqual([]);
+    await expect(stateStore.hasMentionLocation(mention)).resolves.toBe(false);
+    await expect(stateStore.getBaselineAlarmId()).resolves.toBeNull();
+  });
+});

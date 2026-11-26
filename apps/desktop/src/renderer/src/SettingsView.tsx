@@ -51,8 +51,8 @@ export function SettingsView({ initialSection, initialProjectId = null }: Settin
 
   /** 키 확인의 진행 상태. 스냅숏을 받기 전에는 없다. */
   const keyCheck = snapshot?.flowAccount.keyCheck;
-  /** 다른 계정의 키라서 바꾸기 확인을 기다리는 계정. 확인 창가 떠 있는 동안 뒤 화면은 누를 수 없다. */
-  const switchingTo = keyCheck?.status === 'awaiting-confirmation' ? keyCheck.account : null;
+  /** 다른 계정의 키라서 바꾸기 확인을 기다리는 계정과 그 계정의 기록을 보관해 두었는지 여부. 확인 창이 떠 있는 동안 뒤 화면은 누를 수 없다. */
+  const switchingTo = keyCheck?.status === 'awaiting-confirmation' ? keyCheck : null;
 
   return (
     <>
@@ -92,7 +92,9 @@ export function SettingsView({ initialSection, initialProjectId = null }: Settin
           </main>
         </div>
       </div>
-      {switchingTo && <AccountSwitchModal account={switchingTo} />}
+      {switchingTo && (
+        <AccountSwitchModal account={switchingTo.account} current={snapshot?.flowAccount.account ?? null} stored={switchingTo.stored} />
+      )}
     </>
   );
 }

@@ -293,7 +293,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
     expect(stateStore.baselineAlarmId).toBe('105');
   });
 
-  it('기준점이 없으면(다른 계정의 키로 바꿔 기록을 비움) 가장 최근 alarmId를 기준점으로 잡고 과거 멘션은 가져오지 않는다', async () => {
+  it('기준점이 없으면(처음 넣는 계정) 가장 최근 alarmId를 기준점으로 잡고 과거 멘션은 가져오지 않는다', async () => {
     const { flow, stateStore, notifier, detection } = await setup({ baseline: null });
     addPostMentioningMe(flow, 'p1');
     flow.respondToListMentionAlarms([alarm('205', { postId: 'p1' }), alarm('204', { postId: 'p1' })]);

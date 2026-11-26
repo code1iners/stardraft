@@ -74,8 +74,9 @@ export type RunFailureReason =
  * 생성 중으로 남았으면 처음부터 다시 만든다. 저장한 실행 기록과 맞추려고 Flow 시절의 이름을 그대로 쓴다.
  * `secret-patterns-changed`는 실행 중에 비밀 파일 패턴을 추가해 앱이 실행을 멈춘 것이다. 대기열 맨 앞에서 새 패턴으로 처음부터 다시 만든다.
  * `app-quit`은 앱을 끄며 실행을 끊은 것이다. 자동 재시도 1회에 세지 않고, 다시 켜면 그 대상을 대기열 맨 앞에서 처음부터 다시 만든다.
+ * `account-left`는 다른 Flow 계정으로 바꾸며 실행을 끊은 것이다. 앱 종료와 같게, 그 계정으로 돌아오면 그 대상을 대기열 맨 앞에서 처음부터 다시 만든다.
  */
-export type RunResult = 'succeeded' | 'bundle-changed' | 'secret-patterns-changed' | 'app-quit' | RunFailureReason;
+export type RunResult = 'succeeded' | 'bundle-changed' | 'secret-patterns-changed' | 'app-quit' | 'account-left' | RunFailureReason;
 
 /**
  * 실행 기록. 에이전트를 한 번 실행할 때마다 남긴다. 화면에는 상세 머리의 실행 줄만 보이고 비용은 보이지 않는다.

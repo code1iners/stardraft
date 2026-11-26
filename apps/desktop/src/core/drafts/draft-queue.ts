@@ -93,6 +93,19 @@ export class DraftQueue {
     return this.queue.stop();
   }
 
+  /**
+   * 다른 Flow 계정으로 바꾸기 전에 지금 계정의 초안 생성을 멈춘다. 그 계정에 한해 앱을 끈 것과 같다.
+   * 생성 중이던 실행은 끊고, 줄 서 있던 초안은 대기열에서 빠져 그 계정의 기록으로 보관된다. 다른 종류의 대상(진단)은 그대로 돈다.
+   */
+  leaveAccount(): Promise<void> {
+    return this.queue.suspendKind(FLOW_TARGET_KIND);
+  }
+
+  /** 계정을 바꾼 뒤 움직이는 계정의 초안 생성을 다시 돌린다. 떠날 때 보관한 대기열이 있으면 그 순서와 자리로 먼저 선다. */
+  resumeAccount(): Promise<void> {
+    return this.queue.resumeKind(FLOW_TARGET_KIND);
+  }
+
   /** 생성 중 묶음의 진행. 대기열에 없으면 `null`. */
   progress(bundleId: number): DraftProgress | null {
     return this.queue.progress(flowTarget(bundleId));

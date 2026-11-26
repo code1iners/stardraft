@@ -8,7 +8,8 @@ import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
-import type { StateStore } from '../ports/state-store';
+import type { AccountSwitchResult, StateStore } from '../ports/state-store';
+import type { FlowEmployee } from '../ports/flow-api';
 import { bundleRecipients, draftEditorText, isPostable, postableBody } from '../drafts/post-body';
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
@@ -16,7 +17,7 @@ import { SerialQueue } from '../serial-queue';
 import type { RecentAssignment } from '../manual-check/recent-assignments';
 import type { RecentMention } from '../manual-check/recent-mentions';
 import { unseenChanges } from './bundle-changes';
-import { isExpired, minimalRecordOf } from './retention';
+import { ACCOUNT_RETENTION_MS, isExpired, minimalRecordOf } from './retention';
 import {
   activeMentions,
   answeredSinceAssignment,
@@ -160,7 +161,7 @@ export class MentionBundles {
 
   constructor(private readonly options: MentionBundlesOptions) {}
 
-  /** 저장한 묶음을 읽는다. 앱을 시작할 때와 다른 계정으로 바꿔 기록을 비운 뒤에 부른다. */
+  /** 움직이는 계정의 저장한 묶음을 읽는다. 앱을 시작할 때 부른다. */
   load(): Promise<void> {
     return this.lane.run(async () => {
       this.bundles = await this.options.stateStore.listBundles();
@@ -170,7 +171,45 @@ export class MentionBundles {
   }
 
   /**
-   * 앱을 다시 켤 때 앱이 꺼지며 끊긴 묶음을 정리한다. 앱을 시작할 때 저장한 묶음을 읽은 뒤 한 번 부른다.
+   * 다른 Flow 계정으로 바꾼다. 지금 계정의 기록은 지우지 않고 보관하며(떠날 때의 비밀 파일 패턴 `secretPatterns`와 함께),
+   * 새 계정의 보관한 기록을 읽어 그 계정의 묶음만 보인다. 마지막으로 쓴 지 30일이 지난 계정은 먼저 지우므로, 그 계정이면 처음 넣는 계정처럼 시작한다.
+   * 묶음을 바꾸는 다른 일과 끼어들지 않게 같은 줄에서 한다. 이 앞에 맡긴 일은 지금 계정에, 뒤에 맡긴 일은 새 계정에 한다.
+   */
+  switchAccount(account: FlowEmployee, secretPatterns: readonly string[]): Promise<AccountSwitchResult> {
+    return this.lane.run(async () => {
+      /** 바꾸는 시각. 떠나는 계정이 마지막으로 쓴 시각이 된다. */
+      const now = this.options.clock.now();
+      await this.deleteAccountsUnusedSince(now);
+      /** 바꾼 결과. */
+      const result = await this.options.stateStore.switchAccount(account, { now, secretPatterns });
+      this.bundles = await this.options.stateStore.listBundles();
+      this.minimalRecords = await this.options.stateStore.listMinimalRecords();
+      // 떠난 계정의 게시를 누를 때의 확인과 맥락 조회는 버린다. 늦게 끝나도 새 계정의 묶음을 덮지 않는다.
+      this.postChecks.clear();
+      this.contextRequests.clear();
+      this.options.logger.info('bundle.account-switched', { returning: result.returning, bundleCount: this.bundles.length });
+      this.emit();
+      return result;
+    });
+  }
+
+  /** 마지막으로 쓴 지 30일이 지난 보관 계정의 기록 전체를 지운다. 보관 정리가 하루에 한 번, 계정을 바꾸기 전에 부른다. 지운 계정 수를 돌려준다. */
+  deleteUnusedAccounts(): Promise<number> {
+    /** 정리를 부른 시각. */
+    const now = this.options.clock.now();
+    return this.lane.run(() => this.deleteAccountsUnusedSince(now));
+  }
+
+  /** 줄 안에서 30일이 지난 보관 계정을 지운다. 사용자에게 알리지 않는다. */
+  private async deleteAccountsUnusedSince(now: number): Promise<number> {
+    /** 지운 계정 수. */
+    const deleted = await this.options.stateStore.deleteAccountsUnusedBefore(now - ACCOUNT_RETENTION_MS);
+    if (deleted > 0) this.options.logger.info('bundle.unused-accounts-deleted', { count: deleted });
+    return deleted;
+  }
+
+  /**
+   * 앱을 다시 켤 때 앱이 꺼지며 끊긴 묶음을 정리한다. 앱을 시작할 때 저장한 묶음을 읽은 뒤 한 번 부른다. 보관해 둔 계정으로 돌아왔을 때도 부른다.
    * 카운트다운 중이던 게시 중 묶음(보내기 전 기록이 없음)은 게시하지 않고 준비됨으로 돌리고 "앱이 꺼져서 게시하지 않았습니다"를 띄운다.
    * 게시를 누를 때 조회한 내용은 메모리에만 있어 이미 버려졌다.
    */
@@ -317,11 +356,18 @@ export class MentionBundles {
    * 자리마다 `lookups`의 내 답으로 "이미 답함"을 판정하고, 모든 멘션이 빠진 묶음은 초안 없이 이미 답함으로 둔다.
    * 새로 저장소 확인 필요가 된 묶음이 있으면 OS 알림을 하나 띄운다.
    */
-  async addDetected(mentions: readonly Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baselineAlarmId: string): Promise<void> {
+  async addDetected(mentions: readonly Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baselineAlarmId: string, accountId: string): Promise<void> {
     /** 멘션이 온 Flow 프로젝트마다 저장소 매핑을 확인한 결과. 새 묶음의 상태를 정한다. */
     const resolutions = await this.resolveProjects(mentions.map((mention) => mention.projectId));
     /** 멘션을 넣어 초안 없이 기다리게 된 묶음. 원문 영역에 보일 맥락을 새로 조회한다. */
     const changed = await this.lane.run(async (): Promise<number[]> => {
+      // 조회하는 사이에 다른 계정으로 바뀌었으면, 떠난 계정의 감지 결과를 새 계정의 기록에 넣지 않는다.
+      /** 지금 움직이는 계정. */
+      const current = await this.options.stateStore.getAccount();
+      if (!current || !isSameFlowUser(current.userId, accountId)) {
+        this.options.logger.info('bundle.detection-dropped-after-account-switch', { mentionCount: mentions.length });
+        return [];
+      }
       /** 지금 시각. */
       const now = this.options.clock.now();
       /** 이번에 바뀌는 묶음과 새로 넣은 멘션. 자리마다 하나다. */
@@ -1312,6 +1358,14 @@ export class MentionBundles {
     /** 정리를 부른 시각. */
     const now = this.options.clock.now();
     return this.lane.run(async () => {
+      // 보관 중인 계정의 처리한 묶음도 시계대로 정리한다. 화면에 보이지 않으므로 알리지 않는다.
+      /** 보관 중인 계정에서 목록에서 뺄 묶음. */
+      const storedExpired = (await this.options.stateStore.listStoredBundles()).filter((bundle) => isExpired(bundle, now));
+      if (storedExpired.length > 0) {
+        await this.options.stateStore.archiveBundles(storedExpired.map(minimalRecordOf));
+        this.options.logger.info('bundle.stored-account-archived', { count: storedExpired.length });
+      }
+
       /** 목록에서 뺄 묶음. */
       const expired = this.bundles.filter((bundle) => isExpired(bundle, now));
       if (expired.length === 0) return 0;

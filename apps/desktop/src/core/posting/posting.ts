@@ -155,8 +155,31 @@ export class Posting {
   }
 
   /**
+   * 다른 Flow 계정으로 바꾸기 전에 지금 계정의 게시 대기를 멈춘다. 그 계정에 한해 앱을 끈 것과 같다.
+   * 카운트다운 중이던 게시는 보내지 않고 준비됨으로 되돌리고, 기다리던 일(`429` 뒤 다시 보내기, 올라갔는지 다시 확인하기)은 지운다.
+   * 응답을 기다리는 게시 요청은 최대 5초 기다리고, 그래도 없으면 보내기 전 기록을 둔 채 떠난다. 돌아왔을 때 `recoverAfterRestart`가 확인한다.
+   */
+  async leaveAccount(): Promise<void> {
+    /** 카운트다운 중(확인을 기다리는 시간 포함)이던 묶음. */
+    const countingDown = [...this.attempts.keys()];
+    for (const attempt of this.attempts.values()) attempt.cancel();
+    this.attempts.clear();
+    for (const cancel of this.waits.values()) cancel();
+    this.waits.clear();
+    this.resendWaits.clear();
+    this.emit();
+    for (const bundleId of countingDown) {
+      if (await this.options.bundles.cancelPosting(bundleId)) this.options.logger.info('posting.countdown-stopped-by-account-switch', { bundleId });
+    }
+    if (this.pendingSends.size === 0) return;
+
+    this.options.logger.info('posting.waiting-before-account-switch', { count: this.pendingSends.size });
+    await waitAtMost(this.options.clock, Promise.all(this.pendingSends), QUIT_RESPONSE_WAIT_MS);
+  }
+
+  /**
    * 앱을 다시 켤 때, 게시 요청의 응답을 받지 못하고 꺼진 게시(보내기 전 기록만 있고 결과가 없는 게시 중 묶음)를 확인한다.
-   * 저장된 키를 읽은 뒤에 부른다. 확인이 끝날 때까지 묶음은 게시 중("게시 결과 확인 중")으로 남고,
+   * 저장된 키를 읽은 뒤에 부른다. 다른 계정에서 돌아와 그 계정의 키를 쓰게 된 뒤에도 부른다. 확인이 끝날 때까지 묶음은 게시 중("게시 결과 확인 중")으로 남고,
    * 같은 글을 찾지 못하면 게시 실패("앱이 꺼져서 게시하지 못했습니다")다.
    */
   recoverAfterRestart(): void {

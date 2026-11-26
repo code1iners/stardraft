@@ -24,8 +24,11 @@ export type FlowKeyCheck =
   | { status: 'checking' }
   /** 요청 한도에 걸려 잠시 뒤 자동으로 다시 확인한다. */
   | { status: 'waiting-retry' }
-  /** 다른 계정의 키라서, 지금까지의 기록을 지우고 바꿀지 사용자의 확인을 기다린다. */
-  | { status: 'awaiting-confirmation'; account: FlowEmployee };
+  /**
+   * 다른 계정의 키라서, 지금 계정의 기록을 보관하고 바꿀지 사용자의 확인을 기다린다.
+   * `stored`는 그 계정의 기록을 보관해 두었는지(돌아오는 계정인지) 여부다. 30일이 지나 지운 계정은 처음 넣는 계정이다.
+   */
+  | { status: 'awaiting-confirmation'; account: FlowEmployee; stored: boolean };
 
 /** Flow 계정 칸이 보일 상태. */
 export interface FlowAccountState {
@@ -59,6 +62,22 @@ export type FlowKeyCheckOutcome =
   /** 새 확인이나 취소로 이 확인을 그만뒀다. 아무것도 바꾸지 않았다. */
   | { kind: 'cancelled' };
 
+/**
+ * 계정마다 보관하는 Flow 기록을 바꾸는 일. 다른 계정의 키로 바꿀 때 쓴다.
+ * 떠나는 계정은 그 계정에 한해 앱을 끈 것처럼 멈추고 기록을 보관하며, 들어오는 계정은 다시 켠 것처럼 이어 간다.
+ */
+export interface FlowAccountRecords {
+  /** 이 사용자의 기록을 보관해 두었는지 본다. 마지막으로 쓴 지 30일이 지난 계정은 먼저 지우므로 보관하지 않은 것이다. */
+  isStored(userId: string): Promise<boolean>;
+  /**
+   * 지금 계정을 떠나 `account`로 기록을 바꾼다. 지금 계정의 생성·게시 대기를 멈추고 기록을 보관한다.
+   * 실패하면 던지고 지금 계정의 기록을 그대로 둔다. 어느 쪽이든 그 뒤 `resume`을 불러야 대기열이 다시 돈다.
+   */
+  switchTo(account: FlowEmployee): Promise<void>;
+  /** 움직이는 계정의 기록을 이어 간다. 그 계정의 키를 지금 쓰는 키로 둔 뒤에 부른다. */
+  resume(): Promise<void>;
+}
+
 /** Flow 계정에 필요한 포트. */
 export interface FlowAccountOptions {
   /** 키 하나로 Flow API를 부르는 클라이언트를 만든다. */
@@ -67,6 +86,8 @@ export interface FlowAccountOptions {
   secretStore: SecretStore;
   /** 계정을 두는 상태 저장소. */
   stateStore: StateStore;
+  /** 다른 계정의 키로 바꿀 때 계정마다 보관하는 Flow 기록을 바꾸는 일. */
+  records: FlowAccountRecords;
   /** 다시 시도를 기다리는 시계. */
   clock: Clock;
   /** 진단 로그. 키와 사용자 ID는 남기지 않는다. */
@@ -208,7 +229,7 @@ export class FlowAccount {
     }
   }
 
-  /** 다른 계정의 키로 바꾸는 것을 사용자가 확인했다. 지금까지의 기록을 지우고 새 계정으로 시작한다. */
+  /** 다른 계정으로 바꾸는 것을 사용자가 확인했다. 지금 계정의 기록을 보관하고, 새 계정의 보관한 기록을 이어 쓰거나 처음부터 시작한다. */
   async confirmSwitch(): Promise<FlowKeyCheckOutcome> {
     /** 확인을 기다리던 키. */
     const pending = this.pendingSwitch;
@@ -217,7 +238,7 @@ export class FlowAccount {
     this.setState({ keyCheck: { status: 'checking' } });
     return this.saving.run(async () =>
       // 차례를 기다리는 사이에 새 확인이 시작됐으면 지우지 않는다.
-      pending.attempt.cancelled ? CANCELLED : this.save(pending, 'reset-state'),
+      pending.attempt.cancelled ? CANCELLED : this.save(pending, 'switch'),
     );
   }
 
@@ -237,10 +258,17 @@ export class FlowAccount {
     // 차례를 기다리는 사이에 새 확인이 시작됐으면 저장하지 않는다.
     if (verified.attempt.cancelled) return CANCELLED;
 
-    // 다른 계정의 키면 지금까지의 기록을 지워야 하므로, 사용자가 확인할 때까지 아무것도 바꾸지 않는다.
+    // 다른 계정의 키면 만들던 초안과 게시 대기가 멈추므로, 사용자가 확인할 때까지 아무것도 바꾸지 않는다.
     if (this.account && !this.isConnectedAs(verified.account)) {
+      /** 그 계정의 기록을 보관해 두었는지 여부. 확인 창 본문이 갈린다. */
+      const stored = await this.options.records.isStored(verified.account.userId).catch((error: unknown) => {
+        this.options.logger.warn('flow-account.stored-check-failed', errorFields(error));
+        return false;
+      });
+      // 보관 여부를 보는 사이에 새 확인이 시작됐으면 묻지 않는다.
+      if (verified.attempt.cancelled) return CANCELLED;
       this.pendingSwitch = verified;
-      this.setState({ keyCheck: { status: 'awaiting-confirmation', account: verified.account } });
+      this.setState({ keyCheck: { status: 'awaiting-confirmation', account: verified.account, stored } });
       this.options.logger.info('flow-account.switch-pending');
       return { kind: 'needs-confirmation', account: verified.account };
     }
@@ -248,10 +276,10 @@ export class FlowAccount {
   }
 
   /**
-   * 확인한 키와 계정을 저장한다. `reset-state`면 `state.db`의 기록을 모두 지우고 새 계정으로 시작한다.
-   * `settings.json`은 어느 쪽이든 건드리지 않는다. 실패하면 옛 키와 계정을 그대로 둔다.
+   * 확인한 키와 계정을 저장한다. `switch`면 지금 계정의 기록을 보관하고 새 계정의 기록으로 바꾼다.
+   * `settings.json`은 어느 쪽이든 건드리지 않는다. 실패하면 옛 키와 계정, 기록을 그대로 둔다.
    */
-  private async save({ attempt, apiKey, account }: VerifiedKey, mode: 'keep-state' | 'reset-state'): Promise<FlowKeyCheckOutcome> {
+  private async save({ attempt, apiKey, account }: VerifiedKey, mode: 'keep-state' | 'switch'): Promise<FlowKeyCheckOutcome> {
     /** 지금 연결된 계정과 같은 사람의 키인지 여부. 같은 사람의 새 키는 그대로 써도 된다. */
     const sameUser = this.isConnectedAs(account);
     /** 바꾸기 전 키. 다른 사람의 키를 저장한 뒤 계정 기록이 실패하면 이 키로 되돌린다. */
@@ -266,10 +294,12 @@ export class FlowAccount {
     }
 
     try {
-      if (mode === 'reset-state') await this.options.stateStore.resetForAccount(account);
+      if (mode === 'switch') await this.options.records.switchTo(account);
       else await this.options.stateStore.setAccount(account);
     } catch (error) {
       this.options.logger.error('flow-account.account-save-failed', errorFields(error));
+      // 떠나며 멈춘 지금 계정의 대기열을 다시 돌린다. 키는 아래에서 옛 키로 되돌린다.
+      if (mode === 'switch') await this.resumeRecords();
       // 같은 사람의 새 키는 그대로 쓰고 연결을 이어 간다. 바뀐 이름·소속은 다음 확인 때 다시 남긴다.
       if (sameUser) {
         this.useKey(apiKey);
@@ -284,8 +314,19 @@ export class FlowAccount {
     this.useKey(apiKey);
     // 저장하는 사이에 취소됐으면 진행 상태는 그 뒤의 확인 몫이라 계정만 바꾼다.
     this.setState(attempt.cancelled ? { account } : { account, keyCheck: IDLE });
-    this.options.logger.info('flow-account.connected', { resetState: mode === 'reset-state' });
+    this.options.logger.info('flow-account.connected', { switched: mode === 'switch' });
+    // 새 계정의 키를 지금 쓰는 키로 둔 뒤에 그 계정의 기록을 이어 간다. 옛 키로 새 계정의 맥락을 조회하지 않게 한다.
+    if (mode === 'switch') await this.resumeRecords();
     return CONNECTED;
+  }
+
+  /** 움직이는 계정의 기록을 이어 간다. 실패해도 키와 계정은 이미 정해졌으므로 로그만 남긴다. */
+  private async resumeRecords(): Promise<void> {
+    try {
+      await this.options.records.resume();
+    } catch (error) {
+      this.options.logger.error('flow-account.records-resume-failed', errorFields(error));
+    }
   }
 
   /** 확인하고 저장한 키를 지금 쓰는 키로 둔다. Flow가 받아 준 키이므로 "키 확인 필요"는 해결됐다. */

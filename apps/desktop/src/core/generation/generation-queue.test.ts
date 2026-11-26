@@ -576,3 +576,70 @@ describe('생성 대기열: 병렬 작업 수', () => {
     expect(queue.progress({ kind: 'flow', targetId: 2 })).toEqual({ status: 'running', step: '둘째 파일 읽는 중', filesRead: 7 });
   });
 });
+
+describe('생성 대기열: 계정을 떠날 때와 돌아올 때', () => {
+  it('Flow 계정을 떠나면 생성 중이던 Flow 실행은 끊기고 줄 서 있던 Flow 대상은 빠지며, 다른 종류의 대상은 그대로 돈다', async () => {
+    const env = setup();
+    env.setParallel(2);
+    env.flow.add(1);
+    env.second.add(10);
+    env.executor.script({ outcome: 'wait-for-abort' });
+    /** 둘째 어댑터의 실행을 끝내는 함수. */
+    const finishSecond = env.holds();
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.flow.add(2);
+    await settle();
+    expect(queue.progress({ kind: 'flow', targetId: 2 })).toEqual({ status: 'waiting' });
+
+    await queue.suspendKind('flow');
+    await settle();
+
+    expect(env.executor.requests[0]?.signal.aborted).toBe(true);
+    // 앱을 끈 것과 같게 실행 기록만 남기고 생성 중으로 둔다.
+    expect(env.flow.status(1)).toBe('generating');
+    expect(env.flow.targets.get(1)?.runs.map((run) => run.result)).toEqual(['account-left']);
+    expect(queue.progress({ kind: 'flow', targetId: 1 })).toBeNull();
+    expect(queue.progress({ kind: 'flow', targetId: 2 })).toBeNull();
+    // 떠나기 전의 대기열을 그대로 남겨, 그 계정의 줄로 보관되게 한다.
+    expect(env.store.queue).toEqual([
+      { kind: 'flow', targetId: 1, priority: 'resume' },
+      { kind: 'second', targetId: 10, priority: 'resume' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
+    ]);
+    // 떠나 있는 동안 생성 중이 된 Flow 대상도 시작하지 않는다.
+    env.flow.add(3);
+    await settle();
+    expect(env.flow.prepared).toEqual([1]);
+    expect(queue.progress({ kind: 'second', targetId: 10 })).toMatchObject({ status: 'running' });
+    finishSecond({ type: 'completed', output: { answer: 'second' } });
+    await settle();
+    expect(env.second.status(10)).toBe('saved');
+    expect(env.flow.prepared).toEqual([1]);
+  });
+
+  it('계정에 돌아오면 그 계정이 남긴 대기열의 Flow 줄이 그 순서와 자리로 먼저 서고, 끊긴 생성은 처음부터 다시 만든다', async () => {
+    const env = setup();
+    env.flow.add(1);
+    env.flow.add(2);
+    env.executor.script({ outcome: 'wait-for-abort' });
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    await queue.suspendKind('flow');
+    await settle();
+
+    // 다른 계정으로 갔다가 돌아왔다. 화면 순서는 2가 먼저지만, 남긴 대기열에서는 끊긴 1이 맨 앞이다.
+    env.flow.targets.delete(1);
+    env.flow.add(1);
+    env.completes({ answer: 'flow-1' });
+    env.completes({ answer: 'flow-2' });
+    await queue.resumeKind('flow');
+    await settle();
+
+    expect(env.flow.prepared).toEqual([1, 1, 2]);
+    expect(env.flow.status(1)).toBe('saved');
+    expect(env.flow.status(2)).toBe('saved');
+  });
+});

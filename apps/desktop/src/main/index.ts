@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { AgentConnections } from '../core/agent/agent-connections';
 import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
-import { FlowAccount } from '../core/account/flow-account';
+import { AccountRecords } from '../core/account/account-records';
+import { FlowAccount, type FlowAccountRecords } from '../core/account/flow-account';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { BundleRetention } from '../core/bundles/retention';
 import { RepoWaitMonitor } from '../core/bundles/repo-wait-monitor';
@@ -135,11 +136,21 @@ function start(): void {
       },
     });
 
+    /**
+     * 계정마다 보관하는 Flow 기록을 오가는 일. 묶음·초안 대기열·게시가 만들어진 뒤에 정해지므로, 계정 바꾸기는 그때까지 이 자리를 거친다.
+     * 키 확인은 설정 창에서만 시작하고 설정 창은 아래 연결을 마친 뒤에 열 수 있으므로, 정해지기 전에 불리지 않는다.
+     */
+    let accountRecords: FlowAccountRecords | null = null;
     /** 설정 창 "Flow 계정" 칸의 키 확인과 계정. Flow 요청은 OS 프록시와 인증서 설정을 따르는 Chromium 네트워크로 보낸다. */
     const flowAccount = new FlowAccount({
       connectFlow: (apiKey) => new HttpFlowApi({ apiKey, fetch: net.fetch, clock: systemClock }),
       secretStore: appData.secretStore,
       stateStore: appData.stateStore,
+      records: {
+        isStored: (userId) => requireRecords(accountRecords).isStored(userId),
+        switchTo: (account) => requireRecords(accountRecords).switchTo(account),
+        resume: () => requireRecords(accountRecords).resume(),
+      },
       clock: systemClock,
       logger,
       problems: globalProblems,
@@ -279,15 +290,22 @@ function start(): void {
       logger,
     });
     posting = bundlePosting;
+    // 다른 계정의 키로 바꾸면 지금 계정의 생성·게시 대기를 멈추고 기록을 보관한 뒤, 새 계정의 보관한 기록을 이어 쓴다.
+    accountRecords = new AccountRecords({
+      bundles: mentionBundles,
+      drafts: draftQueue,
+      posting: bundlePosting,
+      stateStore: appData.stateStore,
+      settingsStore: appData.settingsStore,
+      logger,
+    });
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
-    // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.
     /** 목록을 받은 계정의 사용자 ID. */
     let projectsAccountId = flowAccount.state().account?.userId ?? null;
     flowAccount.onChange(({ account }) => {
       if ((account?.userId ?? null) === projectsAccountId) return;
       projectsAccountId = account?.userId ?? null;
       void repoMappings.refresh();
-      void mentionBundles.load();
     });
     /** 설정 "일반" 칸의 로그인 시 자동 시작. [감지 시작]이 켠다. */
     const launchAtLogin = new LaunchAtLogin({ settingsStore: appData.settingsStore, logger, applyToSystem: applyLoginItem });
@@ -436,7 +454,7 @@ function start(): void {
     let detectionKey: string | null = null;
     /**
      * 감지를 시작했고 쓸 수 있는 키가 있으면 폴링을 시작한다. [감지 시작] 직후, 앱 시작 때 저장된 키를 읽은 뒤,
-     * 키를 새로 확인했을 때(다른 계정이면 기준점을 다시 잡음), "키 확인 필요"가 풀렸을 때 바로 조회하며 시작한다.
+     * 키를 새로 확인했을 때(다른 계정이면 그 계정의 기준점에서 72시간 안의 멘션만 이어 받음), "키 확인 필요"가 풀렸을 때 바로 조회하며 시작한다.
      */
     const syncDetection = () => {
       /** 지금 쓰는 키. "키 확인 필요"가 있으면 쓰지 않는다. */
@@ -535,6 +553,12 @@ async function prepareQuit(): Promise<void> {
   } catch (error) {
     logger.error('app.quit-cleanup-failed', errorFields(error));
   }
+}
+
+/** 계정 기록을 오가는 일. 연결을 마치기 전에 불리면 앱의 순서가 틀린 것이라 던진다. */
+function requireRecords(records: FlowAccountRecords | null): FlowAccountRecords {
+  if (!records) throw new Error('계정 기록을 아직 연결하지 않았습니다.');
+  return records;
 }
 
 /** 구독을 끊는 함수 여럿을 한 번에 부르는 함수 하나로 묶는다. */

@@ -199,7 +199,9 @@ function facts(entries: readonly (readonly [string, string | null])[]): string {
  * 첨부가 있으면 재현 칸 끝에 `<보고서 이름>/<파일>` 상대 링크로 건다.
  */
 export function reportMarkdown(diagnosis: SentryDiagnosis, report: DiagnosisReport, name: string, attachmentNames: readonly string[]): string {
+  /** 오류 이슈 정보. */
   const { issue } = diagnosis;
+  /** 보고서의 재현, 받아 둔 이벤트 정보, 실행 정보. */
   const { reproduction, event, run } = report;
   /** 재현 칸의 줄들. */
   const reproductionLines = [`- 결과: ${reproductionResultText(reproduction)}`];

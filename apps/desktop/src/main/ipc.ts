@@ -11,6 +11,7 @@ import type { AgentConnections } from '../core/agent/agent-connections';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import type { SentryConnection, SentryConnectionState, SentryTokenCheckOutcome } from '../core/sentry/sentry-connection';
+import type { DiagnosisExports, DiagnosisReportFolder } from '../core/sentry/diagnosis-exports';
 import type { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
 import { openableSentryUrl } from '../core/sentry/sentry-diagnosis';
 import { SENTRY_TARGET_KIND } from '../core/sentry/sentry-target-adapter';
@@ -40,6 +41,7 @@ import {
   type DiagnosisProgressSnapshot,
   type DraftSettingsSnapshot,
   type ParallelWorkSnapshot,
+  type ReportFolderSnapshot,
   type EditorSnapshot,
   type FlowAccountProfile,
   type FlowAccountSnapshot,
@@ -73,6 +75,10 @@ export interface IpcServices {
   sentryProjects: SentryProjects;
   /** 감지한 Sentry 진단. 검토 화면의 `진단` 묶음과 프로젝트 줄의 "n건 대기"가 따른다. */
   sentryDiagnoses: SentryDiagnoses;
+  /** 검토 대기 진단 보고서의 마크다운 내보내기. */
+  diagnosisExports: DiagnosisExports;
+  /** 설정 "Sentry" 칸의 "보고서를 내보낼 폴더". */
+  reportFolder: DiagnosisReportFolder;
   /** 작은 창 띠에 보일 전역 문제. */
   globalProblems: GlobalProblems;
   /** "에이전트" 칸의 연결 확인. 이 OS의 후보 에이전트마다 하나씩 있다. */
@@ -206,6 +212,7 @@ export function registerIpc(services: IpcServices): void {
     lastParallelWork = json;
     services.windows.broadcast({ type: 'parallel-work-changed', parallelWork });
   };
+  services.reportFolder.onChange(() => services.windows.broadcast({ type: 'report-folder-changed', reportFolder: reportFolderSnapshot(services) }));
   services.parallelWork.onChange(broadcastParallelWork);
   services.drafts.onChange(broadcastParallelWork);
   // 다시 시작은 앱 내 업데이트의 상태 변화도 함께 알린다.
@@ -241,6 +248,11 @@ function diagnosisProgress(drafts: IpcServices['drafts'], diagnosisId: number): 
   if (!progress) return null;
   if (progress.status === 'waiting') return { status: 'waiting', ahead: drafts.aheadOf(target) };
   return { status: 'running', step: progress.step, filesRead: progress.filesRead, startedAt: drafts.runningSince(target) ?? Date.now() };
+}
+
+/** 지금 보고서를 내보낼 폴더. */
+function reportFolderSnapshot({ reportFolder }: IpcServices): ReportFolderSnapshot {
+  return { path: reportFolder.path(), isDefault: reportFolder.isDefault() };
 }
 
 /** 지금 병렬 작업 수와 진행 중인 초안·진단 수. */
@@ -288,6 +300,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     manualCheck: currentManualCheckSnapshot(services),
     draftSettings: draftSettingsSnapshot(services.draftSettings.state()),
     parallelWork: parallelWorkSnapshot(services),
+    reportFolder: reportFolderSnapshot(services),
     update: services.updateRestart && updateSnapshot(services.updateRestart.state()),
   };
 }
@@ -455,6 +468,18 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'complete-diagnosis':
       await services.sentryDiagnoses.complete(command.diagnosisId);
+      return;
+    case 'export-diagnosis':
+      await exportDiagnosis(services, command.diagnosisId);
+      return;
+    case 'pick-report-folder': {
+      /** 고른 폴더. 고르지 않고 닫으면 `null`. */
+      const path = await pickSingleFolder(windows, { title: '보고서를 내보낼 폴더 고르기', createDirectory: true });
+      if (path !== null) await services.reportFolder.set(path);
+      return;
+    }
+    case 'open-report-folder':
+      await openReportFolder(services);
       return;
     case 'open-diagnosis-in-sentry':
       await openDiagnosisInSentry(services, command.diagnosisId);
@@ -662,6 +687,30 @@ async function openDiagnosisEvidenceInEditor(
   await editorOpener.open(target);
 }
 
+/** 진단 보고서를 내보내고 결과를 창에 알린다. 내보낼 수 없는 진단(이미 완료함 등)이면 아무것도 알리지 않고, 파일을 만들지 못하면 실패를 알린다. */
+async function exportDiagnosis({ diagnosisExports, windows, logger }: IpcServices, diagnosisId: number): Promise<void> {
+  try {
+    /** 만든 파일. 내보낼 수 없는 진단이면 `null`. */
+    const exported = await diagnosisExports.export(diagnosisId);
+    if (exported) windows.broadcast({ type: 'diagnosis-exported', diagnosisId, fileName: exported.fileName });
+  } catch (error) {
+    logger.warn('diagnosis-exports.failed', { diagnosisId, ...errorFields(error) });
+    windows.broadcast({ type: 'diagnosis-export-failed', diagnosisId });
+  }
+}
+
+/** 보고서를 내보낼 폴더를 OS 파일 관리자로 연다. 아직 없으면 만들어서 연다. 열지 못하면 로그만 남긴다. 경로는 로그에 남기지 않는다. */
+async function openReportFolder({ reportFolder, logger }: IpcServices): Promise<void> {
+  try {
+    await mkdir(reportFolder.path(), { recursive: true });
+    /** 실패했을 때 OS가 돌려준 오류 문구. 성공하면 빈 문자열이다. */
+    const failure = await shell.openPath(reportFolder.path());
+    if (failure) logger.warn('report-folder.open-failed', { errorMessage: failure });
+  } catch (error) {
+    logger.warn('report-folder.open-failed', errorFields(error));
+  }
+}
+
 /** 진단의 오류 이슈를 기본 브라우저로 Sentry에서 연다. 열 주소가 없거나 열지 못하면 로그만 남긴다. 주소는 로그에 남기지 않는다. */
 async function openDiagnosisInSentry({ sentryDiagnoses, logger }: IpcServices, diagnosisId: number): Promise<void> {
   /** 열 주소. 공식 sentry.io 주소만 연다. */
@@ -845,9 +894,9 @@ function saveResultOf(outcome: SentryRegisterOutcome | SentryUpdateOutcome): Sen
 }
 
 /** 폴더 선택 창으로 저장소 폴더를 하나 받는다. 고르지 않고 닫으면 `null`. */
-async function pickSingleFolder(windows: AppWindows): Promise<string | null> {
+async function pickSingleFolder(windows: AppWindows, { title = '저장소 폴더 고르기', createDirectory = false } = {}): Promise<string | null> {
   /** 폴더 선택 창 설정. git 저장소가 아닌 코드 폴더도 고를 수 있다. */
-  const options: OpenDialogOptions = { title: '저장소 폴더 고르기', buttonLabel: '선택', properties: ['openDirectory'] };
+  const options: OpenDialogOptions = { title, buttonLabel: '선택', properties: createDirectory ? ['openDirectory', 'createDirectory'] : ['openDirectory'] };
   /** 설정 창. 있으면 그 위에 시트로 띄운다. */
   const parent = windows.settingsWindow();
   /** 고른 결과. */

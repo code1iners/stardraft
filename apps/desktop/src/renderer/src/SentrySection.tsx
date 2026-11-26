@@ -3,6 +3,7 @@ import { globalProblemText } from '../../shared/global-problem-text';
 import {
   SENTRY_TOKEN_MAX_LENGTH,
   type AppSnapshot,
+  type ReportFolderSnapshot,
   type SentryConnectionSnapshot,
   type SentryProjectSnapshot,
   type SentryProjectsSnapshot,
@@ -31,6 +32,8 @@ interface SentrySectionProps {
   sentry: SentryConnectionSnapshot;
   /** 진단하려고 등록한 프로젝트와 등록할 수 있는 프로젝트 목록. */
   projects: SentryProjectsSnapshot;
+  /** 보고서를 내보낼 폴더. 토큰이 없어도 보인다. */
+  reportFolder: ReportFolderSnapshot;
   /** 실행 중인 OS. 읽을 수 없는 이유의 문구가 OS마다 다르다. */
   platform: AppSnapshot['platform'];
 }
@@ -39,7 +42,7 @@ interface SentrySectionProps {
  * 설정 "Sentry" 칸. 토큰이 없으면 토큰 입력만, 있으면 토큰 카드(조직 수와 이름, 권한, 상태)와 "진단할 프로젝트" 목록을 보인다.
  * 토큰은 [확인]으로 Sentry에 확인되었을 때만 main이 저장하므로 저장 버튼은 없다. 토큰 문제는 이 칸의 Sentry만 멈춘다.
  */
-export function SentrySection({ sentry, projects, platform }: SentrySectionProps) {
+export function SentrySection({ sentry, projects, reportFolder, platform }: SentrySectionProps) {
   /** 토큰 연결 여부, 확인의 진행 상태, "토큰 확인 필요"의 이유. */
   const { connected, tokenCheck, tokenProblem } = sentry;
   /** 연결된 토큰이 있을 때 [토큰 바꾸기]로 입력 칸을 연 상태. */
@@ -158,7 +161,36 @@ export function SentrySection({ sentry, projects, platform }: SentrySectionProps
           )}
         </form>
       )}
+      <ReportFolderField reportFolder={reportFolder} />
     </>
+  );
+}
+
+/** "보고서를 내보낼 폴더" 항목에 넘기는 값. */
+interface ReportFolderFieldProps {
+  /** 보고서를 내보낼 폴더. */
+  reportFolder: ReportFolderSnapshot;
+}
+
+/** 칸 맨 아래의 "보고서를 내보낼 폴더". 경로와 [바꾸기…]·[폴더 열기]를 보인다. 토큰이 없어도 보인다. */
+function ReportFolderField({ reportFolder }: ReportFolderFieldProps) {
+  return (
+    <div className="field">
+      <span className="field-label">보고서를 내보낼 폴더</span>
+      <p className="field-help muted">[내보내기]를 누르면 진단 보고서가 이 폴더에 마크다운 파일로 만들어집니다.</p>
+      <div className="row">
+        <code className="path-text" title={reportFolder.path}>
+          {reportFolder.path}
+        </code>
+        {reportFolder.isDefault && <span className="muted small">기본 폴더</span>}
+        <button type="button" className="btn sm" onClick={() => void window.stardraft.send({ type: 'pick-report-folder' })}>
+          바꾸기…
+        </button>
+        <button type="button" className="btn sm" onClick={() => void window.stardraft.send({ type: 'open-report-folder' })}>
+          폴더 열기
+        </button>
+      </div>
+    </div>
   );
 }
 

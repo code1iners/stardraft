@@ -2,6 +2,7 @@ import type { DetectionRecord, SentryStore } from '../ports/sentry-store';
 import type { RunRecord } from '../generation/generation-run';
 import type {
   DetectionKey,
+  DiagnosisExport,
   DiagnosisFailure,
   DiagnosisIssue,
   DiagnosisOrigin,
@@ -60,6 +61,8 @@ interface DiagnosisRow {
   runs: string;
   /** 완료한 시각(Unix epoch 밀리초). 완료가 아니면 `NULL`. */
   completed_at: number | null;
+  /** 마지막으로 내보낸 기록(JSON). 내보낸 적 없으면 `NULL`. */
+  last_export: string | null;
 }
 
 /**
@@ -108,7 +111,7 @@ export class SqliteSentryStore implements SentryStore {
           repoCheck: diagnosis.repoCheck === null ? null : JSON.stringify(diagnosis.repoCheck),
           issue: JSON.stringify(diagnosis.issue),
         });
-        return structuredClone({ ...diagnosis, id: Number(result.lastInsertRowid), report: null, failure: null, runs: [], completedAt: null });
+        return structuredClone({ ...diagnosis, id: Number(result.lastInsertRowid), report: null, failure: null, runs: [], completedAt: null, lastExport: null });
       });
     })();
   }
@@ -119,7 +122,7 @@ export class SqliteSentryStore implements SentryStore {
 
   async updateDiagnosis(diagnosis: SentryDiagnosis): Promise<void> {
     this.db
-      .prepare('UPDATE sentry_diagnosis SET status = ?, repo_check = ?, report = ?, failure = ?, runs = ?, completed_at = ? WHERE id = ?')
+      .prepare('UPDATE sentry_diagnosis SET status = ?, repo_check = ?, report = ?, failure = ?, runs = ?, completed_at = ?, last_export = ? WHERE id = ?')
       .run(
         diagnosis.status,
         jsonOrNull(diagnosis.repoCheck),
@@ -127,6 +130,7 @@ export class SqliteSentryStore implements SentryStore {
         jsonOrNull(diagnosis.failure),
         JSON.stringify(diagnosis.runs),
         diagnosis.completedAt,
+        jsonOrNull(diagnosis.lastExport),
         diagnosis.id,
       );
   }
@@ -181,6 +185,7 @@ function diagnosisOf(row: DiagnosisRow): SentryDiagnosis {
     failure: row.failure === null ? null : (JSON.parse(row.failure) as DiagnosisFailure),
     runs: JSON.parse(row.runs) as RunRecord[],
     completedAt: row.completed_at,
+    lastExport: row.last_export === null ? null : (JSON.parse(row.last_export) as DiagnosisExport),
   };
 }
 

@@ -239,3 +239,11 @@ export function issueFacts({ issue, origin, detectedAt }: Pick<DiagnosisSnapshot
   ];
   return facts.flatMap(([label, value]) => (value === null ? [] : [{ label, value }]));
 }
+
+/** 보고서 내보내기 토스트 글. 내보냈으면 파일 이름을 적고(`fileName`), 내보내지 못했으면 `null`이다. */
+export function exportToastText(fileName: string | null): string {
+  return fileName === null ? '내보내지 못했습니다. 내보낼 폴더를 확인해 주세요.' : `내보냈습니다: ${fileName}`;
+}
+
+/** 내보내지 않고 [완료]를 눌렀을 때 바닥 줄에 보이는 확인 글. */
+export const EXPORT_CONFIRM_TEXT = '내보내지 않았습니다. 완료하면 이 보고서가 사라집니다.';

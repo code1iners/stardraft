@@ -68,6 +68,8 @@ export interface Settings {
   extraInstructions: string;
   /** 병렬 작업 수. 초안과 진단을 합쳐 함께 진행하는 최대 수(1~5)다. 이 값이 없던 옛 파일은 기본값 1로 읽는다. */
   parallelWorkCount: number;
+  /** 진단 보고서를 내보낼 폴더(절대 경로). `null`이면 기본 폴더(사용자 문서 폴더 아래 `Stardraft/Reports/Sentry/`)다. 이 값이 없던 옛 파일은 `null`로 읽는다. */
+  diagnosisReportFolder: string | null;
   /** 에디터에서 열기에 쓸 에디터. 아직 고르지 않았으면 `null`. */
   editor: EditorChoice | null;
   /** 로그인 시 자동 시작 여부. */
@@ -92,6 +94,7 @@ export const DEFAULT_SETTINGS: Settings = {
   extraSecretPatterns: [],
   extraInstructions: '',
   parallelWorkCount: 1,
+  diagnosisReportFolder: null,
   editor: null,
   launchAtLogin: false,
   detectionStarted: false,

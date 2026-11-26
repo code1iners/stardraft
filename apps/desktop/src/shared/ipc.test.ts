@@ -207,8 +207,13 @@ describe('렌더러가 보낸 명령 검사', () => {
     for (const diagnosisId of [0, 1.5, '4', null]) expect(parseAppCommand({ type: 'open-sentry-repo-mapping', diagnosisId })).toBeNull();
   });
 
+  it('보고서 폴더 명령은 인자가 없고, 다른 갈래의 값은 받지 않는다', () => {
+    expect(parseAppCommand({ type: 'pick-report-folder' })).toEqual({ type: 'pick-report-folder' });
+    expect(parseAppCommand({ type: 'open-report-folder', path: '/아무데나' })).toEqual({ type: 'open-report-folder' });
+  });
+
   it('진단의 취소·다시 시도·완료 명령은 진단 ID(양의 정수)를 받는다', () => {
-    for (const type of ['cancel-diagnosis', 'retry-diagnosis', 'complete-diagnosis'] as const) {
+    for (const type of ['cancel-diagnosis', 'retry-diagnosis', 'complete-diagnosis', 'export-diagnosis'] as const) {
       expect(parseAppCommand({ type, diagnosisId: 7 })).toEqual({ type, diagnosisId: 7 });
       for (const diagnosisId of [0, -1, 2.5, '7', undefined]) expect(parseAppCommand({ type, diagnosisId })).toBeNull();
     }

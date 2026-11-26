@@ -12,6 +12,7 @@ import {
   replacedByRegression,
   STATUSES_REMOVED_ON_UNREGISTER,
   type DetectionKey,
+  type DiagnosisExport,
   type DiagnosisFailure,
   type DiagnosisOrigin,
   type DiagnosisReport,
@@ -221,6 +222,18 @@ export class SentryDiagnoses {
       },
       { requestedByUser: true },
     );
+  }
+
+  /**
+   * 보고서를 내보낸 기록을 남긴다. 검토 대기 보고서가 대상이고, 몇 번이든 부를 수 있으며 상태는 바꾸지 않는다.
+   * 그사이 완료하거나 보고서가 없어졌으면 기록하지 않고 거짓이다. 이미 내보낸 파일은 그대로 남는다.
+   */
+  async recordExport(id: number, exported: DiagnosisExport): Promise<boolean> {
+    return this.change(id, (diagnosis) => {
+      if (diagnosis.status !== 'ready' || diagnosis.report === null) return false;
+      diagnosis.lastExport = exported;
+      return true;
+    });
   }
 
   /**

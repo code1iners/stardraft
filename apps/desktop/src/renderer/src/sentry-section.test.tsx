@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { SETTINGS_SECTIONS, type SentryConnectionSnapshot, type SentryProjectsSnapshot } from '../../shared/ipc';
+import { SETTINGS_SECTIONS, type ReportFolderSnapshot, type SentryConnectionSnapshot, type SentryProjectsSnapshot } from '../../shared/ipc';
 import { SentrySection } from './SentrySection';
 
 /** 토큰이 없는 상태. */
@@ -16,13 +16,16 @@ const CONNECTED: SentryConnectionSnapshot = {
 /** 등록한 프로젝트가 없는 상태. */
 const NO_PROJECTS: SentryProjectsSnapshot = { projects: [], candidates: { status: 'idle' } };
 
+/** 기본 보고서 폴더. */
+const REPORT_FOLDER: ReportFolderSnapshot = { path: '/가짜/문서/Stardraft/Reports/Sentry', isDefault: true };
+
 /** 그린 HTML. */
 function htmlOf(
   sentry: SentryConnectionSnapshot,
   platform: 'darwin' | 'win32' | 'other' = 'darwin',
   projects: SentryProjectsSnapshot = NO_PROJECTS,
 ): string {
-  return renderToStaticMarkup(<SentrySection sentry={sentry} projects={projects} platform={platform} />);
+  return renderToStaticMarkup(<SentrySection sentry={sentry} projects={projects} reportFolder={REPORT_FOLDER} platform={platform} />);
 }
 
 /** 그린 HTML에서 태그를 지운 글자. */
@@ -33,6 +36,25 @@ function textOf(html: string): string {
 describe('설정 칸 순서', () => {
   it('Flow 계정 · Sentry · 에이전트 · 저장소 · 초안 · 일반 순서다', () => {
     expect(SETTINGS_SECTIONS).toEqual(['flow-account', 'sentry', 'agent', 'repositories', 'drafts', 'general']);
+  });
+});
+
+describe('설정 "Sentry" 칸의 보고서 폴더', () => {
+  it('토큰이 없어도 맨 아래에 "보고서를 내보낼 폴더"와 경로, [바꾸기…]·[폴더 열기]가 보인다', () => {
+    const text = textOf(htmlOf(NO_TOKEN));
+
+    expect(text).toContain('보고서를 내보낼 폴더');
+    expect(text).toContain('[내보내기]를 누르면 진단 보고서가 이 폴더에 마크다운 파일로 만들어집니다.');
+    expect(text).toContain('/가짜/문서/Stardraft/Reports/Sentry');
+    expect(text).toContain('바꾸기…');
+    expect(text).toContain('폴더 열기');
+    expect(text.lastIndexOf('보고서를 내보낼 폴더')).toBeGreaterThan(text.indexOf('개인 토큰'));
+  });
+
+  it('연결된 상태에서는 진단할 프로젝트 목록 아래에 있다', () => {
+    const text = textOf(htmlOf(CONNECTED));
+
+    expect(text.indexOf('보고서를 내보낼 폴더')).toBeGreaterThan(text.indexOf('진단할 프로젝트'));
   });
 });
 

@@ -89,7 +89,7 @@ export function SettingsView({ initialSection, initialProjectId = null, initialS
               <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
             )}
             {section === 'sentry' && snapshot && (
-              <SentrySection sentry={snapshot.sentry} projects={snapshot.sentryProjects} platform={snapshot.platform} />
+              <SentrySection sentry={snapshot.sentry} projects={snapshot.sentryProjects} reportFolder={snapshot.reportFolder} platform={snapshot.platform} />
             )}
             {section === 'agent' && snapshot && (
               <AgentSection

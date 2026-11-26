@@ -1022,6 +1022,10 @@ export interface DiagnosisSnapshot {
   failure: DiagnosisFailureSnapshot | null;
   /** 완료한 시각. 완료가 아니면 `null`. */
   completedAt: number | null;
+  /** 지금 보이는 보고서를 내보낸 적이 있는지 여부. 거짓이면 [완료]가 "내보내지 않았습니다" 확인을 거친다. */
+  exported: boolean;
+  /** 마지막으로 내보낸 파일의 경로. 내보낸 적 없으면 `null`. 완료함의 `기록`에 보인다. */
+  lastExportedPath: string | null;
   /** [Sentry에서 열기]로 열 주소가 있는지 여부. 주소는 main이 가지고 있다. */
   canOpenInSentry: boolean;
   /** 보고서의 첨부 파일. 보고서가 없으면 비어 있다. 첨부는 재현하는 진단이 만들므로 읽기 전용 진단의 보고서에는 없다. */
@@ -1151,6 +1155,14 @@ export interface ParallelWorkSnapshot {
   running: number;
 }
 
+/** 진단 보고서를 내보낼 폴더. */
+export interface ReportFolderSnapshot {
+  /** 폴더 경로. 고르지 않았으면 기본 폴더(사용자 문서 폴더 아래 `Stardraft/Reports/Sentry`)다. */
+  path: string;
+  /** 기본 폴더를 쓰는 중인지 여부. */
+  isDefault: boolean;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -1187,6 +1199,8 @@ export interface AppSnapshot {
   draftSettings: DraftSettingsSnapshot;
   /** 설정 "에이전트" 칸의 병렬 작업 수와 진행 중인 수. */
   parallelWork: ParallelWorkSnapshot;
+  /** 설정 "Sentry" 칸의 "보고서를 내보낼 폴더". */
+  reportFolder: ReportFolderSnapshot;
   /** 앱 내 업데이트의 화면 상태. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
   update: UpdateStateSnapshot | null;
 }
@@ -1232,6 +1246,12 @@ export type AppEvent =
   | { type: 'manual-check-changed'; manualCheck: ManualCheckSnapshot }
   /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
   | { type: 'draft-settings-changed'; draftSettings: DraftSettingsSnapshot }
+  /** 보고서를 내보낼 폴더가 바뀌었다. */
+  | { type: 'report-folder-changed'; reportFolder: ReportFolderSnapshot }
+  /** 진단 보고서를 내보냈다. 토스트가 파일 이름을 보인다. */
+  | { type: 'diagnosis-exported'; diagnosisId: number; fileName: string }
+  /** 진단 보고서를 내보내지 못했다. 토스트가 알린다. */
+  | { type: 'diagnosis-export-failed'; diagnosisId: number }
   /** 병렬 작업 수나 진행 중인 수가 바뀌었다. */
   | { type: 'parallel-work-changed'; parallelWork: ParallelWorkSnapshot }
   /** 앱 내 업데이트의 상태가 바뀌었다. */
@@ -1259,6 +1279,12 @@ export type AppCommand =
   | { type: 'retry-diagnosis'; diagnosisId: number }
   /** 진단을 [완료]한다. 진단 실패와 검토 대기 보고서가 대상이고, 최소 기록만 남기고 본문과 첨부를 지운다. Sentry에는 요청하지 않는다. */
   | { type: 'complete-diagnosis'; diagnosisId: number }
+  /** 검토 대기 보고서를 설정의 폴더에 마크다운 파일로 내보낸다. 끝나면 `diagnosis-exported`나 `diagnosis-export-failed`로 알린다. 상태는 바뀌지 않는다. */
+  | { type: 'export-diagnosis'; diagnosisId: number }
+  /** 보고서를 내보낼 폴더를 폴더 선택 창으로 바꾼다. */
+  | { type: 'pick-report-folder' }
+  /** 보고서를 내보낼 폴더를 OS 파일 관리자로 연다. 아직 없으면 만들어서 연다. */
+  | { type: 'open-report-folder' }
   /** 진단의 오류 이슈를 Sentry에서 연다. 주소는 main이 정한다. */
   | { type: 'open-diagnosis-in-sentry'; diagnosisId: number }
   /** 진단 보고서의 근거 하나를 에디터에서 연다. `evidenceIndex`는 보고서 근거 목록의 위치다. */
@@ -1666,6 +1692,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'cancel-diagnosis':
     case 'retry-diagnosis':
     case 'complete-diagnosis':
+    case 'export-diagnosis':
     case 'open-diagnosis-in-sentry':
       return isDiagnosisIdInput(candidate.diagnosisId) ? { type: candidate.type, diagnosisId: candidate.diagnosisId } : null;
     case 'open-diagnosis-evidence-in-editor':
@@ -1739,6 +1766,10 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'restart-update-now':
     case 'cancel-update-restart':
     case 'retry-update-install':
+      return { type: candidate.type };
+    // 인자 없는 명령이 한 갈래에 너무 많으면 TypeScript가 합집합 대입을 검사하지 못해 갈래를 나눈다.
+    case 'pick-report-folder':
+    case 'open-report-folder':
       return { type: candidate.type };
     default:
       return null;

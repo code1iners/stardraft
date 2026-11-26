@@ -179,6 +179,35 @@ describe('Sentry 진단 저장소', () => {
     db.close();
   });
 
+  it('형식 29의 진단은 올린 뒤 재현 없이 다시 시도가 아닌 것으로 읽히고, 켠 값은 다시 열어도 남는다. 재현하던 진단의 실패 표시도 JSON 그대로 남는다', async () => {
+    const path = join(dir, 'state.db');
+    /** 형식 29로 연 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 29), '0.1.0');
+    old
+      .prepare(
+        `INSERT INTO sentry_diagnosis (project_id, issue_id, origin, regression_event_id, detected_at, status, repo_check, issue)
+         VALUES ('p1', '101', 'new', NULL, 1000, 'queued', NULL, ?)`,
+      )
+      .run(JSON.stringify(diagnosis('101').issue));
+    old.close();
+
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const sentry = new SqliteSentryStore(db);
+    const [before] = await sentry.listDiagnoses();
+    expect(before).toMatchObject({ issueId: '101', withoutReproduction: false });
+    await sentry.updateDiagnosis({
+      ...before!,
+      withoutReproduction: true,
+      status: 'failed',
+      failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'diagnosis', reproducing: true },
+    });
+    db.close();
+
+    const reopened = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    expect(await new SqliteSentryStore(reopened).listDiagnoses()).toMatchObject([{ withoutReproduction: true, failure: { reproducing: true } }]);
+    reopened.close();
+  });
+
   it('진단의 보고서·실패·실행 기록·완료 시각을 쓰고 다시 열어도 읽으며, 진단 하나를 지워도 중복 억제 기록은 남는다', async () => {
     const first = open();
     const [saved] = await first.sentry.recordDetection({ projectId: 'p1', checkpoint: 2_000, keys: [{ issueId: '101', eventId: null }], diagnoses: [diagnosis('101')] });

@@ -966,12 +966,24 @@ export type ReviewSection = (typeof REVIEW_SECTIONS)[number];
 /** 진단의 상태. 진행 중(`running`)은 대기 가운데 생성 대기열이 진행하고 있는 진단이다. */
 export type DiagnosisStatusSnapshot = 'queued' | 'running' | 'repo-check-needed' | 'ready' | 'failed' | 'completed';
 
+/**
+ * 진행 중인 재현하는 진단이 시간 상한을 앞두고 있을 때의 상태. `asking`은 상한 5분 전에 계속할지 묻는 중(노란 바닥 줄의 [멈추기] · [계속 진행]),
+ * `wrapping-up`은 [멈추기]나 답 없음 뒤에 보고서를 마무리하기를 기다리는 중이다. `canSteer`는 에이전트가 실행 중 전달을 받는지 여부로,
+ * 거짓이면 멈추거나 답이 없을 때 보고서 없이 끝난다는 문장이 바닥 줄에 보인다.
+ */
+export interface DiagnosisTimeExtensionSnapshot {
+  /** 단계. */
+  phase: 'asking' | 'wrapping-up';
+  /** 에이전트가 실행 중 전달을 받는지 여부. */
+  canSteer: boolean;
+}
+
 /** 대기·진행 중 진단의 진행. 대기면 앞에 있는 수, 진행 중이면 단계와 읽은 파일 수, 시작한 시각이다. */
 export type DiagnosisProgressSnapshot =
   /** 차례를 기다린다. `ahead`는 앞에 있는 대상 수다. 대기열이 아직 넣지 않았으면 `null`. */
   | { status: 'waiting'; ahead: number | null }
-  /** 진행 중이다. */
-  | { status: 'running'; step: string; filesRead: number; startedAt: number };
+  /** 진행 중이다. `extension`은 연장을 묻는 중이거나 마무리를 기다리는 중일 때만 있다. */
+  | { status: 'running'; step: string; filesRead: number; startedAt: number; extension?: DiagnosisTimeExtensionSnapshot };
 
 /** 재현 칸. 읽기 전용 진단은 앱이 "불가(허용 안 됨)"로 채운다. */
 export interface DiagnosisReproductionSnapshot {
@@ -1105,6 +1117,8 @@ export interface DiagnosisSnapshot {
   report: DiagnosisReportSnapshot | null;
   /** 진단 실패의 까닭. 진단 실패가 아니면 `null`. */
   failure: DiagnosisFailureSnapshot | null;
+  /** 시간 초과로 실패한 재현하던 진단이라 [재현 없이 다시 시도]를 보일지 여부. */
+  canRetryWithoutReproduction: boolean;
   /**
    * 다시 진단하는 중인지 여부. 대기·진행 중인데 앞선 보고서(`report`)와 첨부를 보관하고 있다.
    * 이 동안 내보내기와 완료를 할 수 없고 목록 태그는 `다시 진단 중`이다.
@@ -1381,6 +1395,12 @@ export type AppCommand =
   | { type: 'cancel-diagnosis'; diagnosisId: number }
   /** 진단 실패를 [다시 시도]한다. 생성 대기열의 `user` 칸에 선다. */
   | { type: 'retry-diagnosis'; diagnosisId: number }
+  /** 시간 초과로 실패한 재현하던 진단을 [재현 없이 다시 시도]한다. 읽기 전용으로 돌고 보고서의 재현 칸은 "불가(시간 초과)"다. 생성 대기열의 `user` 칸에 선다. */
+  | { type: 'retry-diagnosis-without-reproduction'; diagnosisId: number }
+  /** 연장을 묻는 진단의 [계속 진행]. 상한을 10분 늘린다. */
+  | { type: 'continue-diagnosis'; diagnosisId: number }
+  /** 연장을 묻는 진단의 [멈추기]. 전달이 되는 에이전트는 보고서를 마무리하게 하고, 아니면 바로 끊는다. */
+  | { type: 'stop-diagnosis'; diagnosisId: number }
   /** 검토 대기 보고서를 지시 없이 [다시 진단]한다. 앞선 보고서를 넘기지 않고 쌓인 지시를 비운다. 생성 대기열의 `user` 칸에 선다. */
   | { type: 'rediagnose'; diagnosisId: number }
   /**
@@ -1843,6 +1863,9 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'open-sentry-repo-mapping':
     case 'cancel-diagnosis':
     case 'retry-diagnosis':
+    case 'retry-diagnosis-without-reproduction':
+    case 'continue-diagnosis':
+    case 'stop-diagnosis':
     case 'rediagnose':
     case 'complete-diagnosis':
     case 'export-diagnosis':

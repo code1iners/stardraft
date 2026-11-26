@@ -266,7 +266,13 @@ function diagnosisProgress(drafts: IpcServices['drafts'], diagnosisId: number): 
   const progress = drafts.targetProgress(target);
   if (!progress) return null;
   if (progress.status === 'waiting') return { status: 'waiting', ahead: drafts.aheadOf(target) };
-  return { status: 'running', step: progress.step, filesRead: progress.filesRead, startedAt: drafts.runningSince(target) ?? Date.now() };
+  return {
+    status: 'running',
+    step: progress.step,
+    filesRead: progress.filesRead,
+    startedAt: drafts.runningSince(target) ?? Date.now(),
+    ...(progress.extension ? { extension: { ...progress.extension } } : {}),
+  };
 }
 
 /** 지금 보고서를 내보낼 폴더. */
@@ -520,6 +526,17 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), () =>
         services.sentryDiagnoses.retry(command.diagnosisId),
       );
+      return;
+    case 'retry-diagnosis-without-reproduction':
+      await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), async () => {
+        await services.sentryDiagnoses.retryWithoutReproduction(command.diagnosisId);
+      });
+      return;
+    case 'continue-diagnosis':
+      services.drafts.answerTimeExtension(sentryTarget(command.diagnosisId), 'continue');
+      return;
+    case 'stop-diagnosis':
+      services.drafts.answerTimeExtension(sentryTarget(command.diagnosisId), 'stop');
       return;
     case 'rediagnose':
       await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), async () => {

@@ -84,6 +84,7 @@ function diagnosis(overrides: Partial<SentryDiagnosis> = {}, projectName = 'ê°€ì
     directives: [],
     rediagnosisFailure: null,
     keepReproduction: false,
+    withoutReproduction: false,
     ...overrides,
   };
 }

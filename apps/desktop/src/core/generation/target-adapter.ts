@@ -27,8 +27,37 @@ export interface TargetFailure<Reason extends string = never> {
   runKind: GenerationRunKind | null;
 }
 
-/** 실행기에 넘길 실행 하나의 요청 가운데 어댑터가 정하는 것. 실행의 종류, 중단 신호, 진행 알림은 대기열이 붙인다. */
-export type TargetRunRequest = Omit<ExecutorRunRequest, 'kind' | 'signal' | 'onProgress'>;
+/**
+ * 사용자에게 연장을 묻는 실행의 시간 규칙. 대기열이 이 규칙대로 상한을 세고 묻는다. 이 규칙이 있는 요청은 `timeoutMs`가 처음 상한(`limitMs`)이고,
+ * 실행기에는 가장 늦게 끊길 때까지의 시간을 넘긴다. 실행 중 전달이 되는 실행기에만 메시지를 보낸다.
+ */
+export interface TimeExtensionPolicy {
+  /** 처음 상한(밀리초). 실행을 시작한 때부터 센다. */
+  limitMs: number;
+  /** [계속 진행] 한 번에 늘리는 시간(밀리초). */
+  stepMs: number;
+  /** 늘려도 넘지 않는 합계 상한(밀리초). 이 상한이 되면 더는 묻지 않고 그때 멈춘다. */
+  maxMs: number;
+  /** 상한 얼마 전에 묻는지(밀리초). */
+  askBeforeMs: number;
+  /** [멈추기] 뒤에 에이전트가 마무리하기를 기다리는 시간(밀리초). 전달이 되는 실행기에만 쓴다. */
+  wrapUpMs: number;
+  /** [계속 진행] 뒤에 에이전트에게 보낼 메시지. */
+  extendedMessage: string;
+  /** [멈추기]나 답 없음 뒤에 에이전트에게 보낼 마무리 메시지. */
+  wrapUpMessage: string;
+  /** 사용자에게 묻기 시작할 때 한 번 부른다. 알림을 띄우는 데 쓴다. */
+  onAsk?: () => void;
+}
+
+/**
+ * 실행기에 넘길 실행 하나의 요청 가운데 어댑터가 정하는 것. 실행의 종류, 중단 신호, 진행 알림, 실행 중 전달 연결은 대기열이 붙인다.
+ * `timeExtension`이 있으면 대기열이 상한을 세고 연장을 묻는다.
+ */
+export type TargetRunRequest = Omit<ExecutorRunRequest, 'kind' | 'signal' | 'onProgress' | 'onSteerable'> & {
+  /** 연장을 묻는 실행의 시간 규칙. 없으면 `timeoutMs`에서 묻지 않고 끊는다. */
+  timeExtension?: TimeExtensionPolicy;
+};
 
 /** 구조화 출력을 읽은 결과. 읽을 수 없으면 실패 사유를 돌려주고, 일시적 실패(구조 실패 등)면 대기열이 한 번 더 실행한다. */
 export type RunReading<Output> =

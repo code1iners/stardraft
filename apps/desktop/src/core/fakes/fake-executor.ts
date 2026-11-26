@@ -22,7 +22,18 @@ export class FakeExecutor implements Executor {
   /** 아직 쓰지 않은 대본. 실행할 때마다 앞에서 하나씩 꺼낸다. */
   private readonly scripts: ScriptedRun[] = [];
 
-  constructor(readonly agent: AgentId) {}
+  /** 실행 중에 받은 메시지(`onSteerable`로 받은 함수로 보낸 것). 받은 순서대로 쌓인다. */
+  readonly sentMessages: string[] = [];
+  /** 실행 중 전달을 하는 실행기인지 여부. */
+  readonly supportsSteering: boolean;
+
+  /** `steering`이 참이면 실행 중 전달을 하는 실행기처럼 `onSteerable`로 보내는 함수를 넘긴다. */
+  constructor(
+    readonly agent: AgentId,
+    { steering = false }: { steering?: boolean } = {},
+  ) {
+    this.supportsSteering = steering;
+  }
 
   /** 다음 실행에 쓸 대본을 뒤에 더한다. */
   script(run: ScriptedRun): void {
@@ -36,6 +47,16 @@ export class FakeExecutor implements Executor {
     // 대본 없이 실행을 부른 테스트는 준비가 빠진 것이므로 바로 알린다.
     if (!scripted) throw new Error('가짜 실행기에 남은 대본이 없습니다.');
 
+    // 실행이 끝난 뒤에는 보내도 전해지지 않는다.
+    /** 실행이 끝났는지 여부. */
+    let finished = false;
+    if (this.supportsSteering) {
+      request.onSteerable?.((message) => {
+        if (finished) return false;
+        this.sentMessages.push(message);
+        return true;
+      });
+    }
     // 진행 단계를 차례로 알린 뒤, 결과를 돌려주거나 중단 신호를 기다린다.
     for (const progress of scripted.progress ?? []) request.onProgress(progress);
     await scripted.during?.(request);
@@ -45,6 +66,7 @@ export class FakeExecutor implements Executor {
       scripted.outcome === 'wait-for-abort'
         ? await waitForAbort(request.signal)
         : await Promise.race([scripted.outcome, waitForAbort(request.signal)]);
+    finished = true;
     return { outcome, cliVersion: null, model: null, usage: null, ...scripted.report };
   }
 }

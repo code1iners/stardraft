@@ -111,12 +111,17 @@ export interface SentryDiagnosis {
    * 앞선 보고서의 재현 칸과 첨부를 앱이 그대로 옮긴다. 다시 진단이 끝나면(성공, 실패, 취소) 거짓으로 되돌린다.
    */
   keepReproduction: boolean;
+  /**
+   * 시간 초과로 실패한 재현하는 진단을 [재현 없이 다시 시도]해서 대기가 되었는지 여부. 참이면 읽기 전용 진단으로 돌고 그 보고서의
+   * 재현 칸은 앱이 "불가(시간 초과)"로 채운다. 그 실행이 끝나면(성공, 실패, 취소) 거짓으로 되돌린다.
+   */
+  withoutReproduction: boolean;
 }
 
 /** 아직 저장하지 않은 진단. 감지가 만든 진단은 대기나 저장소 대기라 보고서·실패·실행 기록·완료 시각·내보내기 기록·지시가 없다. */
 export type UnsavedDiagnosis = Omit<
   SentryDiagnosis,
-  'id' | 'report' | 'failure' | 'runs' | 'completedAt' | 'lastExport' | 'directives' | 'rediagnosisFailure' | 'keepReproduction'
+  'id' | 'report' | 'failure' | 'runs' | 'completedAt' | 'lastExport' | 'directives' | 'rediagnosisFailure' | 'keepReproduction' | 'withoutReproduction'
 >;
 
 /**
@@ -136,6 +141,11 @@ export interface DiagnosisFailure {
   lastStep: string | null;
   /** 실패한 실행의 종류. 실행을 시작하기 전에 실패했으면 `null`. */
   runKind: GenerationRunKind | null;
+  /**
+   * 재현하는 진단(원본의 사본에서 재현 경계로 돈 실행)으로 돌다 실패했는지 여부. 시간 초과인 경우 [재현 없이 다시 시도]를 보일지 정한다.
+   * 이 칸이 생기기 전에 저장한 실패와 재현하지 않은 실행의 실패는 없거나 거짓이다.
+   */
+  reproducing?: boolean;
 }
 
 /** 원인의 확신도. 재현 없이 추정한 원인을 확정으로 오해하지 않게 보고서에 함께 보인다. */
@@ -315,4 +325,9 @@ export function openableSentryUrl(permalink: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/** 재현하던 진단이 시간 초과로 실패한 것인지 본다. [재현 없이 다시 시도]가 보이는 조건이다. */
+export function timedOutWhileReproducing(failure: DiagnosisFailure | null): boolean {
+  return failure?.reason === 'timed-out' && failure.reproducing === true;
 }

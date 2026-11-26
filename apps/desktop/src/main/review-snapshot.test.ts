@@ -974,6 +974,7 @@ describe('진단 스냅숏', () => {
       directives: [],
       rediagnosisFailure: null,
       keepReproduction: false,
+      withoutReproduction: false,
       issue: {
         shortId: `WEB-${id}`,
         title: `시험 오류 ${id}`,
@@ -1007,6 +1008,7 @@ describe('진단 스냅숏', () => {
       progress: { status: 'waiting', ahead: null },
       report: null,
       failure: null,
+      canRetryWithoutReproduction: false,
       rediagnosing: false,
       directives: [],
       rediagnosisFailure: null,
@@ -1163,6 +1165,28 @@ describe('진단 스냅숏', () => {
 
     expect(failed).toMatchObject({ status: 'failed', failure: { reason: 'cancelled', detail: null, lastStep: '오류 진단하는 중' }, progress: null });
     expect(completed).toMatchObject({ status: 'completed', completedAt: 7_000, report: null });
+  });
+
+  it('연장을 묻는 중이거나 마무리를 기다리는 진행은 단계와 전달 가능 여부를 그대로 넘긴다', () => {
+    const [asking] = diagnosisSnapshots(
+      [diagnosis(1, { status: 'queued', repoCheck: null })],
+      () => ({ status: 'running', step: '재현 중', filesRead: 2, startedAt: 5_000, extension: { phase: 'asking', canSteer: false } }),
+    );
+
+    expect(asking).toMatchObject({ status: 'running', progress: { extension: { phase: 'asking', canSteer: false } } });
+  });
+
+  it('시간 초과로 실패한 재현하던 진단만 [재현 없이 다시 시도]를 보이게 한다', () => {
+    /** 실패 사유만 다른 진단. */
+    const failed = (failure: { reason: 'timed-out' | 'cancelled'; reproducing?: boolean }) =>
+      diagnosisSnapshots([diagnosis(1, { status: 'failed', repoCheck: null, failure: { detail: null, lastStep: null, runKind: 'diagnosis', ...failure } })])[0]!.canRetryWithoutReproduction;
+
+    expect(failed({ reason: 'timed-out', reproducing: true })).toBe(true);
+    expect(failed({ reason: 'timed-out' })).toBe(false);
+    expect(failed({ reason: 'timed-out', reproducing: false })).toBe(false);
+    expect(failed({ reason: 'cancelled', reproducing: true })).toBe(false);
+    // 다시 진단하다 돌아온 실패나 검토 대기 보고서에는 보이지 않는다.
+    expect(diagnosisSnapshots([diagnosis(2, { status: 'ready', repoCheck: null, failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'diagnosis', reproducing: true } })])[0]!.canRetryWithoutReproduction).toBe(false);
   });
 
   it('저장소 대기는 같은 프로젝트·사유로 기다리는 진단 수를 넘긴다. 사유나 프로젝트가 다르면 따로 센다', () => {

@@ -40,6 +40,12 @@ export interface ExecutorRunRequest {
   onProgress: (progress: ExecutorProgress) => void;
   /** 재현 경계로 돌릴 때만 있다. 없으면 읽기 전용 경계로 돈다. */
   reproduction?: ReproductionBoundary | null;
+  /**
+   * 실행 중 전달을 쓰려는 실행만 준다. 실행기가 메시지를 받을 준비가 되면(`supportsSteering`인 실행기만) 보내는 함수를 넘겨 부른다.
+   * 보내는 함수는 메시지를 에이전트에게 전하면 `true`, 실행이 이미 끝났거나 보낼 수 없으면 `false`를 돌려준다.
+   * 메시지는 에이전트가 도구 호출을 마친 자리에서만 반영된다.
+   */
+  onSteerable?: (send: (message: string) => boolean) => void;
 }
 
 /**
@@ -159,6 +165,11 @@ export interface ExecutorReport {
 export interface Executor {
   /** 이 실행기가 부르는 에이전트. */
   readonly agent: AgentId;
+  /**
+   * 실행 중인 에이전트에게 메시지를 더 보낼 수 있는지 여부(선택 능력). 참이면 `onSteerable`을 받은 실행에서 보내는 함수를 넘긴다.
+   * 생성 대기열은 이 능력이 있는지만 본다. 없거나 거짓이면 실행 중에는 아무것도 보낼 수 없다.
+   */
+  readonly supportsSteering?: boolean;
   /** 에이전트를 한 번 실행한다. 실패도 실행 보고로 돌려준다. */
   run(request: ExecutorRunRequest): Promise<ExecutorReport>;
 }

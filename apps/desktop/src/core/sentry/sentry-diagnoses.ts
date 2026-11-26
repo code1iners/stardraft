@@ -11,6 +11,7 @@ import {
   isRediagnosing,
   isRepoWaiting,
   replacedByRegression,
+  timedOutWhileReproducing,
   STATUSES_REMOVED_ON_UNREGISTER,
   type DetectionKey,
   type DiagnosisExport,
@@ -182,7 +183,7 @@ export class SentryDiagnoses {
     const saved = await this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'queued') return false;
       replaced = isRediagnosing(diagnosis);
-      Object.assign(diagnosis, { status: 'ready', report, failure: null, rediagnosisFailure: null, keepReproduction: false, runs: [...diagnosis.runs, ...runs] });
+      Object.assign(diagnosis, { status: 'ready', report, failure: null, rediagnosisFailure: null, keepReproduction: false, withoutReproduction: false, runs: [...diagnosis.runs, ...runs] });
       announce = structuredClone(diagnosis);
       return true;
     });
@@ -209,7 +210,7 @@ export class SentryDiagnoses {
     return this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'queued') return false;
       if (isRediagnosing(diagnosis)) returnToReport(diagnosis, failure, runs);
-      else Object.assign(diagnosis, { status: 'failed', failure, keepReproduction: false, runs: [...diagnosis.runs, ...runs] });
+      else Object.assign(diagnosis, { status: 'failed', failure, keepReproduction: false, withoutReproduction: false, runs: [...diagnosis.runs, ...runs] });
       return true;
     });
   }
@@ -255,6 +256,22 @@ export class SentryDiagnoses {
       (diagnosis) => {
         if (diagnosis.status !== 'failed') return false;
         Object.assign(diagnosis, { status: 'queued', failure: null });
+        return true;
+      },
+      { requestedByUser: true },
+    );
+  }
+
+  /**
+   * 시간 초과로 실패한 재현하는 진단을 [재현 없이 다시 시도]한다. 읽기 전용 진단으로 돌도록 대기가 되고, 사용자 요청이라 생성 대기열의 `user` 칸에 선다.
+   * 그 보고서의 재현 칸은 앱이 "불가(시간 초과)"로 채운다. 시간 초과로 실패한 재현하는 진단이 아니면 아무것도 하지 않고 거짓이다.
+   */
+  async retryWithoutReproduction(id: number): Promise<boolean> {
+    return this.change(
+      id,
+      (diagnosis) => {
+        if (diagnosis.status !== 'failed' || !timedOutWhileReproducing(diagnosis.failure)) return false;
+        Object.assign(diagnosis, { status: 'queued', failure: null, withoutReproduction: true });
         return true;
       },
       { requestedByUser: true },
@@ -338,7 +355,7 @@ export class SentryDiagnoses {
     /** 완료했는지 여부. */
     const completed = await this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'failed' && diagnosis.status !== 'ready') return false;
-      Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now, directives: [], rediagnosisFailure: null, keepReproduction: false });
+      Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now, directives: [], rediagnosisFailure: null, keepReproduction: false, withoutReproduction: false });
       return true;
     });
     if (completed) await this.removeAttachmentsOf(id);
@@ -526,6 +543,17 @@ export class SentryDiagnoses {
   }
 
   /**
+   * 재현하는 진단이 상한 5분 전에 연장을 묻기 시작했다고 OS 알림 한 번으로 알린다. 버튼은 없고, 누르면 그 진단이 열리며 답은 앱의 노란 바닥 줄에서 한다.
+   * 창을 앞으로 띄우지 않고 트레이의 검토 수도 바꾸지 않는다. 본문에는 프로젝트 이름만 넣는다.
+   */
+  announceTimeExtension(id: number): void {
+    /** 연장을 묻는 진단. */
+    const diagnosis = this.find(id);
+    if (diagnosis?.status !== 'queued') return;
+    this.options.notifier.notify(timeExtensionNotification(diagnosis));
+  }
+
+  /**
    * 방금 저장소 대기가 된 진단을 프로젝트 단위로 알린다. 부르는 쪽이 그 프로젝트에 이미 기다리던 진단이 없을 때만 넘긴다.
    * 알림을 누르면 그 프로젝트의 첫 건을 연다. 본문에는 프로젝트 이름만 넣고 오류 제목은 넣지 않는다.
    */
@@ -604,7 +632,7 @@ export class SentryDiagnoses {
  * 이 실행에서 돌린 실행 기록은 진단의 실행 기록에 더한다.
  */
 function returnToReport(diagnosis: SentryDiagnosis, failure: DiagnosisFailure, runs: readonly RunRecord[]): void {
-  Object.assign(diagnosis, { status: 'ready', rediagnosisFailure: failure, keepReproduction: false, runs: [...diagnosis.runs, ...runs] });
+  Object.assign(diagnosis, { status: 'ready', rediagnosisFailure: failure, keepReproduction: false, withoutReproduction: false, runs: [...diagnosis.runs, ...runs] });
 }
 
 /** 저장소 상태에 맞는 진단 상태. */
@@ -628,6 +656,17 @@ function repoWaitNotification(first: SentryDiagnosis): AppNotification {
     return { title: '저장소 확인 필요', body: `${project}에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.`, target };
   }
   return { title: '저장소 매핑 필요', body: `${project}에 연결한 저장소가 없습니다. 매핑하면 기다리는 오류를 진단합니다.`, target };
+}
+
+/** 연장 묻기 OS 알림. 본문에는 프로젝트 이름만 넣고 오류 제목과 메시지는 넣지 않는다. */
+function timeExtensionNotification(diagnosis: SentryDiagnosis): AppNotification {
+  /** 본문에 쓸 프로젝트 이름. */
+  const project = diagnosis.issue.projectName || '이 프로젝트';
+  return {
+    title: '진단이 5분 뒤 멈춥니다',
+    body: `${project}의 오류를 재현하는 중입니다. 계속하려면 눌러서 답해 주세요.`,
+    target: { kind: 'diagnosis', id: diagnosis.id },
+  };
 }
 
 /** 재현 결과를 알림 본문에 쓰는 말. 불가는 "재현 안 함"이다. */

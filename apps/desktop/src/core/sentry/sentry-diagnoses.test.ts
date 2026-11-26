@@ -716,3 +716,71 @@ describe('재현 첨부와 재현도 다시 하기', () => {
     expect(await folders.list(id)).toEqual([]);
   });
 });
+
+describe('연장 묻기 알림과 재현 없이 다시 시도', () => {
+  /** 재현하던 진단이 시간 초과로 실패한 사유. */
+  const TIMED_OUT_REPRODUCING: DiagnosisFailure = { reason: 'timed-out', detail: null, lastStep: '재현 중', runKind: 'diagnosis', reproducing: true };
+
+  it('연장 묻기 알림은 대기·진행 중인 진단에 한 번 띄우고 본문은 프로젝트 이름뿐이다. 검토 수와 실패 표시는 바뀌지 않는다', async () => {
+    const { diagnoses, notifier } = await setup();
+    const id = (await detect(diagnoses, '101')).id;
+
+    diagnoses.announceTimeExtension(id);
+
+    expect(notifier.sent).toEqual([
+      { title: '진단이 5분 뒤 멈춥니다', body: '프로젝트 11의 오류를 재현하는 중입니다. 계속하려면 눌러서 답해 주세요.', target: { kind: 'diagnosis', id } },
+    ]);
+    expect(diagnoses.reviewCount()).toBe(0);
+    expect(diagnoses.hasFailure()).toBe(false);
+    // 대기가 아닌 진단(끝났거나 없는 진단)에는 알리지 않는다.
+    await diagnoses.markFailed(id, CANCELLED, []);
+    diagnoses.announceTimeExtension(id);
+    diagnoses.announceTimeExtension(9999);
+    expect(notifier.sent).toHaveLength(1);
+  });
+
+  it('시간 초과로 실패한 재현하던 진단만 [재현 없이 다시 시도]로 대기가 되고 사용자 요청 자리에 선다. 고른 값은 앱을 다시 켜도 남는다', async () => {
+    const { diagnoses, open } = await setup();
+    const id = (await detect(diagnoses, '101')).id;
+    await diagnoses.markFailed(id, TIMED_OUT_REPRODUCING, []);
+    expect(diagnoses.get(id)).toMatchObject({ status: 'failed', failure: { reproducing: true } });
+
+    expect(await diagnoses.retryWithoutReproduction(id)).toBe(true);
+
+    expect(diagnoses.get(id)).toMatchObject({ status: 'queued', failure: null, withoutReproduction: true });
+    expect(diagnoses.requestedByUser(id)).toBe(true);
+    const reopened = open();
+    await reopened.load();
+    expect(reopened.get(id)).toMatchObject({ status: 'queued', withoutReproduction: true });
+  });
+
+  it('재현하던 진단이 아니거나 시간 초과가 아닌 실패, 실패가 아닌 진단에는 아무것도 하지 않는다', async () => {
+    const { diagnoses } = await setup();
+    const readOnly = (await detect(diagnoses, '101')).id;
+    await diagnoses.markFailed(readOnly, { reason: 'timed-out', detail: null, lastStep: null, runKind: 'diagnosis' }, []);
+    const otherReason = (await detect(diagnoses, '102')).id;
+    await diagnoses.markFailed(otherReason, { ...TIMED_OUT_REPRODUCING, reason: 'invalid-output' }, []);
+    const queued = (await detect(diagnoses, '103')).id;
+
+    expect(await diagnoses.retryWithoutReproduction(readOnly)).toBe(false);
+    expect(await diagnoses.retryWithoutReproduction(otherReason)).toBe(false);
+    expect(await diagnoses.retryWithoutReproduction(queued)).toBe(false);
+    expect(await diagnoses.retryWithoutReproduction(9999)).toBe(false);
+    expect(diagnoses.get(readOnly)).toMatchObject({ status: 'failed', withoutReproduction: false });
+  });
+
+  it('재현 없이 다시 시도한 실행이 성공·실패하면 표시를 되돌려 다음 시도는 다시 재현한다', async () => {
+    const { diagnoses } = await setup();
+    const ids = [(await detect(diagnoses, '101')).id, (await detect(diagnoses, '102')).id];
+    for (const id of ids) {
+      await diagnoses.markFailed(id, TIMED_OUT_REPRODUCING, []);
+      await diagnoses.retryWithoutReproduction(id);
+    }
+
+    await diagnoses.saveReport(ids[0]!, report('impossible'), []);
+    await diagnoses.markFailed(ids[1]!, CANCELLED, []);
+
+    expect(diagnoses.get(ids[0]!)?.withoutReproduction).toBe(false);
+    expect(diagnoses.get(ids[1]!)?.withoutReproduction).toBe(false);
+  });
+});

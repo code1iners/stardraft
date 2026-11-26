@@ -13,7 +13,10 @@ import type { DeviceSnapshot, Simulators } from '../reproduction/simulators';
 import type { RepoGitState } from '../repos/repo-git-state';
 import { stageReproductionAttachments, type DiagnosisAttachmentFolders } from './diagnosis-attachments';
 import {
+  DIAGNOSIS_EXTENDED_MESSAGE,
   DIAGNOSIS_TIMEOUT_MS,
+  DIAGNOSIS_WRAP_UP_MESSAGE,
+  REPRODUCTION_TIME_EXTENSION,
   diagnosisInputDocument,
   eventFacts,
   readDiagnosisOutput,
@@ -137,6 +140,8 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
 
   /** 생성을 시작할 때(재현 자원을 쥘 때) 재현하는 진단으로 판단했는지. 진단 ID → 판단. 준비가 꺼내 쓴다. */
   private readonly startedReproducing = new Map<number, boolean>();
+  /** 지금 사본에서 재현 경계로 도는 진단 ID. 실패를 기록할 때 "재현하던 진단"인지 알려 준다. 생성이 끝날 때(정리) 뺀다. */
+  private readonly reproducingNow = new Set<number>();
 
   constructor(private readonly options: SentryTargetAdapterOptions) {}
 
@@ -294,7 +299,8 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   }
 
   async fail(id: number, _detectedAt: number | null, failure: TargetFailure<SentryFailureReason>, runs: readonly RunRecord[]): Promise<boolean> {
-    return this.options.diagnoses.markFailed(id, failure, runs);
+    // 시간 초과로 실패한 것이 재현하던 진단이었는지 남긴다. 그래야 [재현 없이 다시 시도]를 보인다.
+    return this.options.diagnoses.markFailed(id, this.reproducingNow.has(id) ? { ...failure, reproducing: true } : failure, runs);
   }
 
   async needsRepoCheck(id: number, _detectedAt: number, repoCheck: DiagnosisRepoCheck, runs: readonly RunRecord[]): Promise<boolean> {
@@ -314,7 +320,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
 
   /** 이 진단이 재현하는 진단으로 도는지 본다. 재현 허용이 켜진 저장소이고, 재현을 끈 다시 진단이 아니다. */
   private reproduces(diagnosis: SentryDiagnosis): boolean {
-    return this.reproductionSetting(diagnosis.projectId)?.enabled === true && !(isRediagnosing(diagnosis) && diagnosis.keepReproduction);
+    return this.reproductionSetting(diagnosis.projectId)?.enabled === true && !(isRediagnosing(diagnosis) && diagnosis.keepReproduction) && !diagnosis.withoutReproduction;
   }
 
   /** 쓸 수 있는 토큰. 토큰이 없거나 "토큰 확인 필요"면 `null`. */
@@ -375,7 +381,10 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
             kind: 'save',
             result: {
               ...reportBody(output, checked.evidence),
-              reproduction: carried ? structuredClone(carried.reproduction) : { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
+              reproduction: carried
+                ? structuredClone(carried.reproduction)
+                : // 시간 초과 뒤 재현 없이 다시 시도한 진단은 허용 여부와 상관없이 "불가(시간 초과)"다. 이 경로의 보고서에만 나온다.
+                  { result: 'impossible', impossibleReason: diagnosis.withoutReproduction ? 'timed-out' : 'not-allowed', method: '', steps: [] },
               attachments: carried ? structuredClone(carried.attachments) : [],
               omittedAttachments: carried?.omittedAttachments ?? 0,
               attachmentChange: carried ? { kind: 'keep' } : { kind: 'replace', staged: null },
@@ -435,7 +444,11 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
           session.copyFailed = true;
           this.options.logger.warn('sentry-adapter.copy-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
         }
-        if (session.copy === null) return this.readOnlyRequest(input, model);
+        if (session.copy === null) {
+          this.reproducingNow.delete(diagnosis.id);
+          return this.readOnlyRequest(input, model);
+        }
+        this.reproducingNow.add(diagnosis.id);
         /** 실을 MCP. 정의를 읽지 못하면 서버 없이 진행한다. */
         const mcp = await reproduction.mcp(agent, input.repository).catch((error: unknown) => {
           this.options.logger.warn('sentry-adapter.mcp-load-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
@@ -452,6 +465,14 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
           model,
           timeoutMs: DIAGNOSIS_TIMEOUT_MS,
           reproduction: { copyRoot: session.copy, sourceRoot: input.repository, mcp },
+          // 재현하는 진단만 상한 5분 전에 연장을 묻는다. 사본을 만들지 못해 읽기 전용으로 도는 실행은 묻지 않고 상한에서 끊긴다.
+          timeExtension: {
+            limitMs: DIAGNOSIS_TIMEOUT_MS,
+            ...REPRODUCTION_TIME_EXTENSION,
+            extendedMessage: DIAGNOSIS_EXTENDED_MESSAGE,
+            wrapUpMessage: DIAGNOSIS_WRAP_UP_MESSAGE,
+            onAsk: () => this.options.diagnoses.announceTimeExtension(diagnosis.id),
+          },
         };
       },
       read: (output) => (session.copyFailed ? readDiagnosisReading(output) : readReproducingReading(output)),
@@ -511,6 +532,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
         };
       },
       release: async () => {
+        this.reproducingNow.delete(diagnosis.id);
         // 프로세스는 실행기가 이미 끝냈다. 새로 켠 시뮬레이터를 끄고 끝나기를 기다린 뒤에 다음 재현 진단이 시작한다. 사본 삭제는 기다리지 않는다.
         dropCopy();
         if (session.devicesBefore !== null) {

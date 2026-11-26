@@ -5,6 +5,7 @@ import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { TargetAdapter } from '../generation/target-adapter';
+import type { TimeExtensionAnswer } from '../generation/time-extension';
 import type { SettingsStore } from '../ports/settings-store';
 import { FLOW_TARGET_KIND, FlowTargetAdapter } from './flow-target-adapter';
 
@@ -183,6 +184,11 @@ export class DraftQueue {
   /** 진행 중인 대상의 진행을 시작한 시각. 진행 중이 아니면 `null`. */
   runningSince(target: TargetRef): number | null {
     return this.queue.runningSince(target);
+  }
+
+  /** 연장을 묻는 대상(재현하는 진단)에 사용자의 답을 전한다. 묻는 중이 아니면 아무 일도 하지 않는다. */
+  answerTimeExtension(target: TargetRef, answer: TimeExtensionAnswer): void {
+    this.queue.answerTimeExtension(target, answer);
   }
 
   /** 줄 서 있거나 진행 중인 대상(진단 등)을 취소한다. 그 어댑터가 "취소함" 실패로 둔다. */

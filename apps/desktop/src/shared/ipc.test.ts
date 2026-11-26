@@ -212,8 +212,8 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'open-report-folder', path: '/아무데나' })).toEqual({ type: 'open-report-folder' });
   });
 
-  it('진단의 취소·다시 시도·완료 명령은 진단 ID(양의 정수)를 받는다', () => {
-    for (const type of ['cancel-diagnosis', 'retry-diagnosis', 'complete-diagnosis', 'export-diagnosis'] as const) {
+  it('진단의 취소·다시 시도·재현 없이 다시 시도·연장 답·완료 명령은 진단 ID(양의 정수)를 받는다', () => {
+    for (const type of ['cancel-diagnosis', 'retry-diagnosis', 'retry-diagnosis-without-reproduction', 'continue-diagnosis', 'stop-diagnosis', 'complete-diagnosis', 'export-diagnosis'] as const) {
       expect(parseAppCommand({ type, diagnosisId: 7 })).toEqual({ type, diagnosisId: 7 });
       for (const diagnosisId of [0, -1, 2.5, '7', undefined]) expect(parseAppCommand({ type, diagnosisId })).toBeNull();
     }

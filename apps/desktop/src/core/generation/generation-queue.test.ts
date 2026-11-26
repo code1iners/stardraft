@@ -6,7 +6,7 @@ import type { ExecutorOutcome, ExecutorProgress } from '../ports/executor';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { QueuedTarget, RunRecord } from './generation-run';
 import { GenerationQueue } from './generation-queue';
-import type { Preparation, TargetAdapter, TargetFailure } from './target-adapter';
+import type { Preparation, TargetAdapter, TargetFailure, TimeExtensionPolicy } from './target-adapter';
 
 /** 지금 시각. */
 const NOW = Date.UTC(2026, 10, 26, 0, 0, 0);
@@ -198,10 +198,10 @@ async function settle(): Promise<void> {
 }
 
 /** 가짜 Flow 어댑터와 가짜 둘째 어댑터를 붙인 생성 대기열을 만든다. 에이전트는 테스트가 끊고 이을 수 있다. */
-function setup() {
+function setup({ steering = false }: { steering?: boolean } = {}) {
   const clock = new FakeClock(NOW);
   const logger = createLogger([{ write: () => {} }], clock);
-  const executor = new FakeExecutor('claude-code');
+  const executor = new FakeExecutor('claude-code', { steering });
   const flow = new FakeAdapter('flow');
   const second = new FakeAdapter('second');
   const store = new MemoryQueueStore();
@@ -728,5 +728,345 @@ describe('생성 대기열: 계정을 떠날 때와 돌아올 때', () => {
     expect(env.flow.prepared).toEqual([1, 1, 2]);
     expect(env.flow.status(1)).toBe('saved');
     expect(env.flow.status(2)).toBe('saved');
+  });
+});
+
+/** 연장을 묻는 규칙. 처음 상한 20분, 한 번에 10분, 최대 60분, 5분 전에 묻고 마무리는 5분 기다린다. */
+const MINUTE = 60_000;
+function extensionPolicy(onAsk: () => void = () => {}): TimeExtensionPolicy {
+  return {
+    limitMs: 20 * MINUTE,
+    stepMs: 10 * MINUTE,
+    maxMs: 60 * MINUTE,
+    askBeforeMs: 5 * MINUTE,
+    wrapUpMs: 5 * MINUTE,
+    extendedMessage: '10분이 더 있다',
+    wrapUpMessage: '마무리해라',
+    onAsk,
+  };
+}
+
+/** 연장을 묻는 실행 하나를 내는 대본을 둘째 어댑터의 대상 10에 넣는다. 돌려준 함수로 실행 결과를 낸다. */
+function startExtensionRun(env: ReturnType<typeof setup>, onAsk?: () => void) {
+  env.second.add(10);
+  env.second.scriptPreparation(10, {
+    kind: 'ready',
+    next: {
+      kind: 'run',
+      run: {
+        ...fakeRun(),
+        kind: 'diagnosis',
+        request: async (model: string | null) => ({
+          instructions: '지침',
+          input: '입력',
+          outputSchema: {},
+          readRoots: [],
+          secretPatterns: [],
+          model,
+          timeoutMs: 20 * MINUTE,
+          timeExtension: extensionPolicy(onAsk),
+        }),
+      },
+    },
+  });
+  return env.holds();
+}
+
+describe('생성 대기열: 시간 연장 묻기', () => {
+  const target = { kind: 'second', targetId: 10 };
+
+  it('연장을 묻는 실행에는 처음 상한 대신 가장 늦게 끊길 때까지의 시간을 넘기고, 전달이 되는 실행기에만 보내는 함수를 넘긴다', async () => {
+    const env = setup({ steering: true });
+    startExtensionRun(env);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    expect(env.executor.requests[0]?.timeoutMs).toBe(65 * MINUTE);
+    expect(env.executor.requests[0]?.onSteerable).toBeTypeOf('function');
+    expect('timeExtension' in (env.executor.requests[0] ?? {})).toBe(false);
+  });
+
+  it('연장을 묻지 않는 실행은 규칙 없이 그대로 간다', async () => {
+    const env = setup({ steering: true });
+    env.flow.add(1);
+    env.holds();
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    expect(env.executor.requests[0]?.timeoutMs).toBe(60_000);
+    expect(env.executor.requests[0]?.onSteerable).toBeUndefined();
+    env.clock.advance(30 * MINUTE);
+    expect(queue.progress({ kind: 'flow', targetId: 1 })).toEqual({ status: 'running', step: '쓰는 중', filesRead: 0 });
+  });
+
+  it('상한 5분 전에 한 번 묻고, 묻는 동안 진행에 묻는 중과 전달 가능 여부가 보인다', async () => {
+    const env = setup({ steering: true });
+    let asked = 0;
+    startExtensionRun(env, () => (asked += 1));
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    env.clock.advance(14 * MINUTE + 59_000);
+    expect(asked).toBe(0);
+    expect(queue.progress(target)).toMatchObject({ status: 'running' });
+    expect(queue.progress(target)).not.toHaveProperty('extension');
+    env.clock.advance(1_000);
+    expect(asked).toBe(1);
+    expect(queue.progress(target)).toMatchObject({ status: 'running', extension: { phase: 'asking', canSteer: true } });
+  });
+
+  it('[계속 진행]은 상한을 10분 늘리고 전달이 되는 실행기에 "10분이 더 있다"를 보내며, 새 상한 5분 전에 다시 묻는다', async () => {
+    const env = setup({ steering: true });
+    let asked = 0;
+    startExtensionRun(env, () => (asked += 1));
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+
+    queue.answerTimeExtension(target, 'continue');
+    expect(env.executor.sentMessages).toEqual(['10분이 더 있다']);
+    expect(queue.progress(target)).not.toHaveProperty('extension');
+    // 원래 상한(20분)을 지나도 끊기지 않는다.
+    env.clock.advance(10 * MINUTE);
+    expect(queue.progress(target)).toMatchObject({ status: 'running' });
+    expect(asked).toBe(2);
+    expect(queue.progress(target)).toMatchObject({ extension: { phase: 'asking' } });
+  });
+
+  it('[계속 진행]은 전달이 안 되는 실행기에는 아무것도 보내지 않고 상한만 늘린다', async () => {
+    const env = setup({ steering: false });
+    startExtensionRun(env);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+    expect(queue.progress(target)).toMatchObject({ extension: { phase: 'asking', canSteer: false } });
+
+    queue.answerTimeExtension(target, 'continue');
+    expect(env.executor.sentMessages).toEqual([]);
+    env.clock.advance(10 * MINUTE);
+    expect(queue.progress(target)).toMatchObject({ status: 'running' });
+  });
+
+  it('합계가 60분이 되면 더는 묻지 않고 60분에 [멈추기]처럼 처리한다. 묻는 때는 15·25·35·45분이다', async () => {
+    const env = setup({ steering: true });
+    let asked = 0;
+    const finish = startExtensionRun(env, () => (asked += 1));
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    for (const minute of [15, 25, 35, 45]) {
+      env.clock.advance(minute * MINUTE - (env.clock.now() - NOW));
+      expect(queue.progress(target)).toMatchObject({ extension: { phase: 'asking' } });
+      queue.answerTimeExtension(target, 'continue');
+    }
+    expect(asked).toBe(4);
+    // 55분이 되어도 묻지 않는다.
+    env.clock.advance(10 * MINUTE);
+    expect(asked).toBe(4);
+    expect(queue.progress(target)).not.toHaveProperty('extension');
+    expect(env.executor.sentMessages.filter((message) => message === '10분이 더 있다')).toHaveLength(4);
+    // 60분에 마무리 메시지를 보낸다.
+    env.clock.advance(5 * MINUTE);
+    expect(env.executor.sentMessages.at(-1)).toBe('마무리해라');
+    expect(queue.progress(target)).toMatchObject({ extension: { phase: 'wrapping-up' } });
+    finish({ type: 'completed', output: { answer: 'wrapped' } });
+    await settle();
+    expect(env.second.status(10)).toBe('saved');
+  });
+
+  it('[멈추기]: 전달이 되는 실행기에 마무리 메시지를 보내고, 5분 안에 결과가 나오면 보통의 결과로 저장한다', async () => {
+    const env = setup({ steering: true });
+    const finish = startExtensionRun(env);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+
+    queue.answerTimeExtension(target, 'stop');
+    expect(env.executor.sentMessages).toEqual(['마무리해라']);
+    expect(queue.progress(target)).toMatchObject({ extension: { phase: 'wrapping-up', canSteer: true } });
+    env.clock.advance(4 * MINUTE);
+    finish({ type: 'completed', output: { answer: 'wrapped' } });
+    await settle();
+
+    expect(env.second.status(10)).toBe('saved');
+    expect(env.second.targets.get(10)?.result).toEqual({ answer: 'wrapped' });
+  });
+
+  it('[멈추기]: 마무리 5분 안에 결과가 나오지 않으면 끊고 시간 초과 실패가 된다', async () => {
+    const env = setup({ steering: true });
+    startExtensionRun(env);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+    queue.answerTimeExtension(target, 'stop');
+    env.clock.advance(5 * MINUTE - 1);
+    await settle();
+    expect(env.second.status(10)).toBe('generating');
+
+    env.clock.advance(1);
+    await settle();
+    expect(env.second.status(10)).toBe('failed');
+    expect(env.second.targets.get(10)?.failure).toMatchObject({ reason: 'timed-out', runKind: 'diagnosis' });
+    expect(env.second.targets.get(10)?.runs.at(-1)?.result).toBe('timed-out');
+  });
+
+  it('[멈추기]: 전달이 안 되는 실행기는 바로 끊고 시간 초과 실패가 된다', async () => {
+    const env = setup({ steering: false });
+    startExtensionRun(env);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+
+    queue.answerTimeExtension(target, 'stop');
+    await settle();
+
+    expect(env.second.status(10)).toBe('failed');
+    expect(env.second.targets.get(10)?.failure).toMatchObject({ reason: 'timed-out' });
+    expect(env.executor.sentMessages).toEqual([]);
+  });
+
+  it('답이 없으면 상한에 [멈추기]와 똑같이 처리한다: 전달이 되면 마무리를 기다리고, 안 되면 바로 끊는다', async () => {
+    const steering = setup({ steering: true });
+    startExtensionRun(steering);
+    const steeringQueue = steering.createQueue();
+    await steeringQueue.start();
+    await settle();
+    steering.clock.advance(19 * MINUTE + 59_000);
+    expect(steeringQueue.progress(target)).toMatchObject({ extension: { phase: 'asking' } });
+    steering.clock.advance(1_000);
+    expect(steering.executor.sentMessages).toEqual(['마무리해라']);
+    expect(steeringQueue.progress(target)).toMatchObject({ extension: { phase: 'wrapping-up' } });
+    steering.clock.advance(5 * MINUTE);
+    await settle();
+    expect(steering.second.targets.get(10)?.failure).toMatchObject({ reason: 'timed-out' });
+
+    const plain = setup({ steering: false });
+    startExtensionRun(plain);
+    const plainQueue = plain.createQueue();
+    await plainQueue.start();
+    await settle();
+    plain.clock.advance(20 * MINUTE);
+    await settle();
+    expect(plain.second.targets.get(10)?.failure).toMatchObject({ reason: 'timed-out' });
+  });
+
+  it('묻는 중이 아닐 때 온 답과 끝난 실행에 온 답은 무시한다', async () => {
+    const env = setup({ steering: true });
+    const finish = startExtensionRun(env);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    queue.answerTimeExtension(target, 'stop');
+    queue.answerTimeExtension(target, 'continue');
+    env.clock.advance(14 * MINUTE);
+    expect(env.executor.sentMessages).toEqual([]);
+    finish({ type: 'completed', output: { answer: 'done' } });
+    await settle();
+    queue.answerTimeExtension(target, 'stop');
+    expect(env.second.status(10)).toBe('saved');
+    expect(env.executor.sentMessages).toEqual([]);
+  });
+
+  it('묻는 중에 실행이 끝나면 예약이 지워져 나중에 아무 일도 일어나지 않는다', async () => {
+    const env = setup({ steering: true });
+    let asked = 0;
+    const finish = startExtensionRun(env, () => (asked += 1));
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+    finish({ type: 'completed', output: { answer: 'early' } });
+    await settle();
+    env.clock.advance(60 * MINUTE);
+
+    expect(asked).toBe(1);
+    expect(env.second.status(10)).toBe('saved');
+    expect(env.executor.sentMessages).toEqual([]);
+  });
+
+  it('마무리 중에 일시적 실패(구조화 출력 없음)로 끝나면 상한을 새로 세며 다시 실행하지 않고 그대로 실패한다. 마무리까지 가지 않은 일시적 실패는 다시 실행한다', async () => {
+    // 첫 실행을 마무리 중 구조 실패로 끝내고, 다시 실행하면 쓸 결과를 미리 넣어 둔다.
+    const early = setup({ steering: true });
+    const finish = startExtensionRun(early);
+    const earlyQueue = early.createQueue();
+    await earlyQueue.start();
+    await settle();
+    early.clock.advance(15 * MINUTE);
+    earlyQueue.answerTimeExtension(target, 'stop');
+    early.completes({ answer: 'second' });
+    finish({ type: 'invalid-output', detail: '구조화 출력 없음' });
+    await settle();
+
+    expect(early.executor.requests).toHaveLength(1);
+    expect(early.second.status(10)).toBe('failed');
+    expect(early.second.targets.get(10)?.failure).toMatchObject({ reason: 'invalid-output' });
+
+    // 마무리까지 가지 않은 일시적 실패는 지금처럼 한 번 다시 실행한다.
+    const plain = setup({ steering: true });
+    const finishPlain = startExtensionRun(plain);
+    const plainQueue = plain.createQueue();
+    await plainQueue.start();
+    await settle();
+    plain.clock.advance(5 * MINUTE);
+    plain.completes({ answer: 'retried' });
+    finishPlain({ type: 'invalid-output', detail: '구조화 출력 없음' });
+    await settle();
+    expect(plain.executor.requests).toHaveLength(2);
+    expect(plain.second.status(10)).toBe('saved');
+  });
+
+  it('사용자의 [취소]는 마무리를 기다리는 중에도 시간 초과가 아니라 취소함이다', async () => {
+    const env = setup({ steering: true });
+    startExtensionRun(env);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.clock.advance(20 * MINUTE);
+    await queue.cancel(target);
+    await settle();
+
+    expect(env.second.targets.get(10)?.failure).toMatchObject({ reason: 'cancelled' });
+  });
+
+  it('다시 켜서 처음부터 도는 실행은 상한을 처음부터 센다', async () => {
+    const env = setup({ steering: true });
+    startExtensionRun(env);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.clock.advance(18 * MINUTE);
+    // 앱을 끄고 다시 켠다. 끊긴 실행은 처음부터 다시 돈다.
+    await queue.stop();
+    await settle();
+    env.second.scriptPreparation(10, {
+      kind: 'ready',
+      next: {
+        kind: 'run',
+        run: {
+          ...fakeRun(),
+          kind: 'diagnosis',
+          request: async (model: string | null) => ({ instructions: '', input: '', outputSchema: {}, readRoots: [], secretPatterns: [], model, timeoutMs: 20 * MINUTE, timeExtension: extensionPolicy() }),
+        },
+      },
+    });
+    env.holds();
+    const restarted = env.createQueue();
+    await restarted.start();
+    await settle();
+
+    env.clock.advance(14 * MINUTE);
+    expect(restarted.progress(target)).not.toHaveProperty('extension');
+    env.clock.advance(1 * MINUTE);
+    expect(restarted.progress(target)).toMatchObject({ extension: { phase: 'asking' } });
   });
 });

@@ -86,6 +86,8 @@ export function parseClaudeMcpServers(config: unknown, repoPaths: readonly strin
   const definitions = new Map<string, Record<string, unknown>>();
   /** 꺼 둔 서버 이름. */
   const disabled = new Set<string>();
+  /** 로컬 범위에서 이미 정의를 정한 이름. 사용자 범위는 덮어쓰지만 먼저 읽은 저장소의 로컬 정의는 덮어쓰지 않는다. */
+  const localNames = new Set<string>();
 
   for (const [name, definition] of Object.entries(asRecord(root.mcpServers) ?? {})) {
     /** 정의. */
@@ -101,7 +103,9 @@ export function parseClaudeMcpServers(config: unknown, repoPaths: readonly strin
     for (const [name, definition] of Object.entries(asRecord(project.mcpServers) ?? {})) {
       /** 정의. */
       const record = asRecord(definition);
-      if (record && !definitions.has(name)) definitions.set(name, record);
+      if (!record || localNames.has(name)) continue;
+      definitions.set(name, record);
+      localNames.add(name);
     }
     if (Array.isArray(project.disabledMcpServers)) {
       for (const name of project.disabledMcpServers) if (typeof name === 'string') disabled.add(name);

@@ -33,6 +33,15 @@ describe('Claude Code MCP 서버 목록 읽기', () => {
     ]);
   });
 
+  it('같은 이름이 사용자 범위와 로컬 범위에 있으면 로컬 범위 정의가 이긴다', () => {
+    const config = {
+      mcpServers: { docs: { command: 'node' } },
+      projects: { '/fake/a': { mcpServers: { docs: { type: 'http', url: 'https://fake.example/a' } } } },
+    };
+
+    expect(parseClaudeMcpServers(config, ['/fake/a']).map((server) => [server.name, server.kind, server.external])).toEqual([['docs', 'http', true]]);
+  });
+
   it('매핑되지 않은 저장소의 로컬 범위 서버와 저장소의 프로젝트 정의 파일 서버는 목록에 없다', () => {
     const servers = parseClaudeMcpServers(CLAUDE_CONFIG, ['/fake/work/web-app']);
 

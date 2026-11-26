@@ -1,13 +1,14 @@
 import type { AssignmentState } from '../detection/assignment-detection';
 import { compareMentions, type MentionBundle, type MinimalRecord, type UnsavedBundle } from '../bundles/mention-bundle';
 import { mentionLocationKey, type MentionLocation } from '../detection/mention';
-import type { QueuedDraft } from '../drafts/draft';
+import type { QueuedTarget } from '../generation/generation-run';
 import type { FlowEmployee } from '../ports/flow-api';
+import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { StateStore } from '../ports/state-store';
 import type { UpdateAttempt } from '../update/update-restart';
 
 /** 메모리에만 두는 상태 저장소. */
-export class MemoryStateStore implements StateStore {
+export class MemoryStateStore implements StateStore, GenerationQueueStore {
   /** 계정별 감지 상태. */
   private assignmentState: AssignmentState | null = null;
   /** 이미 묶음을 만든 업무. 묶음 보관 기간과 독립적이다. */
@@ -37,8 +38,8 @@ export class MemoryStateStore implements StateStore {
   private readonly records = new Map<number, MinimalRecord>();
   /** 다음에 줄 묶음 ID. 지운 ID를 다시 쓰지 않는다. */
   private nextBundleId = 1;
-  /** 마지막으로 남긴 초안 대기열. */
-  private draftQueue: QueuedDraft[] = [];
+  /** 마지막으로 남긴 생성 대기열. */
+  private generationQueue: QueuedTarget[] = [];
   /** 서명 검증에 실패한 업데이트 버전들. 다른 계정으로 처음부터 시작해도 남는다. */
   private readonly signatureFailedVersions = new Set<string>();
   /** 마지막 "업데이트 시도". 다른 계정으로 처음부터 시작해도 남는다. */
@@ -58,7 +59,7 @@ export class MemoryStateStore implements StateStore {
     this.baselineAlarmId = null;
     this.bundles.clear();
     this.records.clear();
-    this.draftQueue = [];
+    this.generationQueue = [];
     this.account = { ...account };
   }
 
@@ -133,12 +134,12 @@ export class MemoryStateStore implements StateStore {
     for (const bundleId of bundleIds) this.bundles.delete(bundleId);
   }
 
-  async getDraftQueue(): Promise<QueuedDraft[]> {
-    return structuredClone(this.draftQueue);
+  async getGenerationQueue(): Promise<QueuedTarget[]> {
+    return structuredClone(this.generationQueue);
   }
 
-  async setDraftQueue(queue: readonly QueuedDraft[]): Promise<void> {
-    this.draftQueue = structuredClone([...queue]);
+  async setGenerationQueue(queue: readonly QueuedTarget[]): Promise<void> {
+    this.generationQueue = structuredClone([...queue]);
   }
 
   async getSignatureFailedVersions(): Promise<string[]> {

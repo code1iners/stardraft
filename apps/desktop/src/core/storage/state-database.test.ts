@@ -886,25 +886,25 @@ describe('다시 켜기', () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
-    await expect(store.getDraftQueue()).resolves.toEqual([]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([]);
 
-    await store.setDraftQueue([
-      { bundleId: 3, priority: 'resume' },
-      { bundleId: 1, priority: 'user' },
-      { bundleId: 2, priority: 'auto' },
+    await store.setGenerationQueue([
+      { kind: 'flow', targetId: 3, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'user' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
     ]);
     /** 다시 연 저장소. */
     const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
-    await expect(reopened.getDraftQueue()).resolves.toEqual([
-      { bundleId: 3, priority: 'resume' },
-      { bundleId: 1, priority: 'user' },
-      { bundleId: 2, priority: 'auto' },
+    await expect(reopened.getGenerationQueue()).resolves.toEqual([
+      { kind: 'flow', targetId: 3, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'user' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
     ]);
 
-    await reopened.setDraftQueue([{ bundleId: 2, priority: 'auto' }]);
-    await expect(reopened.getDraftQueue()).resolves.toEqual([{ bundleId: 2, priority: 'auto' }]);
-    await reopened.setDraftQueue([]);
-    await expect(reopened.getDraftQueue()).resolves.toEqual([]);
+    await reopened.setGenerationQueue([{ kind: 'flow', targetId: 2, priority: 'auto' }]);
+    await expect(reopened.getGenerationQueue()).resolves.toEqual([{ kind: 'flow', targetId: 2, priority: 'auto' }]);
+    await reopened.setGenerationQueue([]);
+    await expect(reopened.getGenerationQueue()).resolves.toEqual([]);
   });
 
   it('묶음을 지우면 묶음·멘션·내 답을 지우고 최소 기록도 남기지 않으며, 지운 글은 state.db와 WAL 어디에도 남지 않는다', async () => {
@@ -974,7 +974,7 @@ describe('다시 켜기', () => {
     const store = new SqliteStateStore(db);
 
     expect((await store.listBundles()).map(({ id, postId, status, mentions }) => [id, postId, status, mentions.length])).toEqual([[1, '90000011', 'ready', 1]]);
-    await expect(store.getDraftQueue()).resolves.toEqual([{ bundleId: 1, priority: 'user' }]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([{ kind: 'flow', targetId: 1, priority: 'user' }]);
     expect((await store.listMinimalRecords()).map(({ bundleId }) => bundleId)).toEqual([9]);
     expect(db.prepare('SELECT COUNT(*) AS count FROM bundle_answer').get()).toEqual({ count: 1 });
     // 시험 전용 표와 열은 없어지고, 시험이던 위치는 다시 감지하지 않을 위치로 남지 않는다.
@@ -982,6 +982,40 @@ describe('다시 켜기', () => {
     expect((db.prepare('PRAGMA table_info(mention_bundle)').all() as { name: string }[]).map(({ name }) => name)).not.toContain('trial');
     await expect(store.hasMentionLocation({ postId: '90000012', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
     db.close();
+  });
+
+  it('형식 22에서 올리면 남긴 대기열의 줄은 순서와 자리 그대로 Flow 대상이 되고, 다른 종류의 대상도 함께 남길 수 있다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 22로 만든 DB. 대기열 줄은 묶음 ID만 담는다. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 22), '0.0.22');
+    /** 대기열 한 줄을 넣는 문장. */
+    const insertQueued = old.prepare('INSERT INTO draft_queue (position, bundle_id, priority) VALUES (?, ?, ?)');
+    insertQueued.run(0, 3, 'resume');
+    insertQueued.run(1, 1, 'user');
+    insertQueued.run(2, 2, 'auto');
+    old.close();
+
+    /** 마지막 형식으로 올린 DB. */
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const store = new SqliteStateStore(db);
+
+    await expect(store.getGenerationQueue()).resolves.toEqual([
+      { kind: 'flow', targetId: 3, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'user' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
+    ]);
+    await store.setGenerationQueue([
+      { kind: 'sentry', targetId: 1, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'auto' },
+    ]);
+    db.close();
+    /** 다시 연 저장소. */
+    const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await expect(reopened.getGenerationQueue()).resolves.toEqual([
+      { kind: 'sentry', targetId: 1, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'auto' },
+    ]);
   });
 
   it('저장하지 않은 묶음이 하나라도 있으면 지우지 못하고 아무것도 바꾸지 않는다', async () => {
@@ -995,11 +1029,11 @@ describe('다시 켜기', () => {
 
   it('다른 계정으로 처음부터 시작하면 남긴 초안 대기열도 지운다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
-    await store.setDraftQueue([{ bundleId: 1, priority: 'resume' }]);
+    await store.setGenerationQueue([{ kind: 'flow', targetId: 1, priority: 'resume' }]);
 
     await store.resetForAccount(NEW_ACCOUNT);
 
-    await expect(store.getDraftQueue()).resolves.toEqual([]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([]);
   });
 
   it('형식 14에서 올리면 이미 있던 묶음은 카운트다운 중 종료 표시가 없고, 남긴 대기열은 없다', async () => {
@@ -1021,7 +1055,7 @@ describe('다시 켜기', () => {
     expect((await store.listBundles()).map(({ status, quitDuringCountdown }) => ({ status, quitDuringCountdown }))).toEqual([
       { status: 'posting', quitDuringCountdown: false },
     ]);
-    await expect(store.getDraftQueue()).resolves.toEqual([]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([]);
   });
 });
 

@@ -11,10 +11,12 @@ import {
   type RepoCheck,
   type UnsavedBundle,
 } from '../bundles/mention-bundle';
-import { isQueuePriority, type Draft, type DraftFailure, type QueuedDraft, type Regeneration, type RunRecord } from '../drafts/draft';
+import type { Draft, DraftFailure, Regeneration } from '../drafts/draft';
+import { isQueuePriority, type QueuedTarget, type RunRecord } from '../generation/generation-run';
 import type { BundleContext } from '../flow/bundle-context';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
+import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { StateStore } from '../ports/state-store';
 import type { UpdateAttempt } from '../update/update-restart';
 
@@ -311,6 +313,19 @@ export const STATE_MIGRATIONS: readonly string[] = [
   DROP TABLE trial_mention;
   ALTER TABLE mention_bundle DROP COLUMN trial;
   `,
+  // 23: 생성 대기열. 대기열이 Flow 묶음 말고 다른 종류의 대상도 담도록 대상 종류(`kind`)를 두고, 묶음 ID 열을 대상 ID(`target_id`)로 바꾼다.
+  // 이미 있던 줄은 모두 Flow 묶음이다. 종류 열에 기본값을 두지 않으려고 표를 새로 만들어 옮긴다.
+  `
+  CREATE TABLE draft_queue_new (
+    position INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    priority TEXT NOT NULL CHECK (priority IN ('resume', 'user', 'auto'))
+  ) STRICT;
+  INSERT INTO draft_queue_new (position, kind, target_id, priority) SELECT position, 'flow', bundle_id, priority FROM draft_queue;
+  DROP TABLE draft_queue;
+  ALTER TABLE draft_queue_new RENAME TO draft_queue;
+  `,
 ];
 
 /**
@@ -400,7 +415,7 @@ function readAppVersion(db: StateDatabase): string | null {
 }
 
 /** `state.db`를 쓰는 상태 저장소. 연결을 열고 마이그레이션하는 일은 `openStateDatabase`가 한다. */
-export class SqliteStateStore implements StateStore {
+export class SqliteStateStore implements StateStore, GenerationQueueStore {
   constructor(private readonly db: StateDatabase) {}
 
   async getAccount(): Promise<FlowEmployee | null> {
@@ -773,19 +788,19 @@ export class SqliteStateStore implements StateStore {
     this.clearWal();
   }
 
-  async getDraftQueue(): Promise<QueuedDraft[]> {
+  async getGenerationQueue(): Promise<QueuedTarget[]> {
     /** 남긴 대기열의 줄. 실행할 순서다. */
-    const rows = this.db.prepare('SELECT bundle_id, priority FROM draft_queue ORDER BY position').all() as { bundle_id: number; priority: string }[];
-    // 표의 검사가 자리를 막아 두지만, 이 앱이 모르는 자리가 있으면 그 줄만 빼고 작은 창 순서에 맡긴다.
-    return rows.flatMap(({ bundle_id: bundleId, priority }) => (isQueuePriority(priority) ? [{ bundleId, priority }] : []));
+    const rows = this.db.prepare('SELECT kind, target_id, priority FROM draft_queue ORDER BY position').all() as { kind: string; target_id: number; priority: string }[];
+    // 표의 검사가 자리를 막아 두지만, 이 앱이 모르는 자리가 있으면 그 줄만 빼고 화면 순서에 맡긴다.
+    return rows.flatMap(({ kind, target_id: targetId, priority }) => (isQueuePriority(priority) ? [{ kind, targetId, priority }] : []));
   }
 
-  async setDraftQueue(queue: readonly QueuedDraft[]): Promise<void> {
+  async setGenerationQueue(queue: readonly QueuedTarget[]): Promise<void> {
     /** 대기열 한 줄을 넣는 문장. */
-    const insert = this.db.prepare('INSERT INTO draft_queue (position, bundle_id, priority) VALUES (?, ?, ?)');
+    const insert = this.db.prepare('INSERT INTO draft_queue (position, kind, target_id, priority) VALUES (?, ?, ?, ?)');
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM draft_queue').run();
-      queue.forEach(({ bundleId, priority }, position) => insert.run(position, bundleId, priority));
+      queue.forEach(({ kind, targetId, priority }, position) => insert.run(position, kind, targetId, priority));
     })();
   }
 

@@ -2,6 +2,7 @@ import { constants, existsSync } from 'node:fs';
 import { copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { errorFields, type Logger } from '../logging/logger';
+import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { SecretStore } from '../ports/secret-store';
 import { DEFAULT_SETTINGS, type SettingsStore } from '../ports/settings-store';
 import type { StateStore } from '../ports/state-store';
@@ -54,8 +55,8 @@ export interface AppData {
   kind: 'ready';
   /** 설정 저장소. */
   settingsStore: SettingsStore;
-  /** 상태 저장소. */
-  stateStore: StateStore;
+  /** 상태 저장소. 같은 `state.db`에 생성 대기열도 남긴다. */
+  stateStore: StateStore & GenerationQueueStore;
   /** Flow 개인 API 키를 두는 비밀 저장소. */
   secretStore: SecretStore;
   /** `state.db` 연결을 닫는다. 앱이 끝날 때 부른다. */

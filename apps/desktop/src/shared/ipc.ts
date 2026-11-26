@@ -888,6 +888,19 @@ export interface UpdateStateSnapshot {
   dismissedBanners: string[];
 }
 
+/** 병렬 작업 수 슬라이더의 가장 작은 값. main의 생성 대기열과 같은 범위인지는 테스트가 확인한다. */
+export const PARALLEL_WORK_COUNT_MIN = 1;
+/** 병렬 작업 수 슬라이더의 가장 큰 값. */
+export const PARALLEL_WORK_COUNT_MAX = 5;
+
+/** 설정 "에이전트" 칸 `병렬 작업` 탭의 상태. */
+export interface ParallelWorkSnapshot {
+  /** 고른 병렬 작업 수(1~5). */
+  count: number;
+  /** 지금 진행 중인 초안·진단 수. 고른 값보다 많을 때만 "진행 중인 n개가 끝나면" 띠가 보인다. */
+  running: number;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -920,6 +933,8 @@ export interface AppSnapshot {
   manualCheck: ManualCheckSnapshot;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettingsSnapshot;
+  /** 설정 "에이전트" 칸의 병렬 작업 수와 진행 중인 수. */
+  parallelWork: ParallelWorkSnapshot;
   /** 앱 내 업데이트의 화면 상태. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
   update: UpdateStateSnapshot | null;
 }
@@ -954,6 +969,8 @@ export type AppEvent =
   | { type: 'manual-check-changed'; manualCheck: ManualCheckSnapshot }
   /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
   | { type: 'draft-settings-changed'; draftSettings: DraftSettingsSnapshot }
+  /** 병렬 작업 수나 진행 중인 수가 바뀌었다. */
+  | { type: 'parallel-work-changed'; parallelWork: ParallelWorkSnapshot }
   /** 앱 내 업데이트의 상태가 바뀌었다. */
   | { type: 'update-changed'; update: UpdateStateSnapshot }
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
@@ -1009,6 +1026,8 @@ export type AppCommand =
   | { type: 'start-detection' }
   /** 로그인 시 자동 시작을 켜거나 끈다. */
   | { type: 'set-launch-at-login'; enabled: boolean }
+  /** 병렬 작업 수를 바꾼다. 1~5의 정수만 받는다. 돌던 실행은 그대로 두고 다음 실행을 꺼낼 때부터 쓴다. */
+  | { type: 'set-parallel-work-count'; count: number }
   /** 묶음을 무시한다. 처리됨이면 main이 무시한다. */
   | { type: 'ignore-bundle'; bundleId: number }
   /** 처리됨 묶음을 되돌린다. 되돌릴 수 없는 묶음이면 main이 무시한다. */
@@ -1272,6 +1291,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
         : null;
     case 'set-launch-at-login':
       return typeof candidate.enabled === 'boolean' ? { type: 'set-launch-at-login', enabled: candidate.enabled } : null;
+    case 'set-parallel-work-count':
+      return isParallelWorkCount(candidate.count) ? { type: 'set-parallel-work-count', count: candidate.count } : null;
     case 'edit-draft':
       return isBundleIdInput(candidate.bundleId) && isDraftTextInput(candidate.text) ? { type: 'edit-draft', bundleId: candidate.bundleId, text: candidate.text } : null;
     case 'remove-recipient':
@@ -1362,4 +1383,9 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     default:
       return null;
   }
+}
+
+/** 병렬 작업 수로 받을 수 있는 값(1~5의 정수)인지 본다. */
+function isParallelWorkCount(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= PARALLEL_WORK_COUNT_MIN && (value as number) <= PARALLEL_WORK_COUNT_MAX;
 }

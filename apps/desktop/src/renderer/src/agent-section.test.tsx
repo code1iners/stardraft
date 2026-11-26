@@ -30,7 +30,7 @@ const NO_PREFERENCES: AgentPreferencesSnapshot = { connectedAgents: [], defaultA
 
 /** 에이전트 칸을 macOS로 그린 HTML. */
 function htmlOf(agentConnections: AgentConnectionSnapshot[], agentPreferences = NO_PREFERENCES): string {
-  return renderToStaticMarkup(<AgentSection agentConnections={agentConnections} agentPreferences={agentPreferences} platform="darwin" />);
+  return renderToStaticMarkup(<AgentSection agentConnections={agentConnections} agentPreferences={agentPreferences} parallelWork={{ count: 1, running: 0 }} platform="darwin" />);
 }
 
 describe('설정 "에이전트" 칸', () => {

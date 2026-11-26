@@ -25,6 +25,8 @@ export interface Settings {
   extraSecretPatterns: string[];
   /** 모든 초안에 적용할 추가 지침. */
   extraInstructions: string;
+  /** 병렬 작업 수. 초안과 진단을 합쳐 함께 진행하는 최대 수(1~5)다. 이 값이 없던 옛 파일은 기본값 1로 읽는다. */
+  parallelWorkCount: number;
   /** 에디터에서 열기에 쓸 에디터. 아직 고르지 않았으면 `null`. */
   editor: EditorChoice | null;
   /** 로그인 시 자동 시작 여부. */
@@ -46,6 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   agentModels: {},
   extraSecretPatterns: [],
   extraInstructions: '',
+  parallelWorkCount: 1,
   editor: null,
   launchAtLogin: false,
   detectionStarted: false,

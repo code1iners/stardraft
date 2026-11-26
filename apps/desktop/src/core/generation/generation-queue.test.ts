@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeExecutor } from '../fakes/fake-executor';
 import { createLogger } from '../logging/logger';
+import type { ExecutorOutcome, ExecutorProgress } from '../ports/executor';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { QueuedTarget, RunRecord } from './generation-run';
 import { GenerationQueue } from './generation-queue';
@@ -51,6 +52,8 @@ class FakeAdapter implements TargetAdapter<FakeTypes> {
   readonly prepared: number[] = [];
   /** 연결을 쓸 수 있는지 여부. */
   usable = true;
+  /** 대상마다 함께 돌 수 없는 자원. 없으면 제한이 없다. */
+  readonly exclusive = new Map<number, string>();
   /** 대상마다 남은 준비 대본. */
   private readonly scripts = new Map<number, Preparation<FakeTypes>[]>();
   /** 대상이 바뀔 때 부를 함수. */
@@ -102,6 +105,10 @@ class FakeAdapter implements TargetAdapter<FakeTypes> {
   onConnectionChange(listener: () => void): () => void {
     this.connectionListeners.add(listener);
     return () => this.connectionListeners.delete(listener);
+  }
+
+  exclusiveResource(targetId: number): string | null {
+    return this.exclusive.get(targetId) ?? null;
   }
 
   begin(targetId: number): number | null {
@@ -200,6 +207,8 @@ function setup() {
   const store = new MemoryQueueStore();
   /** 에이전트를 쓸 수 있는지 여부와 바뀔 때 부를 함수. */
   const agent = { connected: true, listeners: new Set<() => void>() };
+  /** 병렬 작업 수와 바뀔 때 부를 함수. */
+  const parallel = { count: 1, listeners: new Set<() => void>() };
   /** 대기열을 만든다. 앱을 다시 켤 때처럼 같은 어댑터와 저장소로 새로 만들 수 있다. */
   const createQueue = () =>
     new GenerationQueue({
@@ -208,6 +217,13 @@ function setup() {
       onAgentChange: (listener) => {
         agent.listeners.add(listener);
         return () => agent.listeners.delete(listener);
+      },
+      parallelWork: {
+        count: () => parallel.count,
+        onChange: (listener) => {
+          parallel.listeners.add(listener);
+          return () => parallel.listeners.delete(listener);
+        },
       },
       store,
       clock,
@@ -218,9 +234,25 @@ function setup() {
     agent.connected = connected;
     for (const listener of agent.listeners) listener();
   };
+  /** 알림 없이 에이전트 연결만 바꾼다. 연결 확인을 다시 해야 알 수 있는 변화다. */
+  const setConnectedQuietly = (connected: boolean) => {
+    agent.connected = connected;
+  };
+  /** 병렬 작업 수를 바꾼다. */
+  const setParallel = (count: number) => {
+    parallel.count = count;
+    for (const listener of parallel.listeners) listener();
+  };
   /** 실행 하나를 출력 `output`으로 끝나게 대본을 넣는다. */
   const completes = (output: unknown) => executor.script({ outcome: { type: 'completed', output } });
-  return { clock, executor, flow, second, store, createQueue, setConnected, completes };
+  /** 실행 하나를 테스트가 끝낼 때까지 돌게 대본을 넣는다. 돌려준 함수에 결과를 넘기면 끝난다. */
+  const holds = (progress: ExecutorProgress[] = []) => {
+    /** 실행을 끝내는 함수. */
+    let finish!: (outcome: ExecutorOutcome) => void;
+    executor.script({ progress, outcome: new Promise<ExecutorOutcome>((resolve) => (finish = resolve)) });
+    return finish;
+  };
+  return { clock, executor, flow, second, store, createQueue, setConnected, setConnectedQuietly, setParallel, completes, holds };
 }
 
 describe('생성 대기열: 멈춤은 두 층', () => {
@@ -342,5 +374,205 @@ describe('생성 대기열: 저장과 복원', () => {
     expect(env.flow.targets.get(2)?.result).toEqual({ answer: 'b' });
     expect(env.flow.targets.get(1)?.result).toEqual({ answer: 'c' });
     expect(env.store.queue).toEqual([]);
+  });
+});
+
+describe('생성 대기열: 병렬 작업 수', () => {
+  it('병렬 작업 수만큼 초안을 함께 진행하고, 남은 대상은 자리가 날 때 꺼낸다', async () => {
+    const env = setup();
+    env.setParallel(2);
+    const finishFirst = env.holds();
+    env.holds();
+    env.completes({ answer: 'third' });
+    env.flow.add(1);
+    env.flow.add(2);
+    env.flow.add(3);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    expect(env.executor.requests).toHaveLength(2);
+    expect(queue.progress({ kind: 'flow', targetId: 1 })?.status).toBe('running');
+    expect(queue.progress({ kind: 'flow', targetId: 2 })?.status).toBe('running');
+    expect(queue.progress({ kind: 'flow', targetId: 3 })).toEqual({ status: 'waiting' });
+
+    finishFirst({ type: 'completed', output: { answer: 'first' } });
+    await settle();
+    expect(env.flow.targets.get(1)?.result).toEqual({ answer: 'first' });
+    expect(env.flow.status(3)).toBe('saved');
+    expect(env.flow.status(2)).toBe('generating');
+  });
+
+  it('값을 줄여도 돌던 실행은 끊지 않고, 진행 중이 새 값 아래로 내려간 뒤에야 다음 대상을 꺼낸다. 값을 올리면 바로 자리가 난다', async () => {
+    const env = setup();
+    env.setParallel(3);
+    const finishes = [env.holds(), env.holds(), env.holds()];
+    for (const targetId of [1, 2, 3, 4, 5]) env.flow.add(targetId);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    expect(queue.runningCount()).toBe(3);
+
+    env.setParallel(1);
+    await settle();
+    expect(queue.runningCount()).toBe(3);
+    expect(env.executor.requests.every((request) => !request.signal.aborted)).toBe(true);
+
+    finishes[0]!({ type: 'completed', output: 'one' });
+    finishes[1]!({ type: 'completed', output: 'two' });
+    await settle();
+    expect(queue.runningCount()).toBe(1);
+    expect(env.executor.requests).toHaveLength(3);
+
+    const finishFourth = env.holds();
+    env.holds();
+    finishes[2]!({ type: 'completed', output: 'three' });
+    await settle();
+    expect(env.executor.requests).toHaveLength(4);
+    expect(queue.runningCount()).toBe(1);
+
+    env.setParallel(2);
+    await settle();
+    expect(env.executor.requests).toHaveLength(5);
+    expect(queue.runningCount()).toBe(2);
+    finishFourth({ type: 'completed', output: 'four' });
+    await settle();
+    expect(env.flow.status(4)).toBe('saved');
+  });
+
+  it('함께 돌 수 없는 자원을 쓰는 대상은 한 번에 하나만 돌고, 다음 것은 자리를 지키며 기다리는 동안 뒤의 대상이 먼저 돈다', async () => {
+    const env = setup();
+    env.setParallel(3);
+    env.second.exclusive.set(10, 'reproduction');
+    env.second.exclusive.set(11, 'reproduction');
+    // 같은 칸에서는 어댑터 순서대로 서므로 Flow 대상이 먼저 시작한다.
+    env.holds();
+    const finishFirstRepro = env.holds();
+    env.second.add(10);
+    env.second.add(11);
+    env.flow.add(1);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    expect(env.second.prepared).toEqual([10]);
+    expect(env.flow.prepared).toEqual([1]);
+    expect(queue.progress({ kind: 'second', targetId: 11 })).toEqual({ status: 'waiting' });
+    expect(queue.runningCount()).toBe(2);
+
+    const finishSecondRepro = env.holds();
+    finishFirstRepro({ type: 'completed', output: 'repro-1' });
+    await settle();
+    expect(env.second.status(10)).toBe('saved');
+    expect(env.second.prepared).toEqual([10, 11]);
+    finishSecondRepro({ type: 'completed', output: 'repro-2' });
+    await settle();
+    expect(env.second.status(11)).toBe('saved');
+  });
+
+  it('전역 실패로 대기열이 멈춰도 함께 돌던 실행은 끊기지 않고, 성공하면 저장되며 실패하면 같은 판정을 거쳐 대기열로 돌아간다', async () => {
+    const env = setup();
+    env.setParallel(3);
+    const finishes = [env.holds(), env.holds(), env.holds()];
+    for (const targetId of [1, 2, 3, 4]) env.flow.add(targetId);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    // 첫 실행이 CLI 오류로 끝나고 다시 한 연결 확인도 실패한다. 전역 실패다.
+    env.setConnected(false);
+    finishes[0]!({ type: 'failed', reason: 'cli-error', detail: '' });
+    await settle();
+    expect(env.flow.status(1)).toBe('generating');
+    expect(queue.progress({ kind: 'flow', targetId: 1 })).toEqual({ status: 'waiting' });
+    expect(env.executor.requests).toHaveLength(3);
+    expect(env.executor.requests.slice(1).every((request) => !request.signal.aborted)).toBe(true);
+
+    finishes[1]!({ type: 'completed', output: 'two' });
+    finishes[2]!({ type: 'failed', reason: 'not-logged-in', detail: '' });
+    await settle();
+    expect(env.flow.targets.get(2)?.result).toBe('two');
+    expect(env.flow.status(3)).toBe('generating');
+    expect(env.flow.targets.get(3)?.failure).toBeNull();
+    expect(env.executor.requests).toHaveLength(3);
+    expect(queue.runningCount()).toBe(0);
+  });
+
+  it('전역 실패로 멈춘 뒤 함께 돌던 실행의 연결 확인이 통과하면 멈춤을 풀고 기다리던 대상을 다시 꺼낸다', async () => {
+    const env = setup();
+    env.setParallel(2);
+    const finishes = [env.holds(), env.holds()];
+    env.flow.add(1);
+    env.flow.add(2);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    env.setConnected(false);
+    finishes[0]!({ type: 'failed', reason: 'cli-error', detail: '' });
+    await settle();
+    expect(queue.progress({ kind: 'flow', targetId: 1 })).toEqual({ status: 'waiting' });
+
+    // 알림 없이 연결이 돌아왔다(실행하는 사이 CLI를 고침 등). 둘째 실행의 실패 뒤 다시 한 확인이 통과한다.
+    env.completes({ answer: 'two-again' });
+    env.completes({ answer: 'one-again' });
+    env.setConnectedQuietly(true);
+    finishes[1]!({ type: 'failed', reason: 'cli-error', detail: '' });
+    await settle();
+    expect(env.flow.targets.get(2)?.result).toEqual({ answer: 'two-again' });
+    expect(env.flow.targets.get(1)?.result).toEqual({ answer: 'one-again' });
+  });
+
+  it('앱을 끄면 돌던 실행을 모두 끊고, 다시 켜면 원래 시작한 순서대로 resume 칸 맨 앞에 선다', async () => {
+    const env = setup();
+    env.setParallel(2);
+    env.holds();
+    env.holds();
+    env.flow.add(1);
+    env.second.add(10);
+    env.flow.add(2);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+    env.flow.add(3, true);
+    await settle();
+
+    await queue.stop();
+    expect(env.executor.requests.every((request) => request.signal.aborted)).toBe(true);
+    expect(env.flow.targets.get(1)?.runs.at(-1)?.result).toBe('app-quit');
+    expect(env.flow.targets.get(2)?.runs.at(-1)?.result).toBe('app-quit');
+    expect(env.store.queue).toEqual([
+      { kind: 'flow', targetId: 1, priority: 'resume' },
+      { kind: 'flow', targetId: 2, priority: 'resume' },
+      { kind: 'flow', targetId: 3, priority: 'user' },
+      { kind: 'second', targetId: 10, priority: 'auto' },
+    ]);
+
+    env.setParallel(1);
+    for (const answer of ['a', 'b', 'c', 'd']) env.completes({ answer });
+    const restarted = env.createQueue();
+    await restarted.start();
+    await settle();
+    expect(env.flow.prepared).toEqual([1, 2, 1, 2, 3]);
+    expect(env.second.prepared).toEqual([10]);
+    expect(env.flow.targets.get(1)?.result).toEqual({ answer: 'a' });
+    expect(env.flow.targets.get(2)?.result).toEqual({ answer: 'b' });
+    expect(env.flow.targets.get(3)?.result).toEqual({ answer: 'c' });
+    expect(env.second.targets.get(10)?.result).toEqual({ answer: 'd' });
+  });
+
+  it('진행 단계 알림은 실행마다 따로 간다', async () => {
+    const env = setup();
+    env.setParallel(2);
+    env.holds([{ step: '첫째 파일 읽는 중', filesRead: 3 }]);
+    env.holds([{ step: '둘째 파일 읽는 중', filesRead: 7 }]);
+    env.flow.add(1);
+    env.flow.add(2);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    expect(queue.progress({ kind: 'flow', targetId: 1 })).toEqual({ status: 'running', step: '첫째 파일 읽는 중', filesRead: 3 });
+    expect(queue.progress({ kind: 'flow', targetId: 2 })).toEqual({ status: 'running', step: '둘째 파일 읽는 중', filesRead: 7 });
   });
 });

@@ -4,6 +4,7 @@ import type { MentionBundles } from '../core/bundles/mention-bundles';
 import { evidenceFileOf, type EditorOpener, type EditorOpenerState } from '../core/editors/editor-opener';
 import type { DraftQueue } from '../core/drafts/draft-queue';
 import type { DraftSettings, DraftSettingsState } from '../core/drafts/draft-settings';
+import type { ParallelWork } from '../core/generation/parallel-work';
 import type { Posting } from '../core/posting/posting';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { AgentConnections } from '../core/agent/agent-connections';
@@ -32,6 +33,7 @@ import {
   type AppFolder,
   type AppSnapshot,
   type DraftSettingsSnapshot,
+  type ParallelWorkSnapshot,
   type EditorSnapshot,
   type FlowAccountProfile,
   type FlowAccountSnapshot,
@@ -87,6 +89,8 @@ export interface IpcServices {
   manualCheck: ManualCheckSession;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettings;
+  /** 설정 "에이전트" 칸 `병렬 작업` 탭의 병렬 작업 수. */
+  parallelWork: ParallelWork;
   /** 설정 "일반"의 [알림 시험]이 띄우는 OS 알림. */
   notifier: Notifier;
   /** 앱 내 업데이트. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
@@ -160,6 +164,21 @@ export function registerIpc(services: IpcServices): void {
   services.draftSettings.onChange(() =>
     services.windows.broadcast({ type: 'draft-settings-changed', draftSettings: draftSettingsSnapshot(services.draftSettings.state()) }),
   );
+  // 병렬 작업 수를 바꾸거나 진행 중인 수가 바뀌면 알린다. 진행 단계만 바뀐 알림은 보내지 않는다.
+  /** 마지막으로 보낸 병렬 작업 상태. */
+  let lastParallelWork = JSON.stringify(parallelWorkSnapshot(services));
+  /** 병렬 작업 상태가 바뀌었으면 열린 창에 알린다. */
+  const broadcastParallelWork = () => {
+    /** 지금 병렬 작업 상태. */
+    const parallelWork = parallelWorkSnapshot(services);
+    /** 비교할 JSON. */
+    const json = JSON.stringify(parallelWork);
+    if (json === lastParallelWork) return;
+    lastParallelWork = json;
+    services.windows.broadcast({ type: 'parallel-work-changed', parallelWork });
+  };
+  services.parallelWork.onChange(broadcastParallelWork);
+  services.drafts.onChange(broadcastParallelWork);
   // 다시 시작은 앱 내 업데이트의 상태 변화도 함께 알린다.
   services.updateRestart?.onChange((state) => services.windows.broadcast({ type: 'update-changed', update: updateSnapshot(state) }));
 }
@@ -175,6 +194,11 @@ function currentReviewSnapshot({ bundles, drafts, posting, reviewSections, repoM
     repoPicker.state(),
     (bundleId) => posting.countdownEndsAt(bundleId),
   );
+}
+
+/** 지금 병렬 작업 수와 진행 중인 초안·진단 수. */
+function parallelWorkSnapshot({ parallelWork, drafts }: IpcServices): ParallelWorkSnapshot {
+  return { count: parallelWork.count(), running: drafts.runningCount() };
 }
 
 /** 지금 최근 멘션 확인 상태의 스냅숏. */
@@ -215,6 +239,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     review: currentReviewSnapshot(services),
     manualCheck: currentManualCheckSnapshot(services),
     draftSettings: draftSettingsSnapshot(services.draftSettings.state()),
+    parallelWork: parallelWorkSnapshot(services),
     update: services.updateRestart && updateSnapshot(services.updateRestart.state()),
   };
 }
@@ -316,6 +341,9 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'set-launch-at-login':
       await launchAtLogin.set(command.enabled);
+      return;
+    case 'set-parallel-work-count':
+      await services.parallelWork.set(command.count);
       return;
     case 'ignore-bundle':
       await bundles.ignore(command.bundleId);

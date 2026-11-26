@@ -18,6 +18,7 @@ import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { MentionJudge } from '../core/flow/mention-judgement';
 import { errorFields } from '../core/logging/logger';
 import { LaunchAtLogin } from '../core/onboarding/launch-at-login';
+import { ParallelWork } from '../core/generation/parallel-work';
 import { Onboarding } from '../core/onboarding/onboarding';
 import { Posting } from '../core/posting/posting';
 import type { FlowConnection } from '../core/ports/flow-api';
@@ -227,8 +228,11 @@ function start(): void {
     // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
     retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
     retention.start();
+    /** 설정 "에이전트" 칸 `병렬 작업` 탭의 병렬 작업 수. 초안 대기열이 다음 실행을 꺼낼 때마다 읽는다. */
+    const parallelWork = new ParallelWork({ settingsStore: appData.settingsStore, logger });
+    await parallelWork.load();
     /**
-     * 초안 대기열. 생성 중 묶음을 기본 에이전트로 하나씩 실행한다. 실행마다 직전에 CLI 버전을 확인하고,
+     * 초안 대기열. 생성 중 묶음을 기본 에이전트로 병렬 작업 수만큼 함께 실행한다. 실행마다 직전에 CLI 버전을 확인하고,
      * 에이전트 연결이 없거나 전역 실패면 연결될 때까지 멈춘다.
      */
     const draftQueue = new DraftQueue({
@@ -236,6 +240,7 @@ function start(): void {
       // 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
       agent: () => draftAgentFrom(agentPreferences.state(), agentConnections.all),
       onAgentChange: (listener) => unsubscribeAll([agentConnections.onChange(listener), agentPreferences.onChange(listener)]),
+      parallelWork,
       // "키 확인 필요"인 동안은 맥락을 조회할 수 없어 Flow 묶음만 멈춘다(Flow 어댑터 멈춤). 키를 다시 넣어 풀리면 다시 돈다.
       flowKeyUsable: () => flowAccount.apiKey() !== null && !globalProblems.has('flow-key'),
       onFlowKeyChange: (listener) => unsubscribeAll([globalProblems.onChange(listener), flowAccount.onChange(listener)]),
@@ -402,6 +407,7 @@ function start(): void {
       editorOpener,
       manualCheck,
       draftSettings,
+      parallelWork,
       notifier,
       inAppUpdate,
       updateRestart,

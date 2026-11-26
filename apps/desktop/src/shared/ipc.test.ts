@@ -151,6 +151,8 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'set-launch-at-login', enabled: false })).toEqual({ type: 'set-launch-at-login', enabled: false });
     expect(parseAppCommand({ type: 'set-launch-at-login', enabled: 'yes' })).toBeNull();
     expect(parseAppCommand({ type: 'set-launch-at-login' })).toBeNull();
+    expect(parseAppCommand({ type: 'set-parallel-work-count', count: 3 })).toEqual({ type: 'set-parallel-work-count', count: 3 });
+    for (const count of [0, 6, 2.5, '3', null]) expect(parseAppCommand({ type: 'set-parallel-work-count', count })).toBeNull();
   });
 
   it('묶음 무시·되돌리기·생성 취소·다시 시도·Flow에서 열기 명령은 묶음 ID(양의 정수)를 받는다', () => {

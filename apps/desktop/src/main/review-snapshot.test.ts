@@ -971,6 +971,8 @@ describe('진단 스냅숏', () => {
       runs: [],
       completedAt: null,
       lastExport: null,
+      directives: [],
+      rediagnosisFailure: null,
       issue: {
         shortId: `WEB-${id}`,
         title: `시험 오류 ${id}`,
@@ -1004,6 +1006,9 @@ describe('진단 스냅숏', () => {
       progress: { status: 'waiting', ahead: null },
       report: null,
       failure: null,
+      rediagnosing: false,
+      directives: [],
+      rediagnosisFailure: null,
       completedAt: null,
       exported: false,
       lastExportedPath: null,
@@ -1025,6 +1030,38 @@ describe('진단 스냅숏', () => {
     });
   });
 
+  it('다시 진단하는 중이면 앞선 보고서를 보관한 채 대기·진행 중이고, 돌아온 진단은 사유와 쌓인 지시를 넘긴다', () => {
+    /** 앞선 보고서. */
+    const report: NonNullable<SentryDiagnosis['report']> = {
+      summary: '요약',
+      reproduction: { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
+      cause: { text: '원인', confidence: 'low' },
+      improvements: [],
+      openQuestions: [],
+      evidence: [],
+      event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
+      run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: false, durationMs: 1, createdAt: 7 },
+      priorDiagnosis: { kind: 'in-review' },
+    };
+    const [again, running, returned, fresh] = diagnosisSnapshots(
+      [
+        diagnosis(1, { status: 'queued', repoCheck: null, report, directives: ['더 짧게'] }),
+        diagnosis(2, { status: 'queued', repoCheck: null, report }),
+        diagnosis(3, { status: 'ready', repoCheck: null, report, directives: ['더 짧게'], rediagnosisFailure: { reason: 'cancelled', detail: null, lastStep: null, runKind: null } }),
+        diagnosis(4, { status: 'queued', repoCheck: null }),
+      ],
+      (id) => (id === 2 ? { status: 'running', step: '진단하는 중', filesRead: 1, startedAt: 5 } : null),
+    );
+
+    expect(again).toMatchObject({ status: 'queued', rediagnosing: true, directives: ['더 짧게'], rediagnosisFailure: null });
+    expect(again!.report?.summary).toBe('요약');
+    expect(again!.report?.priorDiagnosis).toEqual({ kind: 'in-review' });
+    expect(running).toMatchObject({ status: 'running', rediagnosing: true });
+    expect(returned).toMatchObject({ status: 'ready', rediagnosing: false, directives: ['더 짧게'], rediagnosisFailure: { reason: 'cancelled', detail: null, lastStep: null } });
+    // 처음 진단하는 대기에는 보고서가 없어 다시 진단이 아니다.
+    expect(fresh).toMatchObject({ status: 'queued', rediagnosing: false, report: null });
+  });
+
   it('내보낸 기록은 지금 보고서를 내보냈는지(exported)와 마지막 파일 경로로 넘긴다', () => {
     /** 보고서 생성 시각이 7인 가짜 보고서. */
     const report: NonNullable<SentryDiagnosis['report']> = {
@@ -1036,6 +1073,7 @@ describe('진단 스냅숏', () => {
       evidence: [],
       event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
       run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: false, durationMs: 1, createdAt: 7 },
+      priorDiagnosis: null,
     };
     /** 검토 대기 진단. */
     const ready = (lastExport: SentryDiagnosis['lastExport']) => diagnosis(1, { status: 'ready', repoCheck: null, report, lastExport });

@@ -471,6 +471,12 @@ export const STATE_MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE sentry_diagnosis ADD COLUMN last_export TEXT;
   `,
+  // 28: 다시 진단. 진단에 쌓인 지시(JSON 배열)와, 마지막 다시 진단이 실패해 앞선 보고서로 돌아왔다는 기록(JSON)을 둔다.
+  // 기존 줄은 다시 진단한 적이 없어 지시는 빈 배열이고 실패 기록은 `NULL`이다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN directives TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE sentry_diagnosis ADD COLUMN rediagnosis_failure TEXT;
+  `,
 ];
 
 /** 계정에 매이는 대기열 줄의 종류. Flow 초안만 계정에 매이고, 다른 종류(진단 등)는 계정과 무관하다. */

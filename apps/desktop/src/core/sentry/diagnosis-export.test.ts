@@ -43,6 +43,7 @@ function report(reproduction: Partial<DiagnosisReport['reproduction']> = {}): Di
       durationMs: 134_000,
       createdAt: DETECTED_AT + 60_000,
     },
+    priorDiagnosis: null,
   };
 }
 
@@ -77,6 +78,8 @@ function diagnosis(overrides: Partial<SentryDiagnosis> = {}, projectName = '가�
     runs: [],
     completedAt: null,
     lastExport: null,
+    directives: [],
+    rediagnosisFailure: null,
     ...overrides,
   };
 }
@@ -203,6 +206,21 @@ describe('보고서 마크다운', () => {
     expect(markdown).toContain('[근거 1] 금액을 그대로 쓴다 — `web/src/pay.ts:10-12`');
     expect(markdown).toContain('- Sentry: https://org-a.sentry.io/issues/9001/');
     expect(markdown).toContain('- 에이전트: Claude Code 2.1.300');
+  });
+
+  it('오류 이슈 정보에 앞선 진단이 적힌다: 검토 대기 중이었으면 그 사실을, 완료한 뒤의 재발이면 완료한 날짜와 내보낸 파일 경로를(없으면 날짜만)', () => {
+    /** 앞선 진단별 마크다운. */
+    const of = (priorDiagnosis: DiagnosisReport['priorDiagnosis']) => reportMarkdown(diagnosis(), { ...report(), priorDiagnosis }, 'x', []);
+    /** 2026-11-20 15:30(PC 시간대). */
+    const completedAt = new Date(2026, 10, 20, 15, 30).getTime();
+
+    expect(of(null)).not.toContain('앞선 진단');
+    expect(of({ kind: 'in-review' })).toContain('- 앞선 진단: 검토 대기 중인 앞선 보고서가 있음');
+    expect(of({ kind: 'completed', completedAt, exportPath: '/내보냄/old.md' })).toContain('- 앞선 진단: 앞서 진단함(2026-11-20)\n- 앞서 내보낸 파일: /내보냄/old.md');
+    /** 파일이 없는 경우. */
+    const dateOnly = of({ kind: 'completed', completedAt, exportPath: null });
+    expect(dateOnly).toContain('- 앞선 진단: 앞서 진단함(2026-11-20)');
+    expect(dateOnly).not.toContain('앞서 내보낸 파일');
   });
 
   it('"시도한 것"은 재현이 실패·불가일 때만 넣고, 성공이면 재현 순서만 넣는다', () => {

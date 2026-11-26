@@ -194,6 +194,16 @@ function facts(entries: readonly (readonly [string, string | null])[]): string {
 }
 
 /**
+ * 오류 이슈 정보의 앞선 진단 줄. 검토 대기 중인 앞선 보고서가 있었으면 그 사실을, 완료한 뒤의 재발이면 "앞서 진단함(완료한 날짜)"과
+ * 마지막으로 내보낸 파일 경로를 적는다(경로가 없으면 날짜만). 앞선 진단이 없으면 줄이 없다.
+ */
+function priorDiagnosisFacts(prior: DiagnosisReport['priorDiagnosis']): (readonly [string, string | null])[] {
+  if (prior === null) return [];
+  if (prior.kind === 'in-review') return [['앞선 진단', '검토 대기 중인 앞선 보고서가 있음']];
+  return [['앞선 진단', `앞서 진단함(${dateOf(prior.completedAt)})`], ['앞서 내보낸 파일', prior.exportPath]];
+}
+
+/**
  * 보고서를 마크다운으로 쓴다. 순서는 제목 → 요약 → 재현 → 원인과 확신도 → 개선 방향 → 근거 → 남은 의문 → 오류 이슈 정보 → 실행 정보다.
  * "시도한 것"은 재현이 실패·불가일 때만 재현 칸에 넣고, 성공이면 최소화한 재현 순서를 넣는다.
  * 첨부가 있으면 재현 칸 끝에 `<보고서 이름>/<파일>` 상대 링크로 건다.
@@ -238,6 +248,7 @@ export function reportMarkdown(diagnosis: SentryDiagnosis, report: DiagnosisRepo
       ['난 자리', issue.culprit || null],
       ['소스맵', SOURCE_MAP_TEXT[event.sourceMaps]],
       ['없는 데이터', event.missingData.length === 0 ? '없음' : event.missingData.join(', ')],
+      ...priorDiagnosisFacts(report.priorDiagnosis),
     ])}`,
     `## 실행 정보\n\n${facts([
       ['저장소', run.repository],

@@ -10,7 +10,7 @@ import type { SentryProjectRegistration } from '../ports/settings-store';
 import { openStateDatabase, STATE_MIGRATIONS } from '../storage/state-database';
 import { SqliteSentryStore } from '../storage/sqlite-sentry-store';
 import { COMPLETED_RETENTION_MS, SentryDiagnoses } from './sentry-diagnoses';
-import type { DiagnosisReport, SentryDiagnosis } from './sentry-diagnosis';
+import { hasExportedCurrentReport, type DiagnosisReport, type DiagnosisFailure, type SentryDiagnosis } from './sentry-diagnosis';
 
 /** 지금(2026-11-26 12:00 UTC). */
 const NOW = Date.UTC(2026, 10, 26, 12);
@@ -72,6 +72,7 @@ function report(result: DiagnosisReport['reproduction']['result'] = 'impossible'
     evidence: [],
     event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
     run: { repository: '/repo', headCommit: null, uncommittedChanges: null, reproductionAllowed: false, agent: 'claude-code', cliVersion: null, durationMs: 1000, createdAt: NOW },
+    priorDiagnosis: null,
   } as DiagnosisReport;
 }
 
@@ -364,5 +365,267 @@ describe('검토 대기와 완료 뒤의 재발', () => {
     const second = await detect(diagnoses, '101', 'regression', 'event-2');
 
     expect(diagnoses.list().map((item) => `${item.id}:${item.status}`)).toEqual([`${first}:completed`, `${second.id}:queued`]);
+  });
+});
+
+/** 다시 진단을 시작하기 전 보고서와 구분되는, 새 보고서. 생성 시각이 다르다. */
+function newerReport(): DiagnosisReport {
+  /** 앞선 보고서와 같은 모양의 보고서. */
+  const base = report();
+  return { ...base, summary: '새 요약', run: { ...base.run, createdAt: NOW + MINUTE } };
+}
+
+/** 취소한 실행의 실패. */
+const CANCELLED: DiagnosisFailure = { reason: 'cancelled', detail: null, lastStep: null, runKind: null };
+
+describe('다시 진단', () => {
+  it('지시 없이 다시 진단하면 앞선 보고서를 보관한 채 대기가 되고 쌓인 지시를 비우며 user 칸에 선다', async () => {
+    const { diagnoses } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    await diagnoses.rediagnose(id, '더 짧게');
+    await diagnoses.saveReport(id, newerReport(), []);
+
+    expect(await diagnoses.rediagnose(id, null)).toBe(true);
+
+    const current = diagnoses.get(id)!;
+    expect(current).toMatchObject({ status: 'queued', directives: [], rediagnosisFailure: null });
+    expect(current.report?.summary).toBe('새 요약');
+    expect(isRediagnosingNow(current)).toBe(true);
+    expect(diagnoses.requestedByUser(id)).toBe(true);
+    expect(diagnoses.generatingIds()).toContain(id);
+  });
+
+  it('지시를 덧붙이면 지시가 앞뒤 공백 없이 쌓이고, 빈 지시로는 다시 진단하지 않는다', async () => {
+    const { diagnoses } = await setup();
+    const id = await makeReady(diagnoses, '101');
+
+    expect(await diagnoses.rediagnose(id, '   ')).toBe(false);
+    expect(diagnoses.get(id)?.status).toBe('ready');
+
+    expect(await diagnoses.rediagnose(id, '  더 짧게  ')).toBe(true);
+    expect(diagnoses.get(id)?.directives).toEqual(['더 짧게']);
+    await diagnoses.saveReport(id, newerReport(), []);
+    await diagnoses.rediagnose(id, '근거를 더');
+    expect(diagnoses.get(id)?.directives).toEqual(['더 짧게', '근거를 더']);
+  });
+
+  it('검토 대기가 아닌 진단은 다시 진단하지 않는다', async () => {
+    const { diagnoses } = await setup();
+    const waiting = await detect(diagnoses, '101');
+    const done = await makeReady(diagnoses, '102');
+    await diagnoses.complete(done);
+
+    expect(await diagnoses.rediagnose(waiting.id, null)).toBe(false);
+    expect(await diagnoses.rediagnose(done, null)).toBe(false);
+    expect(await diagnoses.rediagnose(9999, null)).toBe(false);
+  });
+
+  it('다시 진단하는 동안에는 내보내기 기록도 완료도 다시 시도도 하지 않는다', async () => {
+    const { diagnoses } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    await diagnoses.rediagnose(id, null);
+
+    expect(await diagnoses.recordExport(id, { path: '/x.md', at: NOW, reportCreatedAt: NOW })).toBe(false);
+    await diagnoses.complete(id);
+    await diagnoses.retry(id);
+
+    expect(diagnoses.get(id)).toMatchObject({ status: 'queued', lastExport: null });
+    expect(diagnoses.get(id)?.report).not.toBeNull();
+  });
+
+  it('다시 진단하는 동안의 재발은 새 진단을 만들지 않고 키만 기록한다', async () => {
+    const { diagnoses, store } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    await diagnoses.rediagnose(id, null);
+
+    await detect(diagnoses, '101', 'regression', 'event-2').catch(() => undefined);
+
+    expect(diagnoses.list().filter((item) => item.issueId === '101')).toHaveLength(1);
+    expect(await store.hasDetectionKey({ issueId: '101', eventId: 'event-2' })).toBe(true);
+  });
+
+  it('새 보고서가 나오면 앞선 보고서와 첨부를 바꾸고 내보내지 않은 것으로 돌아가며 준비됨 알림이 뜬다', async () => {
+    const { diagnoses, notifier, removed } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    await diagnoses.recordExport(id, { path: '/x.md', at: NOW, reportCreatedAt: NOW });
+    expect(hasExportedCurrentReport(diagnoses.get(id)!)).toBe(true);
+    notifier.sent.length = 0;
+    await diagnoses.rediagnose(id, '더 짧게');
+    expect(removed).toEqual([]);
+
+    expect(await diagnoses.saveReport(id, newerReport(), [])).toBe(true);
+
+    const current = diagnoses.get(id)!;
+    expect(current).toMatchObject({ status: 'ready', directives: ['더 짧게'], rediagnosisFailure: null });
+    expect(current.report?.summary).toBe('새 요약');
+    expect(hasExportedCurrentReport(current)).toBe(false);
+    expect(removed).toEqual([id]);
+    expect(notifier.sent).toHaveLength(1);
+    expect(notifier.sent[0]).toMatchObject({ title: '진단 보고서 준비됨', target: { kind: 'diagnosis', id } });
+  });
+
+  it('처음 진단의 보고서는 첨부 폴더를 지우지 않는다', async () => {
+    const { removed, diagnoses } = await setup();
+    await makeReady(diagnoses, '101');
+
+    expect(removed).toEqual([]);
+  });
+
+  it('실패하거나 취소하면 진단 실패가 아니라 앞선 보고서의 검토 대기로 돌아오고 지시는 남는다', async () => {
+    const { diagnoses } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    await diagnoses.rediagnose(id, '더 짧게');
+
+    expect(await diagnoses.markFailed(id, CANCELLED, [])).toBe(true);
+
+    const current = diagnoses.get(id)!;
+    expect(current).toMatchObject({ status: 'ready', failure: null, directives: ['더 짧게'], rediagnosisFailure: CANCELLED });
+    expect(current.report?.summary).toBe('요약');
+    expect(diagnoses.hasFailure()).toBe(false);
+    expect(diagnoses.reviewCount()).toBe(1);
+    expect(diagnoses.requestedByUser(id)).toBe(false);
+  });
+
+  it('돌아온 보고서는 다시 내보내고 완료할 수 있고, 새 다시 진단을 시작하면 실패 기록이 지워진다', async () => {
+    const { diagnoses } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    await diagnoses.rediagnose(id, null);
+    await diagnoses.markFailed(id, CANCELLED, []);
+    expect(await diagnoses.recordExport(id, { path: '/x.md', at: NOW, reportCreatedAt: NOW })).toBe(true);
+
+    await diagnoses.rediagnose(id, '한 번 더');
+
+    expect(diagnoses.get(id)?.rediagnosisFailure).toBeNull();
+  });
+
+  it('다시 진단 중 저장소 매핑이나 폴더가 사라지면 저장소 대기로 가지 않고 앞선 보고서로 돌아와 알린다', async () => {
+    const { diagnoses, notifier } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    notifier.sent.length = 0;
+    await diagnoses.rediagnose(id, null);
+
+    expect(await diagnoses.markRepoWaiting(id, { kind: 'unmapped' }, [])).toBe(true);
+
+    expect(diagnoses.get(id)).toMatchObject({ status: 'ready', repoCheck: null, rediagnosisFailure: { reason: 'repository-unavailable' } });
+    expect(notifier.sent).toEqual([]);
+  });
+
+  it('다시 진단 중 프로젝트 등록을 풀면 취소로 보고 앞선 보고서를 남긴다', async () => {
+    const { diagnoses } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    const plain = await detect(diagnoses, '102');
+    await diagnoses.rediagnose(id, null);
+
+    await diagnoses.removeProject('11');
+
+    expect(diagnoses.get(id)).toMatchObject({ status: 'ready', rediagnosisFailure: { reason: 'cancelled' } });
+    expect(diagnoses.get(plain.id)).toBeUndefined();
+  });
+
+  it('다시 진단 중인 진단과 지시, 실패 기록은 앱을 다시 켜도 남는다', async () => {
+    const { diagnoses, open } = await setup();
+    const running = await makeReady(diagnoses, '101');
+    const returned = await makeReady(diagnoses, '102');
+    await diagnoses.rediagnose(running, '더 짧게');
+    await diagnoses.rediagnose(returned, '근거를 더');
+    await diagnoses.markFailed(returned, CANCELLED, []);
+
+    const reopened = open();
+    await reopened.load();
+
+    expect(reopened.get(running)).toMatchObject({ status: 'queued', directives: ['더 짧게'] });
+    expect(reopened.get(running)?.report?.summary).toBe('요약');
+    expect(reopened.get(returned)).toMatchObject({ status: 'ready', directives: ['근거를 더'], rediagnosisFailure: CANCELLED });
+  });
+
+  it('완료하면 쌓인 지시와 실패 기록을 지운다', async () => {
+    const { diagnoses, store } = await setup();
+    const id = await makeReady(diagnoses, '101');
+    await diagnoses.rediagnose(id, '더 짧게');
+    await diagnoses.markFailed(id, CANCELLED, []);
+
+    await diagnoses.complete(id);
+
+    expect(diagnoses.get(id)).toMatchObject({ status: 'completed', directives: [], rediagnosisFailure: null });
+    expect((await store.listDiagnoses()).find((item) => item.id === id)).toMatchObject({ directives: [], rediagnosisFailure: null });
+  });
+});
+
+/** 다시 진단하는 중인지(대기인데 보고서가 있는지). */
+function isRediagnosingNow(diagnosis: SentryDiagnosis): boolean {
+  return diagnosis.status === 'queued' && diagnosis.report !== null;
+}
+
+describe('앞선 진단', () => {
+  it('같은 오류 이슈의 앞선 보고서가 검토 대기 중이면 그 보고서를 참고로 알려 준다', async () => {
+    const { diagnoses } = await setup();
+    const first = await makeReady(diagnoses, '101');
+    const second = await detect(diagnoses, '101', 'regression', 'event-2');
+
+    const prior = await diagnoses.priorOf(second.id);
+
+    expect(prior?.info).toEqual({ kind: 'in-review' });
+    expect(prior?.report?.summary).toBe('요약');
+    expect(await diagnoses.priorOf(first)).toBeNull();
+  });
+
+  it('완료한 뒤의 재발에는 보고서를 넘기지 않고 완료한 날짜와 마지막으로 내보낸 파일 경로를 알려 준다', async () => {
+    const { diagnoses, clock } = await setup();
+    const first = await makeReady(diagnoses, '101');
+    await diagnoses.recordExport(first, { path: '/내보냄/a.md', at: NOW, reportCreatedAt: NOW });
+    clock.advance(DAY);
+    await diagnoses.complete(first);
+    const second = await detect(diagnoses, '101', 'regression', 'event-2');
+
+    const prior = await diagnoses.priorOf(second.id);
+
+    expect(prior).toEqual({ info: { kind: 'completed', completedAt: NOW + DAY, exportPath: '/내보냄/a.md' }, report: null });
+  });
+
+  it('내보낸 적 없이 완료했으면 경로 없이 날짜만 알려 주고, 가장 최근에 완료한 진단을 쓴다', async () => {
+    const { diagnoses, clock } = await setup();
+    const first = await makeReady(diagnoses, '101');
+    await diagnoses.complete(first);
+    clock.advance(DAY);
+    const again = await detect(diagnoses, '101', 'regression', 'event-2');
+    await diagnoses.saveReport(again.id, report(), []);
+    clock.advance(DAY);
+    await diagnoses.complete(again.id);
+    const third = await detect(diagnoses, '101', 'regression', 'event-3');
+
+    expect((await diagnoses.priorOf(third.id))?.info).toEqual({ kind: 'completed', completedAt: NOW + 2 * DAY, exportPath: null });
+  });
+
+  it('검토 대기 보고서가 완료한 진단보다 우선하고, 나중에 만든 진단은 앞선 진단이 아니다', async () => {
+    const { diagnoses } = await setup();
+    const done = await makeReady(diagnoses, '101');
+    await diagnoses.complete(done);
+    const review = await detect(diagnoses, '101', 'regression', 'event-2');
+    await diagnoses.saveReport(review.id, report(), []);
+    const latest = await detect(diagnoses, '101', 'regression', 'event-3');
+
+    expect((await diagnoses.priorOf(latest.id))?.info).toEqual({ kind: 'in-review' });
+    expect((await diagnoses.priorOf(review.id))?.info.kind).toBe('completed');
+  });
+
+  it('완료함에서 사라진 지 오래된 완료 진단도 앞선 진단으로 찾는다(완료 최소 기록은 기한이 없다)', async () => {
+    const { diagnoses, clock } = await setup();
+    const first = await makeReady(diagnoses, '101');
+    await diagnoses.recordExport(first, { path: '/내보냄/a.md', at: NOW, reportCreatedAt: NOW });
+    await diagnoses.complete(first);
+    clock.advance(30 * DAY);
+    await diagnoses.archiveExpired();
+    expect(diagnoses.get(first)).toBeUndefined();
+    const second = await detect(diagnoses, '101', 'regression', 'event-2');
+
+    expect(await diagnoses.priorOf(second.id)).toEqual({ info: { kind: 'completed', completedAt: NOW, exportPath: '/내보냄/a.md' }, report: null });
+  });
+
+  it('다른 오류 이슈의 진단은 앞선 진단이 아니다', async () => {
+    const { diagnoses } = await setup();
+    await makeReady(diagnoses, '101');
+    const other = await detect(diagnoses, '102');
+
+    expect(await diagnoses.priorOf(other.id)).toBeNull();
   });
 });

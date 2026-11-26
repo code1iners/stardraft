@@ -971,12 +971,20 @@ export interface DiagnosisReportSnapshot {
     /** 생성 시각(Unix epoch 밀리초). */
     createdAt: number;
   };
+  /**
+   * 같은 오류 이슈의 앞선 진단. 없으면 `null`. 오류 이슈 정보에 적힌다.
+   * `in-review`는 앞선 보고서가 검토 대기 중이었던 것, `completed`는 완료한 뒤의 재발이다(완료한 시각과 마지막으로 내보낸 파일 경로, 없으면 `null`).
+   */
+  priorDiagnosis: { kind: 'in-review' } | { kind: 'completed'; completedAt: number; exportPath: string | null } | null;
 }
 
 /** 진단 실패의 까닭. Flow 초안과 같은 빨간 상자에 사유와 마지막 단계로 보인다. */
 export interface DiagnosisFailureSnapshot {
-  /** 사유. `sentry-unavailable`은 Sentry에서 오류 데이터를 가져오지 못한 것이다. */
-  reason: DraftFailureReasonSnapshot | 'sentry-unavailable';
+  /**
+   * 사유. `sentry-unavailable`은 Sentry에서 오류 데이터를 가져오지 못한 것이고,
+   * `repository-unavailable`은 다시 진단하려는데 저장소 매핑이나 폴더가 사라진 것이다.
+   */
+  reason: DraftFailureReasonSnapshot | 'sentry-unavailable' | 'repository-unavailable';
   /** 에이전트가 알려 준 오류 원문. 없으면 `null`. */
   detail: string | null;
   /** 마지막 단계. 없으면 `null`. */
@@ -1020,6 +1028,15 @@ export interface DiagnosisSnapshot {
   report: DiagnosisReportSnapshot | null;
   /** 진단 실패의 까닭. 진단 실패가 아니면 `null`. */
   failure: DiagnosisFailureSnapshot | null;
+  /**
+   * 다시 진단하는 중인지 여부. 대기·진행 중인데 앞선 보고서(`report`)와 첨부를 보관하고 있다.
+   * 이 동안 내보내기와 완료를 할 수 없고 목록 태그는 `다시 진단 중`이다.
+   */
+  rediagnosing: boolean;
+  /** 다시 진단에서 쌓인 지시. 덧붙인 순서다. 지시 입력이 "앞서 덧붙인 지시"로 보인다. */
+  directives: string[];
+  /** 마지막 다시 진단이 실패하거나 취소해 앞선 보고서로 돌아왔다는 사유. 보고서 위 알림 줄과 [다시 걸기]가 보인다. 없으면 `null`. */
+  rediagnosisFailure: DiagnosisFailureSnapshot | null;
   /** 완료한 시각. 완료가 아니면 `null`. */
   completedAt: number | null;
   /** 지금 보이는 보고서를 내보낸 적이 있는지 여부. 거짓이면 [완료]가 "내보내지 않았습니다" 확인을 거친다. */
@@ -1277,6 +1294,10 @@ export type AppCommand =
   | { type: 'cancel-diagnosis'; diagnosisId: number }
   /** 진단 실패를 [다시 시도]한다. 생성 대기열의 `user` 칸에 선다. */
   | { type: 'retry-diagnosis'; diagnosisId: number }
+  /** 검토 대기 보고서를 지시 없이 [다시 진단]한다. 앞선 보고서를 넘기지 않고 쌓인 지시를 비운다. 생성 대기열의 `user` 칸에 선다. */
+  | { type: 'rediagnose'; diagnosisId: number }
+  /** 검토 대기 보고서를 지시를 덧붙여 다시 진단한다. 앞선 보고서와 쌓인 지시 전부를 넘긴다. 생성 대기열의 `user` 칸에 선다. */
+  | { type: 'rediagnose-with-directive'; diagnosisId: number; directive: string }
   /** 진단을 [완료]한다. 진단 실패와 검토 대기 보고서가 대상이고, 최소 기록만 남기고 본문과 첨부를 지운다. Sentry에는 요청하지 않는다. */
   | { type: 'complete-diagnosis'; diagnosisId: number }
   /** 검토 대기 보고서를 설정의 폴더에 마크다운 파일로 내보낸다. 끝나면 `diagnosis-exported`나 `diagnosis-export-failed`로 알린다. 상태는 바뀌지 않는다. */
@@ -1671,6 +1692,10 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.directive)
         ? { type: 'regenerate-with-directive', bundleId: candidate.bundleId, directive: candidate.directive }
         : null;
+    case 'rediagnose-with-directive':
+      return isDiagnosisIdInput(candidate.diagnosisId) && isRegenerationTextInput(candidate.directive)
+        ? { type: 'rediagnose-with-directive', diagnosisId: candidate.diagnosisId, directive: candidate.directive }
+        : null;
     case 'fix-requirement':
       return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.requirement)
         ? { type: 'fix-requirement', bundleId: candidate.bundleId, requirement: candidate.requirement }
@@ -1691,6 +1716,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'open-sentry-repo-mapping':
     case 'cancel-diagnosis':
     case 'retry-diagnosis':
+    case 'rediagnose':
     case 'complete-diagnosis':
     case 'export-diagnosis':
     case 'open-diagnosis-in-sentry':

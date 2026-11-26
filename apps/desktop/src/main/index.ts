@@ -1,6 +1,7 @@
 import { AssignmentDetection } from '../core/detection/assignment-detection';
 import { app, dialog, Menu, net, powerMonitor, safeStorage } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { AgentConnections } from '../core/agent/agent-connections';
@@ -361,6 +362,10 @@ function start(): void {
           connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
           settingsStore: appData.settingsStore,
           repoState: (repository) => readRepoGitState(repository, readGitStatus),
+          exportFileExists: (path) => stat(path).then(
+            (info) => info.isFile(),
+            () => false,
+          ),
           clock: systemClock,
           logger,
         }),

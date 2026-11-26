@@ -4,7 +4,7 @@ import { BundleFooter, BundleSections, ManualTag, OpenInFlowButton, PostStatusLi
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerModal } from './EditorPickerModal';
 import { RepoPickerModal } from './RepoPickerModal';
-import { DiagnosisBody, DiagnosisFooter, DiagnosisHead, DiagnosisStatusTag, ReproductionTag } from './DiagnosisDetail';
+import { DiagnosisBody, DiagnosisFooter, DiagnosisHead, DiagnosisStatusTag, ReproductionTag, useDirectivePane } from './DiagnosisDetail';
 import { DIAGNOSIS_KIND_LABEL, diagnosisPlaceLine } from './diagnosis-text';
 import { ListKindGroup, ListRetentionNote, ListRow } from './ReviewList';
 import { assignmentSourceText, BUNDLE_PLACE_LABELS, DRAFT_KIND_LABEL, formatTime, postLine, postTitleOf, senderLine } from './review-text';
@@ -54,6 +54,8 @@ export function ReviewContent({ snapshot, initialBundleId = null, initialDiagnos
   const { movedWhileViewing } = selection;
   /** 고른 진단 ID. 묶음을 고르면 `null`이다. */
   const [diagnosisId, setDiagnosisId] = useState<number | null>(initialDiagnosisId);
+  /** 진단의 지시 입력. 보고서 위 알림 줄과 바닥 줄이 함께 쓴다. */
+  const directivePane = useDirectivePane();
 
   useEffect(function followRequestedDiagnosis() {
     return window.stardraft.onEvent((event) => {
@@ -96,8 +98,8 @@ export function ReviewContent({ snapshot, initialBundleId = null, initialDiagnos
           {shownDiagnosis ? (
             <>
               <DiagnosisHead diagnosis={shownDiagnosis} onCollapse={handleCollapse} />
-              <DiagnosisBody diagnosis={shownDiagnosis} />
-              <DiagnosisFooter diagnosis={shownDiagnosis} />
+              <DiagnosisBody diagnosis={shownDiagnosis} directivePane={directivePane} />
+              <DiagnosisFooter diagnosis={shownDiagnosis} directivePane={directivePane} />
             </>
           ) : selected ? (
             <>

@@ -15,11 +15,12 @@ import {
   readDiagnosisOutput,
   readOnlyDiagnosisInstructions,
   readOnlyDiagnosisSchema,
+  type DiagnosisInstructionContext,
   type DiagnosisOutput,
 } from './diagnosis-run';
 import type { SentryConnection } from './sentry-connection';
 import type { SentryDiagnoses } from './sentry-diagnoses';
-import type { DiagnosisRepoCheck, DiagnosisReport, DiagnosisRunInfo, SentryDiagnosis, SentryFailureReason } from './sentry-diagnosis';
+import { isRediagnosing, type DiagnosisRepoCheck, type DiagnosisReport, type DiagnosisRunInfo, type PriorDiagnosis, type SentryDiagnosis, type SentryFailureReason } from './sentry-diagnosis';
 import type { SentryProjects } from './sentry-projects';
 
 /** Sentry 진단의 대상 종류. 생성 대기열 표에 남는 값이라 바꾸지 않는다. */
@@ -65,6 +66,8 @@ export interface SentryTargetAdapterOptions {
   settingsStore: SettingsStore;
   /** 저장소의 HEAD 해시와 커밋하지 않은 변경 유무를 읽는다. */
   repoState: (repository: string) => Promise<RepoGitState>;
+  /** 내보낸 파일이 지금도 그 자리에 있는지 본다. 완료한 뒤의 재발이 앞선 진단의 파일 경로를 적을 때 쓴다. */
+  exportFileExists: (path: string) => Promise<boolean>;
   /** 보고서를 만든 시각을 읽는 시계. */
   clock: Clock;
   /** 진단 로그. 오류 제목과 경로는 남기지 않는다. */
@@ -76,6 +79,10 @@ export interface SentryTargetAdapterOptions {
  * 준비는 저장소 확인 → 시작 직전 오류 이슈 상태 확인 → 최신 이벤트 받기 → 저장소 git 상태 읽기 순서다.
  * 해결·보관·삭제·병합된 오류 이슈는 조용히 빼고, Sentry에 닿지 못하거나 토큰이 거부되면 진단을 실패로 두지 않고 Sentry 어댑터만 멈춘다.
  * 지금은 모든 진단이 읽기 전용 진단으로 돈다(재현은 재현 허용이 생긴 뒤에 더한다).
+ * 다시 진단(대기인데 앞선 보고서를 보관한 진단)도 이 어댑터가 돌린다. 지시를 덧붙였으면 앞선 보고서와 쌓인 지시 전부를, 지시가 없으면 아무것도 넘기지 않는다.
+ * 사용자가 요청한 다시 진단은 그사이 Sentry에서 오류 이슈가 해결·보관돼도 조용히 빼지 않고 진단하며, 오류 이슈가 사라졌으면 앞선 보고서로 돌아온다.
+ * 같은 오류 이슈의 앞선 진단이 검토 대기 중이면 그 요약·원인·개선 방향을 참고로 넘기고, 완료한 뒤라면 아무것도 넘기지 않는다.
+ * 어느 쪽이든 보고서의 오류 이슈 정보에 앞선 진단이 있다고 적는다.
  */
 export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   /** Sentry 진단의 대상 종류. */
@@ -143,16 +150,20 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
     const api = this.options.connectSentry(token);
 
     // 시작 직전 확인: 그사이 해결·보관·삭제·병합됐으면 진단하지 않는다. 실행 중에는 다시 보지 않는다.
+    // 다시 진단은 앞선 보고서를 보관하고 있어 조용히 뺄 수 없다. 해결·보관돼도 사용자가 요청했으니 진단하고, 오류 이슈가 사라졌으면 앞선 보고서로 돌아온다.
+    /** 다시 진단인지 여부. */
+    const rediagnosing = isRediagnosing(diagnosis);
     /** 오류 이슈 상태. */
     const state = await api.errorIssueState(organization, diagnosis.issueId);
     if (context.stopped()) return { kind: 'skipped' };
     if (!state.ok) {
       // 시작 직전 확인의 `404`는 그사이 지워진 오류 이슈라 조용히 뺀다.
       if (state.failure.kind !== 'not-found') return this.unavailable(id, token, state.failure);
+      if (rediagnosing) return { kind: 'ready', next: { kind: 'fail', reason: 'sentry-unavailable' } };
       await this.options.diagnoses.dropBeforeStart(id, 'deleted');
       return { kind: 'skipped' };
     }
-    if (state.value.status !== 'unresolved') {
+    if (state.value.status !== 'unresolved' && !rediagnosing) {
       await this.options.diagnoses.dropBeforeStart(id, state.value.status);
       return { kind: 'skipped' };
     }
@@ -167,20 +178,50 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
     /** 저장소 git 상태. */
     const git = await this.options.repoState(repo.path);
     if (context.stopped()) return { kind: 'skipped' };
+    /** 같은 오류 이슈의 앞선 진단. 완료한 진단의 파일은 지금도 있을 때만 경로를 적는다. */
+    const prior = await this.priorDiagnosis(id);
+    if (context.stopped()) return { kind: 'skipped' };
+    // 지시를 덧붙인 다시 진단만 앞선 보고서와 쌓인 지시를 넘긴다. 지시 없는 다시 진단은 쌓인 지시가 비어 있어 처음부터 한다.
+    /** 넘길 직전 결과. */
+    const rediagnosis = rediagnosing && diagnosis.report && diagnosis.directives.length > 0 ? { previous: diagnosis.report, directives: diagnosis.directives } : null;
     return {
       kind: 'ready',
       next: {
         kind: 'run',
         run: this.readOnlyRun(diagnosis, {
           repository: repo.path,
-          document: diagnosisInputDocument({ repository: repo.path, issue: diagnosis.issue, origin: diagnosis.origin, event: event.value, facts }),
+          document: diagnosisInputDocument({
+            repository: repo.path,
+            issue: diagnosis.issue,
+            origin: diagnosis.origin,
+            event: event.value,
+            facts,
+            prior: prior.report,
+            rediagnosis,
+          }),
+          instructionContext: { rediagnosisWithPrevious: rediagnosis !== null, priorDiagnosis: prior.report !== null },
           base: {
             event: facts,
+            priorDiagnosis: prior.info,
             run: { repository: repo.path, headCommit: git.headCommit, uncommittedChanges: git.uncommittedChanges, reproductionAllowed: false },
           },
         }),
       },
     };
+  }
+
+  /**
+   * 진단의 앞선 진단. 검토 대기 중인 앞선 보고서는 입력에 참고로 넘길 보고서와 함께, 완료한 진단은 날짜와 내보낸 파일 경로만 돌려준다.
+   * 완료한 진단의 내보낸 파일이 그 자리에 없으면 경로 없이 날짜만 적는다.
+   */
+  private async priorDiagnosis(id: number): Promise<{ info: PriorDiagnosis | null; report: DiagnosisReport | null }> {
+    /** 목록이 아는 앞선 진단. */
+    const found = await this.options.diagnoses.priorOf(id);
+    if (!found) return { info: null, report: null };
+    if (found.info.kind !== 'completed' || found.info.exportPath === null) return { info: found.info, report: found.report };
+    /** 파일이 지금도 있는지 여부. */
+    const exists = await this.options.exportFileExists(found.info.exportPath).catch(() => false);
+    return { info: exists ? found.info : { ...found.info, exportPath: null }, report: null };
   }
 
   async save(id: number, _detectedAt: number, pending: PendingDiagnosisReport, runs: readonly RunRecord[]): Promise<boolean> {
@@ -240,7 +281,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
    */
   private readOnlyRun(
     diagnosis: SentryDiagnosis,
-    input: { repository: string; document: string; base: Pick<PendingDiagnosisReport, 'event' | 'run'> },
+    input: { repository: string; document: string; instructionContext: DiagnosisInstructionContext; base: Pick<PendingDiagnosisReport, 'event' | 'run' | 'priorDiagnosis'> },
   ): TargetRun<SentryTargetTypes, DiagnosisOutput> {
     return {
       kind: 'diagnosis',
@@ -250,7 +291,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
         /** 지금 설정. */
         const settings = await this.options.settingsStore.load();
         return {
-          instructions: readOnlyDiagnosisInstructions(input.base.event.missingData),
+          instructions: readOnlyDiagnosisInstructions(input.base.event.missingData, input.instructionContext),
           input: input.document,
           outputSchema: readOnlyDiagnosisSchema(),
           readRoots: [input.repository],

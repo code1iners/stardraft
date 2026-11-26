@@ -230,6 +230,7 @@ function start(): void {
     // 자동 선택 때문에 멈췄던 묶음을 저장소 매핑 기준으로 한 번 다시 판정한다. 대기열을 시작하기 전에 해야 옛 묶음이 선택 실행을 타지 않는다.
     await mentionBundles.reconcileRepoStates().catch((error: unknown) => logger.error('bundle.repo-state-reconcile-failed', errorFields(error)));
     // 저장소 매핑 필요·저장소 확인 필요 묶음이 읽을 저장소를 얻었는지 앱을 켤 때, 매핑이 바뀔 때, 절전에서 깰 때, 폴더 없음이 있는 동안 60초마다 확인해 재개한다.
+    /** 저장소 대기 묶음을 재개하는 감시. 앱을 켤 때 시작하고, 매핑이 바뀔 때와 절전에서 깰 때 지금 확인한다. */
     const repoWaitMonitor = new RepoWaitMonitor({ bundles: mentionBundles, clock: systemClock, logger });
     repoWait = repoWaitMonitor;
     repoWaitMonitor.start();

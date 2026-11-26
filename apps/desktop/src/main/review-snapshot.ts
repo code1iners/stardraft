@@ -247,8 +247,8 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
   const recipients = bundleRecipients(bundle);
   /** 문체 검사에서 뺄 단어. */
   const source = bundleSourceWords(bundle);
-  /** 저장소가 정해지지 않은 초안인지 여부. 고른 저장소도 저장소 매핑도 없다. */
-  const repoUndetermined = isRepoUndetermined(bundle, mapping !== 'unmapped');
+  /** 저장소가 정해지지 않은 초안인지 여부. 고른 저장소도 저장소 매핑도 없다. 다시 만들 수 있는 준비됨 묶음에서만 알린다. */
+  const repoUndetermined = bundle.status === 'ready' && isRepoUndetermined(bundle, mapping !== 'unmapped');
   return {
     requirement: { ...draft.requirement },
     paragraphs: draft.paragraphs.map((paragraph) => ({

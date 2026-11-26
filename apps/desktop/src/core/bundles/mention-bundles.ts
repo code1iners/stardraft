@@ -669,18 +669,19 @@ export class MentionBundles {
    * 매핑을 저장했을 때, 폴더가 돌아왔을 때, 앱을 켜거나 절전에서 깰 때 부른다. 생성 중으로 올린 묶음 수를 돌려준다.
    */
   async resumeRepoWaiting(): Promise<number> {
-    /** 다시 판정할 묶음. 초안 없이 기다리는 저장소 대기 묶음이다. */
-    const waiting = this.bundles.filter(isRepoWaiting);
+    /** 다시 판정할 묶음. 초안 없이 기다리는 저장소 대기 묶음이다. 처음 보인 순서(대기열 순서)로 올려 `auto` 칸에 그 순서로 선다. */
+    const waiting = this.bundles.filter(isRepoWaiting).sort(compareBundles);
     if (waiting.length === 0) return 0;
-    /** 묶음마다 확인한 결과. 확인하다 예외가 나면 매핑이 없는 것으로 본다. */
+    /** 묶음마다 확인한 결과. 확인하다 예외가 나면 그 묶음은 지금 상태 그대로 둔다(일시 오류로 매핑 없음으로 잘못 옮기지 않는다). */
     const resolutions = new Map(
-      await Promise.all(waiting.map(async (bundle): Promise<[number, BundleRepoResolution]> => [bundle.id, await this.resolutionOf(bundle).catch((): BundleRepoResolution => ({ kind: 'unmapped' }))])),
+      await Promise.all(waiting.map(async (bundle): Promise<[number, BundleRepoResolution | null]> => [bundle.id, await this.resolutionOf(bundle).catch(() => null)])),
     );
     /** 생성 중으로 올린 묶음 수. */
     let resumed = 0;
     for (const { id } of waiting) {
       /** 지금 확인한 결과. */
-      const resolution = resolutions.get(id)!;
+      const resolution = resolutions.get(id);
+      if (!resolution) continue;
       await this.change(id, 'bundle.repo-wait-rechecked', (latest) => {
         if (!isRepoWaiting(latest)) return null;
         /** 다시 판정한 묶음. */
@@ -691,11 +692,6 @@ export class MentionBundles {
       });
     }
     return resumed;
-  }
-
-  /** 저장소가 정해지지 않아 기다리는 묶음(저장소 매핑 필요, 저장소 확인 필요)이 있는지 본다. 읽을 수 있게 되는지 다시 확인할 대상이다. */
-  hasRepoWaiting(): boolean {
-    return this.bundles.some(isRepoWaiting);
   }
 
   /** 정해 둔 저장소의 폴더가 없어 기다리는 묶음(저장소 확인 필요)이 있는지 본다. 폴더가 돌아오는지 60초마다 다시 확인할 대상이다. */
@@ -718,8 +714,9 @@ export class MentionBundles {
       /** 지금 묶음. */
       const bundle = this.bundles.find((item) => item.id === id);
       if (!bundle || !isLegacySelectionStalled(bundle)) continue;
-      /** 지금 확인한 결과. 확인하다 예외가 나면 매핑이 없는 것으로 본다. */
-      const resolution = await this.resolutionOf(bundle).catch((): BundleRepoResolution => ({ kind: 'unmapped' }));
+      /** 지금 확인한 결과. 확인하다 예외가 나면 그 묶음은 이번에 건드리지 않는다. */
+      const resolution = await this.resolutionOf(bundle).catch(() => null);
+      if (!resolution) continue;
       await this.change(id, 'bundle.repo-state-reconciled', (latest) => {
         if (!isLegacySelectionStalled(latest)) return null;
         // 생성 중이던 묶음은 읽을 저장소가 있으면 그대로 대기열에 두고, 실패 묶음은 다시 시도와 같게 생성 중으로 올린다.

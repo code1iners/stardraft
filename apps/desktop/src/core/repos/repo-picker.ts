@@ -22,8 +22,11 @@ export interface RepoChoice {
 
 /** 열린 저장소 선택 창의 상태. 닫혀 있으면 `null`이다. `mapping`은 체크한 구성을 그 묶음 Flow 프로젝트의 저장소 매핑과 견준 것이다. */
 export interface RepoPickerState {
+  /** 창을 연 묶음 ID. */
   bundleId: number;
+  /** 후보. 화면에 이 순서로 보인다. */
   choices: RepoChoice[];
+  /** 체크한 구성과 그 Flow 프로젝트의 저장소 매핑을 견준 결과. */
   mapping: MappingMatch;
 }
 
@@ -39,7 +42,9 @@ export interface RepoPickerOptions {
 
 /** 열린 창의 내부 상태. */
 interface OpenPicker {
+  /** 창을 연 묶음 ID. */
   bundleId: number;
+  /** 후보. 체크 상태가 든다. */
   choices: RepoChoice[];
 }
 

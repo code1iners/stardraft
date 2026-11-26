@@ -469,6 +469,10 @@ describe('묶음 스냅숏: 저장소 대기', () => {
     /** 고른 저장소로 만든 초안의 스냅숏. 매핑이 없어도 저장소가 정해져 있다. */
     const chosen = bundleSnapshot(bundle({ status: 'ready', draft, userRepos: ['/fake/work/web'] }), () => null, undefined, () => 'unmapped').draft;
 
+    /** 무시한 묶음의 스냅숏. 처리됨 묶음은 다시 만들 수 없다는 안내를 따로 하지 않는다. */
+    const ignored = bundleSnapshot(bundle({ status: 'ignored', processedAt: 20_000, draft }), () => null, undefined, () => 'unmapped').draft;
+
+    expect(ignored?.repoUndetermined).toBe(false);
     expect(undetermined).toMatchObject({ repoUndetermined: true, canRegenerate: false, canPost: true, canEdit: true });
     expect(mapped).toMatchObject({ repoUndetermined: false, canRegenerate: true });
     expect(chosen).toMatchObject({ repoUndetermined: false, canRegenerate: true });

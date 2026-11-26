@@ -6,7 +6,9 @@ import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { SecretStore } from '../ports/secret-store';
 import type { SentryTokenStore } from '../ports/sentry-token-store';
 import { DEFAULT_SETTINGS, type SettingsStore } from '../ports/settings-store';
+import type { SentryStore } from '../ports/sentry-store';
 import type { StateStore } from '../ports/state-store';
+import { SqliteSentryStore } from './sqlite-sentry-store';
 import { writeFileAtomic } from './atomic-file';
 import { FileSecretStore, FileSentryTokenStore, type AsyncStringEncryption } from './file-secret-store';
 import {
@@ -64,6 +66,8 @@ export interface AppData {
   secretStore: SecretStore;
   /** Sentry 개인 토큰을 두는 비밀 저장소. Flow 키와 다른 파일이다. */
   sentryTokenStore: SentryTokenStore;
+  /** Sentry 진단 저장소. 같은 `state.db`의 `sentry_` 표이고 Flow 계정과 무관하다. */
+  sentryStore: SentryStore;
   /** `state.db` 연결을 닫는다. 앱이 끝날 때 부른다. */
   close(): void;
 }
@@ -160,6 +164,7 @@ export async function openAppData({
       stateStore: new SqliteStateStore(db),
       secretStore: new FileSecretStore(join(dataDir, FLOW_API_KEY_FILE_NAME), encryption, logger),
       sentryTokenStore: new FileSentryTokenStore(join(dataDir, SENTRY_TOKEN_FILE_NAME), encryption, logger),
+      sentryStore: new SqliteSentryStore(db),
       close: () => db.close(),
     };
   } catch (error) {

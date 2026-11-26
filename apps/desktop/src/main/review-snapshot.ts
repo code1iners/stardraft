@@ -14,8 +14,10 @@ import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
 import type { ManualCheckState } from '../core/manual-check/manual-check-session';
 import type { ManualAssignmentCandidate, ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
+import { isRepoWaiting, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
 import type {
   BundleMentionSnapshot,
+  DiagnosisSnapshot,
   BundleSnapshot,
   DraftSnapshot,
   GenerationSnapshot,
@@ -52,9 +54,10 @@ export type MappingLookup = (projectId: string, repos: readonly string[]) => Map
 /** 묶음 ID로 게시 카운트다운이 끝날 시각을 찾는다. 카운트다운 중이 아니면 `null`. */
 export type CountdownLookup = (bundleId: number) => number | null;
 
-/** 작은 창과 펼친 창이 그릴 묶음 상태. `bundles`는 대기열 순서 그대로 넘긴다. */
+/** 작은 창과 펼친 창이 그릴 묶음과 진단 상태. `bundles`는 대기열 순서 그대로 넘긴다. 진단은 묶음과 따로 감지한 순서로 넘긴다. */
 export function reviewSnapshot(
   bundles: readonly MentionBundle[],
+  diagnoses: readonly SentryDiagnosis[],
   sections: ReviewSnapshot['sections'],
   projectOf: ProjectLookup,
   generationOf: GenerationLookup,
@@ -72,9 +75,54 @@ export function reviewSnapshot(
   }
   return {
     bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf, (item) => waitCounts.get(repoWaitKey(item)) ?? 1)),
+    diagnoses: diagnosisSnapshots(diagnoses),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
     repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
   };
+}
+
+/**
+ * 진단을 렌더러에 넘길 모양으로 바꾼다. 저장소 대기는 같은 프로젝트·사유로 기다리는 진단 수를 함께 넘겨 바닥 줄의 "기다리는 오류 n건"이 된다.
+ * 오류 제목은 검토 화면에만 보이고 OS 알림에는 넣지 않는다.
+ */
+export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[]): DiagnosisSnapshot[] {
+  /** 프로젝트와 사유별로 기다리는 진단 수. */
+  const waitCounts = new Map<string, number>();
+  /** 프로젝트와 사유를 묶는 키. */
+  const waitKey = (diagnosis: SentryDiagnosis) => `${diagnosis.projectId}\u0000${diagnosis.repoCheck?.kind ?? ''}`;
+  for (const diagnosis of diagnoses) if (isRepoWaiting(diagnosis)) waitCounts.set(waitKey(diagnosis), (waitCounts.get(waitKey(diagnosis)) ?? 0) + 1);
+  return diagnoses.map((diagnosis): DiagnosisSnapshot => {
+    /** 같은 프로젝트·사유로 기다리는 진단 수. */
+    const waitingCount = waitCounts.get(waitKey(diagnosis)) ?? 1;
+    const { issue, repoCheck } = diagnosis;
+    return {
+      id: diagnosis.id,
+      projectId: diagnosis.projectId,
+      origin: diagnosis.origin,
+      title: issue.title,
+      detectedAt: diagnosis.detectedAt,
+      status: diagnosis.status,
+      repoWait:
+        !isRepoWaiting(diagnosis) || repoCheck === null
+          ? null
+          : repoCheck.kind === 'unmapped'
+            ? { kind: 'unmapped', waitingCount }
+            : { kind: 'missing-folder', path: repoCheck.path, waitingCount },
+      issue: {
+        shortId: issue.shortId,
+        culprit: issue.culprit,
+        level: issue.level,
+        environment: issue.environment,
+        firstSeen: issue.firstSeen,
+        lastSeen: issue.lastSeen,
+        count: issue.count,
+        userCount: issue.userCount,
+        platform: issue.platform,
+        organizationName: issue.organizationName,
+        projectName: issue.projectName,
+      },
+    };
+  });
 }
 
 /** 멘션 위치에 있는 기존 기록을 찾는 함수. */

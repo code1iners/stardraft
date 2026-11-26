@@ -9,7 +9,7 @@ import {
   type SentryTokenCheckFailure,
 } from '../../shared/ipc';
 import { SentryProjectModal } from './SentryProjectModal';
-import { PROJECT_STATUS_TEXT, projectFilterSummary, projectStatus } from './sentry-project-text';
+import { projectFilterSummary, projectStatus, projectStatusText } from './sentry-project-text';
 
 /** 토큰 확인이 실패했을 때 입력 칸 아래에 보일 문구. 권한이 모자라면 빠진 scope 이름을 짚는다. */
 const FAILURE_MESSAGES: Record<SentryTokenCheckFailure, string> = {
@@ -283,7 +283,7 @@ interface ProjectRowProps {
   onEdit: () => void;
 }
 
-/** 프로젝트 줄. 상태는 감지 중, 저장소 매핑 없음, 접근 불가, 토큰 확인 필요 중 하나다. */
+/** 프로젝트 줄. 상태는 감지 중, 저장소 매핑 없음 · n건 대기, 접근 불가, 토큰 확인 필요 중 하나다. */
 function ProjectRow({ project, tokenProblem, onEdit }: ProjectRowProps) {
   /** 줄의 상태. */
   const status = projectStatus(project, tokenProblem);
@@ -298,7 +298,7 @@ function ProjectRow({ project, tokenProblem, onEdit }: ProjectRowProps) {
         <div className="muted small">{projectFilterSummary(project)}</div>
       </div>
       <span className={status === 'watching' ? 'ok-text small' : status === 'unmapped' ? 'warning-text small' : 'danger-text small'}>
-        {PROJECT_STATUS_TEXT[status]}
+        {projectStatusText(project, status)}
       </span>
       <button type="button" className="btn sm" onClick={onEdit}>
         편집

@@ -235,3 +235,162 @@ describe('Sentry 어댑터: 프로젝트 목록과 오류 이슈 확인', () => 
     expect(await connect(server).probeErrorIssues(organization(1), '11')).toEqual({ ok: false, failure: { kind } });
   });
 });
+
+describe('Sentry 어댑터: 감지 조회', () => {
+  /** 시험용 프로젝트 필터. */
+  const FILTER = { projectId: '11', environment: 'production', levels: ['fatal', 'error'] } as const;
+  /** 2026-11-26T00:00:00Z. */
+  const T0 = Date.UTC(2026, 10, 26);
+
+  /** 목록 응답 한 항목. 실제 응답처럼 `count`는 문자열이다. */
+  function issueBody(id: string, firstSeen: string): Record<string, unknown> {
+    return {
+      id,
+      shortId: `WEB-${id}`,
+      title: `TypeError: 시험 오류 ${id}`,
+      culprit: 'app/pages/checkout',
+      level: 'error',
+      status: 'unresolved',
+      substatus: 'new',
+      firstSeen,
+      lastSeen: '2026-11-26T01:00:00Z',
+      count: '12',
+      userCount: 3,
+      permalink: `https://org-1.sentry.io/issues/${id}/`,
+      platform: 'javascript',
+      project: { id: '11', slug: 'web', name: '웹' },
+    };
+  }
+
+  it('신규 조회는 지역 주소로 미해결·처음 보인 시각·레벨을 검색 쿼리로, 프로젝트·환경을 파라미터로 걸고 처음 보인 순으로 부른다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 200, body: [issueBody('101', '2026-11-26T00:30:00.123456Z')] });
+
+    const result = await connect(server).listNewErrorIssues(organization(1, 'https://de.sentry.io'), FILTER, T0);
+
+    expect(server.requests.map((request) => request.url)).toEqual([
+      'https://de.sentry.io/api/0/organizations/org-1/issues/?project=11&environment=production&query=is%3Aunresolved%20firstSeen%3A%3E2026-11-26T00%3A00%3A00.000Z%20level%3A%5Bfatal%2Cerror%5D&sort=new&limit=100',
+    ]);
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        {
+          id: '101',
+          shortId: 'WEB-101',
+          title: 'TypeError: 시험 오류 101',
+          culprit: 'app/pages/checkout',
+          level: 'error',
+          firstSeen: Date.parse('2026-11-26T00:30:00.123Z'),
+          lastSeen: Date.parse('2026-11-26T01:00:00Z'),
+          count: 12,
+          userCount: 3,
+          permalink: 'https://org-1.sentry.io/issues/101/',
+          platform: 'javascript',
+        },
+      ],
+    });
+  });
+
+  it('레벨이 하나면 목록 문법 없이 걸고, 환경 필터가 없으면 환경 파라미터를 보내지 않는다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 200, body: [] });
+
+    await connect(server).listNewErrorIssues(organization(1), { projectId: '11', environment: null, levels: ['error'] }, T0);
+
+    expect(server.requests[0]?.url).toBe(
+      'https://us.sentry.io/api/0/organizations/org-1/issues/?project=11&query=is%3Aunresolved%20firstSeen%3A%3E2026-11-26T00%3A00%3A00.000Z%20level%3Aerror&sort=new&limit=100',
+    );
+  });
+
+  it('재발 조회는 is:regressed와 레벨을 걸고 마지막 발생 순으로 부른다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 200, body: [] });
+
+    expect(await connect(server).listRegressedErrorIssues(organization(1), FILTER)).toEqual({ ok: true, value: [] });
+    expect(server.requests[0]?.url).toBe(
+      'https://us.sentry.io/api/0/organizations/org-1/issues/?project=11&environment=production&query=is%3Aregressed%20level%3A%5Bfatal%2Cerror%5D&sort=date&limit=100',
+    );
+  });
+
+  it('오류 이슈 목록도 Link 헤더의 다음 쪽을 끝까지 넘긴다', async () => {
+    const server = new FakeSentryServer();
+    /** 다음 쪽이 있는지 알리는 Link 헤더. */
+    const link = (next: boolean) => `<https://us.sentry.io/x>; rel="next"; results="${next}"; cursor="1764115200000:0:0"`;
+    server.replyNext(
+      { status: 200, body: [issueBody('1', '2026-11-26T00:01:00Z')], headers: { link: link(true) } },
+      { status: 200, body: [issueBody('2', '2026-11-26T00:02:00Z')], headers: { link: link(false) } },
+    );
+
+    const result = await connect(server).listRegressedErrorIssues(organization(1), FILTER);
+
+    expect(result.ok && result.value.map((issue) => issue.id)).toEqual(['1', '2']);
+    expect(server.requests[1]?.url).toContain('&cursor=1764115200000%3A0%3A0');
+  });
+
+  it('처음 보인 시각을 읽을 수 없는 항목이 있으면 알 수 없는 응답이다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 200, body: [{ id: '1', title: 'x' }] });
+
+    expect(await connect(server).listNewErrorIssues(organization(1), FILTER, T0)).toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+  });
+
+  it('조직에 없는 환경 이름이면 Sentry가 404를 주고 not-found로 구분한다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 404, body: { detail: 'The requested resource does not exist' } });
+
+    expect(await connect(server).listNewErrorIssues(organization(1), FILTER, T0)).toEqual({ ok: false, failure: { kind: 'not-found' } });
+  });
+
+  it('429는 X-Sentry-Rate-Limit-Reset(UTC epoch 초)을 한도 초기화 시각(밀리초)으로 읽는다. 헤더가 없으면 시각이 없다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext(
+      { status: 429, body: { detail: 'x' }, headers: { 'x-sentry-rate-limit-reset': '1764115260' } },
+      { status: 429, body: { detail: 'x' } },
+    );
+
+    expect(await connect(server).listRegressedErrorIssues(organization(1), FILTER)).toEqual({
+      ok: false,
+      failure: { kind: 'rate-limited', resetAt: 1_764_115_260_000 },
+    });
+    expect(await connect(server).listRegressedErrorIssues(organization(1), FILTER)).toEqual({ ok: false, failure: { kind: 'rate-limited' } });
+  });
+
+  it('재발은 오류 이슈 상세 활동의 가장 최근 set_regression에서 재발을 일으킨 이벤트 ID와 시각을 읽는다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({
+      status: 200,
+      body: {
+        id: '101',
+        activity: [
+          { id: '9', type: 'set_resolved', dateCreated: '2026-11-26T03:00:00.000000Z', data: {} },
+          { id: '8', type: 'set_regression', dateCreated: '2026-11-26T02:00:00.654321Z', data: { version: '', event_id: 'b'.repeat(32) } },
+          { id: '7', type: 'set_regression', dateCreated: '2026-11-25T02:00:00Z', data: { version: '', event_id: 'a'.repeat(32) } },
+          { id: '1', type: 'first_seen', dateCreated: '2026-11-24T00:00:00Z', data: {} },
+        ],
+      },
+    });
+
+    const result = await connect(server).latestRegression(organization(1), '101');
+
+    expect(server.requests[0]?.url).toBe('https://us.sentry.io/api/0/organizations/org-1/issues/101/');
+    expect(result).toEqual({ ok: true, value: { eventId: 'b'.repeat(32), at: Date.parse('2026-11-26T02:00:00.654Z') } });
+  });
+
+  it('재발 활동이 없거나 이벤트 ID가 없으면 재발 없음(null)이다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext(
+      { status: 200, body: { id: '101', activity: [{ id: '1', type: 'first_seen', dateCreated: '2026-11-24T00:00:00Z', data: {} }] } },
+      { status: 200, body: { id: '101', activity: [{ id: '2', type: 'set_regression', dateCreated: '2026-11-24T00:00:00Z', data: { version: '' } }] } },
+    );
+
+    expect(await connect(server).latestRegression(organization(1), '101')).toEqual({ ok: true, value: null });
+    expect(await connect(server).latestRegression(organization(1), '101')).toEqual({ ok: true, value: null });
+  });
+
+  it('오류 이슈 상세가 404(삭제됨)이면 not-found다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 404, body: { detail: 'x' } });
+
+    expect(await connect(server).latestRegression(organization(1), '101')).toEqual({ ok: false, failure: { kind: 'not-found' } });
+  });
+});

@@ -68,6 +68,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
         compact: { original: true, requirement: true, draft: true, evidence: false, repository: false, progress: true },
         expanded: { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true },
       },
+      diagnoses: [],
       repoPicker: null,
     },
     manualCheck: { canOpen: false, sheet: null },

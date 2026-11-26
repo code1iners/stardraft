@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppSnapshot, BundleSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
+import type { AppSnapshot, BundleSnapshot, DiagnosisSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
+import { DiagnosisFooter } from './DiagnosisDetail';
 import { DraftsSection } from './DraftsSection';
 import { ManualCheckModal } from './ManualCheck';
 import { PopoverContent } from './PopoverView';
@@ -117,7 +118,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     },
     launchAtLogin: true,
     editor: { choice: null, installed: [], picker: null },
-    review: { bundles, sections: SECTIONS, repoPicker: null },
+    review: { bundles, diagnoses: [], sections: SECTIONS, repoPicker: null },
     manualCheck: { canOpen: true, sheet: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     parallelWork: { count: 1, running: 0 },
@@ -158,8 +159,8 @@ describe('작은 창: 멘션 묶음', () => {
     const open = { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } };
 
     expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain(path);
-    expect(textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections: open, repoPicker: null } })} />)).toContain(path);
-    expect(textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections: open, repoPicker: null } })} />)).not.toContain('첫 질문입니다');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], diagnoses: [], sections: open, repoPicker: null } })} />)).toContain(path);
+    expect(textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], diagnoses: [], sections: open, repoPicker: null } })} />)).not.toContain('첫 질문입니다');
   });
 
   it('맥락을 조회한 묶음은 원문 영역에 "스레드 보기"를 두고, 맥락이 없으면 두지 않는다', () => {
@@ -491,7 +492,7 @@ describe('작은 창: 초안 실행', () => {
   it('근거를 펼치면 근거마다 자연어 설명과 "저장소 · 파일 · 줄" 위치를, 저장소를 펼치면 쓴 저장소를 보인다', () => {
     /** 근거와 저장소를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, evidence: true, repository: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections, repoPicker: null } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], diagnoses: [], sections, repoPicker: null } })} />);
 
     expect(text).toContain('① 운영 설정에서 다시 시도하는 횟수를 5로 정해 둡니다.');
     expect(text).toContain('billing-api · application-prod.yml · 88번째 줄');
@@ -509,7 +510,7 @@ describe('작은 창: 초안 실행', () => {
     });
     /** 근거를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, evidence: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], sections, repoPicker: null } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], diagnoses: [], sections, repoPicker: null } })} />);
 
     expect(text).toContain('설정을 바꾸면 다음 배포부터 적용됩니다. ① ②');
     expect(text).toContain('billing-api · application-prod.yml · 88번째 줄');
@@ -575,7 +576,7 @@ describe('작은 창: 초안 실행', () => {
     const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 } });
     /** 저장소를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], diagnoses: [], sections, repoPicker: null } })} />);
 
     expect(text).toContain('연결한 저장소 폴더를 찾을 수 없습니다. /fake/work/gone 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.');
     expect(text).not.toContain('연결된 저장소 폴더를 찾을 수 없음');
@@ -589,7 +590,7 @@ describe('저장소 확인 필요와 자동 선택', () => {
 
   /** 저장소 영역을 편 작은 창에 묶음 하나를 그린 마크업. */
   function popoverMarkup(item: BundleSnapshot): string {
-    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], sections: repositoryOpen, repoPicker: null } })} />);
+    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], diagnoses: [], sections: repositoryOpen, repoPicker: null } })} />);
   }
 
   /** 저장소 영역을 편 작은 창에 묶음 하나를 그린 글자. 마크업이 바꾼 따옴표는 되돌린다. */
@@ -709,7 +710,7 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
 
   /** 저장소 영역을 편 작은 창에 묶음 하나와 저장소 선택 창을 그린 마크업. */
   function popoverMarkup(item: BundleSnapshot, repoPicker: ReviewSnapshot['repoPicker'] = null): string {
-    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], sections: repositoryOpen, repoPicker } })} />);
+    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], diagnoses: [], sections: repositoryOpen, repoPicker } })} />);
   }
 
   /** 마크업의 글자. */
@@ -952,7 +953,7 @@ describe('근거와 에디터에서 열기', () => {
       draft: { ...READY.draft!, evidence: [READY.draft!.evidence[0]!, { ...READY.draft!.evidence[1]!, located: false }] },
     });
     /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], sections: evidenceOpen, repoPicker: null } })} />);
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], diagnoses: [], sections: evidenceOpen, repoPicker: null } })} />);
 
     expect(html.match(/에디터에서 열기/g)).toHaveLength(2);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>에디터에서 열기<\/button>/);
@@ -969,12 +970,12 @@ describe('근거와 에디터에서 열기', () => {
       },
     });
     /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([flagged], { review: { bundles: [flagged], sections: evidenceOpen, repoPicker: null } })} />);
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([flagged], { review: { bundles: [flagged], diagnoses: [], sections: evidenceOpen, repoPicker: null } })} />);
 
     expect(html.match(/개발자 용어가 있을 수 있음/g)).toHaveLength(2);
     expect(html).toContain('title="retryCount"');
     expect(html).toContain('title="application-prod.yml"');
-    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections: evidenceOpen, repoPicker: null } })} />)).not.toContain(
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], diagnoses: [], sections: evidenceOpen, repoPicker: null } })} />)).not.toContain(
       '개발자 용어가 있을 수 있음',
     );
   });
@@ -1709,4 +1710,105 @@ it('생성 중 담당자에서 제외된 담당 업무는 처리됨의 담당 �
   expect(text).toContain('담당 해제');
   expect(text).toContain('담당자에서 제외되어 초안을 만들지 않았습니다.');
   expect(text).toContain('되돌리기');
+});
+
+describe('펼친 창: 진단', () => {
+  /** 감지 시각. 2026-11-26 09:50(이 PC 시간대와 무관하게 같은 날로 보이도록 시각 글자는 따로 비교하지 않는다). */
+  const DETECTED_AT = new Date(2026, 10, 26, 9, 50).getTime();
+
+  /** 가짜 진단. 실제 오류가 아니다. 기본은 저장소 매핑 필요다. */
+  function diagnosis(id: number, overrides: Partial<DiagnosisSnapshot> = {}): DiagnosisSnapshot {
+    return {
+      id,
+      projectId: '11',
+      origin: 'new',
+      title: `시험 오류 ${id}`,
+      detectedAt: DETECTED_AT,
+      status: 'repo-check-needed',
+      repoWait: { kind: 'unmapped', waitingCount: 2 },
+      issue: {
+        shortId: `WEB-${id}`,
+        culprit: 'app/checkout',
+        level: 'error',
+        environment: 'production',
+        firstSeen: DETECTED_AT,
+        lastSeen: null,
+        count: 3,
+        userCount: 1,
+        platform: 'javascript',
+        organizationName: '가짜 조직',
+        projectName: '가짜 프로젝트',
+      },
+      ...overrides,
+    };
+  }
+
+  /** 진단을 넣은 스냅숏. */
+  function withDiagnoses(diagnoses: DiagnosisSnapshot[], bundles: BundleSnapshot[] = []): AppSnapshot {
+    return snapshot(bundles, { review: { bundles, diagnoses, sections: SECTIONS, repoPicker: null } });
+  }
+
+  it('목록은 `진단 n` 묶음이 `초안 n` 위에 오고, 진단 줄에 오류 제목·감지 시각·`프로젝트 · 자리`·상태 태그가 보인다', () => {
+    const text = textOf(
+      <ReviewContent snapshot={withDiagnoses([diagnosis(1), diagnosis(2, { status: 'queued', repoWait: null })], [bundle(7)])} initialDiagnosisId={1} />,
+    );
+
+    expect(text).toMatch(/진단 2 시험 오류 1 \S+ \S+ 가짜 프로젝트 · app\/checkout 저장소 매핑 필요 시험 오류 2 \S+ \S+ 가짜 프로젝트 · app\/checkout 대기 초안 1 /);
+  });
+
+  it('저장소 매핑 필요 진단의 상세는 `오류 정보`와 노란 바닥 줄(진단용 글, 주 버튼 하나, 치우는 버튼 없음)이다', () => {
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([diagnosis(1)])} initialDiagnosisId={1} />);
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([diagnosis(1)])} initialDiagnosisId={1} />);
+
+    expect(text).toContain('가짜 프로젝트 · 신규 ·');
+    expect(text).toContain('오류 정보 난 자리 app/checkout 발생 수 3회 · 사용자 1명 짧은 ID WEB-1 조직 / 프로젝트 가짜 조직 / 가짜 프로젝트 환경 production 레벨 error');
+    expect(text).toContain('이 프로젝트에 연결한 저장소가 없습니다. 매핑하면 기다리는 오류 2건을 진단합니다.');
+    /** 바닥 줄. */
+    const footer = /<footer class="review-foot warn expanded">[\s\S]*<\/footer>/.exec(markup)?.[0] ?? '';
+    expect(footer.match(/<button/g)).toHaveLength(1);
+    expect(footer).toMatch(/<button[^>]*class="btn primary"[^>]*>저장소 매핑하기<\/button>/);
+    expect(footer).not.toContain('무시');
+  });
+
+  it('저장소 확인 필요 진단은 찾을 수 없는 폴더와 [매핑 고치기]를 보인다', () => {
+    const missing = diagnosis(1, { repoWait: { kind: 'missing-folder', path: '/fake/gone', waitingCount: 1 } });
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([missing])} initialDiagnosisId={1} />);
+
+    expect(text).toContain('저장소 확인 필요');
+    expect(text).toContain('연결한 저장소 폴더를 찾을 수 없습니다. /fake/gone 폴더가 돌아오거나 매핑을 고치면 이어 갑니다. 매핑 고치기');
+  });
+
+  it('대기 진단은 `대기` 태그와 기다린다는 바닥 줄을 보이고 노란 바닥 줄은 없다', () => {
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([diagnosis(1, { status: 'queued', repoWait: null })])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<span class="tag generating">대기</span>');
+    expect(markup).toContain('차례를 기다리는 중입니다.');
+    expect(markup).not.toContain('review-foot warn');
+  });
+
+  it('[저장소 매핑하기]는 그 진단의 Sentry 매핑 편집을 연다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 바닥 줄이 그린 요소. 훅을 쓰지 않아 함수로 직접 부른다. */
+      const element = DiagnosisFooter({ diagnosis: diagnosis(5) });
+      /** 요소 트리에서 누를 수 있는 요소를 모두 찾는다. */
+      const find = (node: unknown): Record<string, unknown>[] => {
+        if (Array.isArray(node)) return node.flatMap((child) => find(child));
+        if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+        /** 요소의 속성. */
+        const props = (node as { props: Record<string, unknown> }).props;
+        return [...(typeof props.onClick === 'function' ? [props] : []), ...find(props.children)];
+      };
+
+      /** 바닥 줄의 버튼. */
+      const buttons = find(element);
+      expect(buttons).toHaveLength(1);
+      (buttons[0]!.onClick as () => void)();
+      expect(send).toHaveBeenCalledWith({ type: 'open-sentry-repo-mapping', diagnosisId: 5 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

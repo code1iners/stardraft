@@ -97,8 +97,9 @@ const PROJECTS: SentryProjectsSnapshot = {
       levels: ['fatal', 'error'],
       repo: { path: '/fake/work/web-app', status: 'found' },
       access: 'ok',
+      waitingCount: 0,
     },
-    { projectId: '12', organizationName: '조직 A', projectName: '배치', environment: null, levels: ['error'], repo: null, access: 'unchecked' },
+    { projectId: '12', organizationName: '조직 A', projectName: '배치', environment: null, levels: ['error'], repo: null, access: 'unchecked', waitingCount: 2 },
   ],
 };
 
@@ -116,7 +117,7 @@ describe('설정 "Sentry" 칸의 진단할 프로젝트', () => {
     const text = textOf(htmlOf(CONNECTED, 'darwin', PROJECTS));
 
     expect(text).toContain('조직 A / 웹 production · fatal, error · web-app 감지 중 편집');
-    expect(text).toContain('조직 A / 배치 모든 환경 · error · 저장소 없음 저장소 매핑 없음 편집');
+    expect(text).toContain('조직 A / 배치 모든 환경 · error · 저장소 없음 저장소 매핑 없음 · 2건 대기 편집');
   });
 
   it('프로젝트 하나가 접근 불가이면 그 줄만 "접근 불가"이고 다른 줄은 그대로다', () => {

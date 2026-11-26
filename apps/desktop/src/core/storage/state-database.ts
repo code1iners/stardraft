@@ -433,6 +433,31 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ALTER TABLE account_new RENAME TO account;
   CREATE UNIQUE INDEX account_active ON account (active) WHERE active = 1;
   `,
+  // 25: Sentry 오류 이슈 감지. 프로젝트별 체크포인트, 중복 억제 기록(신규는 이벤트 ID가 빈 문자열), 진단을 둔다.
+  // Flow 계정과 무관한 기록이라 계정 열(`account_id`)을 두지 않는다. 계정 열이 있으면 계정 이어받기와 30일 삭제가 건드린다.
+  // 진단의 상태 열에는 검사를 두지 않아, 뒤 단계가 상태를 더해도 표를 다시 만들지 않는다.
+  `
+  CREATE TABLE sentry_checkpoint (project_id TEXT PRIMARY KEY, checked_at INTEGER NOT NULL) STRICT;
+  CREATE TABLE sentry_detection_key (
+    issue_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    PRIMARY KEY (issue_id, event_id)
+  ) STRICT;
+  CREATE INDEX sentry_detection_key_project_id ON sentry_detection_key (project_id);
+  CREATE TABLE sentry_diagnosis (
+    id INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    issue_id TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ('new', 'regression')),
+    regression_event_id TEXT,
+    detected_at INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    repo_check TEXT,
+    issue TEXT NOT NULL
+  ) STRICT;
+  CREATE INDEX sentry_diagnosis_project_id ON sentry_diagnosis (project_id);
+  `,
 ];
 
 /** 계정에 매이는 대기열 줄의 종류. Flow 초안만 계정에 매이고, 다른 종류(진단 등)는 계정과 무관하다. */

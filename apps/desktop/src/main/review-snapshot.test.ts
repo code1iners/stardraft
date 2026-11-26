@@ -5,7 +5,8 @@ import type { RunRecord } from '../core/drafts/draft';
 import type { BundleContext } from '../core/flow/bundle-context';
 import { POST_BODY_CHAR_LIMIT as CORE_POST_BODY_CHAR_LIMIT } from '../core/drafts/post-body';
 import { POST_BODY_CHAR_LIMIT } from '../shared/ipc';
-import { bundleSnapshot, flowUrlOf, manualCheckSnapshot, reviewSnapshot } from './review-snapshot';
+import type { SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
+import { bundleSnapshot, diagnosisSnapshots, flowUrlOf, manualCheckSnapshot, reviewSnapshot } from './review-snapshot';
 
 /** 가짜 멘션. 실제 사람이나 글이 아니다. 기본은 08:50(한국 표준시)에 온 댓글 멘션이다. */
 function mention(alarmId: string, overrides: Partial<BundledMention> = {}): BundledMention {
@@ -549,8 +550,8 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     /** 창 하나의 영역 펼침 상태. */
     const sections = { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true };
 
-    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', picker, () => null).repoPicker).toEqual(picker);
-    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).repoPicker).toBeNull();
+    expect(reviewSnapshot([], [], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', picker, () => null).repoPicker).toEqual(picker);
+    expect(reviewSnapshot([], [], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).repoPicker).toBeNull();
   });
 });
 
@@ -567,7 +568,7 @@ describe('묶음 스냅숏: 저장소 대기 건수', () => {
     ];
 
     /** 건수만 모은 값. */
-    const counts = reviewSnapshot(bundles, { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).bundles.map((item) => item.repoCheck?.waitingCount);
+    const counts = reviewSnapshot(bundles, [], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).bundles.map((item) => item.repoCheck?.waitingCount);
 
     expect(counts).toEqual([2, 2, 1, 1]);
   });
@@ -950,5 +951,82 @@ describe('묶음 스냅숏: 담당 해제', () => {
     );
     expect(snapshot.assignment?.blockedByUnassignment).toBe(false);
     expect(snapshot.draft).toMatchObject({ canPost: true, canRegenerate: true });
+  });
+});
+
+describe('진단 스냅숏', () => {
+  /** 가짜 진단. */
+  function diagnosis(id: number, overrides: Partial<SentryDiagnosis> = {}): SentryDiagnosis {
+    return {
+      id,
+      projectId: '11',
+      issueId: String(100 + id),
+      origin: 'new',
+      regressionEventId: null,
+      detectedAt: 1_000 + id,
+      status: 'repo-check-needed',
+      repoCheck: { kind: 'unmapped' },
+      issue: {
+        shortId: `WEB-${id}`,
+        title: `시험 오류 ${id}`,
+        culprit: 'app/checkout',
+        level: 'error',
+        environment: 'production',
+        firstSeen: 500,
+        lastSeen: 900,
+        count: 3,
+        userCount: 1,
+        permalink: 'https://fake.sentry.test/issues/1/',
+        platform: 'javascript',
+        organizationName: '가짜 조직',
+        projectName: '가짜 프로젝트',
+      },
+      ...overrides,
+    };
+  }
+
+  it('진단은 묶음과 따로 배열로 넘기고, 오류 제목·감지 시각·프로젝트·자리·상태를 담는다', () => {
+    const [snapshot] = diagnosisSnapshots([diagnosis(1, { status: 'queued', repoCheck: null })]);
+
+    expect(snapshot).toEqual({
+      id: 1,
+      projectId: '11',
+      origin: 'new',
+      title: '시험 오류 1',
+      detectedAt: 1_001,
+      status: 'queued',
+      repoWait: null,
+      issue: {
+        shortId: 'WEB-1',
+        culprit: 'app/checkout',
+        level: 'error',
+        environment: 'production',
+        firstSeen: 500,
+        lastSeen: 900,
+        count: 3,
+        userCount: 1,
+        platform: 'javascript',
+        organizationName: '가짜 조직',
+        projectName: '가짜 프로젝트',
+      },
+    });
+  });
+
+  it('저장소 대기는 같은 프로젝트·사유로 기다리는 진단 수를 넘긴다. 사유나 프로젝트가 다르면 따로 센다', () => {
+    const snapshots = diagnosisSnapshots([
+      diagnosis(1),
+      diagnosis(2),
+      diagnosis(3, { projectId: '12' }),
+      diagnosis(4, { repoCheck: { kind: 'missing-folder', path: '/fake/gone' } }),
+      diagnosis(5, { status: 'queued', repoCheck: null }),
+    ]);
+
+    expect(snapshots.map((item) => item.repoWait)).toEqual([
+      { kind: 'unmapped', waitingCount: 2 },
+      { kind: 'unmapped', waitingCount: 2 },
+      { kind: 'unmapped', waitingCount: 1 },
+      { kind: 'missing-folder', path: '/fake/gone', waitingCount: 1 },
+      null,
+    ]);
   });
 });

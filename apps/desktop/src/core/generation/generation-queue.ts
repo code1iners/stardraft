@@ -66,6 +66,14 @@ export type GenerationProgress =
   /** 실행하고 있다. */
   | { status: 'running'; step: string; filesRead: number };
 
+/** 병렬 작업 수. 생성 대기열이 함께 돌리는 실행의 최대 수다. */
+export interface ParallelWorkLimit {
+  /** 지금 병렬 작업 수. 다음 실행을 꺼낼 때마다 읽는다. */
+  count(): number;
+  /** 병렬 작업 수가 바뀔 때마다 `listener`를 부르게 한다. 돌려준 함수를 부르면 그만 부른다. */
+  onChange(listener: () => void): () => void;
+}
+
 /** 생성 대기열에 필요한 것. */
 export interface GenerationQueueOptions {
   /** 대상 어댑터. 종류마다 하나다. 같은 차례의 대상끼리는 여기 둔 순서로 대기열에 들어간다. */
@@ -74,6 +82,8 @@ export interface GenerationQueueOptions {
   agent: () => QueueAgent | null;
   /** 에이전트 연결이나 기본 에이전트·모델이 바뀔 때마다 `listener`를 부르게 한다. 돌려준 함수를 부르면 그만 부른다. */
   onAgentChange: (listener: () => void) => () => void;
+  /** 병렬 작업 수. 값을 바꾸면 돌던 실행은 그대로 두고 다음 실행을 꺼낼 때부터 쓴다. */
+  parallelWork: ParallelWorkLimit;
   /** 대기열이 바뀔 때마다 남기고 다시 켤 때 읽는 저장소. */
   store: GenerationQueueStore;
   /** 실행 시작·종료 시각을 읽고 어댑터 멈춤의 기다림을 재는 시계. */
@@ -119,6 +129,8 @@ interface AdapterState {
 interface RunningTarget extends TargetRef {
   /** 대상의 어댑터. */
   slot: AdapterState;
+  /** 이 실행이 쥔 함께 돌 수 없는 자원. 없으면 `null`. 생성이 끝날 때(어댑터의 정리까지) 놓는다. */
+  resource: string | null;
   /** 실행을 끊는 장치. 끊으면 실행기가 프로세스 트리를 끝낸다. */
   abort: AbortController;
   /** 앱이 실행을 멈춘 까닭. 멈추지 않았으면 `null`. */
@@ -160,7 +172,8 @@ type PhaseResult =
   | { kind: 'stopped' };
 
 /**
- * 생성 대기열. 프로바이더와 무관하게 대상을 하나씩 꺼내 에이전트 실행을 돌리는 직렬 대기열이다(한 번에 하나만 실행한다).
+ * 생성 대기열. 프로바이더와 무관하게 대상을 꺼내 에이전트 실행을 돌린다. 병렬 작업 수만큼 함께 돌리고,
+ * 어댑터가 함께 돌 수 없다고 알린 자원을 쓰는 대상은 그 자원마다 한 번에 하나만 돌린다. 그런 대상은 자리를 지키며 기다리고 뒤의 대상이 먼저 돈다.
  * 대상은 `(종류, 대상 ID)`로만 알고, 대상마다 다른 일(준비, 결과 읽기, 저장, 실패·저장소 대기 기록)은 대상 어댑터에 맡긴다.
  * 끊긴 생성과 사용자 행동은 감지한 대상보다 앞에 넣는다. 실행마다 직전에 에이전트를 확인한다.
  * 일시적 실패는 한 번 다시 실행하고, 전역 실패는 대상을 실패로 두지 않고 대기열 전체를 멈췄다가 원인이 풀리면 다시 돈다.
@@ -172,10 +185,10 @@ export class GenerationQueue {
   private waiting: QueuedTarget[] = [];
   /** 사용자 행동으로 곧 생성 중이 될 대상에 잡아 둔 자리. 대상이 바뀌는 즉시 대기열을 맞추므로, 대상을 바꾸기 전에 적어 둔다. */
   private readonly reservedPriorities = new Map<string, QueuePriority>();
-  /** 다음 실행을 시작하는 중(실행 직전 확인)이거나 실행하고 있는지 여부. 한 번에 하나만 실행하게 한다. */
-  private busy = false;
-  /** 실행하고 있는 대상. 없으면 `null`. */
-  private running: RunningTarget | null = null;
+  /** 다음 실행을 시작하는 중(실행 직전 확인)인지 여부. 실행 직전 확인은 한 번에 하나씩 한다. */
+  private starting = false;
+  /** 실행하고 있는 대상. 시작한 순서다. */
+  private running: RunningTarget[] = [];
   /** 모든 대상을 멈추게 한 까닭. */
   private readonly paused = new Set<GlobalPause>();
   /** 에이전트 연결이 바뀌었다는 알림을 받은 횟수. 확인하는 사이에 알림이 왔는지 보려고 센다. */
@@ -184,8 +197,8 @@ export class GenerationQueue {
   private readonly slots: ReadonlyMap<TargetKind, AdapterState>;
   /** 대기열 상태. `starting`은 앱이 꺼지기 전에 남긴 대기열을 읽는 중이고, `stopped`면 새 실행을 시작하지 않는다. */
   private status: 'idle' | 'starting' | 'started' | 'stopped' = 'idle';
-  /** 실행 직전 확인부터 생성이 끝날 때까지의 일. 앱을 끌 때 끊은 실행의 기록을 기다린다. 없으면 `null`. */
-  private runTask: Promise<void> | null = null;
+  /** 실행 직전 확인부터 생성이 끝날 때까지의 일. 앱을 끌 때 끊은 실행들의 기록을 기다린다. */
+  private readonly runTasks = new Set<Promise<void>>();
   /** 마지막으로 남긴 대기열의 JSON. 대기열이 바뀐 때만 다시 남긴다. */
   private savedQueueJson: string | null = null;
   /** 어댑터와 에이전트 연결 구독을 끊는 함수. */
@@ -215,7 +228,11 @@ export class GenerationQueue {
     this.status = 'started';
     // 더는 생성 중이 아닌 대상과 모르는 종류의 대상은 바로 아래 `sync`가 뺀다.
     for (const queued of saved) this.enqueue(queued, queued.priority);
-    this.unsubscribes.push(this.options.onAgentChange(() => this.agentChanged()));
+    this.unsubscribes.push(
+      this.options.onAgentChange(() => this.agentChanged()),
+      // 값을 올리면 바로 자리가 나고, 내리면 돌던 실행을 그대로 두고 다음에 꺼낼 때부터 맞춘다.
+      this.options.parallelWork.onChange(() => this.pump()),
+    );
     for (const slot of this.slots.values()) {
       this.unsubscribes.push(
         slot.adapter.onTargetsChange(() => this.sync()),
@@ -227,8 +244,8 @@ export class GenerationQueue {
   }
 
   /**
-   * 대기열을 멈춘다. 앱을 끝낼 때 부른다. 실행 중인 실행은 끊어 프로세스 트리를 끝내고, 대상은 생성 중으로 둔다.
-   * 멈출 때의 대기열을 남겨 다시 켤 때 그 순서와 자리로 돌게 한다. 끊은 실행의 대상은 맨 앞이다.
+   * 대기열을 멈춘다. 앱을 끝낼 때 부른다. 실행 중인 실행은 모두 끊어 프로세스 트리를 끝내고, 대상은 생성 중으로 둔다.
+   * 멈출 때의 대기열을 남겨 다시 켤 때 그 순서와 자리로 돌게 한다. 끊은 실행의 대상은 원래 시작한 순서대로 맨 앞이다.
    * 끊은 실행이 "앱 종료로 중단" 기록을 남기기를 최대 5초 기다린다.
    */
   async stop(): Promise<void> {
@@ -246,23 +263,30 @@ export class GenerationQueue {
 
     // 멈춘 뒤에는 대기열을 다시 남기지 않으므로, 끊은 실행이 끝나 실행 중인 대상이 비기 전에 지금 대기열을 남긴다.
     this.saveQueue(this.currentQueue());
-    if (this.running) this.interrupt(this.running, 'app-quit');
-    if (this.runTask) await waitAtMost(this.options.clock, this.runTask, QUIT_RECORD_WAIT_MS);
+    for (const entry of this.running) this.interrupt(entry, 'app-quit');
+    if (this.runTasks.size > 0) await waitAtMost(this.options.clock, Promise.all(this.runTasks).then(() => {}), QUIT_RECORD_WAIT_MS);
   }
 
   /** 생성 중 대상의 진행. 대기열에 없으면 `null`. */
   progress(target: TargetRef): GenerationProgress | null {
-    if (this.running && sameTarget(this.running, target)) return { status: 'running', step: this.running.step, filesRead: this.running.filesRead };
+    /** 실행 중이면 그 실행. */
+    const entry = this.runningEntry(target);
+    if (entry) return { status: 'running', step: entry.step, filesRead: entry.filesRead };
     return this.isWaiting(target) ? { status: 'waiting' } : null;
   }
 
   /** 에이전트 실행이 진행 중인지 본다. 앱 내 업데이트는 실행이 끝날 때까지 다시 시작을 미룬다. */
   isRunning(): boolean {
-    return this.running !== null;
+    return this.running.length > 0;
+  }
+
+  /** 진행 중인 실행 수. 병렬 작업 수를 줄였을 때 설정 화면이 "진행 중인 n개가 끝나면" 띠를 보일지 정한다. */
+  runningCount(): number {
+    return this.running.length;
   }
 
   /**
-   * 참이면 앱 내 업데이트의 다시 시작을 기다리는 동안 다음 실행을 시작하지 않는다. 실행 중인 실행은 끝까지 가고 대상은 대기열에서 기다린다.
+   * 참이면 앱 내 업데이트의 다시 시작을 기다리는 동안 다음 실행을 시작하지 않는다. 실행 중인 실행들은 끝까지 가고 대상은 대기열에서 기다린다.
    * 거짓이면(다시 시작을 거둠) 다시 돈다.
    */
   holdForRestart(held: boolean): void {
@@ -284,19 +308,21 @@ export class GenerationQueue {
    * 대기열을 시작하기 전의 생성 중 대상도 기다리는 대상처럼 취소한다. 생성 중이 아닌 대상은 어댑터가 그대로 둔다.
    */
   async cancel(target: TargetRef): Promise<void> {
-    if (this.running && sameTarget(this.running, target)) {
-      this.interrupt(this.running, 'user');
+    /** 실행 중이면 그 실행. */
+    const entry = this.runningEntry(target);
+    if (entry) {
+      this.interrupt(entry, 'user');
       return;
     }
     await this.slots.get(target.kind)?.adapter.fail(target.targetId, null, { reason: 'cancelled', detail: null, lastStep: null, runKind: null }, []);
   }
 
   /**
-   * 비밀 파일 패턴을 추가했다. 실행 중인 실행이 있으면 끊어 프로세스 트리를 끝내고, 그 대상을 대기열 맨 앞에 다시 넣어 새 패턴으로 처음부터 다시 만든다.
+   * 비밀 파일 패턴을 추가했다. 실행 중인 실행을 모두 끊어 프로세스 트리를 끝내고, 그 대상들을 대기열 맨 앞에 다시 넣어 새 패턴으로 처음부터 다시 만든다.
    * 옛 패턴으로는 새 패턴에 맞는 파일을 읽을 수 있기 때문이다. 기다리는 대상은 실행할 때 설정을 새로 읽으므로 그대로 둔다.
    */
   restartForSecretPatterns(): void {
-    if (this.running) this.interrupt(this.running, 'secret-patterns-changed');
+    for (const entry of this.running) this.interrupt(entry, 'secret-patterns-changed');
   }
 
   /** 사용자 행동으로 대상을 바꾼다. 바꾸는 사이에 대상이 생성 중이 되면 감지한 대상보다 앞인 `user` 자리에 넣는다. */
@@ -327,12 +353,12 @@ export class GenerationQueue {
       for (const targetId of targetIds) {
         /** 대상. */
         const target = { kind, targetId };
-        if (this.running && sameTarget(this.running, target)) continue;
+        if (this.runningEntry(target)) continue;
         this.enqueue(target, this.reservedPriorities.get(targetKey(target)) ?? (adapter.requestedByUser(targetId) ? 'user' : 'auto'));
       }
     }
     // 실행 중인 대상이 바뀌었거나(새 멘션이 합쳐짐 등) 생성 중이 아니게 되었으면 실행을 멈춘다. 생성 중으로 남았으면 처음부터 다시 만든다.
-    if (this.running && !this.isStillGenerating(this.running)) this.interrupt(this.running, 'target-changed');
+    for (const entry of this.running) if (!this.isStillGenerating(entry)) this.interrupt(entry, 'target-changed');
     if (this.waitingOrder() !== before) this.emit();
     this.pump();
   }
@@ -343,6 +369,11 @@ export class GenerationQueue {
     /** 이 대상 뒤에 설 첫 대상의 위치. 없으면 맨 뒤다. */
     const index = this.waiting.findIndex((queued) => PRIORITY_ORDER[queued.priority] > PRIORITY_ORDER[priority]);
     this.waiting.splice(index === -1 ? this.waiting.length : index, 0, { kind: target.kind, targetId: target.targetId, priority });
+  }
+
+  /** 실행 중인 대상이면 그 실행. 아니면 `undefined`. */
+  private runningEntry(target: TargetRef): RunningTarget | undefined {
+    return this.running.find((entry) => sameTarget(entry, target));
   }
 
   /** 대상이 차례를 기다리는지 본다. */
@@ -360,27 +391,42 @@ export class GenerationQueue {
     return entry.slot.adapter.isGenerating(entry.targetId, entry.begun ? entry.job : null);
   }
 
-  /** 실행하고 있지 않고, 전역 멈춤이 아니고, 시작할 수 있는 대상이 있고, 에이전트 연결이 있으면 그 대상을 실행한다. */
+  /**
+   * 빈 실행 자리가 있고, 전역 멈춤이 아니고, 시작할 수 있는 대상이 있고, 에이전트 연결이 있으면 그 대상을 실행한다.
+   * 실행 직전 확인은 한 번에 하나씩 하고, 대상을 꺼내 실행을 시작하면 바로 다음 자리를 본다.
+   */
   private pump(): void {
     if (!this.canStart()) return;
     /** 지금 실행에 쓸 에이전트. */
     const agent = this.options.agent();
     if (!agent) return;
 
-    this.busy = true;
-    /** 이번 실행. */
-    const task = this.runNext(agent).finally(() => {
-      if (this.runTask === task) this.runTask = null;
-      this.busy = false;
+    this.starting = true;
+    /** 이번 시작이 시작 중 표시를 아직 쥐고 있는지 여부. 다른 시작의 표시를 지우지 않게 한 번만 놓는다. */
+    let holdsStart = true;
+    /** 시작 중 표시를 놓는다. */
+    const releaseStart = () => {
+      if (!holdsStart) return;
+      holdsStart = false;
+      this.starting = false;
+    };
+    /** 이번 실행. 실행 직전 확인부터 생성이 끝날 때까지다. */
+    const task = this.runNext(agent, () => {
+      // 대상을 꺼내 실행 중으로 두었으면 다음 자리를 본다.
+      releaseStart();
+      this.pump();
+    }).finally(() => {
+      this.runTasks.delete(task);
+      releaseStart();
       this.pump();
     });
-    this.runTask = task;
+    this.runTasks.add(task);
   }
 
-  /** 지금 대기열. 실행 중인 대상이 맨 앞(바로 이어서 돌 자리)이고 기다리는 대상이 그 뒤다. */
+  /** 지금 대기열. 실행 중인 대상이 시작한 순서대로 맨 앞(바로 이어서 돌 자리)이고 기다리는 대상이 그 뒤다. */
   private currentQueue(): QueuedTarget[] {
     /** 실행 중인 대상의 자리. */
-    const running: QueuedTarget[] = this.running ? [{ kind: this.running.kind, targetId: this.running.targetId, priority: 'resume' }] : [];
+    const running: QueuedTarget[] = this.running.map((entry) => ({ kind: entry.kind, targetId: entry.targetId, priority: 'resume' }));
     return [...running, ...this.waiting];
   }
 
@@ -399,9 +445,14 @@ export class GenerationQueue {
     this.options.store.setGenerationQueue(queue).catch((error: unknown) => this.options.logger.error('generation.queue-save-failed', errorFields(error)));
   }
 
-  /** 다음 대상을 시작할 수 있는지 본다. 이미 실행 중이거나 시작할 수 있는 대상이 없으면 거짓이다. */
+  /** 다음 대상을 시작할 수 있는지 본다. 다른 대상을 시작하는 중이거나, 실행 자리가 다 찼거나, 시작할 수 있는 대상이 없으면 거짓이다. */
   private canStart(): boolean {
-    return !this.busy && this.isRunnable() && this.nextStartable() !== -1;
+    return !this.starting && this.hasFreeSlot() && this.isRunnable() && this.nextStartable() !== -1;
+  }
+
+  /** 빈 실행 자리가 있는지 본다. 병렬 작업 수는 꺼낼 때마다 읽으므로, 줄이면 돌던 실행이 끝나 그 수 아래로 내려갈 때까지 꺼내지 않는다. */
+  private hasFreeSlot(): boolean {
+    return this.running.length < clampParallelWork(this.options.parallelWork.count());
   }
 
   /** 대기열이 돌 수 있는지 본다. 시작하지 않았거나 전역 멈춤이면 거짓이다. */
@@ -409,21 +460,32 @@ export class GenerationQueue {
     return this.status === 'started' && this.paused.size === 0;
   }
 
-  /** 시작할 수 있는 첫 대상의 위치. 어댑터가 멈췄거나 연결을 쓸 수 없는 대상은 자리를 지킨 채 건너뛴다. 없으면 -1이다. */
+  /**
+   * 시작할 수 있는 첫 대상의 위치. 어댑터가 멈췄거나 연결을 쓸 수 없는 대상, 함께 돌 수 없는 자원을 다른 실행이 쥔 대상은
+   * 자리를 지킨 채 건너뛴다. 없으면 -1이다.
+   */
   private nextStartable(): number {
+    /** 실행 중인 대상이 쥔 자원. */
+    const held = new Set(this.running.map((entry) => entry.resource).filter((resource) => resource !== null));
     return this.waiting.findIndex((queued) => {
       /** 대상의 어댑터. */
       const slot = this.slots.get(queued.kind);
-      return slot !== undefined && slot.paused.size === 0 && slot.adapter.connectionUsable();
+      if (slot === undefined || slot.paused.size > 0 || !slot.adapter.connectionUsable()) return false;
+      /** 이 대상이 쓸 함께 돌 수 없는 자원. */
+      const resource = slot.adapter.exclusiveResource?.(queued.targetId) ?? null;
+      return resource === null || !held.has(resource);
     });
   }
 
-  /** 실행 직전 확인을 거쳐 시작할 수 있는 첫 대상을 만든다. 확인하는 동안 대상은 차례를 기다리는 것으로 보인다. */
-  private async runNext(agent: QueueAgent): Promise<void> {
+  /**
+   * 실행 직전 확인을 거쳐 시작할 수 있는 첫 대상을 만든다. 확인하는 동안 대상은 차례를 기다리는 것으로 보인다.
+   * @param started 대상을 꺼내 실행 중으로 둔 뒤나 꺼낼 대상이 없을 때 부른다. 다음 실행 자리를 보게 한다.
+   */
+  private async runNext(agent: QueueAgent, started: () => void): Promise<void> {
     if (!(await this.confirmAgent(agent))) return;
-    // 확인하는 사이에 대기열이 바뀌었거나(취소, 사용자 행동) 멈출 까닭이 생겼을 수 있으므로 확인한 뒤에 다시 보고 꺼낸다.
+    // 확인하는 사이에 대기열이 바뀌었거나(취소, 사용자 행동, 다른 실행이 자원을 쥠) 멈출 까닭이 생겼을 수 있으므로 확인한 뒤에 다시 보고 꺼낸다.
     /** 다음에 실행할 대상의 위치. */
-    const index = this.isRunnable() ? this.nextStartable() : -1;
+    const index = this.isRunnable() && this.hasFreeSlot() ? this.nextStartable() : -1;
     if (index === -1) return;
     /** 다음에 실행할 대상. */
     const [next] = this.waiting.splice(index, 1);
@@ -435,6 +497,7 @@ export class GenerationQueue {
       kind: next!.kind,
       targetId: next!.targetId,
       slot,
+      resource: slot.adapter.exclusiveResource?.(next!.targetId) ?? null,
       abort: new AbortController(),
       interruption: null,
       job: null,
@@ -443,14 +506,15 @@ export class GenerationQueue {
       filesRead: 0,
       runKind: null,
     };
-    this.running = entry;
+    this.running.push(entry);
     this.emit();
+    started();
     try {
       await this.generate(entry, agent);
     } catch (error) {
       await this.failAfterCrash(entry, error);
     } finally {
-      this.running = null;
+      this.running = this.running.filter((running) => running !== entry);
       this.emit();
     }
   }
@@ -792,7 +856,7 @@ export class GenerationQueue {
 
   /** 실행 중인 대상의 진행 단계를 바꾸고 알린다. 이미 끝난 실행이면 아무것도 하지 않는다. */
   private setProgress(entry: RunningTarget, step: string, filesRead: number): void {
-    if (this.running !== entry) return;
+    if (!this.running.includes(entry)) return;
     entry.step = step;
     entry.filesRead = filesRead;
     this.emit();
@@ -803,6 +867,16 @@ export class GenerationQueue {
     this.saveQueueIfChanged();
     for (const listener of this.listeners) listener();
   }
+}
+
+/** 병렬 작업 수의 가장 작은 값과 가장 큰 값. 설정 화면의 슬라이더 범위다. */
+export const PARALLEL_WORK_MIN = 1;
+export const PARALLEL_WORK_MAX = 5;
+
+/** 병렬 작업 수를 1~5 안의 정수로 맞춘다. 손으로 고친 설정 파일의 엉뚱한 값도 실행을 멈추거나 넘치게 하지 않게 한다. */
+export function clampParallelWork(count: number): number {
+  if (!Number.isFinite(count)) return PARALLEL_WORK_MIN;
+  return Math.min(PARALLEL_WORK_MAX, Math.max(PARALLEL_WORK_MIN, Math.trunc(count)));
 }
 
 /** 두 대상이 같은지 본다. */

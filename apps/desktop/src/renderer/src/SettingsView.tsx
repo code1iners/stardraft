@@ -72,7 +72,12 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
               <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
             )}
             {section === 'agent' && snapshot && (
-              <AgentSection agentConnections={snapshot.agentConnections} agentPreferences={snapshot.agentPreferences} platform={snapshot.platform} />
+              <AgentSection
+                agentConnections={snapshot.agentConnections}
+                agentPreferences={snapshot.agentPreferences}
+                parallelWork={snapshot.parallelWork}
+                platform={snapshot.platform}
+              />
             )}
             {section === 'repositories' && snapshot && <RepositoriesSection workFolders={snapshot.workFolders} repoMappings={snapshot.repoMappings} />}
             {section === 'drafts' && snapshot && <DraftsSection snapshot={snapshot} />}

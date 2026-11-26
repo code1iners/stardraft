@@ -44,6 +44,8 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, manualCheck: event.manualCheck });
       } else if (event.type === 'draft-settings-changed') {
         setSnapshot((current) => current && { ...current, draftSettings: event.draftSettings });
+      } else if (event.type === 'parallel-work-changed') {
+        setSnapshot((current) => current && { ...current, parallelWork: event.parallelWork });
       } else if (event.type === 'update-changed') {
         setSnapshot((current) => current && { ...current, update: event.update });
       }

@@ -1,6 +1,6 @@
 import type { MentionBundles, RegenerationRequest } from '../bundles/mention-bundles';
 import type { TargetRef } from '../generation/generation-run';
-import { GenerationQueue, queueAgentFrom, type GenerationProgress, type QueueAgent } from '../generation/generation-queue';
+import { GenerationQueue, queueAgentFrom, type GenerationProgress, type ParallelWorkLimit, type QueueAgent } from '../generation/generation-queue';
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
@@ -29,6 +29,8 @@ export interface DraftQueueOptions {
   agent: () => DraftAgent | null;
   /** 에이전트 연결이나 기본 에이전트·모델이 바뀔 때마다 `listener`를 부르게 한다. 돌려준 함수를 부르면 그만 부른다. */
   onAgentChange: (listener: () => void) => () => void;
+  /** 병렬 작업 수. 주지 않으면 1이라 한 번에 하나씩 돈다. */
+  parallelWork?: ParallelWorkLimit;
   /** Flow에 쓸 키가 있는지 본다. 키가 없거나 "키 확인 필요"면 거짓이고, Flow 묶음은 키를 쓸 수 있게 될 때까지 멈춘다. */
   flowKeyUsable: () => boolean;
   /** Flow 키를 쓸 수 있는지가 바뀔 수 있을 때마다(계정, "키 확인 필요") `listener`를 부르게 한다. 돌려준 함수를 부르면 그만 부른다. */
@@ -74,6 +76,7 @@ export class DraftQueue {
       adapters: [flow],
       agent: options.agent,
       onAgentChange: options.onAgentChange,
+      parallelWork: options.parallelWork ?? ONE_AT_A_TIME,
       store: options.stateStore,
       clock: options.clock,
       logger: options.logger,
@@ -98,6 +101,11 @@ export class DraftQueue {
   /** 에이전트 실행이 진행 중인지 본다. 앱 내 업데이트는 실행이 끝날 때까지 다시 시작을 미룬다. */
   isRunning(): boolean {
     return this.queue.isRunning();
+  }
+
+  /** 진행 중인 실행 수. */
+  runningCount(): number {
+    return this.queue.runningCount();
   }
 
   /** 참이면 앱 내 업데이트의 다시 시작을 기다리는 동안 다음 실행을 시작하지 않고, 거짓이면 다시 돈다. */
@@ -151,6 +159,9 @@ export class DraftQueue {
     return this.queue.changeByUser(flowTarget(bundleId), () => change(this.bundles));
   }
 }
+
+/** 병렬 작업 수를 주지 않았을 때의 값. 한 번에 하나씩 돌고 바뀌지 않는다. */
+const ONE_AT_A_TIME: ParallelWorkLimit = { count: () => 1, onChange: () => () => {} };
 
 /** 묶음 ID를 생성 대기열의 대상으로 바꾼다. */
 function flowTarget(bundleId: number): TargetRef {

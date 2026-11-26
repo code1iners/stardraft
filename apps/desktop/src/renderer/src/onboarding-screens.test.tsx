@@ -62,6 +62,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
     },
     manualCheck: { canOpen: false, sheet: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
+    parallelWork: { count: 1, running: 0 },
     update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
     ...overrides,
   };

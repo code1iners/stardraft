@@ -111,6 +111,11 @@ export interface TargetAdapter<T extends TargetTypes = TargetTypes> {
   connectionUsable(): boolean;
   /** 연결을 쓸 수 있는지가 바뀔 수 있을 때마다 `listener`를 부르게 한다. 어댑터 멈춤이 풀린다. 돌려준 함수를 부르면 그만 부른다. */
   onConnectionChange(listener: () => void): () => void;
+  /**
+   * 대상이 쓸, 다른 실행과 함께 돌 수 없는 자원(재현 등). 같은 자원을 쓰는 대상은 한 번에 하나만 돌고, 기다리는 대상은 자리를 지키며
+   * 대기열은 그 뒤에서 돌 수 있는 대상을 꺼낸다. 자원은 생성이 끝날 때(어댑터의 정리까지) 놓는다. 없으면 `null`이고, 이 메서드가 없으면 제한이 없다.
+   */
+  exclusiveResource?(targetId: number): string | null;
   /** 생성을 시작한다. 시작할 수 있으면 시작 표식을, 대상이 더는 생성 중이 아니면 `null`을 돌려준다. */
   begin(targetId: number): T['job'] | null;
   /** "아직 생성 중인가". `job`이 있으면 그 표식을 만들 때와 같은 대상인지도 본다. */

@@ -2145,3 +2145,146 @@ textarea.instructions-input {
   width: 240px;
   font-family: var(--mono);
 }
+
+/* 설정 칸 안의 밑줄형 탭. 고른 탭에 강조색 밑줄을 긋고, 탭마다 점 하나까지 찍는다. */
+.underline-tabs {
+  display: flex;
+  gap: 2px;
+  max-width: 600px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.underline-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.underline-tab[aria-selected='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.underline-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn-dot);
+}
+
+/* 병렬 작업 수: 눈금 숫자 없는 네이티브 range와 오른쪽 현재 값. */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider {
+  width: 240px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.slider-value {
+  min-width: 36px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.limit-table {
+  width: 100%;
+  max-width: 420px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.limit-table td {
+  padding: 7px 12px;
+}
+
+.limit-table tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.limit-table td:last-child {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 진행 중인 작업이 고른 값보다 많을 때의 노란 띠. */
+.pending-band {
+  max-width: 420px;
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+/* 이름 옆 물음표 단추. 올리거나 초점을 주거나 누르면 설명이 단추 아래로 펼쳐진다. */
+.help-tip {
+  position: relative;
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: -3px;
+}
+
+.help-tip-button {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  cursor: help;
+}
+
+.help-tip-button:hover,
+.help-tip-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.help-tip-body {
+  display: none;
+  position: absolute;
+  top: 22px;
+  left: -8px;
+  z-index: 3;
+  width: max-content;
+  max-width: 260px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.help-tip:hover .help-tip-body,
+.help-tip:focus-within .help-tip-body,
+.help-tip[data-open='true'] .help-tip-body {
+  display: block;
+}

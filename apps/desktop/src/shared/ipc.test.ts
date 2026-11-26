@@ -69,6 +69,37 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'disconnect-sentry' })).toEqual({ type: 'disconnect-sentry' });
   });
 
+  it('Sentry 프로젝트 등록·편집 명령은 환경(없으면 null)과 하나 이상의 아는 레벨과 저장소(없으면 null)를 받는다', () => {
+    /** 맞는 명령의 나머지 값. */
+    const ok = { projectId: '11', environment: 'production', levels: ['fatal', 'error'], repoPath: '/fake/work/web' };
+
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok })).toEqual({ type: 'register-sentry-project', ...ok });
+    expect(parseAppCommand({ type: 'update-sentry-project', ...ok, environment: null, repoPath: null })).toEqual({
+      type: 'update-sentry-project',
+      ...ok,
+      environment: null,
+      repoPath: null,
+    });
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, projectId: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, projectId: 11 })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, environment: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, environment: 'e'.repeat(65) })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, levels: [] })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, levels: ['error', 'critical'] })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, repoPath: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, repoPath: undefined })).toBeNull();
+  });
+
+  it('Sentry 프로젝트 등록 해제와 저장소 고르기 명령은 프로젝트 ID를 받고, 목록·폴더 고르기 명령은 값 없이 받는다', () => {
+    expect(parseAppCommand({ type: 'unregister-sentry-project', projectId: '11' })).toEqual({ type: 'unregister-sentry-project', projectId: '11' });
+    expect(parseAppCommand({ type: 'pick-sentry-project-repo', projectId: '11' })).toEqual({ type: 'pick-sentry-project-repo', projectId: '11' });
+    expect(parseAppCommand({ type: 'unregister-sentry-project', projectId: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'pick-sentry-project-repo' })).toBeNull();
+    for (const type of ['refresh-sentry-projects', 'load-sentry-candidates', 'pick-sentry-draft-folder']) {
+      expect(parseAppCommand({ type })).toEqual({ type });
+    }
+  });
+
   it('다른 계정으로 바꾸기 확인과 키 확인 그만두기 명령을 받는다', () => {
     expect(parseAppCommand({ type: 'confirm-flow-account-switch' })).toEqual({ type: 'confirm-flow-account-switch' });
     expect(parseAppCommand({ type: 'cancel-flow-key-check' })).toEqual({ type: 'cancel-flow-key-check' });

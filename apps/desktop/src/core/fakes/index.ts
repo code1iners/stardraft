@@ -13,7 +13,7 @@ export { FakeExecutor, type ScriptedRun } from './fake-executor';
 export { FAKE_ME, FakeFlowApi, type FakeFlowComment, type FakeFlowCommentReply, type FakeFlowPost, type FakeFlowWrite } from './fake-flow-api';
 export { exited, FakeProcessRunner, type FakeProcessReply } from './fake-process-runner';
 export { FakeFlowServer, flowEnvelope, type FakeFlowReply, type FakeFlowRequest } from './fake-flow-server';
-export { FakeSentryServer, sentryOrganizationBody, type FakeSentryReply, type FakeSentryRequest } from './fake-sentry-server';
+export { FakeSentryServer, sentryOrganizationBody, sentryProjectBody, type FakeSentryReply, type FakeSentryRequest } from './fake-sentry-server';
 export { FakeUpdateFeed, type FakeUpdateRelease } from './fake-update-feed';
 export { MemorySecretStore } from './memory-secret-store';
 export { MemorySentryTokenStore } from './memory-sentry-token-store';

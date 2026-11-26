@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MappedRepoStatus, ParticipantProjectsFailure, ParticipantProjectsSnapshot, RepoMappingsSnapshot } from '../../shared/ipc';
+import type {
+  MappedRepoStatus,
+  ParticipantProjectsFailure,
+  ParticipantProjectsSnapshot,
+  RepoMappingsSnapshot,
+  SentryProjectsSnapshot,
+} from '../../shared/ipc';
+import { tabId, tabPanelId, UnderlineTabs, type UnderlineTab } from './UnderlineTabs';
 
 /** 참여 Flow 프로젝트 목록을 받지 못한 이유 문구. */
 const PROJECTS_FAILURE_TEXT: Record<ParticipantProjectsFailure, string> = {
@@ -10,22 +17,55 @@ const PROJECTS_FAILURE_TEXT: Record<ParticipantProjectsFailure, string> = {
   unexpected: 'Flow 프로젝트 목록을 불러오지 못했습니다.',
 };
 
+/** 저장소 매핑 탭. 매핑의 키가 되는 서비스마다 하나다. */
+type MappingTab = 'flow' | 'sentry';
+
+/** 저장소 매핑 탭의 id 앞부분. */
+const MAPPING_TABS_ID = 'repo-mapping';
+
 /** "저장소" 칸에 넘기는 값. */
 interface RepositoriesSectionProps {
   /** 저장소 매핑과 고를 참여 Flow 프로젝트 목록. */
   repoMappings: RepoMappingsSnapshot;
+  /** 진단하려고 등록한 Sentry 프로젝트와 그 저장소 매핑. */
+  sentryProjects: SentryProjectsSnapshot;
   /** 검토 화면의 [저장소 매핑하기]·[매핑 고치기]로 짚은 Flow 프로젝트 ID. 그 줄을 눈에 띄게 하고 보이는 곳으로 가져온다. 없으면 `null`. */
   focusProjectId?: string | null;
 }
 
-/** 설정 "저장소" 칸. Flow 프로젝트마다 저장소를 연결하고, 매핑이 없어 기다리는 프로젝트를 맨 위에 보인다. */
-export function RepositoriesSection({ repoMappings, focusProjectId = null }: RepositoriesSectionProps) {
+/**
+ * 설정 "저장소" 칸. "저장소 매핑"을 `Flow` | `Sentry` 탭으로 나눠 프로젝트마다 저장소를 연결하고,
+ * 매핑이 없어 기다리는 프로젝트를 탭 맨 위에 보인다. 매핑이 없는 프로젝트가 있는 탭에는 점이 찍힌다.
+ */
+export function RepositoriesSection({ repoMappings, sentryProjects, focusProjectId = null }: RepositoriesSectionProps) {
+  /** 보이는 탭. */
+  const [tab, setTab] = useState<MappingTab>('flow');
+
   useEffect(function refreshOnOpen() {
-    // 칸을 열 때마다 연결된 폴더와 참여 Flow 프로젝트 목록을 다시 확인한다.
+    // 칸을 열 때마다 연결된 폴더와 참여 Flow 프로젝트 목록, 등록한 Sentry 프로젝트에 닿는지를 다시 확인한다.
     void window.stardraft.send({ type: 'refresh-repo-mappings' });
+    void window.stardraft.send({ type: 'refresh-sentry-projects' });
   }, []);
 
-  return <RepoMappingsField repoMappings={repoMappings} focusProjectId={focusProjectId} />;
+  /** 탭 목록. 매핑이 없어 기다리는 프로젝트가 있는 탭에 점을 찍는다. */
+  const tabs: UnderlineTab<MappingTab>[] = [
+    { id: 'flow', label: 'Flow', dot: repoMappings.waiting.length > 0 },
+    { id: 'sentry', label: 'Sentry', dot: sentryProjects.projects.some((project) => project.repo === null) },
+  ];
+
+  return (
+    <div className="field">
+      <span className="field-label">저장소 매핑</span>
+      <UnderlineTabs label="저장소 매핑" idPrefix={MAPPING_TABS_ID} tabs={tabs} selected={tab} onSelect={setTab} />
+      <div role="tabpanel" id={tabPanelId(MAPPING_TABS_ID, tab)} aria-labelledby={tabId(MAPPING_TABS_ID, tab)}>
+        {tab === 'flow' ? (
+          <RepoMappingsField repoMappings={repoMappings} focusProjectId={focusProjectId} />
+        ) : (
+          <SentryRepoMappingsField sentryProjects={sentryProjects} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 /** 저장소 매핑 목록에 넘기는 값. */
@@ -61,8 +101,7 @@ function RepoMappingsField({ repoMappings, focusProjectId }: RepoMappingsFieldPr
   const selectedAvailable = choices.some((project) => project.projectId === selected);
 
   return (
-    <div className="field">
-      <span className="field-label">저장소 매핑</span>
+    <>
       <p className="field-help muted">
         Flow 프로젝트에 저장소를 연결하면 그 프로젝트의 멘션은 연결된 저장소를 모두 읽습니다. 연결하지 않은 프로젝트의 멘션은 저장소를 연결할 때까지 기다립니다.
       </p>
@@ -166,7 +205,81 @@ function RepoMappingsField({ repoMappings, focusProjectId }: RepoMappingsFieldPr
           </button>
         </p>
       )}
-    </div>
+    </>
+  );
+}
+
+/** Sentry 탭에 넘기는 값. */
+interface SentryRepoMappingsFieldProps {
+  /** 진단하려고 등록한 Sentry 프로젝트와 그 저장소 매핑. */
+  sentryProjects: SentryProjectsSnapshot;
+}
+
+/**
+ * `Sentry` 탭. 등록한 프로젝트가 모두 오른다. 저장소는 프로젝트 하나에 하나라서 [폴더 추가…] 대신 [바꾸기…]를 둔다.
+ * 매핑이 없는 프로젝트는 맨 위에 "저장소 매핑 없음"과 [폴더 고르기…]로 보인다. 모달의 저장소와 같은 값이다.
+ */
+export function SentryRepoMappingsField({ sentryProjects }: SentryRepoMappingsFieldProps) {
+  /** 매핑이 없는 프로젝트. */
+  const unmapped = sentryProjects.projects.filter((project) => project.repo === null);
+  /** 저장소가 매핑된 프로젝트. */
+  const mapped = sentryProjects.projects.filter((project) => project.repo !== null);
+  return (
+    <>
+      <p className="field-help muted">
+        등록한 프로젝트마다 저장소를 하나 연결하면 그 프로젝트의 오류 이슈를 연결된 저장소에서 진단합니다. 연결하지 않은 프로젝트의 오류 이슈는 저장소를 연결할 때까지
+        기다립니다. 같은 저장소를 여러 프로젝트에 연결할 수 있습니다.
+      </p>
+      {sentryProjects.projects.length === 0 ? (
+        <p className="muted small">등록한 프로젝트가 없습니다. Sentry 칸에서 프로젝트를 추가해 주세요.</p>
+      ) : (
+        <ul className="folder-list">
+          {unmapped.map((project) => (
+            <li key={project.projectId} className="folder-item">
+              <div className="folder-row">
+                <span className="mapping-title">
+                  {project.organizationName} / {project.projectName}
+                </span>
+                <span className="warning-text">저장소 매핑 없음</span>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => void window.stardraft.send({ type: 'pick-sentry-project-repo', projectId: project.projectId })}
+                >
+                  폴더 고르기…
+                </button>
+              </div>
+            </li>
+          ))}
+          {mapped.map((project) => (
+            <li key={project.projectId} className="folder-item">
+              <div className="folder-row">
+                <span className="mapping-title">
+                  {project.organizationName} / {project.projectName}
+                </span>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => void window.stardraft.send({ type: 'pick-sentry-project-repo', projectId: project.projectId })}
+                >
+                  바꾸기…
+                </button>
+              </div>
+              {project.repo && (
+                <ul className="mapping-repos">
+                  <li className="folder-row">
+                    <span className="folder-path" title={project.repo.path}>
+                      {project.repo.path}
+                    </span>
+                    <MappedRepoStatusText status={project.repo.status} />
+                  </li>
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 

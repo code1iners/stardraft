@@ -139,3 +139,99 @@ describe('Sentry 어댑터: 조직 목록', () => {
     expect(server.requests).toEqual([]);
   });
 });
+
+describe('Sentry 어댑터: 프로젝트 목록과 오류 이슈 확인', () => {
+  /** 시험용 조직의 프로젝트. */
+  const PROJECTS = [
+    { id: '11', slug: 'web', name: '웹', environments: ['production', 'development'] },
+    { id: '12', slug: 'batch', name: '배치', environments: [] },
+  ];
+
+  it('조직의 지역 주소로 프로젝트 목록을 부르고 환경 목록까지 읽는다', async () => {
+    const server = new FakeSentryServer();
+    server.addToken(TOKEN, [organization(1, 'https://de.sentry.io')]);
+    server.addProjects(TOKEN, 'org-1', PROJECTS);
+
+    const result = await connect(server).listProjects(organization(1, 'https://de.sentry.io'));
+
+    expect(result).toEqual({ ok: true, value: PROJECTS });
+    expect(server.requests.map((request) => request.url)).toEqual(['https://de.sentry.io/api/0/organizations/org-1/projects/?per_page=100']);
+    expect(server.requests[0]).toMatchObject({ token: TOKEN, cache: 'no-store', credentials: 'omit', redirect: 'error' });
+  });
+
+  it('프로젝트의 환경 이름은 문자열만 받고 겹침은 한 번만 둔다. 환경이 없으면 빈 목록이다', async () => {
+    const server = new FakeSentryServer();
+    server.addToken(TOKEN, [organization(1)]);
+    server.replyNext({ status: 200, body: [{ id: 7, slug: 'x', name: '', environments: ['a', 'a', '', 3] }, { id: '8', slug: 'y' }] });
+
+    const result = await connect(server).listProjects(organization(1));
+
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { id: '7', slug: 'x', name: 'x', environments: ['a'] },
+        { id: '8', slug: 'y', name: 'y', environments: [] },
+      ],
+    });
+  });
+
+  it('모양이 다른 응답은 알 수 없는 응답으로 본다', async () => {
+    const server = new FakeSentryServer();
+    server.addToken(TOKEN, [organization(1)]);
+
+    server.replyNext({ status: 200, body: { detail: 'x' } });
+    expect(await connect(server).listProjects(organization(1))).toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+    server.replyNext({ status: 200, body: [{ slug: 'no-id' }] });
+    expect(await connect(server).listProjects(organization(1))).toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+  });
+
+  it('토큰을 실을 곳이므로 sentry.io 계열이 아닌 지역 주소로는 부르지 않는다', async () => {
+    const server = new FakeSentryServer();
+    server.addToken(TOKEN, [organization(1)]);
+
+    const result = await connect(server).listProjects(organization(1, 'https://evil.example.com'));
+
+    expect(result).toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+    expect(await connect(server).probeErrorIssues(organization(1, 'http://sentry.io'), '11')).toEqual({ ok: false, failure: { kind: 'unexpected-response' } });
+    expect(server.requests).toEqual([]);
+  });
+
+  it('프로젝트 목록도 Link 헤더의 다음 쪽을 끝까지 넘긴다', async () => {
+    const server = new FakeSentryServer();
+    server.addToken(TOKEN, [organization(1)]);
+    /** 첫 쪽과 둘째 쪽. */
+    const link = (next: boolean) => `<https://us.sentry.io/x>; rel="next"; results="${next}"; cursor="0:100:0"`;
+    server.replyNext(
+      { status: 200, body: [PROJECTS[0]], headers: { link: link(true) } },
+      { status: 200, body: [PROJECTS[1]], headers: { link: link(false) } },
+    );
+
+    const result = await connect(server).listProjects(organization(1));
+
+    expect(result.ok && result.value.map((project) => project.id)).toEqual(['11', '12']);
+    expect(server.requests[1]?.url).toContain('cursor=0%3A100%3A0');
+  });
+
+  it('오류 이슈 확인은 환경 없이 프로젝트 하나를 한 건만 부른다', async () => {
+    const server = new FakeSentryServer();
+    server.addToken(TOKEN, [organization(1)]);
+
+    const result = await connect(server).probeErrorIssues(organization(1), '11');
+
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(server.requests.map((request) => request.url)).toEqual(['https://us.sentry.io/api/0/organizations/org-1/issues/?project=11&limit=1']);
+  });
+
+  it.each([
+    [401, 'unauthorized'],
+    [403, 'forbidden'],
+    [404, 'not-found'],
+    [429, 'rate-limited'],
+  ])('오류 이슈 확인이 %i이면 %s로 구분한다', async (status, kind) => {
+    const server = new FakeSentryServer();
+    server.addToken(TOKEN, [organization(1)]);
+    server.replyNext({ status });
+
+    expect(await connect(server).probeErrorIssues(organization(1), '11')).toEqual({ ok: false, failure: { kind } });
+  });
+});

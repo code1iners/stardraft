@@ -19,12 +19,41 @@ export interface SentryOrganizationRecord {
   regionUrl: string;
 }
 
+/** 진단 대상으로 거를 수 있는 Sentry 오류 이슈 레벨. */
+export type SentryLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug';
+
+/** 사용자가 진단하려고 등록한 Sentry 프로젝트. 프로젝트 `id`가 키라서 프로젝트 이름이 바뀌어도 끊기지 않는다. */
+export interface SentryProjectRegistration {
+  /** 프로젝트 ID. 설정에서 이 등록의 키다. */
+  projectId: string;
+  /** 프로젝트가 속한 조직 ID. */
+  organizationId: string;
+  /** 조직 slug. 호출 경로에 쓴다. */
+  organizationSlug: string;
+  /** 화면에 보일 조직 이름. */
+  organizationName: string;
+  /** 프로젝트 slug. */
+  projectSlug: string;
+  /** 화면에 보일 프로젝트 이름. */
+  projectName: string;
+  /** 환경 필터. `null`이면 모든 환경이다. */
+  environment: string | null;
+  /** 레벨 필터. 비어 있지 않다. */
+  levels: SentryLevel[];
+  /** 등록한 시각(ISO 8601). 이 프로젝트의 기준 시각이다. 필터를 바꿔도 그대로이고 등록을 풀었다 다시 하면 새로 잡는다. */
+  registeredAt: string;
+}
+
 /** 사용자 설정(`settings.json`). PC마다 따로 두고 동기화하지 않는다. */
 export interface Settings {
   /** 파일 형식 버전. 앱이 아는 것보다 크면 실행하지 않는다. */
   schemaVersion: number;
   /** 저장소 매핑. Flow 프로젝트 ID → 저장소 절대 경로 목록. */
   repoMappings: Record<string, string[]>;
+  /** 등록한 Sentry 프로젝트. 프로젝트 ID → 등록. 이 값이 없던 옛 파일은 빈 객체로 읽는다. */
+  sentryProjects: Record<string, SentryProjectRegistration>;
+  /** Sentry 저장소 매핑. Sentry 프로젝트 ID → 저장소 절대 경로 목록(지금은 하나). Flow 매핑과 다른 필드라 키가 겹치지 않는다. */
+  sentryRepoMappings: Record<string, string[]>;
   /** 기본 에이전트. */
   defaultAgent: AgentId;
   /** 연결한 Sentry 토큰으로 보이는 조직. 토큰을 연결하지 않았으면 비어 있다. 이 값이 없던 옛 파일은 빈 목록으로 읽는다. */
@@ -55,6 +84,8 @@ export const DEFAULT_SETTINGS: Settings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
   repoMappings: {},
   sentryOrganizations: [],
+  sentryProjects: {},
+  sentryRepoMappings: {},
   defaultAgent: 'claude-code',
   agentCliPaths: {},
   agentModels: {},

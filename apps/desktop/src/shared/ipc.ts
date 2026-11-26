@@ -53,6 +53,18 @@ export const REPO_FOLDER_PATH_MAX_LENGTH = 4096;
 /** 저장소 매핑 명령이 받는 Flow 프로젝트 ID의 최대 길이. */
 export const FLOW_PROJECT_ID_MAX_LENGTH = 64;
 
+/** Sentry 프로젝트 명령이 받는 프로젝트 ID와 환경 이름의 최대 길이. */
+export const SENTRY_PROJECT_ID_MAX_LENGTH = 64;
+
+/** Sentry 프로젝트의 환경 필터 이름의 최대 길이. */
+export const SENTRY_ENVIRONMENT_MAX_LENGTH = 64;
+
+/** 레벨 필터로 고를 수 있는 Sentry 레벨. 심각한 순서다. */
+export const SENTRY_LEVEL_IDS = ['fatal', 'error', 'warning', 'info', 'debug'] as const;
+
+/** Sentry 오류 이슈 레벨 하나. */
+export type SentryLevelId = (typeof SENTRY_LEVEL_IDS)[number];
+
 /** 초안 편집 명령이 받는 편집기 텍스트의 최대 길이. 게시 본문 상한(4,000)을 넘긴 텍스트도 저장해 안내를 보여야 하므로 그보다 넉넉하다. */
 export const DRAFT_TEXT_MAX_LENGTH = 100_000;
 
@@ -139,6 +151,83 @@ export interface SentryConnectionSnapshot {
   /** "토큰 확인 필요"의 이유. 문제가 없으면 `null`. 다른 전역 문제에 가려도 토큰 카드는 이 값으로 이유를 보인다. */
   tokenProblem: SentryTokenProblemReason | null;
 }
+
+/** 등록한 Sentry 프로젝트에 닿는지 확인한 상태. `inaccessible`이면 그 프로젝트 줄만 "접근 불가"를 보인다. */
+export type SentryProjectAccessSnapshot = 'unchecked' | 'ok' | 'inaccessible';
+
+/** 등록한 Sentry 프로젝트의 저장소 매핑. */
+export interface SentryRepoSnapshot {
+  /** 저장소 폴더의 절대 경로. */
+  path: string;
+  /** 폴더가 있는지 확인한 상태. */
+  status: MappedRepoStatus;
+}
+
+/** 진단하려고 등록한 Sentry 프로젝트 하나. */
+export interface SentryProjectSnapshot {
+  /** 프로젝트 ID. 편집·등록 해제·저장소 명령에 실어 보낸다. */
+  projectId: string;
+  /** 화면에 보일 조직 이름. */
+  organizationName: string;
+  /** 화면에 보일 프로젝트 이름. */
+  projectName: string;
+  /** 환경 필터. `null`이면 모든 환경이다. */
+  environment: string | null;
+  /** 레벨 필터. */
+  levels: SentryLevelId[];
+  /** 매핑된 저장소. 매핑이 없으면 `null`. */
+  repo: SentryRepoSnapshot | null;
+  /** 프로젝트에 닿는지 확인한 상태. */
+  access: SentryProjectAccessSnapshot;
+}
+
+/** 등록할 수 있는 Sentry 프로젝트 하나. */
+export interface SentryCandidateSnapshot {
+  /** 프로젝트 ID. */
+  projectId: string;
+  /** 화면에 보일 조직 이름. */
+  organizationName: string;
+  /** 화면에 보일 프로젝트 이름. */
+  projectName: string;
+  /** 프로젝트에 이벤트가 들어온 환경. 환경 필터를 이 목록에서 고른다. */
+  environments: string[];
+}
+
+/** 등록할 프로젝트 목록을 받지 못한 이유. `no-token`은 토큰이 없거나 "토큰 확인 필요"인 것이다. */
+export type SentryCandidatesFailure = 'no-token' | 'unauthorized' | 'scope-missing' | 'network' | 'rate-limited' | 'unexpected';
+
+/** 등록할 프로젝트 목록의 상태. `incomplete`는 일부 조직의 목록을 받지 못했다는 뜻이다. */
+export type SentryCandidatesSnapshot =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'loaded'; projects: SentryCandidateSnapshot[]; incomplete: boolean }
+  | { status: 'failed'; reason: SentryCandidatesFailure };
+
+/** 설정 "Sentry" 칸의 프로젝트 목록과 "저장소" 칸 `Sentry` 탭이 그릴 상태. */
+export interface SentryProjectsSnapshot {
+  /** 등록한 프로젝트. 등록한 순서다. */
+  projects: SentryProjectSnapshot[];
+  /** 등록할 수 있는 프로젝트 목록. */
+  candidates: SentryCandidatesSnapshot;
+}
+
+/** 프로젝트 등록이나 편집이 끝난 결과. 모달이 닫히거나 이유를 보인다. */
+export type SentryProjectSaveResult =
+  | 'registered'
+  | 'updated'
+  | 'no-token'
+  | 'token-problem'
+  | 'unknown-project'
+  | 'already-registered'
+  | 'not-registered'
+  | 'invalid-filter'
+  | 'unauthorized'
+  | 'scope-missing'
+  | 'project-unavailable'
+  | 'network'
+  | 'rate-limited'
+  | 'unexpected'
+  | 'save-failed';
 
 /** 감지를 멈추게 하는 전역 문제. 작은 창 띠, 트레이 메뉴, OS 알림에 하나만 보인다. */
 export type GlobalProblemSnapshot =
@@ -918,6 +1007,8 @@ export interface AppSnapshot {
   flowAccount: FlowAccountSnapshot;
   /** "Sentry" 칸의 상태. */
   sentry: SentryConnectionSnapshot;
+  /** 등록한 Sentry 프로젝트와 등록할 수 있는 프로젝트 목록. */
+  sentryProjects: SentryProjectsSnapshot;
   /** 지금 보일 전역 문제. 없으면 `null`. */
   globalProblem: GlobalProblemSnapshot | null;
   /** 이 OS의 후보 에이전트마다의 연결 확인 상태. 후보 순서다(macOS는 Claude Code와 Codex, Windows는 Claude Code). */
@@ -956,6 +1047,12 @@ export type AppEvent =
   | { type: 'sentry-changed'; sentry: SentryConnectionSnapshot }
   /** 토큰 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인은 알리지 않는다. */
   | { type: 'sentry-token-check-finished'; result: 'connected' | SentryTokenCheckFailure }
+  /** 등록한 Sentry 프로젝트, 그 저장소 매핑, 등록할 수 있는 프로젝트 목록이 바뀌었다. */
+  | { type: 'sentry-projects-changed'; sentryProjects: SentryProjectsSnapshot }
+  /** 프로젝트 등록이나 편집이 끝났다. 등록·편집 모달이 닫히거나 이유를 보인다. */
+  | { type: 'sentry-project-saved'; result: SentryProjectSaveResult }
+  /** 프로젝트 모달의 [폴더 고르기…]로 폴더를 골랐다. 모달이 이 경로를 보이고 [등록]·[저장]에 싣는다. */
+  | { type: 'sentry-draft-folder-picked'; path: string }
   /** 보일 전역 문제가 바뀌었다. */
   | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null }
   /** 에이전트 연결 확인 상태가 바뀌었다. */
@@ -1029,6 +1126,20 @@ export type AppCommand =
   | { type: 'remove-mapping-repo'; projectId: string; path: string }
   /** 매핑을 통째로 지운다. */
   | { type: 'remove-repo-mapping'; projectId: string }
+  /** 등록한 Sentry 프로젝트에 닿는지, 매핑된 폴더가 있는지 다시 확인한다. "Sentry"·"저장소" 칸을 열 때 보낸다. */
+  | { type: 'refresh-sentry-projects' }
+  /** 등록할 수 있는 Sentry 프로젝트 목록을 조직마다 받는다. 프로젝트 모달을 열 때 보낸다. */
+  | { type: 'load-sentry-candidates' }
+  /** 목록에서 고른 Sentry 프로젝트를 등록한다. `event:read`를 확인한 뒤 저장하고 `sentry-project-saved`로 알린다. */
+  | { type: 'register-sentry-project'; projectId: string; environment: string | null; levels: SentryLevelId[]; repoPath: string | null }
+  /** 등록한 Sentry 프로젝트의 필터와 저장소를 바꾼다. `repoPath`가 `null`이면 저장소 매핑을 지운다. */
+  | { type: 'update-sentry-project'; projectId: string; environment: string | null; levels: SentryLevelId[]; repoPath: string | null }
+  /** Sentry 프로젝트 등록을 푼다. 그 프로젝트의 저장소 매핑도 지워진다. */
+  | { type: 'unregister-sentry-project'; projectId: string }
+  /** 프로젝트 모달의 저장소로 쓸 폴더를 폴더 선택 창으로 고른다. 고르면 `sentry-draft-folder-picked`로 알린다. */
+  | { type: 'pick-sentry-draft-folder' }
+  /** 폴더 선택 창으로 고른 폴더를 등록한 Sentry 프로젝트의 저장소로 정한다. "저장소" 칸의 [바꾸기…]·[폴더 고르기…]가 보낸다. */
+  | { type: 'pick-sentry-project-repo'; projectId: string }
   /** [감지 시작]. 필수 설정가 다 되기 전이거나 이미 시작했으면 main이 무시한다. */
   | { type: 'start-detection' }
   /** 로그인 시 자동 시작을 켜거나 끈다. */
@@ -1184,6 +1295,31 @@ function isFlowProjectIdInput(value: unknown): value is string {
   return typeof value === 'string' && value !== '' && value.length <= FLOW_PROJECT_ID_MAX_LENGTH;
 }
 
+/** Sentry 프로젝트 명령에 실을 수 있는 프로젝트 ID인지 확인한다. 등록할 수 있는 프로젝트인지는 main이 본다. */
+function isSentryProjectIdInput(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= SENTRY_PROJECT_ID_MAX_LENGTH;
+}
+
+/** 환경 필터로 실을 수 있는 값인지 확인한다. `null`은 모든 환경이다. */
+function isSentryEnvironmentInput(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && value !== '' && value.length <= SENTRY_ENVIRONMENT_MAX_LENGTH);
+}
+
+/** 레벨 필터로 실을 수 있는 값인지 확인한다. 하나 이상이고 모두 아는 레벨이다. */
+function isSentryLevelsInput(value: unknown): value is SentryLevelId[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= SENTRY_LEVEL_IDS.length &&
+    value.every((level) => (SENTRY_LEVEL_IDS as readonly unknown[]).includes(level))
+  );
+}
+
+/** 저장소 폴더로 실을 수 있는 값인지 확인한다. `null`은 저장소 없음이다. */
+function isOptionalFolderPathInput(value: unknown): value is string | null {
+  return value === null || isFolderPathInput(value);
+}
+
 /** 묶음 명령에 실을 수 있는 묶음 ID인지 확인한다. 있는 묶음인지는 main이 본다. */
 function isBundleIdInput(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -1292,6 +1428,23 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'pick-mapping-repos':
     case 'remove-repo-mapping':
       return isFlowProjectIdInput(candidate.projectId) ? { type: candidate.type, projectId: candidate.projectId } : null;
+    case 'register-sentry-project':
+    case 'update-sentry-project':
+      return isSentryProjectIdInput(candidate.projectId) &&
+        isSentryEnvironmentInput(candidate.environment) &&
+        isSentryLevelsInput(candidate.levels) &&
+        isOptionalFolderPathInput(candidate.repoPath)
+        ? {
+            type: candidate.type,
+            projectId: candidate.projectId,
+            environment: candidate.environment,
+            levels: [...candidate.levels],
+            repoPath: candidate.repoPath,
+          }
+        : null;
+    case 'unregister-sentry-project':
+    case 'pick-sentry-project-repo':
+      return isSentryProjectIdInput(candidate.projectId) ? { type: candidate.type, projectId: candidate.projectId } : null;
     case 'remove-mapping-repo':
       return isFlowProjectIdInput(candidate.projectId) && isFolderPathInput(candidate.path)
         ? { type: 'remove-mapping-repo', projectId: candidate.projectId, path: candidate.path }
@@ -1377,6 +1530,9 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'disconnect-sentry':
     case 'check-agents':
     case 'refresh-repo-mappings':
+    case 'refresh-sentry-projects':
+    case 'load-sentry-candidates':
+    case 'pick-sentry-draft-folder':
     case 'start-detection':
     case 'pick-repo-picker-folders':
     case 'link-repo-picker':

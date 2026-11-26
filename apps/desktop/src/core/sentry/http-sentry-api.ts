@@ -1,5 +1,5 @@
 import type { Clock } from '../ports/clock';
-import type { SentryApi, SentryApiFailure, SentryApiResult, SentryOrganization } from '../ports/sentry-api';
+import type { SentryApi, SentryApiFailure, SentryApiResult, SentryOrganization, SentryProject } from '../ports/sentry-api';
 
 /** Sentry 공식 서비스 주소. 지원하는 Sentry는 sentry.io뿐이므로 설정으로 받지 않는다. 코드에서 이 주소는 여기에만 둔다. */
 const SENTRY_BASE_URL = 'https://sentry.io';
@@ -7,6 +7,8 @@ const SENTRY_BASE_URL = 'https://sentry.io';
 const RESPONSE_TIMEOUT_MS = 20_000;
 /** 조직 목록을 이어 받는 최대 쪽 수. 서버가 다음 쪽이 있다고 계속 답해도 여기서 멈춘다. */
 const MAX_ORGANIZATION_PAGES = 50;
+/** 프로젝트 목록을 이어 받는 최대 쪽 수. */
+const MAX_PROJECT_PAGES = 50;
 /** 헤더 값으로 보낼 수 있는 토큰. 공백 없는 ASCII 글자만이다. */
 const HEADER_SAFE_TOKEN = /^[\x21-\x7e]+$/;
 
@@ -43,7 +45,7 @@ export class HttpSentryApi implements SentryApi {
       /** 이번 쪽의 경로. */
       const path = cursor === null ? '/api/0/organizations/' : `/api/0/organizations/?cursor=${encodeURIComponent(cursor)}`;
       /** 이번 쪽을 읽은 결과. */
-      const result = await this.get(path);
+      const result = await this.get(SENTRY_BASE_URL, path);
       if (!result.ok) return result;
 
       if (!Array.isArray(result.value.json)) return UNEXPECTED_RESPONSE;
@@ -62,8 +64,56 @@ export class HttpSentryApi implements SentryApi {
     return { ok: true, value: [...organizations.values()] };
   }
 
-  /** `path`를 GET으로 불러 JSON 본문과 `Link` 헤더를 읽는다. */
-  private async get(path: string): Promise<SentryApiResult<{ json: unknown; link: string | null }>> {
+  /**
+   * `GET /api/0/organizations/{조직}/projects/`로 조직의 프로젝트를 모두 받는다. 조직의 지역 주소로 부르고,
+   * 다음 쪽은 조직 목록과 같은 `Link` 헤더 규칙으로 이어 받는다.
+   */
+  async listProjects(organization: SentryOrganization): Promise<SentryApiResult<SentryProject[]>> {
+    /** 토큰을 실을 기준 주소. */
+    const base = readRegionUrl(organization.regionUrl);
+    if (base === null) return UNEXPECTED_RESPONSE;
+    /** 받은 프로젝트. 같은 ID는 처음 것만 둔다. */
+    const projects = new Map<string, SentryProject>();
+    /** 다음 쪽을 받을 커서. 첫 쪽은 `null`. */
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PROJECT_PAGES; page += 1) {
+      /** 이번 쪽의 경로. */
+      const path: string = `/api/0/organizations/${encodeURIComponent(organization.slug)}/projects/?per_page=100${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
+      /** 이번 쪽을 읽은 결과. */
+      const result = await this.get(base, path);
+      if (!result.ok) return result;
+
+      if (!Array.isArray(result.value.json)) return UNEXPECTED_RESPONSE;
+      for (const item of result.value.json) {
+        /** 읽은 프로젝트. */
+        const project = readProject(item);
+        if (!project) return UNEXPECTED_RESPONSE;
+        if (!projects.has(project.id)) projects.set(project.id, project);
+      }
+
+      /** 다음 쪽 커서. */
+      const next = nextCursor(result.value.link);
+      if (next === null || next === cursor) break;
+      cursor = next;
+    }
+    return { ok: true, value: [...projects.values()] };
+  }
+
+  /** `GET /api/0/organizations/{조직}/issues/?project={ID}&limit=1`로 오류 이슈 목록을 한 건만 읽는다. 본문은 배열인지만 본다. */
+  async probeErrorIssues(organization: SentryOrganization, projectId: string): Promise<SentryApiResult<void>> {
+    /** 토큰을 실을 기준 주소. */
+    const base = readRegionUrl(organization.regionUrl);
+    if (base === null) return UNEXPECTED_RESPONSE;
+    /** 이번 확인의 경로. */
+    const path = `/api/0/organizations/${encodeURIComponent(organization.slug)}/issues/?project=${encodeURIComponent(projectId)}&limit=1`;
+    /** 읽은 결과. */
+    const result = await this.get(base, path);
+    if (!result.ok) return result;
+    return Array.isArray(result.value.json) ? { ok: true, value: undefined } : UNEXPECTED_RESPONSE;
+  }
+
+  /** `baseUrl`의 `path`를 GET으로 불러 JSON 본문과 `Link` 헤더를 읽는다. */
+  private async get(baseUrl: string, path: string): Promise<SentryApiResult<{ json: unknown; link: string | null }>> {
     // 헤더에 실을 수 없는 토큰은 fetch가 연결 오류처럼 실패하므로, 보내기 전에 맞지 않는 토큰으로 판정한다.
     if (!HEADER_SAFE_TOKEN.test(this.options.token)) return { ok: false, failure: { kind: 'unauthorized' } };
 
@@ -77,7 +127,7 @@ export class HttpSentryApi implements SentryApi {
       try {
         // 조직 정보가 HTTP 캐시로 디스크에 남지 않게 캐시를 쓰지 않고, 토큰 인증이라 쿠키도 싣거나 받지 않는다.
         // 리디렉트를 따라가면 토큰 헤더가 다른 출처로 갈 수 있으므로 리디렉트는 실패로 본다.
-        response = await this.options.fetch(`${SENTRY_BASE_URL}${path}`, {
+        response = await this.options.fetch(`${baseUrl}${path}`, {
           method: 'GET',
           headers: { authorization: `Bearer ${this.options.token}`, accept: 'application/json' },
           cache: 'no-store',
@@ -118,6 +168,7 @@ const UNEXPECTED_RESPONSE: SentryApiResult<never> = { ok: false, failure: { kind
 /** 실패 응답 코드를 실패 이유로 바꾼다. */
 function failureOf(status: number): SentryApiFailure {
   if (status === 401) return { kind: 'unauthorized' };
+  if (status === 404) return { kind: 'not-found' };
   if (status === 403) return { kind: 'forbidden' };
   if (status === 429) return { kind: 'rate-limited' };
   return { kind: 'http', status };
@@ -133,6 +184,19 @@ function readOrganization(item: unknown): SentryOrganization | null {
   const regionUrl = readRegionUrl(item.links.regionUrl);
   if (regionUrl === null) return null;
   return { id, slug: item.slug, name: typeof item.name === 'string' && item.name !== '' ? item.name : item.slug, regionUrl };
+}
+
+/** 프로젝트 목록 항목 하나를 읽는다. 모양이 맞지 않으면 `null`. 환경은 문자열만 받고 겹치는 이름은 한 번만 둔다. */
+function readProject(item: unknown): SentryProject | null {
+  if (!isRecord(item)) return null;
+  /** 문자열이나 숫자로 올 수 있는 프로젝트 ID. */
+  const id = typeof item.id === 'number' ? String(item.id) : item.id;
+  if (typeof id !== 'string' || id === '' || typeof item.slug !== 'string' || item.slug === '') return null;
+  /** 프로젝트에 이벤트가 들어온 환경. 응답에 없으면 비어 있다. */
+  const environments = Array.isArray(item.environments)
+    ? [...new Set(item.environments.filter((name): name is string => typeof name === 'string' && name !== ''))]
+    : [];
+  return { id, slug: item.slug, name: typeof item.name === 'string' && item.name !== '' ? item.name : item.slug, environments };
 }
 
 /** 지역 주소를 읽어 끝의 `/`를 뺀 출처로 돌려준다. sentry.io 계열의 https 주소가 아니면 `null`. */

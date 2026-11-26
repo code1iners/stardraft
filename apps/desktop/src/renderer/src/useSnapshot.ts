@@ -22,6 +22,10 @@ export function useSnapshot(): AppSnapshot | null {
       // 스냅숏을 받기 전에 온 변경은 버린다. 곧 받을 스냅숏이 그 변경을 담고 있다.
       if (event.type === 'flow-account-changed') {
         setSnapshot((current) => current && { ...current, flowAccount: event.flowAccount });
+      } else if (event.type === 'sentry-changed') {
+        setSnapshot((current) => current && { ...current, sentry: event.sentry });
+      } else if (event.type === 'sentry-projects-changed') {
+        setSnapshot((current) => current && { ...current, sentryProjects: event.sentryProjects });
       } else if (event.type === 'global-problem-changed') {
         setSnapshot((current) => current && { ...current, globalProblem: event.globalProblem });
       } else if (event.type === 'agent-connections-changed') {

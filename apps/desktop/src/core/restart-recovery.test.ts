@@ -52,6 +52,14 @@ async function settle(): Promise<void> {
   }
 }
 
+/**
+ * `done`이 참이 될 때까지 대기 중인 비동기 일을 돌린다. 실제 SQLite에 여러 묶음을 차례로 저장하는 테스트가
+ * 부하가 큰 전체 실행에서 고정 시간 안에 끝나지 못해 흔들리지 않게 한다. 2초가 지나면 그대로 돌아와 단언이 실패를 알린다.
+ */
+async function settleUntil(done: () => boolean): Promise<void> {
+  for (let round = 0; round < 400 && !done(); round += 1) await settle();
+}
+
 /** 가짜 초안. 문장 하나에 근거 하나다. `repository`는 저장소 매핑에 연결한 가짜 저장소다. */
 function draftOf(repository: string): Draft {
   return {
@@ -339,6 +347,7 @@ describe('다시 켜기: 생성 중이던 묶음', () => {
     for (const summary of ['첫째', '둘째', '셋째']) env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repo, summary) } });
 
     const { bundles } = await launch(env);
+    await settleUntil(() => bundles.state().every((bundle) => bundle.status === 'ready'));
 
     expect(summaries(bundles)).toEqual([
       ['700', 'ready', '셋째'],

@@ -888,8 +888,9 @@ export interface UpdateStateSnapshot {
   dismissedBanners: string[];
 }
 
-/** 병렬 작업 수 슬라이더의 가장 작은 값과 가장 큰 값. main의 생성 대기열과 같은 범위다. */
+/** 병렬 작업 수 슬라이더의 가장 작은 값. main의 생성 대기열과 같은 범위인지는 테스트가 확인한다. */
 export const PARALLEL_WORK_COUNT_MIN = 1;
+/** 병렬 작업 수 슬라이더의 가장 큰 값. */
 export const PARALLEL_WORK_COUNT_MAX = 5;
 
 /** 설정 "에이전트" 칸 `병렬 작업` 탭의 상태. */

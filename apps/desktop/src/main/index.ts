@@ -228,13 +228,13 @@ function start(): void {
     // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
     retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
     retention.start();
+    /** 설정 "에이전트" 칸 `병렬 작업` 탭의 병렬 작업 수. 초안 대기열이 다음 실행을 꺼낼 때마다 읽는다. */
+    const parallelWork = new ParallelWork({ settingsStore: appData.settingsStore, logger });
+    await parallelWork.load();
     /**
      * 초안 대기열. 생성 중 묶음을 기본 에이전트로 병렬 작업 수만큼 함께 실행한다. 실행마다 직전에 CLI 버전을 확인하고,
      * 에이전트 연결이 없거나 전역 실패면 연결될 때까지 멈춘다.
      */
-    /** 설정 "에이전트" 칸 `병렬 작업` 탭의 병렬 작업 수. 초안 대기열이 다음 실행을 꺼낼 때마다 읽는다. */
-    const parallelWork = new ParallelWork({ settingsStore: appData.settingsStore, logger });
-    await parallelWork.load();
     const draftQueue = new DraftQueue({
       bundles: mentionBundles,
       // 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.

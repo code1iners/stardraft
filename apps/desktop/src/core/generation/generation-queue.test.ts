@@ -234,6 +234,10 @@ function setup() {
     agent.connected = connected;
     for (const listener of agent.listeners) listener();
   };
+  /** 알림 없이 에이전트 연결만 바꾼다. 연결 확인을 다시 해야 알 수 있는 변화다. */
+  const setConnectedQuietly = (connected: boolean) => {
+    agent.connected = connected;
+  };
   /** 병렬 작업 수를 바꾼다. */
   const setParallel = (count: number) => {
     parallel.count = count;
@@ -248,7 +252,7 @@ function setup() {
     executor.script({ progress, outcome: new Promise<ExecutorOutcome>((resolve) => (finish = resolve)) });
     return finish;
   };
-  return { clock, executor, flow, second, store, createQueue, setConnected, setParallel, completes, holds };
+  return { clock, executor, flow, second, store, createQueue, setConnected, setConnectedQuietly, setParallel, completes, holds };
 }
 
 describe('생성 대기열: 멈춤은 두 층', () => {
@@ -492,6 +496,31 @@ describe('생성 대기열: 병렬 작업 수', () => {
     expect(env.flow.targets.get(3)?.failure).toBeNull();
     expect(env.executor.requests).toHaveLength(3);
     expect(queue.runningCount()).toBe(0);
+  });
+
+  it('전역 실패로 멈춘 뒤 함께 돌던 실행의 연결 확인이 통과하면 멈춤을 풀고 기다리던 대상을 다시 꺼낸다', async () => {
+    const env = setup();
+    env.setParallel(2);
+    const finishes = [env.holds(), env.holds()];
+    env.flow.add(1);
+    env.flow.add(2);
+    const queue = env.createQueue();
+    await queue.start();
+    await settle();
+
+    env.setConnected(false);
+    finishes[0]!({ type: 'failed', reason: 'cli-error', detail: '' });
+    await settle();
+    expect(queue.progress({ kind: 'flow', targetId: 1 })).toEqual({ status: 'waiting' });
+
+    // 알림 없이 연결이 돌아왔다(실행하는 사이 CLI를 고침 등). 둘째 실행의 실패 뒤 다시 한 확인이 통과한다.
+    env.completes({ answer: 'two-again' });
+    env.completes({ answer: 'one-again' });
+    env.setConnectedQuietly(true);
+    finishes[1]!({ type: 'failed', reason: 'cli-error', detail: '' });
+    await settle();
+    expect(env.flow.targets.get(2)?.result).toEqual({ answer: 'two-again' });
+    expect(env.flow.targets.get(1)?.result).toEqual({ answer: 'one-again' });
   });
 
   it('앱을 끄면 돌던 실행을 모두 끊고, 다시 켜면 원래 시작한 순서대로 resume 칸 맨 앞에 선다', async () => {

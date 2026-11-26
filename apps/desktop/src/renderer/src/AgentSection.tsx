@@ -171,6 +171,11 @@ export function AgentSection({ agentConnections, agentPreferences, parallelWork,
   /** 지금 보이는 탭. */
   const [tab, setTab] = useState<AgentTab>('connection');
 
+  useEffect(function checkAgentsOnOpen() {
+    // 칸을 열 때마다 후보 에이전트를 모두 확인한다. 탭을 오가도 다시 확인하지 않는다. 이미 확인 중이면 main이 그 확인을 이어 간다.
+    void window.stardraft.send({ type: 'check-agents' });
+  }, []);
+
   return (
     <>
       <p className="section-lead muted">초안을 만드는 데 쓰는 이 PC의 에이전트입니다.</p>
@@ -191,11 +196,6 @@ export function AgentSection({ agentConnections, agentPreferences, parallelWork,
  * 실패하면 그 마디가 끊기고, 명령으로 고칠 수 있으면 그림 카드 네 장을 보인다. 연결되면 그 아래에서 기본 에이전트와 모델을 고른다.
  */
 function ConnectionPanel({ agentConnections, agentPreferences, platform }: Omit<AgentSectionProps, 'parallelWork'>) {
-  useEffect(function checkAgentsOnOpen() {
-    // 탭을 열 때마다 후보 에이전트를 모두 확인한다. 이미 확인 중이면 main이 그 확인을 이어 간다.
-    void window.stardraft.send({ type: 'check-agents' });
-  }, []);
-
   return (
     <>
       {agentConnections.filter(isVisible).map((connection) => (

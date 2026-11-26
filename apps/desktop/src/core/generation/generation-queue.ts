@@ -471,6 +471,8 @@ export class GenerationQueue {
       /** 대상의 어댑터. */
       const slot = this.slots.get(queued.kind);
       if (slot === undefined || slot.paused.size > 0 || !slot.adapter.connectionUsable()) return false;
+      // 다시 만들려고 대기열에 되돌린 대상은 앞 실행이 정리를 마칠 때까지 꺼내지 않는다. 같은 대상이 두 번 돌지 않게 한다.
+      if (this.runningEntry(queued)) return false;
       /** 이 대상이 쓸 함께 돌 수 없는 자원. */
       const resource = slot.adapter.exclusiveResource?.(queued.targetId) ?? null;
       return resource === null || !held.has(resource);
@@ -531,7 +533,10 @@ export class GenerationQueue {
     return (await this.confirmAgent(agent)) ? agent : null;
   }
 
-  /** 실행 직전에 에이전트를 확인한다. 쓸 수 없으면 에이전트 연결이 바뀌었다는 알림이 올 때까지 대기열 전체를 멈춘다. */
+  /**
+   * 실행 직전에 에이전트를 확인한다. 쓸 수 없으면 에이전트 연결이 바뀌었다는 알림이 올 때까지 대기열 전체를 멈춘다.
+   * 쓸 수 있으면 전역 실패로 멈춘 것을 푼다. 함께 돌던 실행의 확인이 통과하면 알림 없이도 기다리던 대상을 다시 꺼내게 하려는 것이다.
+   */
   private async confirmAgent(agent: QueueAgent): Promise<boolean> {
     /** 확인을 시작할 때까지 받은 알림 수. */
     const changesBefore = this.agentChanges;
@@ -541,7 +546,8 @@ export class GenerationQueue {
       return false;
     });
     // 확인하는 사이에 알림이 왔으면 멈추지 않고 다시 본다. 그래야 그사이 풀린 것을 놓치지 않는다.
-    if (!ready && this.agentChanges === changesBefore) this.pause('agent');
+    if (ready) this.resume('agent');
+    else if (this.agentChanges === changesBefore) this.pause('agent');
     return ready;
   }
 
@@ -869,8 +875,9 @@ export class GenerationQueue {
   }
 }
 
-/** 병렬 작업 수의 가장 작은 값과 가장 큰 값. 설정 화면의 슬라이더 범위다. */
+/** 병렬 작업 수의 가장 작은 값. 설정 화면 슬라이더의 왼쪽 끝이다. */
 export const PARALLEL_WORK_MIN = 1;
+/** 병렬 작업 수의 가장 큰 값. 설정 화면 슬라이더의 오른쪽 끝이다. */
 export const PARALLEL_WORK_MAX = 5;
 
 /** 병렬 작업 수를 1~5 안의 정수로 맞춘다. 손으로 고친 설정 파일의 엉뚱한 값도 실행을 멈추거나 넘치게 하지 않게 한다. */

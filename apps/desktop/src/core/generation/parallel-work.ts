@@ -1,5 +1,5 @@
 import { errorFields, type Logger } from '../logging/logger';
-import type { SettingsStore } from '../ports/settings-store';
+import { DEFAULT_SETTINGS, type SettingsStore } from '../ports/settings-store';
 import { SerialQueue } from '../serial-queue';
 import { clampParallelWork, PARALLEL_WORK_MAX, PARALLEL_WORK_MIN, type ParallelWorkLimit } from './generation-queue';
 
@@ -17,7 +17,7 @@ export interface ParallelWorkOptions {
  */
 export class ParallelWork implements ParallelWorkLimit {
   /** 설정에서 읽어 둔 값. */
-  private saved = PARALLEL_WORK_MIN;
+  private saved = DEFAULT_SETTINGS.parallelWorkCount;
   /** 설정을 읽고 저장하는 일을 하나씩 하는 줄. 슬라이더를 빠르게 움직여도 마지막 값이 남게 한다. */
   private readonly lane = new SerialQueue();
   /** 값이 바뀔 때 부를 함수. */
@@ -30,10 +30,12 @@ export class ParallelWork implements ParallelWorkLimit {
     this.saved = clampParallelWork((await this.options.settingsStore.load()).parallelWorkCount);
   }
 
+  /** 지금 병렬 작업 수. */
   count(): number {
     return this.saved;
   }
 
+  /** 값이 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => {

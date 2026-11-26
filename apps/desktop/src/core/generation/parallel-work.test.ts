@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../fakes/fake-clock';
 import { MemorySettingsStore } from '../fakes/memory-settings-store';
+import { PARALLEL_WORK_COUNT_MAX, PARALLEL_WORK_COUNT_MIN } from '../../shared/ipc';
 import { createLogger } from '../logging/logger';
+import { PARALLEL_WORK_MAX, PARALLEL_WORK_MIN } from './generation-queue';
 import { ParallelWork } from './parallel-work';
 
 /** 가짜 설정 저장소 위에 병렬 작업 수를 만든다. */
@@ -35,6 +37,10 @@ describe('병렬 작업 수 설정', () => {
     await parallelWork.set(2.5);
     expect(parallelWork.count()).toBe(3);
     expect(changes()).toBe(1);
+  });
+
+  it('설정 화면 슬라이더의 범위와 생성 대기열의 범위가 같다', () => {
+    expect([PARALLEL_WORK_COUNT_MIN, PARALLEL_WORK_COUNT_MAX]).toEqual([PARALLEL_WORK_MIN, PARALLEL_WORK_MAX]);
   });
 
   it('설정 파일에 1~5 밖의 값이 있으면 가까운 끝 값으로 읽는다', async () => {

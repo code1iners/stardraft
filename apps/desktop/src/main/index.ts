@@ -12,6 +12,7 @@ import { HttpSentryApi } from '../core/sentry/http-sentry-api';
 import { SentryConnection, type SentryConnectionState } from '../core/sentry/sentry-connection';
 import { SentryDetection } from '../core/sentry/sentry-detection';
 import { DiagnosisAttachmentFolders } from '../core/sentry/diagnosis-attachments';
+import { DiagnosisExports, DiagnosisReportFolder } from '../core/sentry/diagnosis-exports';
 import { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
 import { SentryProjects } from '../core/sentry/sentry-projects';
 import { SentryTargetAdapter } from '../core/sentry/sentry-target-adapter';
@@ -209,6 +210,21 @@ function start(): void {
     });
     await sentryProjects.load();
     await sentryDiagnoses.load();
+    /** 보고서를 내보낼 폴더. 고르지 않았으면 사용자 문서 폴더 아래 `Stardraft/Reports/Sentry`다. */
+    const reportFolder = new DiagnosisReportFolder({
+      settingsStore: appData.settingsStore,
+      defaultFolder: join(app.getPath('documents'), 'Stardraft', 'Reports', 'Sentry'),
+      logger,
+    });
+    await reportFolder.load();
+    /** 검토 대기 보고서를 마크다운 파일로 내보낸다. 첨부는 앱 데이터의 진단별 폴더에서 복사한다. */
+    const diagnosisExports = new DiagnosisExports({
+      diagnoses: sentryDiagnoses,
+      folder: reportFolder,
+      attachments: { dirOf: (id) => attachmentFolders.dirOf(id), list: (id) => attachmentFolders.list(id) },
+      clock: systemClock,
+      logger,
+    });
     // 완료했거나 목록에서 사라진 진단의 첨부 폴더가 지우다 만 채 남았을 수 있어 표에 없는 폴더를 치운다. 실패해도 앱을 막지 않는다.
     void attachmentFolders
       .removeUnknown(sentryDiagnoses.ids())
@@ -500,6 +516,8 @@ function start(): void {
       sentryConnection,
       sentryProjects,
       sentryDiagnoses,
+      diagnosisExports,
+      reportFolder,
       globalProblems,
       agentConnections,
       agentPreferences,

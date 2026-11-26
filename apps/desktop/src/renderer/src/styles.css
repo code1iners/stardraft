@@ -2446,3 +2446,12 @@ textarea.instructions-input {
 .sentry-project-modal .modal-actions .btn.danger:first-child {
   margin-right: auto;
 }
+
+/* 설정 "Sentry" 칸의 보고서 폴더 경로. 길면 가운데가 아니라 끝을 줄인다. */
+.path-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

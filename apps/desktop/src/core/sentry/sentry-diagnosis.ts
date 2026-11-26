@@ -58,6 +58,16 @@ export interface DiagnosisIssue {
   projectName: string;
 }
 
+/** 보고서를 마지막으로 내보낸 기록. 완료한 뒤에도 파일 경로는 최소 기록으로 남는다. */
+export interface DiagnosisExport {
+  /** 내보낸 마크다운 파일의 절대 경로. */
+  path: string;
+  /** 내보낸 시각(Unix epoch 밀리초). */
+  at: number;
+  /** 내보낸 보고서의 생성 시각(`report.run.createdAt`). 다시 진단으로 보고서가 바뀌면 값이 달라져 내보내지 않은 것으로 본다. */
+  reportCreatedAt: number;
+}
+
 /** Sentry 진단 하나. 신규 또는 재발한 오류 이슈 하나에 하나다. 같은 오류 이슈의 진단이 여럿일 수 있다(검토 대기 중 재발 등). */
 export interface SentryDiagnosis {
   /** 진단 ID. 생성 대기열의 대상 ID다. */
@@ -86,10 +96,12 @@ export interface SentryDiagnosis {
   runs: RunRecord[];
   /** 완료한 시각(Unix epoch 밀리초). 완료가 아니면 `null`. */
   completedAt: number | null;
+  /** 마지막으로 내보낸 기록. 내보낸 적 없으면 `null`. 완료해도 남는다. */
+  lastExport: DiagnosisExport | null;
 }
 
-/** 아직 저장하지 않은 진단. 감지가 만든 진단은 대기나 저장소 대기라 보고서·실패·실행 기록·완료 시각이 없다. */
-export type UnsavedDiagnosis = Omit<SentryDiagnosis, 'id' | 'report' | 'failure' | 'runs' | 'completedAt'>;
+/** 아직 저장하지 않은 진단. 감지가 만든 진단은 대기나 저장소 대기라 보고서·실패·실행 기록·완료 시각·내보내기 기록이 없다. */
+export type UnsavedDiagnosis = Omit<SentryDiagnosis, 'id' | 'report' | 'failure' | 'runs' | 'completedAt' | 'lastExport'>;
 
 /**
  * 진단을 실행하기 전에 생기는 실패 사유. Flow 초안의 맥락 조회 실패(`flow-unavailable`)에 해당한다.
@@ -209,6 +221,14 @@ export interface DetectionKey {
   issueId: string;
   /** 재발을 일으킨 이벤트 ID. 신규면 `null`. */
   eventId: string | null;
+}
+
+/**
+ * 지금 보이는 보고서를 내보낸 적이 있는지 본다. 마지막 내보내기가 지금 보고서의 것이어야 한다.
+ * 다시 진단으로 보고서가 새로 생기면 이전 내보내기는 이 보고서의 것이 아니라 거짓이 된다.
+ */
+export function hasExportedCurrentReport(diagnosis: Pick<SentryDiagnosis, 'report' | 'lastExport'>): boolean {
+  return diagnosis.report !== null && diagnosis.lastExport !== null && diagnosis.lastExport.reportCreatedAt === diagnosis.report.run.createdAt;
 }
 
 /** 저장소 대기인지 본다. */

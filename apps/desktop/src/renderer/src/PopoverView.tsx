@@ -134,7 +134,7 @@ function CompactReview({ snapshot, initialBundleId, initialDiagnosisId }: Compac
     selection.select(bundleId);
   };
   /** [무시]·[되돌리기]·[취소]·[다시 시도]·[게시]·[다시 게시]와 무시·게시 실패·멈춘 게시 토스트. */
-  const { toast, failedToasts, stoppedToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions({
+  const { toast, failedToasts, stoppedToasts, exportToasts, followStopped, ignore, restore, cancel, retry, post, cancelPost } = useBundleActions({
     select,
     leave: selection.leave,
   });
@@ -215,6 +215,7 @@ function CompactReview({ snapshot, initialBundleId, initialDiagnosisId }: Compac
         ignoreToast={toast}
         failedToasts={failedToasts}
         stoppedToasts={stoppedToasts}
+        exportToasts={exportToasts}
         onRestore={restore}
         onCancelPost={cancelPost}
         onStoppedAction={followStopped}

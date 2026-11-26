@@ -466,6 +466,11 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ALTER TABLE sentry_diagnosis ADD COLUMN runs TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE sentry_diagnosis ADD COLUMN completed_at INTEGER;
   `,
+  // 27: 보고서 내보내기. 진단에 마지막으로 내보낸 기록(JSON: 파일 경로, 시각, 내보낸 보고서의 생성 시각)을 둔다.
+  // 기존 줄은 내보낸 적이 없어 `NULL`이다. 완료 최소 기록에도 이 칸이 남는다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN last_export TEXT;
+  `,
 ];
 
 /** 계정에 매이는 대기열 줄의 종류. Flow 초안만 계정에 매이고, 다른 종류(진단 등)는 계정과 무관하다. */

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, DiagnosisSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
-import { DiagnosisFooter, DiagnosisHead, DiagnosisTabPanel, EvidenceItems } from './DiagnosisDetail';
+import { DiagnosisFooter, DiagnosisHead, DiagnosisTabPanel, EvidenceItems, ReadyFooterView } from './DiagnosisDetail';
 import { DraftsSection } from './DraftsSection';
 import { ManualCheckModal } from './ManualCheck';
 import { PopoverContent } from './PopoverView';
@@ -122,6 +122,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     manualCheck: { canOpen: true, sheet: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
     parallelWork: { count: 1, running: 0 },
+    reportFolder: { path: '/가짜/문서/Stardraft/Reports/Sentry', isDefault: true },
     update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
     ...overrides,
   };
@@ -1172,7 +1173,7 @@ describe('게시 실패', () => {
   });
 
   it('게시 실패 토스트는 "게시하지 못했습니다: 송신자님 멘션"이다', () => {
-    const text = textOf(<ToastStack bundles={[POST_FAILED]} ignoreToast={null} failedToasts={[{ key: 1, bundleId: 11 }]} stoppedToasts={[]} onRestore={() => {}} onCancelPost={() => {}} onStoppedAction={() => {}} />);
+    const text = textOf(<ToastStack bundles={[POST_FAILED]} ignoreToast={null} failedToasts={[{ key: 1, bundleId: 11 }]} stoppedToasts={[]} exportToasts={[]} onRestore={() => {}} onCancelPost={() => {}} onStoppedAction={() => {}} />);
 
     expect(text).toContain('게시하지 못했습니다: 보낸 사람, 다른 사람님 멘션');
   });
@@ -1187,6 +1188,7 @@ describe('게시를 누를 때의 확인으로 멈춘 게시', () => {
         ignoreToast={null}
         failedToasts={[]}
         stoppedToasts={[{ key: 1, bundleId: READY.id, stop }]}
+        exportToasts={[]}
         onRestore={() => {}}
         onCancelPost={() => {}}
         onStoppedAction={() => {}}
@@ -1730,6 +1732,8 @@ describe('펼친 창: 진단', () => {
       report: null,
       failure: null,
       completedAt: null,
+      exported: false,
+      lastExportedPath: null,
       canOpenInSentry: true,
       attachments: [],
       issue: {
@@ -2106,21 +2110,86 @@ describe('펼친 창: 진단', () => {
     expect(text).toContain(`진단 정보 저장소 /fake/web HEAD ${'a'.repeat(40)} 커밋하지 않은 변경 없음 에이전트 Claude Code 2.1.300 재현 허용 허용 안 함 걸린 시간 2분 14초`);
   });
 
-  it('검토 대기의 바닥 줄은 왼쪽 [완료]뿐이고(다시 진단과 내보내기는 이 단계에 없다) 누르면 그 진단을 완료한다', () => {
+  it('검토 대기의 바닥 줄은 왼쪽 [완료], 오른쪽 주 버튼 [내보내기]이고 내보내기는 그 진단을 내보낸다', () => {
     /** main으로 보낸 명령. */
     const send = vi.fn();
     vi.stubGlobal('window', { stardraft: { send } });
     try {
-      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={readyDiagnosis(9)} />)).toMatch(/<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><\/footer>/);
-      /** 검토 대기 바닥 줄의 버튼. */
-      const buttons = pressables(DiagnosisFooter({ diagnosis: readyDiagnosis(9) }));
-      expect(buttons).toHaveLength(1);
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={readyDiagnosis(9)} />)).toMatch(
+        /<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><button[^>]*class="btn primary"[^>]*>내보내기<\/button><\/footer>/,
+      );
+      /** 평소 바닥 줄의 버튼. */
+      const buttons = pressables(ReadyFooterView({ confirming: false, onComplete: () => send({ type: 'ask' }), onConfirmComplete: () => {}, onCancelConfirm: () => {}, onExport: () => send({ type: 'export' }) }));
+      expect(buttons).toHaveLength(2);
       (buttons[0]!.onClick as () => void)();
+      (buttons[1]!.onClick as () => void)();
 
-      expect(send.mock.calls.map(([command]) => command)).toEqual([{ type: 'complete-diagnosis', diagnosisId: 9 }]);
+      expect(send.mock.calls.map(([command]) => command)).toEqual([{ type: 'ask' }, { type: 'export' }]);
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('내보내지 않고 [완료]를 누르면 확인 줄이 안내 글, [취소] · [내보내기] · 주 버튼 [완료]를 보인다', () => {
+    /** 부른 순서. */
+    const calls: string[] = [];
+    /** 확인 줄. */
+    const footer = ReadyFooterView({
+      confirming: true,
+      onComplete: () => calls.push('complete'),
+      onConfirmComplete: () => calls.push('confirm-complete'),
+      onCancelConfirm: () => calls.push('cancel'),
+      onExport: () => calls.push('export'),
+    });
+    expect(renderToStaticMarkup(footer)).toMatch(
+      /<footer class="review-foot"><span class="small">내보내지 않았습니다\. 완료하면 이 보고서가 사라집니다\.<\/span><span class="spacer"><\/span><button[^>]*class="btn"[^>]*>취소<\/button><button[^>]*class="btn"[^>]*>내보내기<\/button><button[^>]*class="btn primary"[^>]*>완료<\/button><\/footer>/,
+    );
+    for (const button of pressables(footer)) (button.onClick as () => void)();
+
+    expect(calls).toEqual(['cancel', 'export', 'confirm-complete']);
+  });
+
+  it('내보낸 적이 있는 보고서의 [완료]는 확인 없이 바로 완료한다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 내보낸 보고서의 바닥 줄 요소. 훅을 쓰는 컴포넌트라 상태 없이 바로 그릴 수 없어, 완료 명령이 가는 경로를 모양 컴포넌트로 확인한다. */
+      const exported = readyDiagnosis(9, { exported: true });
+      // 이미 내보냈다면 확인 줄이 아니라 평소 줄이 나온다.
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={exported} />)).toContain('>내보내기</button></footer>');
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={exported} />)).not.toContain('내보내지 않았습니다');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('완료함의 기록에 마지막으로 내보낸 파일 경로가 보인다', () => {
+    /** 완료한 진단의 상세 몸통. */
+    const text = textOf(
+      <ReviewContent
+        snapshot={withDiagnoses([diagnosis(3, { status: 'completed', repoWait: null, completedAt: DETECTED_AT, lastExportedPath: '/가짜/보고서/2026-11-26-가짜-WEB-3.md' })])}
+        initialDiagnosisId={3}
+      />,
+    );
+
+    expect(text).toContain('마지막으로 내보낸 파일 /가짜/보고서/2026-11-26-가짜-WEB-3.md');
+  });
+
+  it('내보낸 적 없이 완료한 진단의 기록은 "내보낸 적 없음"이다', () => {
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([diagnosis(3, { status: 'completed', repoWait: null, completedAt: DETECTED_AT })])} initialDiagnosisId={3} />);
+
+    expect(text).toContain('마지막으로 내보낸 파일 내보낸 적 없음');
+  });
+
+  it('내보내기 토스트는 "내보냈습니다: 파일 이름"과 [폴더 열기]를 보이고, 실패하면 폴더 열기 없이 알린다', () => {
+    /** 토스트 자리에 그린 글. */
+    const toastText = (exportToasts: { key: number; fileName: string | null }[]) =>
+      textOf(<ToastStack bundles={[]} ignoreToast={null} failedToasts={[]} stoppedToasts={[]} exportToasts={exportToasts} onRestore={() => {}} onCancelPost={() => {}} onStoppedAction={() => {}} />);
+
+    expect(toastText([{ key: 1, fileName: '2026-11-26-가짜-WEB-1.md' }])).toContain('내보냈습니다: 2026-11-26-가짜-WEB-1.md 폴더 열기');
+    expect(toastText([{ key: 2, fileName: null }])).toContain('내보내지 못했습니다');
+    expect(toastText([{ key: 2, fileName: null }])).not.toContain('폴더 열기');
   });
 
   it('목록 줄의 둘째 줄은 보고서 요약이고, 보고서가 있으면 재현 태그가 상태 태그 앞에 붙는다', () => {

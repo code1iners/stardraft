@@ -143,6 +143,14 @@ export interface StoppedToastState {
   stop: PostStopSnapshot;
 }
 
+/** 진단 보고서 내보내기 토스트 하나. 내보냈거나 내보내지 못한 결과를 알린다. */
+export interface ExportToastState {
+  /** 토스트를 가려내는 번호. */
+  key: number;
+  /** 내보낸 파일 이름. 내보내지 못했으면 `null`. */
+  fileName: string | null;
+}
+
 /** 무시 토스트. 되돌리기로 살릴 묶음과 문구다. */
 export interface IgnoreToastState {
   /** 무시한 묶음 ID. */
@@ -159,6 +167,8 @@ export interface BundleActions {
   failedToasts: FailedToastState[];
   /** 보이는 멈춘 게시 토스트. 띄운 순서다. */
   stoppedToasts: StoppedToastState[];
+  /** 보이는 보고서 내보내기 토스트. 띄운 순서다. */
+  exportToasts: ExportToastState[];
   /** 멈춘 게시 토스트의 [되돌리기]나 [보기]를 눌렀다. 토스트를 닫고 그 묶음을 되돌리거나 보인다. */
   followStopped: (toast: StoppedToastState) => void;
   /** 묶음을 무시하고 다음 묶음으로 넘어가며, 되돌릴 수 있는 토스트를 띄운다. */
@@ -186,6 +196,8 @@ export function useBundleActions({ select, leave }: Pick<BundleSelection, 'selec
   const [failedToasts] = useEventToasts(failedToastOf);
   /** 멈춘 게시 토스트. */
   const [stoppedToasts, dismissStopped] = useEventToasts(stoppedToastOf);
+  /** 보고서 내보내기 토스트. */
+  const [exportToasts] = useEventToasts(exportToastOf);
   /** 처리됨 묶음을 되돌리고 그 묶음을 보인다. */
   const restore = (bundleId: number) => {
     setToast(null);
@@ -197,6 +209,7 @@ export function useBundleActions({ select, leave }: Pick<BundleSelection, 'selec
     toast,
     failedToasts,
     stoppedToasts,
+    exportToasts,
     followStopped: (stopped) => {
       dismissStopped(stopped.key);
       if (postStoppedAction(stopped.stop) === 'restore') restore(stopped.bundleId);
@@ -251,6 +264,12 @@ function failedToastOf(event: AppEvent): Omit<FailedToastState, 'key'> | null {
 /** main 알림에서 멈춘 게시 토스트의 값을 꺼낸다. 멈춘 게시 알림이 아니면 `null`. */
 function stoppedToastOf(event: AppEvent): Omit<StoppedToastState, 'key'> | null {
   return event.type === 'post-stopped' ? { bundleId: event.bundleId, stop: event.stop } : null;
+}
+
+/** main 알림에서 보고서 내보내기 토스트의 값을 꺼낸다. 내보내기 결과 알림이 아니면 `null`. */
+function exportToastOf(event: AppEvent): Omit<ExportToastState, 'key'> | null {
+  if (event.type === 'diagnosis-exported') return { fileName: event.fileName };
+  return event.type === 'diagnosis-export-failed' ? { fileName: null } : null;
 }
 
 /**

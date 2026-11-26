@@ -970,6 +970,7 @@ describe('진단 스냅숏', () => {
       failure: null,
       runs: [],
       completedAt: null,
+      lastExport: null,
       issue: {
         shortId: `WEB-${id}`,
         title: `시험 오류 ${id}`,
@@ -1004,6 +1005,8 @@ describe('진단 스냅숏', () => {
       report: null,
       failure: null,
       completedAt: null,
+      exported: false,
+      lastExportedPath: null,
       canOpenInSentry: false,
       attachments: [],
       issue: {
@@ -1020,6 +1023,32 @@ describe('진단 스냅숏', () => {
         projectName: '가짜 프로젝트',
       },
     });
+  });
+
+  it('내보낸 기록은 지금 보고서를 내보냈는지(exported)와 마지막 파일 경로로 넘긴다', () => {
+    /** 보고서 생성 시각이 7인 가짜 보고서. */
+    const report: NonNullable<SentryDiagnosis['report']> = {
+      summary: '요약',
+      reproduction: { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
+      cause: { text: '원인', confidence: 'low' },
+      improvements: [],
+      openQuestions: [],
+      evidence: [],
+      event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
+      run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: false, durationMs: 1, createdAt: 7 },
+    };
+    /** 검토 대기 진단. */
+    const ready = (lastExport: SentryDiagnosis['lastExport']) => diagnosis(1, { status: 'ready', repoCheck: null, report, lastExport });
+    const [fresh, same, older] = diagnosisSnapshots([
+      ready(null),
+      ready({ path: '/내보냄/a.md', at: 10, reportCreatedAt: 7 }),
+      ready({ path: '/내보냄/b.md', at: 10, reportCreatedAt: 3 }),
+    ]);
+
+    expect([fresh?.exported, fresh?.lastExportedPath]).toEqual([false, null]);
+    expect([same?.exported, same?.lastExportedPath]).toEqual([true, '/내보냄/a.md']);
+    // 다시 진단으로 보고서가 바뀌면 옛 내보내기는 지금 보고서의 것이 아니지만 마지막 파일 경로는 남는다.
+    expect([older?.exported, older?.lastExportedPath]).toEqual([false, '/내보냄/b.md']);
   });
 
   it('[Sentry에서 열기]는 공식 sentry.io 주소가 있을 때만 열 수 있다고 넘기고 주소 자체는 넘기지 않는다', () => {

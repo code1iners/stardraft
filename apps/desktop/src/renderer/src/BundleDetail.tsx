@@ -47,7 +47,8 @@ import {
   senderLine,
   WRITING_CHANGE_LABELS,
 } from './review-text';
-import { useSecondsLeft, type FailedToastState, type IgnoreToastState, type StoppedToastState } from './useReview';
+import { exportToastText } from './diagnosis-text';
+import { useSecondsLeft, type ExportToastState, type FailedToastState, type IgnoreToastState, type StoppedToastState } from './useReview';
 
 /** 문체 검사에 걸린 문장과 근거 설명 옆에 작게 붙이는 말. */
 const DEVELOPER_TERMS_NOTE = '개발자 용어가 있을 수 있음';
@@ -1250,6 +1251,8 @@ interface ToastStackProps {
   failedToasts: readonly FailedToastState[];
   /** 보이는 멈춘 게시 토스트. 띄운 순서다. */
   stoppedToasts: readonly StoppedToastState[];
+  /** 보이는 보고서 내보내기 토스트. 띄운 순서다. */
+  exportToasts: readonly ExportToastState[];
   /** 무시 토스트의 [되돌리기]를 눌렀다. */
   onRestore: (bundleId: number) => void;
   /** 카운트다운 토스트의 [취소]를 눌렀다. */
@@ -1263,7 +1266,7 @@ interface ToastStackProps {
  * 카운트다운 토스트는 main의 묶음 상태를, 멈춘 게시·게시 실패 토스트는 main의 알림을 따르므로 다른 묶음을 보고 있어도 뜬다.
  * 게시를 누를 때의 확인이 게시를 멈추면 카운트다운 토스트가 사라지고 그 자리에 멈춘 게시 토스트가 뜬다.
  */
-export function ToastStack({ bundles, ignoreToast, failedToasts, stoppedToasts, onRestore, onCancelPost, onStoppedAction }: ToastStackProps) {
+export function ToastStack({ bundles, ignoreToast, failedToasts, stoppedToasts, exportToasts, onRestore, onCancelPost, onStoppedAction }: ToastStackProps) {
   /** 카운트다운 중인 묶음과 카운트다운이 끝날 시각. */
   const countdowns = bundles.flatMap((bundle) => (bundle.posting?.phase === 'countdown' ? [{ bundle, endsAt: bundle.posting.endsAt }] : []));
   /** 게시 실패 토스트와 그 묶음. 그사이 사라진 묶음은 뺀다. */
@@ -1272,7 +1275,7 @@ export function ToastStack({ bundles, ignoreToast, failedToasts, stoppedToasts, 
     const bundle = bundles.find((item) => item.id === toast.bundleId);
     return bundle ? [{ key: toast.key, bundle }] : [];
   });
-  if (countdowns.length === 0 && stoppedToasts.length === 0 && failures.length === 0 && !ignoreToast) return null;
+  if (countdowns.length === 0 && stoppedToasts.length === 0 && failures.length === 0 && exportToasts.length === 0 && !ignoreToast) return null;
   return (
     <div className="toast-stack">
       {countdowns.map(({ bundle, endsAt }) => (
@@ -1289,6 +1292,16 @@ export function ToastStack({ bundles, ignoreToast, failedToasts, stoppedToasts, 
       {failures.map(({ key, bundle }) => (
         <div key={key} className="toast" role="alert">
           <span>{postFailedToastText(bundle)}</span>
+        </div>
+      ))}
+      {exportToasts.map((toast) => (
+        <div key={toast.key} className="toast" role={toast.fileName === null ? 'alert' : 'status'}>
+          <span>{exportToastText(toast.fileName)}</span>
+          {toast.fileName !== null && (
+            <button type="button" className="btn link" onClick={() => void window.stardraft.send({ type: 'open-report-folder' })}>
+              폴더 열기
+            </button>
+          )}
         </div>
       ))}
       {ignoreToast && <IgnoreToast toast={ignoreToast} onRestore={() => onRestore(ignoreToast.bundleId)} />}

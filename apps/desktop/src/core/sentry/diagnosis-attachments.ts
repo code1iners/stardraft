@@ -22,6 +22,16 @@ export class DiagnosisAttachmentFolders {
     return join(this.root, String(diagnosisId));
   }
 
+  /** 진단의 첨부 파일 이름. 이름 순서이고 폴더나 숨김 파일은 뺀다. 폴더가 없으면 비어 있다. */
+  async list(diagnosisId: number): Promise<string[]> {
+    /** 폴더 안의 항목. 폴더가 없으면 비어 있다. */
+    const entries = await readdir(this.dirOf(diagnosisId), { withFileTypes: true }).catch(() => []);
+    return entries
+      .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .sort();
+  }
+
   /** 진단의 첨부 폴더를 지운다. 폴더가 없으면 아무것도 하지 않는다. */
   async remove(diagnosisId: number): Promise<void> {
     await rm(this.dirOf(diagnosisId), { recursive: true, force: true });

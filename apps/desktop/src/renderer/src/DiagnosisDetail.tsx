@@ -7,6 +7,7 @@ import {
   CONFIDENCE_TEXT,
   causeParts,
   diagnosisEvidenceLocation,
+  EXPORT_CONFIRM_TEXT,
   diagnosisFailureText,
   diagnosisMetaLine,
   diagnosisProgressText,
@@ -158,7 +159,12 @@ function DiagnosisSections({ diagnosis }: DiagnosisProps) {
   if (diagnosis.status === 'completed') {
     return (
       <Section title="기록">
-        <FactList facts={[{ label: '완료한 때', value: diagnosis.completedAt === null ? '모름' : formatTime(diagnosis.completedAt) }]} />
+        <FactList
+          facts={[
+            { label: '완료한 때', value: diagnosis.completedAt === null ? '모름' : formatTime(diagnosis.completedAt) },
+            { label: '마지막으로 내보낸 파일', value: diagnosis.lastExportedPath ?? '내보낸 적 없음' },
+          ]}
+        />
       </Section>
     );
   }
@@ -684,14 +690,7 @@ export function DiagnosisFooter({ diagnosis, windowKind = 'expanded' }: Diagnosi
   }
   switch (diagnosis.status) {
     case 'ready':
-      return (
-        <footer className="review-foot">
-          <button type="button" className="btn" onClick={() => send('complete-diagnosis')}>
-            완료
-          </button>
-          <span className="spacer" />
-        </footer>
-      );
+      return <ReadyFooter diagnosis={diagnosis} send={send} />;
     case 'queued':
     case 'running':
       return (
@@ -728,6 +727,84 @@ export function DiagnosisFooter({ diagnosis, windowKind = 'expanded' }: Diagnosi
     case 'repo-check-needed':
       return null;
   }
+}
+
+/** 검토 대기 바닥 줄에 넘기는 값. */
+interface ReadyFooterProps extends DiagnosisProps {
+  /** 이 진단에 완료 명령을 보낸다. */
+  send: (type: 'complete-diagnosis') => void;
+}
+
+/**
+ * 검토 대기의 바닥 줄. 지금 보이는 보고서를 내보낸 적이 없을 때 [완료]를 누르면 "내보내지 않았습니다" 확인을 띄우고,
+ * 내보낸 적이 있으면 바로 완료한다. 확인을 띄운 진단 ID만 기억해, 다른 진단으로 넘어가면 확인이 저절로 닫힌다.
+ */
+function ReadyFooter({ diagnosis, send }: ReadyFooterProps) {
+  /** 확인을 띄운 진단 ID. */
+  const [confirmingId, setConfirmingId] = useState<number | null>(null);
+  /** 이 진단의 보고서를 내보낸다. 확인 중이었다면 확인을 닫는다. */
+  const handleExport = () => {
+    setConfirmingId(null);
+    void window.stardraft.send({ type: 'export-diagnosis', diagnosisId: diagnosis.id });
+  };
+  return (
+    <ReadyFooterView
+      confirming={confirmingId === diagnosis.id && !diagnosis.exported}
+      onComplete={() => (diagnosis.exported ? send('complete-diagnosis') : setConfirmingId(diagnosis.id))}
+      onConfirmComplete={() => send('complete-diagnosis')}
+      onCancelConfirm={() => setConfirmingId(null)}
+      onExport={handleExport}
+    />
+  );
+}
+
+/** 검토 대기 바닥 줄의 모양에 넘기는 값. */
+export interface ReadyFooterViewProps {
+  /** "내보내지 않았습니다" 확인을 보이는지 여부. */
+  confirming: boolean;
+  /** 평소 줄의 [완료]를 눌렀다. 내보냈으면 완료하고 아니면 확인을 띄운다. */
+  onComplete: () => void;
+  /** 확인의 [완료]를 눌렀다. 내보내지 않은 채 완료한다. */
+  onConfirmComplete: () => void;
+  /** 확인의 [취소]를 눌렀다. */
+  onCancelConfirm: () => void;
+  /** [내보내기]를 눌렀다. 평소 줄과 확인 줄 모두에 있다. */
+  onExport: () => void;
+}
+
+/**
+ * 검토 대기 바닥 줄의 모양. 평소에는 왼쪽 [완료], 오른쪽 주 버튼 [내보내기]다([다시 진단 ▾]는 다시 진단 단계가 더한다).
+ * 확인 줄은 왼쪽에 안내 글, 오른쪽에 [취소] · [내보내기] · 주 버튼 [완료]다.
+ */
+export function ReadyFooterView({ confirming, onComplete, onConfirmComplete, onCancelConfirm, onExport }: ReadyFooterViewProps) {
+  if (confirming) {
+    return (
+      <footer className="review-foot">
+        <span className="small">{EXPORT_CONFIRM_TEXT}</span>
+        <span className="spacer" />
+        <button type="button" className="btn" onClick={onCancelConfirm}>
+          취소
+        </button>
+        <button type="button" className="btn" onClick={onExport}>
+          내보내기
+        </button>
+        <button type="button" className="btn primary" onClick={onConfirmComplete}>
+          완료
+        </button>
+      </footer>
+    );
+  }
+  return (
+    <footer className="review-foot">
+      <button type="button" className="btn" onClick={onComplete}>
+        완료
+      </button>
+      <span className="spacer" />
+      <button type="button" className="btn primary" onClick={onExport}>
+        내보내기
+      </button>
+    </footer>
+  );
 }
 
 /** 30초마다 지금 시각을 다시 읽는 간격(밀리초). 바닥 줄의 "n분 지남"은 분 단위라 이 정도면 충분하다. */

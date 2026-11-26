@@ -13,6 +13,9 @@ import { SentryConnection, type SentryConnectionState } from '../core/sentry/sen
 import { SentryDetection } from '../core/sentry/sentry-detection';
 import { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
 import { SentryProjects } from '../core/sentry/sentry-projects';
+import { SentryTargetAdapter } from '../core/sentry/sentry-target-adapter';
+import { readRepoGitState } from '../core/repos/repo-git-state';
+import { gitStatusReader } from './git-status';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { BundleRetention } from '../core/bundles/retention';
 import { RepoWaitMonitor } from '../core/bundles/repo-wait-monitor';
@@ -181,13 +184,14 @@ function start(): void {
     });
     await sentryConnection.load();
     /**
-     * 감지한 Sentry 진단. 저장소 대기 진단은 프로젝트 단위로 알리고 매핑이나 폴더가 생기면 대기로 돌린다. 이 단계에서는 진단을 실행하지 않는다.
+     * 감지한 Sentry 진단. 저장소 대기 진단은 프로젝트 단위로 알리고 매핑이나 폴더가 생기면 대기로 돌린다. 진단 실행은 생성 대기열의 Sentry 어댑터가 한다.
      * 저장소 해석과 등록 확인은 아래 프로젝트 등록에 묻는다. 둘 다 등록을 만든 뒤에만 불린다.
      */
     const sentryDiagnoses: SentryDiagnoses = new SentryDiagnoses({
       store: appData.sentryStore,
       notifier,
       logger,
+      clock: systemClock,
       resolveRepo: (projectId) => sentryProjects.resolveRepo(projectId),
       isRegistered: (registration) => sentryProjects.isRegistered(registration),
     });
@@ -300,6 +304,8 @@ function start(): void {
     // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
     retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
     retention.start();
+    /** 진단 보고서의 실행 정보에 적을 커밋하지 않은 변경 유무를 읽는다. */
+    const readGitStatus = gitStatusReader(process.platform);
     /** 설정 "에이전트" 칸 `병렬 작업` 탭의 병렬 작업 수. 초안 대기열이 다음 실행을 꺼낼 때마다 읽는다. */
     const parallelWork = new ParallelWork({ settingsStore: appData.settingsStore, logger });
     await parallelWork.load();
@@ -323,6 +329,19 @@ function start(): void {
       projectTitle: (projectId) => repoMappings.projectTitle(projectId),
       clock: systemClock,
       logger,
+      // Sentry 진단도 같은 대기열에서 병렬 작업 수를 함께 쓴다. 토큰 문제와 Sentry 미도달은 Sentry 어댑터만 멈춘다.
+      extraAdapters: [
+        new SentryTargetAdapter({
+          diagnoses: sentryDiagnoses,
+          projects: sentryProjects,
+          connection: sentryConnection,
+          connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
+          settingsStore: appData.settingsStore,
+          repoState: (repository) => readRepoGitState(repository, readGitStatus),
+          clock: systemClock,
+          logger,
+        }),
+      ],
     });
     drafts = draftQueue;
     /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. 패턴을 추가하면 실행 중인 실행을 다시 돌리고 게시하지 않은 초안을 다시 검사한다. */

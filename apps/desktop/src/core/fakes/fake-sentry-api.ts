@@ -3,6 +3,7 @@ import type {
   SentryApiFailure,
   SentryApiResult,
   SentryErrorIssue,
+  SentryEvent,
   SentryIssueFilter,
   SentryOrganization,
   SentryProject,
@@ -27,12 +28,24 @@ export interface FakeSentryIssue {
   firstSeenByEnvironment: Record<string, number>;
   /** 오류 이슈 상세의 재발 활동. 오래된 것부터다. */
   regressions: SentryRegression[];
+  /** 다른 오류 이슈로 병합됐는지 여부. 참이면 상세 조회가 병합됨으로 답한다. */
+  merged: boolean;
+  /** 최신 이벤트. 없으면 최신 이벤트 조회가 `404`다. */
+  latestEvent: SentryEvent | null;
 }
 
 /** 가짜 Sentry API가 받은 호출. */
 export interface FakeSentryCall {
   /** 부른 메서드. */
-  method: 'listOrganizations' | 'listProjects' | 'probeErrorIssues' | 'listNewErrorIssues' | 'listRegressedErrorIssues' | 'latestRegression';
+  method:
+    | 'listOrganizations'
+    | 'listProjects'
+    | 'probeErrorIssues'
+    | 'listNewErrorIssues'
+    | 'listRegressedErrorIssues'
+    | 'latestRegression'
+    | 'errorIssueState'
+    | 'latestEvent';
   /** 쓴 토큰. */
   token: string;
   /** 프로젝트 ID나 오류 이슈 ID. 없으면 `null`. */
@@ -78,6 +91,8 @@ export class FakeSentryApi {
       status: 'unresolved',
       substatus: 'new',
       regressions: [],
+      merged: false,
+      latestEvent: fakeEvent(issue.id),
       ...issue,
       firstSeenByEnvironment: issue.firstSeenByEnvironment ?? { [issue.environment ?? 'production']: issue.firstSeen ?? 0 },
     };
@@ -124,6 +139,19 @@ export class FakeSentryApi {
         const issue = this.issues.get(issueId);
         if (!issue) return NOT_FOUND;
         return issue.regressions.at(-1) ?? null;
+      }),
+    errorIssueState: (_organization, issueId) =>
+      this.answer({ method: 'errorIssueState', token, target: issueId, firstSeenAfter: null }, () => {
+        /** 상태를 읽을 오류 이슈. 지운 오류 이슈는 없다. */
+        const issue = this.issues.get(issueId);
+        if (!issue) return NOT_FOUND;
+        return { status: issue.merged ? 'merged' : issue.status, firstRelease: 'fake@1.0.0', lastRelease: 'fake@1.0.1' };
+      }),
+    latestEvent: (_organization, issueId) =>
+      this.answer({ method: 'latestEvent', token, target: issueId, firstSeenAfter: null }, () => {
+        /** 최신 이벤트를 읽을 오류 이슈. */
+        const issue = this.issues.get(issueId);
+        return issue?.latestEvent ? structuredClone(issue.latestEvent) : NOT_FOUND;
       }),
   });
 
@@ -174,5 +202,34 @@ function listItem(issue: FakeSentryIssue, environment: string | null): SentryErr
     userCount: 1,
     permalink: `https://fake.sentry.test/issues/${issue.id}/`,
     platform: 'javascript',
+  };
+}
+
+/** 가짜 최신 이벤트. 앱 코드 프레임 하나짜리 스택트레이스와 breadcrumb 하나, release, 환경·레벨 태그를 담는다. */
+export function fakeEvent(issueId: string, overrides: Partial<SentryEvent> = {}): SentryEvent {
+  return {
+    eventId: `event-${issueId}`,
+    platform: 'javascript',
+    release: 'fake@1.0.1',
+    message: null,
+    tags: [
+      { key: 'environment', value: 'production' },
+      { key: 'level', value: 'error' },
+    ],
+    exceptions: [
+      {
+        type: 'TypeError',
+        value: '시험 오류 메시지',
+        module: null,
+        frames: [{ filename: 'src/fake.ts', function: 'fakeHandler', lineNo: 2, colNo: 5, inApp: true, context: [[2, 'throw new TypeError();']] }],
+        hasRawStacktrace: true,
+      },
+    ],
+    breadcrumbs: [{ timestamp: '2026-11-26T11:59:00Z', category: 'navigation', level: 'info', message: '/fake' }],
+    request: { method: 'GET', url: 'https://app.fake.test/fake' },
+    user: { id: 'user-1', username: null },
+    contexts: [{ name: 'browser', summary: 'Chrome 120' }],
+    processingErrors: [],
+    ...overrides,
   };
 }

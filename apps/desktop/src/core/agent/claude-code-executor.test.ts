@@ -111,6 +111,25 @@ describe('Claude Code 실행기: 인수 묶음', () => {
     expect(request?.args).not.toContain('--model');
   });
 
+  it('진단 실행은 초안 실행과 같은 읽기 전용 경계로 돌고 턴 상한만 진단 실행의 값이다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: { requirement: '가짜 요구' } }))));
+
+    await executor.run(draftRequest());
+    await executor.run(draftRequest({ kind: 'diagnosis', timeoutMs: 1_200_000 }));
+
+    /** 초안 실행과 진단 실행의 인수. 지침 파일 경로는 실행마다 다르다. */
+    const [draft, diagnosis] = runner.requests.map((request) => request.args.map((arg) => (arg.endsWith('instructions.md') ? '<지침 파일>' : arg)));
+    expect(flagValue(runner.requests[0], '--max-turns')).toBe('60');
+    expect(flagValue(runner.requests[1], '--max-turns')).toBe('120');
+    expect(diagnosis).toEqual(draft!.map((arg) => (arg === '60' ? '120' : arg)));
+    // 셸·편집 도구와 MCP는 열리지 않고 사용자 설정을 끌어오지 않는다.
+    expect(flagValue(runner.requests[1], '--tools')).toBe('Read,Glob,Grep');
+    expect(diagnosis).toEqual(expect.arrayContaining(['--disallowedTools', 'mcp__*', '--restricted', '--strict-mcp-config']));
+    expect(diagnosis).not.toContain('--mcp-config');
+    expect(runner.requests[1]?.timeoutMs).toBe(1_200_000);
+  });
+
   it('비밀 파일은 기본 목록과 추가 패턴을 Read(//**/<패턴>) 형식의 deny 규칙으로 넣는다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));

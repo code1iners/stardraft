@@ -12,6 +12,7 @@ import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agen
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import type { SentryConnection, SentryConnectionState, SentryTokenCheckOutcome } from '../core/sentry/sentry-connection';
 import type { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
+import { SENTRY_TARGET_KIND } from '../core/sentry/sentry-target-adapter';
 import type { SentryProjects, SentryProjectsState, SentryRegisterOutcome, SentryUpdateOutcome } from '../core/sentry/sentry-projects';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
@@ -35,6 +36,7 @@ import {
   type AppCommand,
   type AppFolder,
   type AppSnapshot,
+  type DiagnosisProgressSnapshot,
   type DraftSettingsSnapshot,
   type ParallelWorkSnapshot,
   type EditorSnapshot,
@@ -220,7 +222,19 @@ function currentReviewSnapshot({ bundles, sentryDiagnoses, drafts, posting, revi
     (projectId, repos) => repoMappings.matchOf(projectId, repos),
     repoPicker.state(),
     (bundleId) => posting.countdownEndsAt(bundleId),
+    (diagnosisId) => diagnosisProgress(drafts, diagnosisId),
   );
+}
+
+/** 진단의 생성 대기열 진행. 진행 중이면 단계와 시작 시각, 기다리면 앞에 있는 수다. 대기열에 없으면 `null`. */
+function diagnosisProgress(drafts: IpcServices['drafts'], diagnosisId: number): DiagnosisProgressSnapshot | null {
+  /** 생성 대기열의 대상. */
+  const target = { kind: SENTRY_TARGET_KIND, targetId: diagnosisId };
+  /** 진행. */
+  const progress = drafts.targetProgress(target);
+  if (!progress) return null;
+  if (progress.status === 'waiting') return { status: 'waiting', ahead: drafts.aheadOf(target) };
+  return { status: 'running', step: progress.step, filesRead: progress.filesRead, startedAt: drafts.runningSince(target) ?? Date.now() };
 }
 
 /** 지금 병렬 작업 수와 진행 중인 초안·진단 수. */
@@ -424,6 +438,17 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);
+      return;
+    case 'cancel-diagnosis':
+      await services.drafts.cancelTarget({ kind: SENTRY_TARGET_KIND, targetId: command.diagnosisId });
+      return;
+    case 'retry-diagnosis':
+      await services.drafts.changeTargetByUser({ kind: SENTRY_TARGET_KIND, targetId: command.diagnosisId }, () =>
+        services.sentryDiagnoses.retry(command.diagnosisId),
+      );
+      return;
+    case 'complete-diagnosis':
+      await services.sentryDiagnoses.complete(command.diagnosisId);
       return;
     case 'open-sentry-repo-mapping': {
       /** 저장소 대기인 진단. 없어졌으면 프로젝트를 모르므로 "저장소" 칸만 연다. */

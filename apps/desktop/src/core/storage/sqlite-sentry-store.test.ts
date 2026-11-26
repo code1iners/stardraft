@@ -161,4 +161,76 @@ describe('Sentry 진단 저장소', () => {
     expect(await sentry.listDiagnoses()).toEqual([]);
     db.close();
   });
+
+  it('형식 25의 진단은 올린 뒤 보고서·실패·완료 시각 없이, 실행 기록은 비어 읽힌다', async () => {
+    const path = join(dir, 'state.db');
+    /** 형식 25로 연 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 25), '0.1.0');
+    old
+      .prepare(
+        `INSERT INTO sentry_diagnosis (project_id, issue_id, origin, regression_event_id, detected_at, status, repo_check, issue)
+         VALUES ('p1', '101', 'new', NULL, 1000, 'queued', NULL, ?)`,
+      )
+      .run(JSON.stringify(diagnosis('101').issue));
+    old.close();
+
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    expect(await new SqliteSentryStore(db).listDiagnoses()).toMatchObject([{ issueId: '101', status: 'queued', report: null, failure: null, runs: [], completedAt: null }]);
+    db.close();
+  });
+
+  it('진단의 보고서·실패·실행 기록·완료 시각을 쓰고 다시 열어도 읽으며, 진단 하나를 지워도 중복 억제 기록은 남는다', async () => {
+    const first = open();
+    const [saved] = await first.sentry.recordDetection({ projectId: 'p1', checkpoint: 2_000, keys: [{ issueId: '101', eventId: null }], diagnoses: [diagnosis('101')] });
+    /** 진단 실패로 바꾼 진단. */
+    const failed = {
+      ...saved!,
+      status: 'failed' as const,
+      failure: { reason: 'timed-out' as const, detail: null, lastStep: '오류 진단하는 중', runKind: 'diagnosis' as const },
+      runs: [
+        {
+          kind: 'diagnosis' as const,
+          agent: 'claude-code' as const,
+          cliVersion: '2.1.300',
+          model: null,
+          startedAt: 1,
+          finishedAt: 2,
+          result: 'timed-out' as const,
+          detail: null,
+          lastStep: null,
+          fixes: [],
+          omittedContextItems: 0,
+          usage: null,
+        },
+      ],
+    };
+    await first.sentry.updateDiagnosis(failed);
+    first.db.close();
+
+    const reopened = open();
+    expect(await reopened.sentry.listDiagnoses()).toEqual([failed]);
+    await reopened.sentry.updateDiagnosis({ ...failed, status: 'completed', failure: null, runs: [], completedAt: 9_000 });
+    expect((await reopened.sentry.listDiagnoses())[0]).toMatchObject({ status: 'completed', completedAt: 9_000, runs: [] });
+
+    await reopened.sentry.removeDiagnosis(saved!.id);
+    expect(await reopened.sentry.listDiagnoses()).toEqual([]);
+    expect(await reopened.sentry.hasDetectionKey({ issueId: '101', eventId: null })).toBe(true);
+    reopened.db.close();
+  });
+
+  it('새 재발로 자리를 내준 진단 실패는 새 진단과 한 트랜잭션으로 지운다', async () => {
+    const { db, sentry } = open();
+    const [failed] = await sentry.recordDetection({ projectId: 'p1', checkpoint: 2_000, keys: [], diagnoses: [diagnosis('101', { status: 'failed' })] });
+
+    const [replacement] = await sentry.recordDetection({
+      projectId: 'p1',
+      checkpoint: 3_000,
+      keys: [{ issueId: '101', eventId: 'r'.repeat(32) }],
+      diagnoses: [diagnosis('101', { origin: 'regression', regressionEventId: 'r'.repeat(32) })],
+      replaced: [failed!.id],
+    });
+
+    expect((await sentry.listDiagnoses()).map((item) => item.id)).toEqual([replacement!.id]);
+    db.close();
+  });
 });

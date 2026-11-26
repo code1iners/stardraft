@@ -966,6 +966,10 @@ describe('진단 스냅숏', () => {
       detectedAt: 1_000 + id,
       status: 'repo-check-needed',
       repoCheck: { kind: 'unmapped' },
+      report: null,
+      failure: null,
+      runs: [],
+      completedAt: null,
       issue: {
         shortId: `WEB-${id}`,
         title: `시험 오류 ${id}`,
@@ -996,6 +1000,10 @@ describe('진단 스냅숏', () => {
       detectedAt: 1_001,
       status: 'queued',
       repoWait: null,
+      progress: { status: 'waiting', ahead: null },
+      report: null,
+      failure: null,
+      completedAt: null,
       issue: {
         shortId: 'WEB-1',
         culprit: 'app/checkout',
@@ -1010,6 +1018,34 @@ describe('진단 스냅숏', () => {
         projectName: '가짜 프로젝트',
       },
     });
+  });
+
+  it('대기 진단은 생성 대기열이 진행하고 있으면 진행 중으로 넘기고, 기다리면 앞에 있는 수를 넘긴다', () => {
+    /** 진단 ID마다 대기열의 진행. */
+    const progress = new Map([
+      [1, { status: 'running' as const, step: '오류 진단하는 중', filesRead: 2, startedAt: 5_000 }],
+      [2, { status: 'waiting' as const, ahead: 1 }],
+    ]);
+    const snapshots = diagnosisSnapshots(
+      [diagnosis(1, { status: 'queued', repoCheck: null }), diagnosis(2, { status: 'queued', repoCheck: null }), diagnosis(3)],
+      (id) => progress.get(id) ?? null,
+    );
+
+    expect(snapshots.map((item) => [item.status, item.progress])).toEqual([
+      ['running', { status: 'running', step: '오류 진단하는 중', filesRead: 2, startedAt: 5_000 }],
+      ['queued', { status: 'waiting', ahead: 1 }],
+      ['repo-check-needed', null],
+    ]);
+  });
+
+  it('진단 실패는 사유와 마지막 단계를, 완료는 완료 시각을 넘긴다', () => {
+    const [failed, completed] = diagnosisSnapshots([
+      diagnosis(1, { status: 'failed', repoCheck: null, failure: { reason: 'cancelled', detail: null, lastStep: '오류 진단하는 중', runKind: 'diagnosis' } }),
+      diagnosis(2, { status: 'completed', repoCheck: null, completedAt: 7_000 }),
+    ]);
+
+    expect(failed).toMatchObject({ status: 'failed', failure: { reason: 'cancelled', detail: null, lastStep: '오류 진단하는 중' }, progress: null });
+    expect(completed).toMatchObject({ status: 'completed', completedAt: 7_000, report: null });
   });
 
   it('저장소 대기는 같은 프로젝트·사유로 기다리는 진단 수를 넘긴다. 사유나 프로젝트가 다르면 따로 센다', () => {

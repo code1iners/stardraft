@@ -790,8 +790,8 @@ export type DraftFailureReasonSnapshot =
   | 'max-turns'
   | 'agent-error';
 
-/** 묶음 하나를 만들 때 돌리는 실행의 종류. 초안 실행과, 과거 기록에만 있는 폐지된 저장소 선택 실행(`selection`)이다. */
-export type GenerationRunKindSnapshot = 'selection' | 'draft';
+/** 대상 하나를 만들 때 돌리는 실행의 종류. 초안 실행, 진단 실행과, 과거 기록에만 있는 폐지된 저장소 선택 실행(`selection`)이다. */
+export type GenerationRunKindSnapshot = 'selection' | 'draft' | 'diagnosis';
 
 /** 생성이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
 export interface FailureSnapshot {
@@ -901,8 +901,87 @@ export const REVIEW_SECTIONS = ['original', 'requirement', 'draft', 'evidence', 
 /** 접고 펴는 상세 영역 하나. */
 export type ReviewSection = (typeof REVIEW_SECTIONS)[number];
 
-/** 진단의 상태. 이 단계에서는 대기와 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)만 있다. */
-export type DiagnosisStatusSnapshot = 'queued' | 'repo-check-needed';
+/** 진단의 상태. 진행 중(`running`)은 대기 가운데 생성 대기열이 진행하고 있는 진단이다. */
+export type DiagnosisStatusSnapshot = 'queued' | 'running' | 'repo-check-needed' | 'ready' | 'failed' | 'completed';
+
+/** 대기·진행 중 진단의 진행. 대기면 앞에 있는 수, 진행 중이면 단계와 읽은 파일 수, 시작한 시각이다. */
+export type DiagnosisProgressSnapshot =
+  /** 차례를 기다린다. `ahead`는 앞에 있는 대상 수다. 대기열이 아직 넣지 않았으면 `null`. */
+  | { status: 'waiting'; ahead: number | null }
+  /** 진행 중이다. */
+  | { status: 'running'; step: string; filesRead: number; startedAt: number };
+
+/** 재현 칸. 읽기 전용 진단은 앱이 "불가(허용 안 됨)"로 채운다. */
+export interface DiagnosisReproductionSnapshot {
+  /** 결과. */
+  result: 'success' | 'failure' | 'impossible';
+  /** 불가의 까닭. 불가가 아니면 `null`. */
+  impossibleReason: 'no-tool' | 'insufficient-data' | 'env-failed' | 'not-allowed' | 'timed-out' | null;
+  /** 재현에 쓴 방법. */
+  method: string;
+  /** 재현 순서 또는 시도한 것. */
+  steps: string[];
+}
+
+/** 진단 보고서. 에이전트가 쓴 칸과 앱이 채운 오류 이슈 정보·실행 정보다. */
+export interface DiagnosisReportSnapshot {
+  /** 요약. */
+  summary: string;
+  /** 재현. */
+  reproduction: DiagnosisReproductionSnapshot;
+  /** 원인과 확신도. 원인 글은 근거를 `[근거 n]`으로 가리킨다. */
+  cause: { text: string; confidence: 'high' | 'medium' | 'low' };
+  /** 개선 방향. */
+  improvements: string[];
+  /** 남은 의문. */
+  openQuestions: string[];
+  /** 근거. Flow 초안의 근거와 같은 필드다. */
+  evidence: { id: number; explanation: string; repository: string; path: string; startLine: number; endLine: number; located: boolean }[];
+  /** 앱이 Sentry에서 받은 오류 이슈 정보. */
+  event: {
+    /** 최신 이벤트의 release. */
+    release: string | null;
+    /** 최초 release. */
+    firstRelease: string | null;
+    /** 최근 release. */
+    lastRelease: string | null;
+    /** 소스맵 적용 여부. */
+    sourceMaps: 'applied' | 'failed' | 'unknown';
+    /** 없는 데이터 항목. */
+    missingData: string[];
+    /** 스택 앞부분. */
+    stackHead: string[];
+  };
+  /** 실행 정보. */
+  run: {
+    /** 저장소 경로. */
+    repository: string;
+    /** HEAD 해시. 모르면 `null`. */
+    headCommit: string | null;
+    /** 커밋하지 않은 변경 유무. 모르면 `null`. */
+    uncommittedChanges: boolean | null;
+    /** 에이전트. */
+    agent: AgentId;
+    /** 에이전트 CLI 버전. 모르면 `null`. */
+    cliVersion: string | null;
+    /** 재현 허용 여부. */
+    reproductionAllowed: boolean;
+    /** 걸린 시간(밀리초). */
+    durationMs: number;
+    /** 생성 시각(Unix epoch 밀리초). */
+    createdAt: number;
+  };
+}
+
+/** 진단 실패의 까닭. Flow 초안과 같은 빨간 상자에 사유와 마지막 단계로 보인다. */
+export interface DiagnosisFailureSnapshot {
+  /** 사유. */
+  reason: DraftFailureReasonSnapshot;
+  /** 에이전트가 알려 준 오류 원문. 없으면 `null`. */
+  detail: string | null;
+  /** 마지막 단계. 없으면 `null`. */
+  lastStep: string | null;
+}
 
 /** 저장소 대기 진단의 사유와 바닥 줄 글의 "기다리는 n건". */
 export type DiagnosisRepoWaitSnapshot =
@@ -927,6 +1006,14 @@ export interface DiagnosisSnapshot {
   status: DiagnosisStatusSnapshot;
   /** 저장소 대기의 사유. 저장소 대기가 아니면 `null`. */
   repoWait: DiagnosisRepoWaitSnapshot | null;
+  /** 대기·진행 중의 진행. 대기·진행 중이 아니면 `null`. */
+  progress: DiagnosisProgressSnapshot | null;
+  /** 진단 보고서. 검토 대기가 아니면 `null`. */
+  report: DiagnosisReportSnapshot | null;
+  /** 진단 실패의 까닭. 진단 실패가 아니면 `null`. */
+  failure: DiagnosisFailureSnapshot | null;
+  /** 완료한 시각. 완료가 아니면 `null`. */
+  completedAt: number | null;
   /** 오류 정보. 감지할 때 오류 이슈 목록에서 받은 값이다. */
   issue: {
     /** 짧은 ID. 없으면 빈 문자열. */
@@ -1154,6 +1241,12 @@ export type AppCommand =
   | { type: 'open-repo-mapping'; bundleId: number }
   /** 저장소 대기 진단의 [저장소 매핑하기]·[매핑 고치기]. 설정 "저장소" 칸 `Sentry` 탭에서 그 프로젝트를 짚는다. */
   | { type: 'open-sentry-repo-mapping'; diagnosisId: number }
+  /** 줄 서 있거나 진행 중인 진단을 취소한다. 진단 실패(취소함)가 된다. */
+  | { type: 'cancel-diagnosis'; diagnosisId: number }
+  /** 진단 실패를 [다시 시도]한다. 생성 대기열의 `user` 칸에 선다. */
+  | { type: 'retry-diagnosis'; diagnosisId: number }
+  /** 진단 실패를 [완료]한다. 확인 없이 최소 기록만 남긴다. */
+  | { type: 'complete-diagnosis'; diagnosisId: number }
   /** 데이터 폴더나 로그 폴더를 OS 파일 관리자로 연다. */
   | { type: 'open-folder'; folder: AppFolder }
   /** 붙여 넣은 Flow 개인 API 키를 확인한다. 성공하면 main이 키를 저장한다. */
@@ -1554,7 +1647,10 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'cancel-posting':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
     case 'open-sentry-repo-mapping':
-      return isDiagnosisIdInput(candidate.diagnosisId) ? { type: 'open-sentry-repo-mapping', diagnosisId: candidate.diagnosisId } : null;
+    case 'cancel-diagnosis':
+    case 'retry-diagnosis':
+    case 'complete-diagnosis':
+      return isDiagnosisIdInput(candidate.diagnosisId) ? { type: candidate.type, diagnosisId: candidate.diagnosisId } : null;
     case 'expand-review':
     case 'collapse-review':
       return candidate.bundleId === null || isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;

@@ -4,7 +4,13 @@ import type {
   SentryApiFailure,
   SentryApiResult,
   SentryErrorIssue,
+  SentryEvent,
+  SentryEventBreadcrumb,
+  SentryEventException,
+  SentryEventFrame,
   SentryIssueFilter,
+  SentryIssueState,
+  SentryIssueStatus,
   SentryOrganization,
   SentryProject,
   SentryRegression,
@@ -20,6 +26,12 @@ const MAX_ORGANIZATION_PAGES = 50;
 const MAX_PROJECT_PAGES = 50;
 /** 오류 이슈 목록을 이어 받는 최대 쪽 수(쪽당 100건). 한 바퀴에서 이보다 많이 받지 않는다. */
 const MAX_ISSUE_PAGES = 50;
+/** 진단 입력에 넣는 breadcrumb의 최대 수. 오류 직전의 것이 중요하므로 뒤에서부터 남긴다. */
+const MAX_BREADCRUMBS = 50;
+/** 진단 입력에 넣는 예외 하나의 최대 프레임 수. 오류가 난 자리에 가까운 뒤쪽을 남긴다. */
+const MAX_FRAMES = 60;
+/** 이벤트에서 읽는 문자열 하나의 최대 길이. 넘으면 자르고 `…`를 붙인다. */
+const MAX_EVENT_TEXT = 2_000;
 /** 헤더 값으로 보낼 수 있는 토큰. 공백 없는 ASCII 글자만이다. */
 const HEADER_SAFE_TOKEN = /^[\x21-\x7e]+$/;
 
@@ -161,6 +173,37 @@ export class HttpSentryApi implements SentryApi {
     return { ok: true, value: latest };
   }
 
+  /**
+   * `GET /api/0/organizations/{조직}/issues/{ID}/?collapse=stats,tags`로 상태와 release를 읽는다.
+   * 다른 오류 이슈로 병합된 ID는 Sentry가 병합된 쪽으로 리디렉트하므로, 리디렉트를 따라가지 않고 병합됨으로 본다.
+   */
+  async errorIssueState(organization: SentryOrganization, issueId: string): Promise<SentryApiResult<SentryIssueState>> {
+    /** 토큰을 실을 기준 주소. */
+    const base = readRegionUrl(organization.regionUrl);
+    if (base === null) return UNEXPECTED_RESPONSE;
+    /** 읽은 결과. */
+    const result = await this.request(base, `/api/0/organizations/${encodeURIComponent(organization.slug)}/issues/${encodeURIComponent(issueId)}/?collapse=stats,tags`, 'manual');
+    if ('moved' in result) return { ok: true, value: { status: 'merged', firstRelease: null, lastRelease: null } };
+    if (!result.ok) return result;
+    /** 응답 본문. */
+    const json = result.value.json;
+    if (!isRecord(json) || typeof json.status !== 'string') return UNEXPECTED_RESPONSE;
+    return { ok: true, value: { status: issueStatusOf(json.status), firstRelease: releaseVersion(json.firstRelease), lastRelease: releaseVersion(json.lastRelease) } };
+  }
+
+  /** `GET /api/0/organizations/{조직}/issues/{ID}/events/latest/`로 최신 이벤트를 읽어 진단에 쓰는 값만 남긴다. */
+  async latestEvent(organization: SentryOrganization, issueId: string): Promise<SentryApiResult<SentryEvent>> {
+    /** 토큰을 실을 기준 주소. */
+    const base = readRegionUrl(organization.regionUrl);
+    if (base === null) return UNEXPECTED_RESPONSE;
+    /** 읽은 결과. */
+    const result = await this.get(base, `/api/0/organizations/${encodeURIComponent(organization.slug)}/issues/${encodeURIComponent(issueId)}/events/latest/`);
+    if (!result.ok) return result;
+    /** 읽은 이벤트. */
+    const event = readEvent(result.value.json);
+    return event ? { ok: true, value: event } : UNEXPECTED_RESPONSE;
+  }
+
   /** 프로젝트·환경 필터와 검색 쿼리로 오류 이슈 목록을 끝 쪽까지 받는다. 같은 ID는 처음 것만 둔다. */
   private async listErrorIssues(
     organization: SentryOrganization,
@@ -199,8 +242,22 @@ export class HttpSentryApi implements SentryApi {
     return { ok: true, value: [...issues.values()] };
   }
 
-  /** `baseUrl`의 `path`를 GET으로 불러 JSON 본문과 `Link` 헤더를 읽는다. */
+  /** `baseUrl`의 `path`를 GET으로 불러 JSON 본문과 `Link` 헤더를 읽는다. 리디렉트는 실패로 본다. */
   private async get(baseUrl: string, path: string): Promise<SentryApiResult<{ json: unknown; link: string | null }>> {
+    /** 읽은 결과. 리디렉트를 따라가지 않는 요청이라 옮겨졌다는 결과는 오지 않는다. */
+    const result = await this.request(baseUrl, path, 'error');
+    return 'moved' in result ? NETWORK_FAILURE : result;
+  }
+
+  /**
+   * `baseUrl`의 `path`를 GET으로 불러 JSON 본문과 `Link` 헤더를 읽는다.
+   * `redirect`가 `manual`이면 리디렉트 응답을 따라가지 않고 옮겨졌다(`moved`)고 돌려준다. 토큰 헤더가 다른 주소로 가지 않는다.
+   */
+  private async request(
+    baseUrl: string,
+    path: string,
+    redirect: 'error' | 'manual',
+  ): Promise<SentryApiResult<{ json: unknown; link: string | null }> | { moved: true }> {
     // 헤더에 실을 수 없는 토큰은 fetch가 연결 오류처럼 실패하므로, 보내기 전에 맞지 않는 토큰으로 판정한다.
     if (!HEADER_SAFE_TOKEN.test(this.options.token)) return { ok: false, failure: { kind: 'unauthorized' } };
 
@@ -219,11 +276,17 @@ export class HttpSentryApi implements SentryApi {
           headers: { authorization: `Bearer ${this.options.token}`, accept: 'application/json' },
           cache: 'no-store',
           credentials: 'omit',
-          redirect: 'error',
+          redirect,
           signal: controller.signal,
         });
       } catch {
         return NETWORK_FAILURE;
+      }
+
+      // 브라우저 계열 fetch는 따라가지 않은 리디렉트를 `opaqueredirect`(상태 0)로, Node fetch는 3xx 응답 그대로 돌려준다.
+      if (redirect === 'manual' && (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400))) {
+        void response.body?.cancel().catch(() => {});
+        return { moved: true };
       }
 
       if (!response.ok) {
@@ -293,6 +356,126 @@ function readErrorIssue(item: unknown): SentryErrorIssue | null {
     permalink: typeof item.permalink === 'string' && item.permalink !== '' ? item.permalink : null,
     platform: typeof item.platform === 'string' && item.platform !== '' ? item.platform : null,
   };
+}
+
+/** 오류 이슈 상세의 `status`를 앱의 갈래로 줄인다. 모르는 값은 미해결로 본다(진단을 빼지 않는다). */
+function issueStatusOf(status: string): SentryIssueStatus {
+  switch (status) {
+    case 'resolved':
+      return 'resolved';
+    case 'ignored':
+    case 'muted':
+      return 'ignored';
+    case 'pending_deletion':
+    case 'deletion_in_progress':
+      return 'deleted';
+    case 'pending_merge':
+      return 'merged';
+    default:
+      return 'unresolved';
+  }
+}
+
+/** 오류 이슈 상세의 release 객체(`firstRelease`·`lastRelease`)에서 버전을 읽는다. 없으면 `null`. */
+function releaseVersion(value: unknown): string | null {
+  if (typeof value === 'string' && value !== '') return value;
+  if (isRecord(value) && typeof value.version === 'string' && value.version !== '') return value.version;
+  return null;
+}
+
+/** 최신 이벤트 응답을 읽는다. 이벤트 ID가 없으면 `null`. 모르는 칸은 빈 값으로 둔다. */
+function readEvent(json: unknown): SentryEvent | null {
+  if (!isRecord(json)) return null;
+  /** 이벤트 ID. 응답에 따라 `eventID`나 `id`로 온다. */
+  const eventId = typeof json.eventID === 'string' && json.eventID !== '' ? json.eventID : typeof json.id === 'string' ? json.id : '';
+  if (eventId === '') return null;
+  /** 이벤트의 항목들. */
+  const entries = Array.isArray(json.entries) ? json.entries.filter(isRecord) : [];
+  /** 종류가 `type`인 첫 항목의 `data`. */
+  const entryData = (type: string): Record<string, unknown> | null => {
+    /** 찾은 항목의 data. */
+    const data = entries.find((entry) => entry.type === type)?.data;
+    return isRecord(data) ? data : null;
+  };
+  /** 예외 항목. */
+  const exception = entryData('exception');
+  /** breadcrumbs 항목. */
+  const breadcrumbs = entryData('breadcrumbs');
+  /** 요청 항목. */
+  const request = entryData('request');
+  /** 사용자. */
+  const user = isRecord(json.user) ? json.user : null;
+  return {
+    eventId,
+    platform: textOrNull(json.platform),
+    release: releaseVersion(json.release),
+    message: textOrNull(json.message) ?? textOrNull(entryData('message')?.formatted),
+    tags: (Array.isArray(json.tags) ? json.tags : []).flatMap((tag) =>
+      isRecord(tag) && typeof tag.key === 'string' && typeof tag.value === 'string' ? [{ key: tag.key, value: clip(tag.value) }] : [],
+    ),
+    exceptions: (Array.isArray(exception?.values) ? exception.values : []).filter(isRecord).map(readException),
+    breadcrumbs: (Array.isArray(breadcrumbs?.values) ? breadcrumbs.values : [])
+      .filter(isRecord)
+      .slice(-MAX_BREADCRUMBS)
+      .map(
+        (crumb): SentryEventBreadcrumb => ({
+          timestamp: textOrNull(crumb.timestamp),
+          category: textOrNull(crumb.category),
+          level: textOrNull(crumb.level),
+          message: textOrNull(crumb.message),
+        }),
+      ),
+    request: request ? { method: textOrNull(request.method), url: urlWithoutQuery(request.url) } : null,
+    user: user ? { id: textOrNull(typeof user.id === 'number' ? String(user.id) : user.id), username: textOrNull(user.username) } : null,
+    contexts: Object.entries(isRecord(json.contexts) ? json.contexts : {}).flatMap(([name, value]) => {
+      /** 컨텍스트 요약. 이름과 버전이 있으면 그것, 없으면 뺀다. */
+      const summary = isRecord(value) ? [textOrNull(value.name), textOrNull(value.version)].filter((part) => part !== null).join(' ') : '';
+      return summary === '' ? [] : [{ name, summary }];
+    }),
+    processingErrors: (Array.isArray(json.errors) ? json.errors : []).flatMap((error) => (isRecord(error) && typeof error.type === 'string' ? [error.type] : [])),
+  };
+}
+
+/** 예외 하나를 읽는다. 프레임은 오류가 난 자리에 가까운 뒤쪽을 최대 수까지 남긴다. */
+function readException(value: Record<string, unknown>): SentryEventException {
+  /** 스택트레이스. */
+  const stacktrace = isRecord(value.stacktrace) ? value.stacktrace : null;
+  /** 프레임. */
+  const frames = (Array.isArray(stacktrace?.frames) ? stacktrace.frames : []).filter(isRecord).slice(-MAX_FRAMES);
+  return {
+    type: stringOr(value.type, ''),
+    value: clip(stringOr(value.value, '')),
+    module: textOrNull(value.module),
+    frames: frames.map(
+      (frame): SentryEventFrame => ({
+        filename: textOrNull(frame.filename) ?? textOrNull(frame.absPath),
+        function: textOrNull(frame.function),
+        lineNo: Number.isInteger(frame.lineNo) ? (frame.lineNo as number) : null,
+        colNo: Number.isInteger(frame.colNo) ? (frame.colNo as number) : null,
+        inApp: frame.inApp === true,
+        context: (Array.isArray(frame.context) ? frame.context : []).flatMap((line) =>
+          Array.isArray(line) && Number.isInteger(line[0]) && typeof line[1] === 'string' ? [[line[0] as number, clip(line[1])] as [number, string]] : [],
+        ),
+      }),
+    ),
+    hasRawStacktrace: isRecord(value.rawStacktrace),
+  };
+}
+
+/** 비어 있지 않은 문자열이면 길이 상한까지 자른 값, 아니면 `null`. */
+function textOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? clip(value) : null;
+}
+
+/** 길이 상한을 넘는 문자열을 자른다. */
+function clip(value: string): string {
+  return value.length > MAX_EVENT_TEXT ? `${value.slice(0, MAX_EVENT_TEXT)}…` : value;
+}
+
+/** 요청 주소에서 쿼리와 조각을 뺀다. 쿼리에 토큰 같은 값이 들 수 있어 진단 입력에 넣지 않는다. 주소가 아니면 `null`. */
+function urlWithoutQuery(value: unknown): string | null {
+  if (typeof value !== 'string' || value === '') return null;
+  return clip(value.split(/[?#]/, 1)[0] ?? '');
 }
 
 /** 문자열이면 그 값, 아니면 `fallback`. */

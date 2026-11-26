@@ -171,10 +171,10 @@ interface RunPaths {
 /**
  * `--skip-git-repo-check`를 붙일지 정한다. Codex는 git 저장소 밖의 첫 루트에서 실행을 거부한다.
  * 점검 실행(앱 전용 빈 폴더)은 git 저장소가 아닌 폴더에서 돌므로 늘 붙인다.
- * 초안 실행은 첫 저장소가 git 저장소 안이면 붙이지 않고, 저장소 매핑이 받는 git이 아닌 코드 폴더일 때만 붙인다.
+ * 초안 실행과 진단 실행은 첫 저장소가 git 저장소 안이면 붙이지 않고, 저장소 매핑이 받는 git이 아닌 코드 폴더일 때만 붙인다.
  */
 async function needsGitRepoCheckSkip(kind: RunKind, cwd: string): Promise<boolean> {
-  return kind !== 'draft' || !(await isInsideGitRepo(cwd));
+  return kind === 'check' || !(await isInsideGitRepo(cwd));
 }
 
 /** `dir`이나 그 위 폴더에 `.git`(폴더, 또는 worktree·서브모듈의 파일)이 있는지 본다. Codex가 git 저장소를 찾는 방식과 같다. */

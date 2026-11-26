@@ -1337,6 +1337,53 @@ p.post-status-line.failure {
   margin: 0;
 }
 
+/* 진단 상세의 구역 이름. 접고 펴지 않으므로 초안 영역 머리와 같은 글자 모양만 쓴다. */
+.section-title {
+  margin: 0;
+  padding: 7px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 구역 이름 옆의 재현 결과·확신도. */
+.section-aside {
+  font-weight: 400;
+}
+
+/* 진단의 오류 정보·실행 정보 표. */
+.diagnosis-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.diagnosis-fact {
+  display: contents;
+}
+
+.diagnosis-fact dt {
+  color: var(--muted);
+}
+
+.diagnosis-fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* 진단 보고서의 개선 방향·남은 의문·재현 순서. */
+.diagnosis-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.diagnosis-list li + li {
+  margin-top: 2px;
+}
+
 /* 원문 영역: 묶인 멘션을 시간순으로 쌓는다. */
 .mention-list {
   margin: 0;

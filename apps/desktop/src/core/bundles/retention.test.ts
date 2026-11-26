@@ -320,3 +320,75 @@ describe('보관: 최소 기록', () => {
     retention.stop();
   });
 });
+
+describe('보관: 완료함 진단의 7일', () => {
+  /** 정리 호출을 세는 가짜 묶음과 진단. 묶음 쪽은 할 일이 없다. */
+  function counting() {
+    const clock = new FakeClock(NOW);
+    const logger = createLogger([{ write: () => {} }], clock);
+    /** 진단 정리를 부른 횟수. */
+    const calls = { diagnoses: 0 };
+    const retention = new BundleRetention({
+      bundles: { archiveExpired: async () => 0, deleteUnusedAccounts: async () => 0 },
+      diagnoses: {
+        archiveExpired: async () => {
+          calls.diagnoses += 1;
+          return 0;
+        },
+      },
+      clock,
+      logger,
+    });
+    return { clock, calls, retention };
+  }
+
+  it('앱을 켤 때, 하루마다, 잠자기에서 깨어날 때 완료함에서 7일이 지난 진단을 정리한다', async () => {
+    const { clock, calls, retention } = counting();
+
+    retention.start();
+    await settle();
+    expect(calls.diagnoses).toBe(1);
+
+    clock.advance(DAY_MS);
+    await settle();
+    expect(calls.diagnoses).toBe(2);
+
+    retention.cleanUpNow();
+    await settle();
+    expect(calls.diagnoses).toBe(3);
+    retention.stop();
+  });
+
+  it('진단 정리가 실패해도 묶음 정리와 다음 정리는 멈추지 않는다', async () => {
+    const clock = new FakeClock(NOW);
+    const logged: string[] = [];
+    const logger = createLogger([{ write: (line) => logged.push(line) }], clock);
+    /** 묶음 정리를 부른 횟수. */
+    let bundleCalls = 0;
+    const retention = new BundleRetention({
+      bundles: {
+        archiveExpired: async () => {
+          bundleCalls += 1;
+          return 0;
+        },
+        deleteUnusedAccounts: async () => 0,
+      },
+      diagnoses: {
+        archiveExpired: async () => {
+          throw new Error('정리 실패');
+        },
+      },
+      clock,
+      logger,
+    });
+
+    retention.start();
+    await settle();
+    clock.advance(DAY_MS);
+    await settle();
+
+    expect(bundleCalls).toBe(2);
+    expect(logged.join('\n')).toContain('retention.diagnosis-cleanup-failed');
+    retention.stop();
+  });
+});

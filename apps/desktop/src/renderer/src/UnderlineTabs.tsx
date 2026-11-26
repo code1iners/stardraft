@@ -22,13 +22,15 @@ interface UnderlineTabsProps<Id extends string> {
   selected: Id;
   /** 탭을 골랐을 때. */
   onSelect: (id: Id) => void;
+  /** 탭 목록에 더할 클래스. 설정 칸 밖에서 쓸 때 여백과 너비를 바꾼다. */
+  className?: string;
 }
 
 /**
  * 설정 칸 안의 밑줄형 탭. 고른 탭 아래에 강조색 밑줄을 긋고, 탭마다 점 하나까지 찍을 수 있다.
  * 왼쪽·오른쪽 화살표로 옆 탭을 고른다. 내용은 부르는 쪽이 `tabPanelId`의 id로 그린다.
  */
-export function UnderlineTabs<Id extends string>({ label, idPrefix, tabs, selected, onSelect }: UnderlineTabsProps<Id>) {
+export function UnderlineTabs<Id extends string>({ label, idPrefix, tabs, selected, onSelect, className }: UnderlineTabsProps<Id>) {
   /** 화살표 키로 옆 탭을 고르고 그 탭에 초점을 옮긴다. */
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -43,7 +45,7 @@ export function UnderlineTabs<Id extends string>({ label, idPrefix, tabs, select
   };
 
   return (
-    <div className="underline-tabs" role="tablist" aria-label={label} onKeyDown={handleKeyDown}>
+    <div className={className ? `underline-tabs ${className}` : 'underline-tabs'} role="tablist" aria-label={label} onKeyDown={handleKeyDown}>
       {tabs.map((tab) => (
         <button
           key={tab.id}

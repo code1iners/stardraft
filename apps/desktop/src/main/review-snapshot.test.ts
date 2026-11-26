@@ -1004,6 +1004,8 @@ describe('진단 스냅숏', () => {
       report: null,
       failure: null,
       completedAt: null,
+      canOpenInSentry: false,
+      attachments: [],
       issue: {
         shortId: 'WEB-1',
         culprit: 'app/checkout',
@@ -1018,6 +1020,23 @@ describe('진단 스냅숏', () => {
         projectName: '가짜 프로젝트',
       },
     });
+  });
+
+  it('[Sentry에서 열기]는 공식 sentry.io 주소가 있을 때만 열 수 있다고 넘기고 주소 자체는 넘기지 않는다', () => {
+    /** 주소만 다른 진단. */
+    const withLink = (permalink: string | null) => diagnosis(1, { issue: { ...diagnosis(1).issue, permalink } });
+    const snapshots = diagnosisSnapshots([
+      withLink('https://org-a.sentry.io/issues/1/'),
+      withLink('https://sentry.io/organizations/org-a/issues/1/'),
+      withLink('http://org-a.sentry.io/issues/1/'),
+      withLink('https://evil.example/issues/1/'),
+      withLink('https://notsentry.io/issues/1/'),
+      withLink('javascript:alert(1)'),
+      withLink(null),
+    ]);
+
+    expect(snapshots.map((item) => item.canOpenInSentry)).toEqual([true, true, false, false, false, false, false]);
+    expect(JSON.stringify(snapshots)).not.toContain('sentry.io/issues');
   });
 
   it('대기 진단은 생성 대기열이 진행하고 있으면 진행 중으로 넘기고, 기다리면 앞에 있는 수를 넘긴다', () => {

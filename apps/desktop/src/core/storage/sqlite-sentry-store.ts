@@ -15,6 +15,23 @@ import type { StateDatabase } from './state-database';
 /** 중복 억제 키의 이벤트 ID 열에 신규를 적는 값. 기본 키 열이라 `NULL`을 쓰지 않는다. */
 const NEW_ISSUE_EVENT_ID = '';
 
+/** 목록에서 사라진 완료 진단에 남기는 오류 이슈 정보. 최소 기록에는 오류 이슈 ID만 있고 나머지는 비운다. */
+const BLANK_ISSUE: DiagnosisIssue = {
+  shortId: '',
+  title: '',
+  culprit: '',
+  level: '',
+  environment: null,
+  firstSeen: 0,
+  lastSeen: null,
+  count: null,
+  userCount: null,
+  permalink: null,
+  platform: null,
+  organizationName: '',
+  projectName: '',
+};
+
 /** `sentry_diagnosis` 한 줄. */
 interface DiagnosisRow {
   /** 진단 ID. */
@@ -116,6 +133,18 @@ export class SqliteSentryStore implements SentryStore {
 
   async removeDiagnosis(id: number): Promise<void> {
     this.db.prepare('DELETE FROM sentry_diagnosis WHERE id = ?').run(id);
+  }
+
+  async scrubCompleted(ids: readonly number[]): Promise<void> {
+    /** 비운 오류 이슈 정보. */
+    const blankIssue = JSON.stringify(BLANK_ISSUE);
+    /** 줄 하나를 비우는 문장. 완료가 아닌 줄은 건드리지 않는다. */
+    const scrub = this.db.prepare(
+      "UPDATE sentry_diagnosis SET issue = ?, report = NULL, failure = NULL, runs = '[]', repo_check = NULL WHERE id = ? AND status = 'completed'",
+    );
+    this.db.transaction(() => {
+      for (const id of ids) scrub.run(blankIssue, id);
+    })();
   }
 
   async removeProject(projectId: string, statuses: readonly DiagnosisStatus[]): Promise<number[]> {

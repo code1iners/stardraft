@@ -33,6 +33,11 @@ export interface SentryStore {
   updateDiagnosis(diagnosis: SentryDiagnosis): Promise<void>;
   /** 진단 하나를 지운다. 중복 억제 기록은 그대로 둔다. */
   removeDiagnosis(id: number): Promise<void>;
+  /**
+   * 목록에서 사라진 완료 진단을 최소 기록(오류 이슈 ID, 재발 식별자, 완료 시각)만 남기고 비운다.
+   * 오류 제목 같은 오류 이슈 정보와 남은 본문을 지우고 줄은 둔다. 이미 비운 진단에 다시 불러도 같다.
+   */
+  scrubCompleted(ids: readonly number[]): Promise<void>;
   /** 등록을 푼 프로젝트의 체크포인트와 중복 억제 기록, 주어진 상태의 진단을 한 트랜잭션으로 지운다. 지운 진단 ID를 돌려준다. */
   removeProject(projectId: string, statuses: readonly DiagnosisStatus[]): Promise<number[]>;
 }

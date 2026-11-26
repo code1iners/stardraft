@@ -1,5 +1,5 @@
 import type { RunRecord } from '../generation/generation-run';
-import type { Logger } from '../logging/logger';
+import { errorFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
 import type { SentryErrorIssue, SentryIssueStatus } from '../ports/sentry-api';
@@ -56,8 +56,21 @@ export interface SentryDiagnosesOptions {
   resolveRepo: (projectId: string) => Promise<SentryRepoResolution>;
   /** 조회 결과를 저장하기 직전에 등록이 그대로인지 본다. 없으면 늘 그대로로 본다. */
   isRegistered?: (registration: SentryProjectRegistration) => boolean;
-  /** 완료 시각을 읽는 시계. 없으면 시스템 시각이다. */
+  /** 완료 시각과 완료함의 7일을 읽는 시계. 없으면 시스템 시각이다. */
   clock?: Clock;
+  /** 완료하거나 완료함에서 사라질 진단의 첨부 폴더를 지운다. 없으면 지우지 않는다. 폴더가 없어도 실패하지 않아야 한다. */
+  removeAttachments?: (diagnosisId: number) => Promise<void>;
+}
+
+/** 하루(밀리초). */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 완료한 진단을 목록에 `완료함`으로 남기는 기간. 완료한 때부터 센다. 설정에서 바꿀 수 없다. */
+export const COMPLETED_RETENTION_MS = 7 * DAY_MS;
+
+/** 완료함에서 사라질 때가 됐는지 본다. 완료한 지 7일이 된 완료 진단이다. */
+function isExpired(diagnosis: Pick<SentryDiagnosis, 'status' | 'completedAt'>, now: number): boolean {
+  return diagnosis.status === 'completed' && diagnosis.completedAt !== null && now - diagnosis.completedAt >= COMPLETED_RETENTION_MS;
 }
 
 /**
@@ -77,12 +90,28 @@ export class SentryDiagnoses {
 
   constructor(private readonly options: SentryDiagnosesOptions) {}
 
-  /** 저장된 진단을 읽는다. 앱이 시작할 때 한 번 부른다. */
+  /**
+   * 저장된 진단을 읽는다. 앱이 시작할 때 한 번 부른다. 완료함에서 사라질 때가 된 완료 진단은 목록에 올리지 않고 최소 기록만 남긴다
+   * (앱이 꺼진 사이 7일이 지난 진단도 여기서 비운다).
+   * 표에 없는 진단의 첨부 폴더를 치우는 일은 부르는 쪽이 `ids()`로 한다.
+   */
   async load(): Promise<void> {
     await this.updates.run(async () => {
-      this.diagnoses = await this.options.store.listDiagnoses();
+      /** 저장된 진단 전부. */
+      const stored = await this.options.store.listDiagnoses();
+      /** 지금 시각. */
+      const now = this.now();
+      this.diagnoses = stored.filter((item) => !isExpired(item, now));
+      /** 앱이 꺼진 사이 7일이 지났지만 아직 오류 정보가 남은 완료 진단. 이미 비운 진단은 다시 쓰지 않는다. */
+      const unscrubbed = stored.filter((item) => isExpired(item, now) && item.issue.projectName !== '').map((item) => item.id);
+      if (unscrubbed.length > 0) await this.options.store.scrubCompleted(unscrubbed);
     });
     this.emit();
+  }
+
+  /** 지금 목록에 있는 진단 ID. 표에 없는 진단의 첨부 폴더를 치울 때 쓴다. */
+  ids(): number[] {
+    return this.diagnoses.map((item) => item.id);
   }
 
   /** 진단 전부. ID 순서다. */
@@ -127,11 +156,17 @@ export class SentryDiagnoses {
 
   /** 보고서를 저장해 검토 대기로 둔다. 그사이 대기가 아니게 되었으면(취소, 등록 해제) 저장하지 않고 거짓이다. */
   async saveReport(id: number, report: DiagnosisReport, runs: readonly RunRecord[]): Promise<boolean> {
-    return this.change(id, (diagnosis) => {
+    /** 알릴 진단. 저장하지 못했으면 `null`. */
+    let announce: SentryDiagnosis | null = null;
+    /** 저장했는지 여부. */
+    const saved = await this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'queued') return false;
       Object.assign(diagnosis, { status: 'ready', report, failure: null, runs: [...diagnosis.runs, ...runs] });
+      announce = structuredClone(diagnosis);
       return true;
     });
+    if (saved && announce) this.options.notifier.notify(reportReadyNotification(announce));
+    return saved;
   }
 
   /**
@@ -189,17 +224,45 @@ export class SentryDiagnoses {
   }
 
   /**
-   * 진단 실패를 완료한다. 최소 기록(오류 이슈 ID, 재발 식별자, 완료 시각)만 남기고 실패·실행 기록을 지운다.
-   * 지울 본문이 없어 확인 없이 부른다. Sentry에는 아무 요청도 보내지 않는다. 검토 대기 보고서의 완료는 검토 화면 단계가 더한다.
+   * 진단을 완료한다. 진단 실패와 검토 대기 보고서가 대상이다. 최소 기록(오류 이슈 ID, 재발 식별자, 완료 시각)만 남기고
+   * 보고서·실패·실행 기록과 첨부 폴더를 지운다. 완료한 진단은 7일 동안 `완료함`으로 목록에 남는다.
+   * Sentry에는 아무 요청도 보내지 않고 되돌릴 수 없다. 대기·진행 중(다시 진단 포함)이거나 이미 완료한 진단이면 아무것도 하지 않는다.
+   * 지금 보이는 보고서를 내보냈는지 묻는 확인은 부르는 쪽(내보내기 단계)이 거친다.
    */
   async complete(id: number): Promise<void> {
     /** 완료 시각. */
-    const now = this.options.clock?.now() ?? Date.now();
-    await this.change(id, (diagnosis) => {
-      if (diagnosis.status !== 'failed') return false;
+    const now = this.now();
+    /** 완료했는지 여부. */
+    const completed = await this.change(id, (diagnosis) => {
+      if (diagnosis.status !== 'failed' && diagnosis.status !== 'ready') return false;
       Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now });
       return true;
     });
+    if (completed) await this.removeAttachmentsOf(id);
+  }
+
+  /**
+   * 완료한 지 7일이 된 진단을 목록에서 빼고 최소 기록만 남긴다(첨부 폴더도 지운다). 앱을 켤 때와 하루에 한 번, 잠자기에서 깰 때 부른다.
+   * 프로젝트 등록을 풀어도 완료 진단은 남으므로 프로젝트와 무관하게 센다. 뺀 진단 수를 돌려준다.
+   */
+  async archiveExpired(): Promise<number> {
+    /** 목록에서 뺀 진단 ID. */
+    const expired = await this.updates.run(async () => {
+      /** 지금 시각. */
+      const now = this.now();
+      /** 사라질 진단 ID. */
+      const ids = this.diagnoses.filter((item) => isExpired(item, now)).map((item) => item.id);
+      if (ids.length === 0) return ids;
+      await this.options.store.scrubCompleted(ids);
+      this.diagnoses = this.diagnoses.filter((item) => !ids.includes(item.id));
+      return ids;
+    });
+    for (const id of expired) await this.removeAttachmentsOf(id);
+    if (expired.length > 0) {
+      this.options.logger.info('sentry-diagnoses.archived', { count: expired.length });
+      this.emit();
+    }
+    return expired.length;
   }
 
   /** 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
@@ -332,9 +395,14 @@ export class SentryDiagnoses {
     this.emit();
   }
 
-  /** 트레이 검토 수에 더할 수. 저장소 대기는 프로젝트마다 1로 센다. */
+  /** 트레이 검토 수에 더할 수. 검토 대기 보고서는 건마다, 저장소 대기는 프로젝트마다 1로 센다. */
   reviewCount(): number {
-    return new Set(this.diagnoses.filter(isRepoWaiting).map((item) => item.projectId)).size;
+    return this.diagnoses.filter((item) => item.status === 'ready').length + new Set(this.diagnoses.filter(isRepoWaiting).map((item) => item.projectId)).size;
+  }
+
+  /** 진단 실패가 있는지 본다. 트레이에 "!"로만 보이고 OS 알림은 없다. */
+  hasFailure(): boolean {
+    return this.diagnoses.some((item) => item.status === 'failed');
   }
 
   /** 프로젝트에서 저장소 매핑이 없어 기다리는 진단 수. 설정의 "저장소 매핑 없음 · n건 대기"다. */
@@ -351,6 +419,20 @@ export class SentryDiagnoses {
     const firsts = new Map<string, SentryDiagnosis>();
     for (const diagnosis of waiting) if (!firsts.has(diagnosis.projectId)) firsts.set(diagnosis.projectId, diagnosis);
     for (const first of firsts.values()) this.options.notifier.notify(repoWaitNotification(first));
+  }
+
+  /** 지금 시각. */
+  private now(): number {
+    return this.options.clock?.now() ?? Date.now();
+  }
+
+  /** 진단의 첨부 폴더를 지운다. 실패해도 완료는 되돌리지 않고 로그만 남긴다. 다음 시작 때 표에 없는 폴더로 치워진다. */
+  private async removeAttachmentsOf(id: number): Promise<void> {
+    try {
+      await this.options.removeAttachments?.(id);
+    } catch (error) {
+      this.options.logger.warn('sentry-diagnoses.attachments-remove-failed', errorFields(error));
+    }
   }
 
   /** 진단 하나. 복사하지 않은 원본이다. */
@@ -408,4 +490,20 @@ function repoWaitNotification(first: SentryDiagnosis): AppNotification {
     return { title: '저장소 확인 필요', body: `${project}에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.`, target };
   }
   return { title: '저장소 매핑 필요', body: `${project}에 연결한 저장소가 없습니다. 매핑하면 기다리는 오류를 진단합니다.`, target };
+}
+
+/** 재현 결과를 알림 본문에 쓰는 말. 불가는 "재현 안 함"이다. */
+const REPRODUCTION_RESULT_TEXT = { success: '재현 성공.', failure: '재현 실패.', impossible: '재현 안 함.' } as const;
+
+/** 진단 보고서 준비됨 OS 알림. 본문에는 프로젝트 이름과 재현 결과만 넣고 오류 제목과 메시지는 넣지 않는다. */
+function reportReadyNotification(diagnosis: SentryDiagnosis): AppNotification {
+  /** 본문에 쓸 프로젝트 이름. */
+  const project = diagnosis.issue.projectName || '이 프로젝트';
+  /** 재현 결과. 보고서가 없을 수는 없지만 없으면 재현 안 함으로 본다. */
+  const result = diagnosis.report?.reproduction.result ?? 'impossible';
+  return {
+    title: '진단 보고서 준비됨',
+    body: `${project}의 오류를 진단했습니다. ${REPRODUCTION_RESULT_TEXT[result]}`,
+    target: { kind: 'diagnosis', id: diagnosis.id },
+  };
 }

@@ -22,7 +22,7 @@ function viewFor(name: string | null) {
     return <SettingsView initialSection={params.get('section')} initialProjectId={params.get('project')} initialSentryProjectId={params.get('sentryProject')} />;
   }
   if (name === 'review') return <ReviewView initialBundleId={initialBundleId} initialDiagnosisId={initialDiagnosisId} />;
-  return <PopoverView initialBundleId={initialBundleId} />;
+  return <PopoverView initialBundleId={initialBundleId} initialDiagnosisId={initialDiagnosisId} />;
 }
 
 if (root) {

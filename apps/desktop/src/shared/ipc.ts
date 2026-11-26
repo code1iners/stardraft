@@ -15,7 +15,7 @@ export const IPC_CHANNELS = {
 } as const;
 
 /** 설정 창의 칸. 왼쪽 칸 목록에 이 순서로 보인다. */
-export const SETTINGS_SECTIONS = ['flow-account', 'agent', 'repositories', 'drafts', 'general'] as const;
+export const SETTINGS_SECTIONS = ['flow-account', 'sentry', 'agent', 'repositories', 'drafts', 'general'] as const;
 
 /** 설정 창의 칸 하나. */
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -34,6 +34,9 @@ export type SiteSection = (typeof SITE_SECTIONS)[number];
 
 /** 키 확인 명령이 받는 키의 최대 길이. 이보다 긴 값은 키가 아니므로 main에 보내지 않는다. */
 export const FLOW_API_KEY_MAX_LENGTH = 512;
+
+/** 토큰 확인 명령이 받는 Sentry 토큰의 최대 길이. 이보다 긴 값은 토큰이 아니므로 main에 보내지 않는다. */
+export const SENTRY_TOKEN_MAX_LENGTH = 512;
 
 /** 앱이 실행할 수 있는 에이전트. */
 export const AGENT_IDS = ['claude-code', 'codex'] as const;
@@ -106,15 +109,51 @@ export interface FlowAccountSnapshot {
   keyCheck: FlowKeyCheckState;
 }
 
+/** "Sentry" 칸의 토큰 카드에 보일 조직. 지역 주소는 화면에 쓰지 않으므로 넘기지 않는다. */
+export interface SentryOrganizationSnapshot {
+  /** 조직 이름. */
+  name: string;
+}
+
+/** 토큰 확인의 진행 상태. */
+export type SentryTokenCheckState = { status: 'idle' } | { status: 'checking' };
+
+/** 토큰 확인이 실패한 이유. `scope-missing`은 `org:read`가 빠진 것, `no-organizations`는 보이는 조직이 없는 것이다. */
+export type SentryTokenCheckFailure =
+  | 'unauthorized'
+  | 'scope-missing'
+  | 'no-organizations'
+  | 'network'
+  | 'rate-limited'
+  | 'unexpected'
+  | 'save-failed';
+
+/** "Sentry" 칸이 그릴 상태. */
+export interface SentryConnectionSnapshot {
+  /** 토큰을 연결했는지 여부. 거부됐거나 읽을 수 없는 토큰도 연결한 것으로 본다. 아니면 토큰 입력만 보인다. */
+  connected: boolean;
+  /** 토큰으로 보이는 조직. */
+  organizations: SentryOrganizationSnapshot[];
+  /** 토큰 확인의 진행 상태. */
+  tokenCheck: SentryTokenCheckState;
+  /** "토큰 확인 필요"의 이유. 문제가 없으면 `null`. 다른 전역 문제에 가려도 토큰 카드는 이 값으로 이유를 보인다. */
+  tokenProblem: SentryTokenProblemReason | null;
+}
+
 /** 감지를 멈추게 하는 전역 문제. 작은 창 띠, 트레이 메뉴, OS 알림에 하나만 보인다. */
 export type GlobalProblemSnapshot =
   /** 키 확인 필요. */
   | { cause: 'flow-key'; reason: FlowKeyProblemReason }
+  /** 토큰 확인 필요. Sentry 감지만 멈춘다. */
+  | { cause: 'sentry-token'; reason: SentryTokenProblemReason }
   /** 에이전트 확인 필요. `agent`는 실패한 에이전트다. */
   | { cause: 'agent'; agent: AgentId; reason: AgentProblemReason };
 
 /** "키 확인 필요"가 생긴 이유. `rejected`는 Flow가 키를 거부한 것(`401`), `unreadable`은 저장된 키를 읽을 수 없는 것이다. */
 export type FlowKeyProblemReason = 'rejected' | 'unreadable';
+
+/** "토큰 확인 필요"가 생긴 이유. 거부(`401`), scope 부족(`403`), 저장된 토큰을 읽을 수 없음이다. */
+export type SentryTokenProblemReason = 'rejected' | 'scope-missing' | 'unreadable';
 
 /** 에이전트 전역 실패의 이유. CLI 없음, 미로그인, CLI 업데이트 필요, 점검 실행(작동 확인) 실패다. */
 export type AgentProblemReason = 'cli-missing' | 'not-logged-in' | 'update-required' | 'check-failed';
@@ -304,8 +343,12 @@ export interface OnboardingSnapshot {
   requirements: Record<SetupRequirement, SetupRequirementStatus>;
   /** 필수 설정이 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
   ready: boolean;
-  /** 감지할 대상(Flow 계정)을 하나라도 연결했는지 여부. 없으면 [감지 시작] 위에 안내 문구를 보인다. */
+  /** 감지할 대상(Flow 계정, Sentry)을 하나라도 연결했는지 여부. 없으면 [감지 시작] 위에 안내 문구를 보인다. */
   hasDetectionTarget: boolean;
+  /** Flow 계정이 연결되어 있고 "키 확인 필요"가 없는지 여부. 체크리스트 Flow 줄이 `✓`나 "연결 안 함"을 보인다. */
+  flowConnected: boolean;
+  /** Sentry 토큰이 연결되어 있고 "토큰 확인 필요"가 없는지 여부. 체크리스트 Sentry 줄이 `✓`나 "연결 안 함"을 보인다. */
+  sentryConnected: boolean;
   /** [감지 시작]의 진행 상태. */
   start: DetectionStartSnapshot;
 }
@@ -873,6 +916,8 @@ export interface AppSnapshot {
   platform: 'darwin' | 'win32' | 'other';
   /** "Flow 계정" 칸의 상태. */
   flowAccount: FlowAccountSnapshot;
+  /** "Sentry" 칸의 상태. */
+  sentry: SentryConnectionSnapshot;
   /** 지금 보일 전역 문제. 없으면 `null`. */
   globalProblem: GlobalProblemSnapshot | null;
   /** 이 OS의 후보 에이전트마다의 연결 확인 상태. 후보 순서다(macOS는 Claude Code와 Codex, Windows는 Claude Code). */
@@ -907,6 +952,10 @@ export type AppEvent =
   | { type: 'flow-account-changed'; flowAccount: FlowAccountSnapshot }
   /** 키 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인과 확인을 기다리는 경우는 알리지 않는다. */
   | { type: 'flow-key-check-finished'; result: 'connected' | FlowKeyCheckFailure }
+  /** "Sentry" 칸의 상태가 바뀌었다. */
+  | { type: 'sentry-changed'; sentry: SentryConnectionSnapshot }
+  /** 토큰 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인은 알리지 않는다. */
+  | { type: 'sentry-token-check-finished'; result: 'connected' | SentryTokenCheckFailure }
   /** 보일 전역 문제가 바뀌었다. */
   | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null }
   /** 에이전트 연결 확인 상태가 바뀌었다. */
@@ -952,6 +1001,12 @@ export type AppCommand =
   | { type: 'confirm-flow-account-switch' }
   /** 진행 중인 키 확인이나 확인을 기다리는 계정 바꾸기를 그만둔다. */
   | { type: 'cancel-flow-key-check' }
+  /** 붙여 넣은 Sentry 개인 토큰을 조직 목록으로 확인한다. 성공하면 main이 토큰을 저장한다. */
+  | { type: 'check-sentry-token'; token: string }
+  /** 진행 중인 토큰 확인을 그만둔다. */
+  | { type: 'cancel-sentry-token-check' }
+  /** Sentry 연결을 끊는다. 토큰만 지운다. */
+  | { type: 'disconnect-sentry' }
   /** 이 OS의 후보 에이전트를 모두 확인한다. 에이전트 칸을 열 때 쓴다. 저장한 CLI 경로가 있으면 그대로 쓴다. */
   | { type: 'check-agents' }
   /** 에이전트 하나의 연결을 확인한다. [다시 확인]에 쓴다. */
@@ -1189,6 +1244,11 @@ function isReviewSection(value: unknown): value is ReviewSection {
   return typeof value === 'string' && (REVIEW_SECTIONS as readonly string[]).includes(value);
 }
 
+/** 토큰 확인 명령에 실을 수 있는 토큰인지 확인한다. 앞뒤 공백 정리는 main이 한다. */
+function isSentryTokenInput(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '' && value.length <= SENTRY_TOKEN_MAX_LENGTH;
+}
+
 /** 키 확인 명령에 실을 수 있는 키인지 확인한다. 앞뒤 공백 정리와 키 형식 판단은 main이 한다. */
 function isFlowApiKeyInput(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '' && value.length <= FLOW_API_KEY_MAX_LENGTH;
@@ -1216,6 +1276,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isUpdateBannerInput(candidate.banner) ? { type: 'dismiss-update-banner', banner: candidate.banner } : null;
     case 'check-flow-key':
       return isFlowApiKeyInput(candidate.apiKey) ? { type: 'check-flow-key', apiKey: candidate.apiKey } : null;
+    case 'check-sentry-token':
+      return isSentryTokenInput(candidate.token) ? { type: 'check-sentry-token', token: candidate.token } : null;
     case 'set-default-agent':
       return isAgentId(candidate.agent) ? { type: 'set-default-agent', agent: candidate.agent } : null;
     case 'check-agent':
@@ -1311,6 +1373,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'close-editor-picker':
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
+    case 'cancel-sentry-token-check':
+    case 'disconnect-sentry':
     case 'check-agents':
     case 'refresh-repo-mappings':
     case 'start-detection':

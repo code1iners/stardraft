@@ -8,7 +8,7 @@ import {
 } from '../../shared/ipc';
 import {
   DETECTION_START_FAILURE_MESSAGES,
-  DETECTION_TARGET_LABEL,
+  DETECTION_TARGET_LABELS,
   detectionStartHints,
   NO_DETECTION_TARGET_NOTICE,
   SETUP_BAND_TEXT,
@@ -43,14 +43,16 @@ function sendOpenSettings(section?: SettingsSection): void {
 }
 
 /**
- * 작은 창의 체크리스트. "필수" 묶음(에이전트 연결)과 "감지할 대상 · 선택" 묶음(Flow 계정)으로 나눈다.
+ * 작은 창의 체크리스트. "필수" 묶음(에이전트 연결)과 "감지할 대상 · 선택" 묶음(Flow 계정, Sentry)으로 나눈다.
  * 필수를 마치면 [감지 시작]을 보이고, 연결한 서비스가 없으면 그 위에 안내를 보인다. 막지는 않는다.
  */
 export function SetupChecklist({ snapshot }: OnboardingProps) {
   /** 온보딩 상태. */
-  const { requirements, ready, start, hasDetectionTarget } = snapshot.onboarding;
+  const { requirements, ready, start, hasDetectionTarget, flowConnected, sentryConnected } = snapshot.onboarding;
   /** Flow 계정 줄의 설명. 연결했으면 계정 이름과 소속이다. */
   const account = snapshot.flowAccount.account;
+  /** Sentry 줄의 설명. 연결했으면 조직 수다. */
+  const organizationCount = snapshot.sentry.organizations.length;
 
   return (
     <main className="popover-body">
@@ -80,10 +82,20 @@ export function SetupChecklist({ snapshot }: OnboardingProps) {
       <h3 className="setup-group-title">{SETUP_GROUP_LABELS.targets}</h3>
       <button type="button" className="setup-row" onClick={() => sendOpenSettings('flow-account')}>
         <span className="setup-row-text">
-          <span className="setup-row-title">{DETECTION_TARGET_LABEL}</span>
-          {hasDetectionTarget && account && <span className="setup-row-detail">{account.division ? `${account.name} · ${account.division}` : account.name}</span>}
+          <span className="setup-row-title">{DETECTION_TARGET_LABELS.flow}</span>
+          {flowConnected && account && <span className="setup-row-detail">{account.division ? `${account.name} · ${account.division}` : account.name}</span>}
         </span>
-        <span className={`setup-row-status ${hasDetectionTarget ? 'ok-text' : 'muted'}`}>{hasDetectionTarget ? '✓' : '연결 안 함'}</span>
+        <span className={`setup-row-status ${flowConnected ? 'ok-text' : 'muted'}`}>{flowConnected ? '✓' : '연결 안 함'}</span>
+        <span className="setup-row-go muted" aria-hidden="true">
+          ›
+        </span>
+      </button>
+      <button type="button" className="setup-row" onClick={() => sendOpenSettings('sentry')}>
+        <span className="setup-row-text">
+          <span className="setup-row-title">{DETECTION_TARGET_LABELS.sentry}</span>
+          {sentryConnected && organizationCount > 0 && <span className="setup-row-detail">조직 {organizationCount}개</span>}
+        </span>
+        <span className={`setup-row-status ${sentryConnected ? 'ok-text' : 'muted'}`}>{sentryConnected ? '✓' : '연결 안 함'}</span>
         <span className="setup-row-go muted" aria-hidden="true">
           ›
         </span>

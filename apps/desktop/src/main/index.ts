@@ -8,6 +8,8 @@ import { AgentPreferences } from '../core/agent/agent-preferences';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { AccountRecords } from '../core/account/account-records';
 import { FlowAccount, type FlowAccountRecords } from '../core/account/flow-account';
+import { HttpSentryApi } from '../core/sentry/http-sentry-api';
+import { SentryConnection, type SentryConnectionState } from '../core/sentry/sentry-connection';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { BundleRetention } from '../core/bundles/retention';
 import { RepoWaitMonitor } from '../core/bundles/repo-wait-monitor';
@@ -156,11 +158,23 @@ function start(): void {
       problems: globalProblems,
     });
     await flowAccount.load();
+    /** 설정 창 "Sentry" 칸의 토큰 확인과 조직. 토큰 문제는 Sentry 전역 문제만 올려 Flow 감지와 Flow 초안을 멈추지 않는다. Sentry 요청도 Chromium 네트워크로 보낸다. */
+    const sentryConnection = new SentryConnection({
+      connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
+      tokenStore: appData.sentryTokenStore,
+      settingsStore: appData.settingsStore,
+      logger,
+      problems: globalProblems,
+    });
+    await sentryConnection.load();
 
     /** 작은 창과 설정 창. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로도 잡는다. */
     const appWindows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
       // 설정 창을 닫으면 그 창에서 시작한 키 확인과 확인을 기다리던 계정 바꾸기를 그만둔다.
-      onSettingsClosed: () => flowAccount.cancelKeyCheck(),
+      onSettingsClosed: () => {
+        flowAccount.cancelKeyCheck();
+        sentryConnection.cancelTokenCheck();
+      },
       // 다시 시작 확인 화면을 띄운 작은 창을 닫으면 [나중에]와 같다.
       onPopoverClosed: () => appRestart?.cancelConfirm(),
     });
@@ -329,6 +343,7 @@ function start(): void {
       setupInputs: () => ({
         // Flow 계정은 감지할 대상(선택)이다. 필수 설정은 에이전트 연결 하나다.
         keyVerified: flowAccount.state().account !== null && !globalProblems.has('flow-key'),
+        sentryConnected: isSentryUsable(sentryConnection.state()),
         // 하나라도 연결되면 연결됨이다. 시작할 때 연결 확인이 돌기 전도 확인 중으로 본다.
         agent: agentConnections.setupStatus(),
       }),
@@ -338,6 +353,7 @@ function start(): void {
     /** 온보딩 상태를 다시 본다. */
     const refreshOnboarding = () => onboarding.refresh();
     flowAccount.onChange(refreshOnboarding);
+    sentryConnection.onChange(refreshOnboarding);
     globalProblems.onChange(refreshOnboarding);
     agentConnections.onChange(refreshOnboarding);
     /** 담당 업무 감지 상태를 읽을 저장소. 함수 안에서는 `appData`가 null이 아님을 알 수 없어 따로 잡아 둔다. */
@@ -415,6 +431,7 @@ function start(): void {
       windows: appWindows,
       logger,
       flowAccount,
+      sentryConnection,
       globalProblems,
       agentConnections,
       agentPreferences,
@@ -522,6 +539,10 @@ function start(): void {
         void draftQueue.start();
         bundlePosting.recoverAfterRestart();
       });
+    // 저장된 Sentry 토큰도 트레이를 띄운 뒤에 읽는다. 키체인 재허용 때문에 끝나지 않을 수 있어 시작을 막지 않는다. 실패는 상태로 남기고 던지지 않는다.
+    void sentryConnection
+      .checkStoredToken()
+      .catch((error: unknown) => logger.error('sentry-connection.stored-token-check-failed', errorFields(error)));
     // 앱을 시작할 때 후보 에이전트의 연결을 확인한다(작동 확인 포함). 쓸 에이전트가 없으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
     void agentConnections.checkAll();
     // 켜고 1분 뒤 처음 확인하고, 그 뒤 4시간마다 확인한다.
@@ -553,6 +574,11 @@ async function prepareQuit(): Promise<void> {
   } catch (error) {
     logger.error('app.quit-cleanup-failed', errorFields(error));
   }
+}
+
+/** 토큰을 연결했고 "토큰 확인 필요"가 없어 Sentry를 쓸 수 있는지 본다. */
+function isSentryUsable({ connected, problem }: SentryConnectionState): boolean {
+  return connected && problem === null;
 }
 
 /** 계정 기록을 오가는 일. 연결을 마치기 전에 불리면 앱의 순서가 틀린 것이라 던진다. */

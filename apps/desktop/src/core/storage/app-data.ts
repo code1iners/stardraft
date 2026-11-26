@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { errorFields, type Logger } from '../logging/logger';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { SecretStore } from '../ports/secret-store';
+import type { SentryTokenStore } from '../ports/sentry-token-store';
 import { DEFAULT_SETTINGS, type SettingsStore } from '../ports/settings-store';
 import type { StateStore } from '../ports/state-store';
 import { writeFileAtomic } from './atomic-file';
-import { FileSecretStore, type AsyncStringEncryption } from './file-secret-store';
+import { FileSecretStore, FileSentryTokenStore, type AsyncStringEncryption } from './file-secret-store';
 import {
   FileSettingsStore,
   migrateSettings,
@@ -32,6 +33,8 @@ const SETTINGS_FILE_NAME = 'settings.json';
 const STATE_FILE_NAME = 'state.db';
 /** 암호화한 Flow 개인 API 키 파일 이름. 형식 검사와 마이그레이션 사본에는 넣지 않는다. */
 const FLOW_API_KEY_FILE_NAME = 'flow-api-key.bin';
+/** 암호화한 Sentry 개인 토큰 파일 이름. Flow 키 파일과 따로 두며, 형식 검사와 마이그레이션 사본에는 넣지 않는다. */
+const SENTRY_TOKEN_FILE_NAME = 'sentry-token.bin';
 
 /** 데이터 폴더를 여는 데 필요한 값. */
 export interface OpenAppDataOptions {
@@ -59,6 +62,8 @@ export interface AppData {
   stateStore: StateStore & GenerationQueueStore;
   /** Flow 개인 API 키를 두는 비밀 저장소. */
   secretStore: SecretStore;
+  /** Sentry 개인 토큰을 두는 비밀 저장소. Flow 키와 다른 파일이다. */
+  sentryTokenStore: SentryTokenStore;
   /** `state.db` 연결을 닫는다. 앱이 끝날 때 부른다. */
   close(): void;
 }
@@ -79,7 +84,7 @@ export interface NewerData {
  * 1. 두 파일의 형식 버전을 바꾸지 않고 읽는다. 하나라도 앱이 아는 것보다 새로우면 아무것도 쓰지 않고 `newer-data`를 돌려준다.
  * 2. 올려야 할 기존 데이터가 있으면, 올리기 직전에 두 파일의 사본을 `backups/before-v<앱 버전>/`에 남긴다.
  * 3. `state.db`와 `settings.json`을 마지막 형식으로 올린다. 첫 실행이면 두 파일을 만든다.
- * 4. 같은 폴더의 Flow 개인 API 키 파일을 쓰는 비밀 저장소를 만든다. 키 파일은 키를 처음 저장할 때 생긴다.
+ * 4. 같은 폴더의 Flow 개인 API 키 파일과 Sentry 토큰 파일을 쓰는 비밀 저장소를 만든다. 두 파일은 값을 처음 저장할 때 생긴다.
  */
 export async function openAppData({
   dataDir,
@@ -154,6 +159,7 @@ export async function openAppData({
       settingsStore: new FileSettingsStore(settingsPath, appVersion),
       stateStore: new SqliteStateStore(db),
       secretStore: new FileSecretStore(join(dataDir, FLOW_API_KEY_FILE_NAME), encryption, logger),
+      sentryTokenStore: new FileSentryTokenStore(join(dataDir, SENTRY_TOKEN_FILE_NAME), encryption, logger),
       close: () => db.close(),
     };
   } catch (error) {

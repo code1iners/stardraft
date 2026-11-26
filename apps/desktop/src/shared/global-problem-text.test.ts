@@ -47,4 +47,21 @@ describe('전역 문제 문구', () => {
       'Codex를 찾을 수 없습니다. 지워졌거나 위치가 바뀌었을 수 있습니다.',
     );
   });
+
+  it.each([
+    ['rejected', 'Sentry가 토큰을 거부했습니다. 토큰이 회수됐거나 바뀌었을 수 있습니다.'],
+    ['scope-missing', '토큰에 필요한 권한(scope)이 없습니다. org:read와 event:read 권한이 있는 토큰이 필요합니다.'],
+    ['unreadable', '저장된 토큰을 읽을 수 없습니다. 키체인 접근을 거부했거나 항목이 지워졌을 수 있습니다.'],
+  ] as const)('토큰 문제(%s)는 이유를 구분해 적고 [토큰 다시 입력]이 Sentry 칸을 연다', (reason, message) => {
+    expect(globalProblemText({ cause: 'sentry-token', reason }, 'darwin')).toEqual({
+      title: '토큰 확인 필요',
+      message,
+      actionLabel: '토큰 다시 입력',
+      actionSection: 'sentry',
+    });
+  });
+
+  it('Windows에서 저장된 토큰을 읽을 수 없으면 키체인 대신 Windows 사용자 계정 문구를 쓴다', () => {
+    expect(globalProblemText({ cause: 'sentry-token', reason: 'unreadable' }, 'win32').message).toContain('Windows 사용자 계정');
+  });
 });

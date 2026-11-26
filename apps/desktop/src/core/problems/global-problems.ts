@@ -10,6 +10,15 @@ export type FlowKeyProblemReason =
   /** 저장된 키를 읽을 수 없다(키체인 거부, 항목 삭제, 다른 PC로 복사, 키 파일 없음). */
   | 'unreadable';
 
+/** "토큰 확인 필요"가 생긴 이유. 띠 문구가 이유마다 다르다. */
+export type SentryTokenProblemReason =
+  /** Sentry가 토큰을 거부했다(`401`). */
+  | 'rejected'
+  /** 토큰에 필요한 scope가 없다(`403`). */
+  | 'scope-missing'
+  /** 저장된 토큰을 읽을 수 없다(키체인 거부, 항목 삭제, 다른 PC로 복사, 토큰 파일 없음). */
+  | 'unreadable';
+
 /** 에이전트 전역 실패의 이유. 띠 문구가 이유마다 다르다. */
 export type AgentProblemReason =
   /** CLI를 찾을 수 없다. */
@@ -25,6 +34,8 @@ export type AgentProblemReason =
 export type GlobalProblem =
   /** 키 확인 필요. */
   | { cause: 'flow-key'; reason: FlowKeyProblemReason }
+  /** 토큰 확인 필요. Sentry 감지만 멈추고 Flow 감지와 Flow 초안은 멈추지 않는다. */
+  | { cause: 'sentry-token'; reason: SentryTokenProblemReason }
   /** 에이전트 확인 필요. 대기열 전체를 멈추는 에이전트 전역 실패다. `agent`는 실패한 에이전트다. */
   | { cause: 'agent'; agent: AgentId; reason: AgentProblemReason };
 
@@ -41,9 +52,9 @@ export interface ActiveGlobalProblem {
 
 /**
  * 띠·트레이 메뉴에 하나만 보일 때의 원인 순서. 앞이 먼저 보인다.
- * 키가 없으면 에이전트를 고쳐도 감지할 수 없으므로 키 문제가 맨 앞이다.
+ * 키나 토큰이 없으면 에이전트를 고쳐도 그 서비스를 감지할 수 없으므로 키 문제, 토큰 문제가 앞이다.
  */
-const CAUSE_ORDER: readonly GlobalProblemCause[] = ['flow-key', 'agent'];
+const CAUSE_ORDER: readonly GlobalProblemCause[] = ['flow-key', 'sentry-token', 'agent'];
 
 /** 전역 문제에 필요한 포트. */
 export interface GlobalProblemsOptions {

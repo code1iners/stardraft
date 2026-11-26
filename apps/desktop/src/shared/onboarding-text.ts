@@ -14,7 +14,7 @@ export const SETUP_REQUIREMENT_SECTIONS: Record<SetupRequirement, SettingsSectio
 export const SETUP_GROUP_LABELS = { required: '필수', targets: '감지할 대상 · 선택' } as const;
 
 /** 감지할 대상 줄의 이름. 연결하면 `✓`, 아니면 "연결 안 함"이 오른쪽에 보인다. */
-export const DETECTION_TARGET_LABEL = 'Flow 계정';
+export const DETECTION_TARGET_LABELS = { flow: 'Flow 계정', sentry: 'Sentry' } as const;
 
 /** 설정 창 맨 위 띠의 안내. 필수 설정이 남았을 때 보이고, 칸으로 가는 단추는 [에이전트 설정]이다. */
 export const SETUP_BAND_TEXT = '필수 설정: 에이전트 연결';

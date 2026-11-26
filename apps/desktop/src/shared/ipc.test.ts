@@ -8,6 +8,7 @@ import {
   FLOW_PROJECT_ID_MAX_LENGTH,
   parseAppCommand,
   RECIPIENT_NAME_MAX_LENGTH,
+  SENTRY_TOKEN_MAX_LENGTH,
   REGENERATION_TEXT_MAX_LENGTH,
   SECRET_PATTERN_MAX_LENGTH,
   UPDATE_BANNER_MAX_LENGTH,
@@ -49,6 +50,23 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'check-flow-key', apiKey: 42 })).toBeNull();
     expect(parseAppCommand({ type: 'check-flow-key' })).toBeNull();
     expect(parseAppCommand({ type: 'check-flow-key', apiKey: 'k'.repeat(FLOW_API_KEY_MAX_LENGTH + 1) })).toBeNull();
+  });
+
+  it('토큰 확인 명령은 붙여 넣은 토큰을 그대로 받고, 비었거나 문자열이 아니거나 너무 길면 거부한다', () => {
+    expect(parseAppCommand({ type: 'check-sentry-token', token: ' fake-token-1\n' })).toEqual({
+      type: 'check-sentry-token',
+      token: ' fake-token-1\n',
+    });
+    expect(parseAppCommand({ type: 'check-sentry-token', token: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'check-sentry-token', token: ' \n ' })).toBeNull();
+    expect(parseAppCommand({ type: 'check-sentry-token', token: 42 })).toBeNull();
+    expect(parseAppCommand({ type: 'check-sentry-token' })).toBeNull();
+    expect(parseAppCommand({ type: 'check-sentry-token', token: 't'.repeat(SENTRY_TOKEN_MAX_LENGTH + 1) })).toBeNull();
+  });
+
+  it('토큰 확인 그만두기와 Sentry 연결 끊기 명령을 받는다', () => {
+    expect(parseAppCommand({ type: 'cancel-sentry-token-check' })).toEqual({ type: 'cancel-sentry-token-check' });
+    expect(parseAppCommand({ type: 'disconnect-sentry' })).toEqual({ type: 'disconnect-sentry' });
   });
 
   it('다른 계정으로 바꾸기 확인과 키 확인 그만두기 명령을 받는다', () => {

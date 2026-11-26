@@ -19,6 +19,8 @@ export type SetupRequirementStatus = 'done' | 'needed' | 'checking';
 export interface SetupInputs {
   /** Flow가 확인해 준 키로 계정이 연결되어 있고 "키 확인 필요"가 없는지 여부. 감지할 대상(선택)이다. */
   keyVerified: boolean;
+  /** Sentry 토큰이 연결되어 있고 "토큰 확인 필요"가 없는지 여부. 감지할 대상(선택)이다. */
+  sentryConnected: boolean;
   /** 에이전트 연결 상태. */
   agent: 'connected' | 'checking' | 'not-connected';
 }
@@ -52,8 +54,12 @@ export interface OnboardingState {
   requirements: Record<SetupRequirement, SetupRequirementStatus>;
   /** 필수 설정이 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
   ready: boolean;
-  /** 감지할 대상(Flow 계정)을 하나라도 연결했는지 여부. 없으면 [감지 시작] 위에 안내 문구를 보인다. */
+  /** 감지할 대상(Flow 계정, Sentry)을 하나라도 연결했는지 여부. 없으면 [감지 시작] 위에 안내 문구를 보인다. */
   hasDetectionTarget: boolean;
+  /** Flow 계정이 연결되어 있고 "키 확인 필요"가 없는지 여부. 체크리스트 Flow 줄이 따른다. */
+  flowConnected: boolean;
+  /** Sentry 토큰이 연결되어 있고 "토큰 확인 필요"가 없는지 여부. 체크리스트 Sentry 줄이 따른다. */
+  sentryConnected: boolean;
   /** [감지 시작]의 진행 상태. */
   start: DetectionStart;
 }
@@ -122,7 +128,9 @@ export class Onboarding {
       detectionStarted: this.detectionStarted,
       requirements,
       ready: SETUP_REQUIREMENTS.every((requirement) => requirements[requirement] === 'done'),
-      hasDetectionTarget: inputs.keyVerified,
+      hasDetectionTarget: inputs.keyVerified || inputs.sentryConnected,
+      flowConnected: inputs.keyVerified,
+      sentryConnected: inputs.sentryConnected,
       start: this.start,
     };
   }
@@ -243,7 +251,10 @@ function startFailureOf(failure: FlowApiFailure): DetectionStartFailure {
 
 /** 두 상태의 필수 설정과 감지할 대상 연결이 같은지 본다. */
 function sameSetup(a: OnboardingState, b: OnboardingState): boolean {
-  return a.hasDetectionTarget === b.hasDetectionTarget && sameRequirements(a, b);
+  return a.hasDetectionTarget === b.hasDetectionTarget &&
+    a.flowConnected === b.flowConnected &&
+    a.sentryConnected === b.sentryConnected &&
+    sameRequirements(a, b);
 }
 
 /** 두 상태의 필수 설정이 같은지 본다. */

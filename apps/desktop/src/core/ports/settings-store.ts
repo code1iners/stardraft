@@ -7,6 +7,18 @@ export type EditorChoice =
   /** `{file}`, `{line}` 자리를 넣은 명령 한 줄. */
   | { kind: 'command'; command: string };
 
+/** 토큰 확인 때 읽어 둔 Sentry 조직. 이후 이 조직에 거는 호출의 기준 주소를 함께 둔다. */
+export interface SentryOrganizationRecord {
+  /** 조직 ID. */
+  id: string;
+  /** 조직 slug. */
+  slug: string;
+  /** 화면에 보일 조직 이름. */
+  name: string;
+  /** 조직 목록 응답의 지역 주소. 서버 주소 설정은 없고 이 값이 기준 주소다. */
+  regionUrl: string;
+}
+
 /** 사용자 설정(`settings.json`). PC마다 따로 두고 동기화하지 않는다. */
 export interface Settings {
   /** 파일 형식 버전. 앱이 아는 것보다 크면 실행하지 않는다. */
@@ -15,6 +27,8 @@ export interface Settings {
   repoMappings: Record<string, string[]>;
   /** 기본 에이전트. */
   defaultAgent: AgentId;
+  /** 연결한 Sentry 토큰으로 보이는 조직. 토큰을 연결하지 않았으면 비어 있다. 이 값이 없던 옛 파일은 빈 목록으로 읽는다. */
+  sentryOrganizations: SentryOrganizationRecord[];
   /** 에이전트별 CLI 절대 경로. */
   agentCliPaths: Partial<Record<AgentId, string>>;
   /** 에이전트별로 고른 모델. */
@@ -40,6 +54,7 @@ export const SETTINGS_SCHEMA_VERSION = 1;
 export const DEFAULT_SETTINGS: Settings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
   repoMappings: {},
+  sentryOrganizations: [],
   defaultAgent: 'claude-code',
   agentCliPaths: {},
   agentModels: {},

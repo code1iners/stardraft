@@ -1,6 +1,7 @@
 import { readFile, rm } from 'node:fs/promises';
 import { errorFields, type Logger } from '../logging/logger';
 import type { SecretReadResult, SecretStore } from '../ports/secret-store';
+import type { SentryTokenStore } from '../ports/sentry-token-store';
 import { SerialQueue } from '../serial-queue';
 import { writeFileAtomic } from './atomic-file';
 
@@ -16,18 +17,18 @@ export interface AsyncStringEncryption {
 }
 
 /**
- * Flow 개인 API 키를 OS 키 보관소로 암호화해 데이터 폴더의 파일 하나에 두는 비밀 저장소.
- * 읽기·쓰기·지우기는 부른 순서대로 하나씩 한다. 읽으면서 옛 키를 다시 암호화해 저장하는 일이
- * 그 사이에 저장한 새 키를 덮어쓰지 않게 하기 위해서다.
+ * 비밀 문자열 하나를 OS 키 보관소로 암호화해 파일 하나에 두는 저장소. Flow 키와 Sentry 토큰이 파일만 달리해 쓴다.
+ * 읽기·쓰기·지우기는 부른 순서대로 하나씩 한다. 읽으면서 옛 값을 다시 암호화해 저장하는 일이
+ * 그 사이에 저장한 새 값을 덮어쓰지 않게 하기 위해서다.
  */
-export class FileSecretStore implements SecretStore {
-  /** 키 파일을 읽고 쓰는 차례. */
+class EncryptedSecretFile {
+  /** 파일을 읽고 쓰는 차례. */
   private readonly queue = new SerialQueue();
 
   /**
    * @param filePath 암호문을 둘 파일.
    * @param encryption OS 키 보관소에 묶인 암호화.
-   * @param logger 진단 로그. 키는 남기지 않는다.
+   * @param logger 진단 로그. 비밀값은 남기지 않는다.
    */
   constructor(
     private readonly filePath: string,
@@ -35,20 +36,20 @@ export class FileSecretStore implements SecretStore {
     private readonly logger: Logger,
   ) {}
 
-  readFlowApiKey(): Promise<SecretReadResult> {
-    return this.queue.run(() => this.read());
+  read(): Promise<SecretReadResult> {
+    return this.queue.run(() => this.readNow());
   }
 
-  writeFlowApiKey(apiKey: string): Promise<void> {
-    return this.queue.run(() => this.write(apiKey));
+  write(secret: string): Promise<void> {
+    return this.queue.run(() => this.writeNow(secret));
   }
 
-  deleteFlowApiKey(): Promise<void> {
+  delete(): Promise<void> {
     return this.queue.run(() => rm(this.filePath, { force: true }));
   }
 
-  /** 키 파일을 읽어 푼다. 열쇠가 바뀌었으면 새 열쇠로 다시 저장한다. */
-  private async read(): Promise<SecretReadResult> {
+  /** 파일을 읽어 푼다. 열쇠가 바뀌었으면 새 열쇠로 다시 저장한다. */
+  private async readNow(): Promise<SecretReadResult> {
     /** 파일의 암호문. */
     let encrypted: Buffer;
     try {
@@ -64,7 +65,7 @@ export class FileSecretStore implements SecretStore {
     try {
       decrypted = await this.encryption.decryptStringAsync(encrypted);
     } catch (error) {
-      // 키체인 거부, 항목 삭제, 다른 PC에서 복사한 파일이 여기로 온다. 오류 문구에는 키가 들어 있지 않다.
+      // 키체인 거부, 항목 삭제, 다른 PC에서 복사한 파일이 여기로 온다. 오류 문구에는 비밀값이 들어 있지 않다.
       this.logger.warn('secret.decrypt-failed', errorFields(error));
       return { kind: 'unreadable' };
     }
@@ -73,18 +74,72 @@ export class FileSecretStore implements SecretStore {
     return { kind: 'found', value: decrypted.result };
   }
 
-  /** 키를 암호화해 임시 파일에 쓴 뒤 이름을 바꿔 저장한다. 암호화에 실패하면 옛 파일을 건드리지 않는다. */
-  private async write(apiKey: string): Promise<void> {
-    await writeFileAtomic(this.filePath, await this.encryption.encryptStringAsync(apiKey));
+  /** 값을 암호화해 임시 파일에 쓴 뒤 이름을 바꿔 저장한다. 암호화에 실패하면 옛 파일을 건드리지 않는다. */
+  private async writeNow(secret: string): Promise<void> {
+    await writeFileAtomic(this.filePath, await this.encryption.encryptStringAsync(secret));
   }
 
-  /** 열쇠가 바뀐 키를 새 열쇠로 암호화해 다시 저장한다. 실패해도 옛 암호문은 그대로 풀리므로 로그만 남긴다. */
-  private async reEncrypt(apiKey: string): Promise<void> {
+  /** 열쇠가 바뀐 값을 새 열쇠로 암호화해 다시 저장한다. 실패해도 옛 암호문은 그대로 풀리므로 로그만 남긴다. */
+  private async reEncrypt(secret: string): Promise<void> {
     try {
-      await this.write(apiKey);
+      await this.writeNow(secret);
       this.logger.info('secret.re-encrypted');
     } catch (error) {
       this.logger.warn('secret.re-encrypt-failed', errorFields(error));
     }
+  }
+}
+
+/** Flow 개인 API 키를 OS 키 보관소로 암호화해 데이터 폴더의 파일 하나에 두는 비밀 저장소. */
+export class FileSecretStore implements SecretStore {
+  /** 키 파일. */
+  private readonly file: EncryptedSecretFile;
+
+  /**
+   * @param filePath 암호문을 둘 파일.
+   * @param encryption OS 키 보관소에 묶인 암호화.
+   * @param logger 진단 로그. 키는 남기지 않는다.
+   */
+  constructor(filePath: string, encryption: AsyncStringEncryption, logger: Logger) {
+    this.file = new EncryptedSecretFile(filePath, encryption, logger);
+  }
+
+  readFlowApiKey(): Promise<SecretReadResult> {
+    return this.file.read();
+  }
+
+  writeFlowApiKey(apiKey: string): Promise<void> {
+    return this.file.write(apiKey);
+  }
+
+  deleteFlowApiKey(): Promise<void> {
+    return this.file.delete();
+  }
+}
+
+/** Sentry 개인 토큰을 Flow 키와 같은 방식으로 암호화해, Flow 키와 다른 파일 하나에 두는 저장소. */
+export class FileSentryTokenStore implements SentryTokenStore {
+  /** 토큰 파일. */
+  private readonly file: EncryptedSecretFile;
+
+  /**
+   * @param filePath 암호문을 둘 파일. Flow 키 파일과 달라야 한다.
+   * @param encryption OS 키 보관소에 묶인 암호화.
+   * @param logger 진단 로그. 토큰은 남기지 않는다.
+   */
+  constructor(filePath: string, encryption: AsyncStringEncryption, logger: Logger) {
+    this.file = new EncryptedSecretFile(filePath, encryption, logger);
+  }
+
+  read(): Promise<SecretReadResult> {
+    return this.file.read();
+  }
+
+  write(token: string): Promise<void> {
+    return this.file.write(token);
+  }
+
+  delete(): Promise<void> {
+    return this.file.delete();
   }
 }

@@ -7,11 +7,13 @@ import { FlowAccountSection } from './FlowAccountSection';
 import { GeneralSection } from './GeneralSection';
 import { sectionNeedsSetup, SetupBand } from './Onboarding';
 import { RepositoriesSection } from './RepositoriesSection';
+import { SentrySection } from './SentrySection';
 import { useSnapshot } from './useSnapshot';
 
 /** 칸 목록에 보이는 칸 이름. */
 const SECTION_LABELS: Record<SettingsSection, string> = {
   'flow-account': 'Flow 계정',
+  sentry: 'Sentry',
   agent: '에이전트',
   repositories: '저장소',
   drafts: '초안',
@@ -77,6 +79,12 @@ export function SettingsView({ initialSection, initialProjectId = null }: Settin
             <h2>{SECTION_LABELS[section]}</h2>
             {section === 'flow-account' && snapshot && (
               <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
+            )}
+            {section === 'sentry' && snapshot && (
+              <SentrySection
+                sentry={snapshot.sentry}
+                platform={snapshot.platform}
+              />
             )}
             {section === 'agent' && snapshot && (
               <AgentSection

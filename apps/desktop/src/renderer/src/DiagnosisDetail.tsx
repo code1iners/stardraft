@@ -493,6 +493,7 @@ function ReproductionBody({ report }: ReportSectionProps) {
       {report.reproduction.method && <p>{report.reproduction.method}</p>}
       {report.reproduction.result !== 'success' && report.reproduction.steps.length > 0 && <p className="small muted">시도한 것</p>}
       <TextList items={report.reproduction.steps} ordered />
+      {report.omittedAttachments > 0 && <p className="small muted">{omittedAttachmentsText(report.omittedAttachments)}</p>}
     </>
   );
 }
@@ -848,7 +849,7 @@ function ReadyFooter({ diagnosis, send, directivePane: given }: ReadyFooterProps
           diagnosisId={diagnosis.id}
           directives={diagnosis.directives}
           reproductionAllowed={diagnosis.reproductionAllowed}
-          reproducedBefore={diagnosis.report?.reproduction.result === 'success'}
+          previousReproductionSucceeded={diagnosis.report?.reproduction.result === 'success'}
           onClose={directivePane.close}
         />
       </footer>
@@ -875,7 +876,7 @@ interface RediagnosisFormProps {
   /** 저장소가 재현을 허용하는지 여부. 거짓이면 "재현도 다시 하기" 체크가 없다. */
   reproductionAllowed: boolean;
   /** 앞선 보고서의 재현이 성공이었는지 여부. 참이면 "재현도 다시 하기"가 꺼진 채로 열린다. */
-  reproducedBefore: boolean;
+  previousReproductionSucceeded: boolean;
   /** 입력을 닫는다. 보내거나 [취소]를 누르면 부른다. */
   onClose: () => void;
 }
@@ -885,11 +886,11 @@ interface RediagnosisFormProps {
  * 재현을 허용한 저장소면 입력 칸 아래 "재현도 다시 하기" 체크, "새 보고서가 나오면 지금 보고서를 바꿉니다" 안내, [취소] · [다시 진단]이다.
  * 체크는 앞선 재현이 성공이면 꺼진 채, 실패·불가면 켜진 채 열린다. 빈 지시로는 보낼 수 없다.
  */
-export function RediagnosisForm({ diagnosisId, directives, reproductionAllowed, reproducedBefore, onClose }: RediagnosisFormProps) {
+export function RediagnosisForm({ diagnosisId, directives, reproductionAllowed, previousReproductionSucceeded, onClose }: RediagnosisFormProps) {
   /** 쓰고 있는 지시. */
   const [text, setText] = useState('');
   /** "재현도 다시 하기". */
-  const [reproduce, setReproduce] = useState(!reproducedBefore);
+  const [reproduce, setReproduce] = useState(!previousReproductionSucceeded);
   /** 지시를 덧붙여 다시 진단한다. 재현을 허용하지 않은 저장소에서는 재현 선택이 쓰이지 않는다. */
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -899,6 +900,8 @@ export function RediagnosisForm({ diagnosisId, directives, reproductionAllowed, 
   };
   /** 지시 글이 바뀌었다. */
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value);
+  /** "재현도 다시 하기"를 켜거나 껐다. */
+  const handleReproduceChange = (event: ChangeEvent<HTMLInputElement>) => setReproduce(event.target.checked);
 
   return (
     <form className="regen-form" onSubmit={handleSubmit}>
@@ -926,7 +929,7 @@ export function RediagnosisForm({ diagnosisId, directives, reproductionAllowed, 
       {reproductionAllowed && (
         <div>
           <label className="choice-row">
-            <input type="checkbox" checked={reproduce} onChange={(event) => setReproduce(event.target.checked)} />
+            <input type="checkbox" checked={reproduce} onChange={handleReproduceChange} />
             {DIRECTIVE_FORM_TEXT.reproduce}
           </label>
           <p className="field-help muted">{DIRECTIVE_FORM_TEXT.reproduceHelp}</p>

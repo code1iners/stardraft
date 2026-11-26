@@ -157,7 +157,8 @@ function killTree(pid: number | undefined): void {
  */
 function killDescendantGroups(pid: number | undefined): void {
   if (pid === undefined) return;
-  /** `pid ppid pgid` 줄. 읽지 못하면 자식의 그룹만 끝낸다. */
+  // 1. 모든 프로세스의 부모와 그룹을 한 번에 읽는다. 읽지 못하면 자식의 그룹만 끝낸다.
+  /** `pid ppid pgid` 줄. */
   let table: string;
   try {
     table = execFileSync('/bin/ps', ['-A', '-o', 'pid=,ppid=,pgid='], { encoding: 'utf8', timeout: 2_000 });
@@ -172,6 +173,7 @@ function killDescendantGroups(pid: number | undefined): void {
     if (childPid === undefined || parentPid === undefined || group === undefined || Number.isNaN(group)) continue;
     children.set(parentPid, [...(children.get(parentPid) ?? []), [childPid, group]]);
   }
+  // 2. 자식에서 시작해 자손을 따라 내려가며 자손이 속한 그룹을 모은다.
   /** 자손이 속한 그룹. 자식 자신의 그룹은 뒤에서 끝낸다. */
   const groups = new Set<number>();
   /** 아직 자식을 보지 않은 프로세스. */
@@ -182,6 +184,7 @@ function killDescendantGroups(pid: number | undefined): void {
       pending.push(descendant);
     }
   }
+  // 3. 모은 그룹을 통째로 끝낸다.
   for (const group of groups) {
     try {
       process.kill(-group, 'SIGKILL');

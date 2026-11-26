@@ -142,15 +142,16 @@ function claudeRunArgs(request: ExecutorRunRequest, instructionsFile: string, ex
  * 사본만 읽을 루트이자 cwd라 `--add-dir`은 없다.
  */
 function claudeReproductionArgs(request: ExecutorRunRequest, instructionsFile: string): string[] {
-  /** 사본 실제 경로. */
-  const copyRoot = request.reproduction!.copyRoot;
+  /** 사본 실제 경로와 원본 저장소 경로. */
+  const { copyRoot, sourceRoot } = request.reproduction!;
   /** 권한 규칙과 샌드박스. */
   const settings = {
     // dontAsk에서는 허용 규칙이 있어야 셸과 편집 도구가 돈다(2.1.324부터 샌드박스만으로 셸을 자동 허용하지 않음).
     permissions: {
       allow: ['Bash', 'Edit', 'Write'],
-      // 사본 경로로 좁힌다. 루트 전체 형식을 샌드박스에 합치면 /etc/ssl/cert.pem과 ~/.npmrc까지 막혀 HTTPS가 깨진다.
-      deny: copySecretPatterns(request.secretPatterns).map((pattern) => `Read(/${copyRoot}/**/${pattern})`),
+      // 사본과 원본 경로로 좁힌다. 루트 전체 형식을 샌드박스에 합치면 /etc/ssl/cert.pem과 ~/.npmrc까지 막혀 HTTPS가 깨진다.
+      // 원본도 막아야 원본 경로로 원본의 비밀 파일을 읽지 못한다. 원본 `.env`는 아래 샌드박스 규칙이 막는다.
+      deny: [copyRoot, sourceRoot].flatMap((root) => copySecretPatterns(request.secretPatterns).map((pattern) => `Read(/${root}/**/${pattern})`)),
     },
     sandbox: {
       enabled: true,

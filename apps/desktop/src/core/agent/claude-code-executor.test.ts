@@ -219,10 +219,12 @@ describe('Claude Code 실행기: 인수 묶음', () => {
 
 /** 재현 사본의 실제 경로. */
 const COPY = '/private/var/folders/fake/T/stardraft-reproduction/run-abc';
+/** 사본을 만든 원본 저장소. */
+const SOURCE = '/Users/fake/work/web-app';
 
 /** 테스트용 재현하는 진단 요청. 읽을 루트는 사본 하나다. */
 function reproductionRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunRequest {
-  return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY }, ...overrides });
+  return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY, sourceRoot: SOURCE }, ...overrides });
 }
 
 describe('Claude Code 실행기: 재현 경계', () => {
@@ -245,11 +247,11 @@ describe('Claude Code 실행기: 재현 경계', () => {
     expect(request?.args).not.toContain('--bare');
   });
 
-  it('셸 명령을 OS 샌드박스 안에 가두고, 쓰기는 사본으로, 네트워크와 localhost는 열고, .env 계열만 사본에서 푼다', async () => {
+  it('셸 명령을 OS 샌드박스 안에 가두고, 쓰기는 사본으로, 네트워크와 localhost는 열고, .env 계열만 사본에서 푼다. 다른 비밀 패턴은 사본과 원본 경로 모두에서 막는다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
 
-    await executor.run(reproductionRequest({ secretPatterns: ['company/*.secret'] }));
+    await executor.run(reproductionRequest({ secretPatterns: ['company/*.secret', '/private-config/'] }));
 
     /** `--settings`로 넘긴 설정. */
     const settings: unknown = JSON.parse(flagValue(runner.requests[0], '--settings') ?? 'null');
@@ -257,6 +259,7 @@ describe('Claude Code 실행기: 재현 경계', () => {
       permissions: {
         allow: ['Bash', 'Edit', 'Write'],
         // 사본 경로로 좁힌 형식이다. 루트 전체 형식을 샌드박스에 합치면 TLS 인증서와 ~/.npmrc까지 막혀 HTTPS가 깨진다.
+        // 원본 저장소도 같은 패턴으로 막는다. 원본 경로로 원본의 비밀 파일을 읽는 길을 닫는다. 폴더 패턴의 끝 `/`는 그대로 둔다.
         deny: [
           `Read(/${COPY}/**/*.pem)`,
           `Read(/${COPY}/**/*.key)`,
@@ -272,6 +275,22 @@ describe('Claude Code 실행기: 재현 경계', () => {
           `Read(/${COPY}/**/secrets/**)`,
           `Read(/${COPY}/**/.git/**)`,
           `Read(/${COPY}/**/company/*.secret)`,
+          `Read(/${COPY}/**/private-config/)`,
+          `Read(/${SOURCE}/**/*.pem)`,
+          `Read(/${SOURCE}/**/*.key)`,
+          `Read(/${SOURCE}/**/*.p12)`,
+          `Read(/${SOURCE}/**/*.pfx)`,
+          `Read(/${SOURCE}/**/*.jks)`,
+          `Read(/${SOURCE}/**/*.keystore)`,
+          `Read(/${SOURCE}/**/id_rsa*)`,
+          `Read(/${SOURCE}/**/id_ed25519*)`,
+          `Read(/${SOURCE}/**/.npmrc)`,
+          `Read(/${SOURCE}/**/.pypirc)`,
+          `Read(/${SOURCE}/**/.netrc)`,
+          `Read(/${SOURCE}/**/secrets/**)`,
+          `Read(/${SOURCE}/**/.git/**)`,
+          `Read(/${SOURCE}/**/company/*.secret)`,
+          `Read(/${SOURCE}/**/private-config/)`,
         ],
       },
       sandbox: {

@@ -35,7 +35,8 @@ export const ENV_FILE_PATTERNS: readonly string[] = DEFAULT_SECRET_PATTERNS.filt
 export const PERSONAL_SECRET_PATHS: readonly string[] = ['~/.ssh', '~/.aws', '~/.npmrc', '~/.netrc', '~/.pypirc'];
 
 /**
- * 사본 안에서 계속 막을 비밀 파일 패턴. 기본 목록과 추가 패턴에서 `.env` 계열만 뺀다. 앞에 붙은 `/`·`**\/`와 끝의 `/`는 뗀다.
+ * 사본 안에서 계속 막을 비밀 파일 패턴. 기본 목록과 추가 패턴에서 `.env` 계열만 뺀다. 앞에 붙은 `/`·`**\/`는 뗀다("어느 깊이에서든"과 같다).
+ * 끝의 `/`("폴더")는 남긴다. 규칙 문법에 따라 실행기가 다룬다.
  * `.git/**`도 남아, 사본 안 linked worktree의 `.git` 포인터 파일을 통한 원본 git 접근도 막는다.
  */
 export function copySecretPatterns(extraPatterns: readonly string[]): string[] {
@@ -43,7 +44,7 @@ export function copySecretPatterns(extraPatterns: readonly string[]): string[] {
     ...new Set(
       withDefaultSecretPatterns(extraPatterns)
         .filter((pattern) => !ENV_FILE_PATTERNS.includes(pattern))
-        .map((pattern) => pattern.replace(/^(?:\/|\*\*\/)+/, '').replace(/\/+$/, '')),
+        .map((pattern) => pattern.replace(/^(?:\/|\*\*\/)+/, '')),
     ),
   ];
 }

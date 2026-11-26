@@ -121,6 +121,7 @@ export async function stageReproductionAttachments({ copyRoot, paths, stagingDir
   let total = 0;
   /** 생략한 수. */
   let omitted = 0;
+  // 적힌 순서대로 보며, 받을 수 있고 한도 안이면 옮기고 아니면 생략으로 센다. 같은 파일을 다시 적은 것은 세지 않는다.
   for (const path of paths) {
     /** 사본 안 실제 경로와 크기. 받을 수 없으면 `null`. */
     const file = await acceptableFile(root, path, patterns);
@@ -141,6 +142,7 @@ export async function stageReproductionAttachments({ copyRoot, paths, stagingDir
 
 /** 사본 안의 첨부로 받을 수 있는 파일이면 실제 경로와 크기, 아니면 `null`. */
 async function acceptableFile(root: string, path: string, patterns: readonly string[]): Promise<{ path: string; size: number } | null> {
+  // 종류 → 링크가 아닌 파일인지 → 중간 폴더 링크까지 푼 실제 경로가 사본 안인지 → 비밀 파일 패턴 순서로 거른다.
   /** 사본 기준으로 푼 경로. */
   const absolute = isAbsolute(path) ? path : resolve(root, path);
   if (!ATTACHMENT_EXTENSIONS.includes(extname(absolute).toLowerCase())) return null;

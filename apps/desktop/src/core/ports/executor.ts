@@ -50,6 +50,8 @@ export interface ExecutorRunRequest {
 export interface ReproductionBoundary {
   /** 사본의 실제 경로(심볼릭 링크를 푼 절대 경로). 쓰기는 이 아래만 허용한다. */
   copyRoot: string;
+  /** 사본을 만든 원본 저장소의 절대 경로. 원본 경로로 원본의 비밀 파일을 읽지 못하게 사본과 같은 비밀 패턴으로 막는다. */
+  sourceRoot: string;
 }
 
 /** 실행 하나의 결과. */

@@ -248,10 +248,14 @@ function codexRunArgs(request: ExecutorRunRequest, paths: RunPaths): string[] {
 function codexReproductionArgs(request: ExecutorRunRequest, paths: Pick<RunPaths, 'schemaFile' | 'cwd'>): string[] {
   /** 홈 아래에서 막을 경로. */
   const homeDeny = [...ENV_FILE_PATTERNS.map((pattern) => `~/**/${pattern}`), ...PERSONAL_SECRET_PATHS].map((path) => `${tomlString(path)}="deny"`);
-  /** 사본 아래에서 막을 패턴. */
-  const copyDeny = [...copySecretPatterns(request.secretPatterns).map((pattern) => `**/${pattern}`), '**/.git'].map((pattern) => `${tomlString(pattern)}="deny"`);
+  /** 사본 안과 원본에서 막을 패턴. 글롭 규칙은 끝의 `/` 없이 쓴다. */
+  const patterns = [...copySecretPatterns(request.secretPatterns).map((pattern) => pattern.replace(/\/+$/, '')), '.git'];
+  /** 원본 경로로 원본의 비밀 파일을 읽지 못하게 막는 규칙. 원본 `.env`는 홈 아래면 위 규칙이 막는다. */
+  const sourceDeny = patterns.map((pattern) => `${tomlString(`${request.reproduction!.sourceRoot}/**/${pattern}`)}="deny"`);
+  /** 사본 아래에서 막을 규칙. */
+  const copyDeny = patterns.map((pattern) => `${tomlString(`**/${pattern}`)}="deny"`);
   /** 파일 시스템 권한. */
-  const filesystem = `{":root"="read", ${homeDeny.join(', ')}, ":workspace_roots"={"."="write", ${copyDeny.join(', ')}}}`;
+  const filesystem = `{":root"="read", ${[...homeDeny, ...sourceDeny].join(', ')}, ":workspace_roots"={"."="write", ${copyDeny.join(', ')}}}`;
   return [
     'exec',
     '--ignore-user-config',

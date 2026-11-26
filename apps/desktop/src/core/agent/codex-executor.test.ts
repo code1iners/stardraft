@@ -260,17 +260,19 @@ describe('Codex 실행기: 인수 묶음', () => {
 describe('Codex 실행기: 재현 경계', () => {
   /** 재현 사본의 실제 경로. 홈 밖(임시 폴더)에 둔다. */
   const COPY = '/private/var/folders/fake/T/stardraft-reproduction/run-abc';
+  /** 사본을 만든 원본 저장소. */
+  const SOURCE = '/Users/fake/work/web-app';
 
   /** 테스트용 재현하는 진단 요청. */
   function reproductionRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunRequest {
-    return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY }, ...overrides });
+    return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY, sourceRoot: SOURCE }, ...overrides });
   }
 
-  it('사용자 설정과 rules를 끌어오지 않고, 권한 프로필에서 사본만 쓰기로 열고 네트워크를 연다. 사본에는 .git이 없어 git 확인을 건너뛴다', async () => {
+  it('사용자 설정과 rules를 끌어오지 않고, 권한 프로필에서 사본만 쓰기로 열고 네트워크를 연다. 비밀 패턴은 원본 경로에서도 막는다. 사본에는 .git이 없어 git 확인을 건너뛴다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
 
-    await executor.run(reproductionRequest({ secretPatterns: ['company/*.secret'] }));
+    await executor.run(reproductionRequest({ secretPatterns: ['company/*.secret', '/private-config/'] }));
 
     const [request] = runner.requests;
     expect(request?.cwd).toBe(COPY);
@@ -279,10 +281,9 @@ describe('Codex 실행기: 재현 경계', () => {
     /** `-c`로 넘긴 설정 값. */
     const configs = request!.args.filter((_, index) => request!.args[index - 1] === '-c');
     expect(configs).toContain(
-      'permissions.stardraft.filesystem={":root"="read", "~/**/.env"="deny", "~/**/.env.*"="deny", "~/.ssh"="deny", "~/.aws"="deny", "~/.npmrc"="deny", "~/.netrc"="deny", "~/.pypirc"="deny", ' +
-        '":workspace_roots"={"."="write", "**/*.pem"="deny", "**/*.key"="deny", "**/*.p12"="deny", "**/*.pfx"="deny", "**/*.jks"="deny", "**/*.keystore"="deny", ' +
-        '"**/id_rsa*"="deny", "**/id_ed25519*"="deny", "**/.npmrc"="deny", "**/.pypirc"="deny", "**/.netrc"="deny", "**/secrets/**"="deny", "**/.git/**"="deny", ' +
-        '"**/company/*.secret"="deny", "**/.git"="deny"}}',
+      `permissions.stardraft.filesystem={":root"="read", "~/**/.env"="deny", "~/**/.env.*"="deny", "~/.ssh"="deny", "~/.aws"="deny", "~/.npmrc"="deny", "~/.netrc"="deny", "~/.pypirc"="deny", ` +
+        `"${SOURCE}/**/*.pem"="deny", "${SOURCE}/**/*.key"="deny", "${SOURCE}/**/*.p12"="deny", "${SOURCE}/**/*.pfx"="deny", "${SOURCE}/**/*.jks"="deny", "${SOURCE}/**/*.keystore"="deny", "${SOURCE}/**/id_rsa*"="deny", "${SOURCE}/**/id_ed25519*"="deny", "${SOURCE}/**/.npmrc"="deny", "${SOURCE}/**/.pypirc"="deny", "${SOURCE}/**/.netrc"="deny", "${SOURCE}/**/secrets/**"="deny", "${SOURCE}/**/.git/**"="deny", "${SOURCE}/**/company/*.secret"="deny", "${SOURCE}/**/private-config"="deny", "${SOURCE}/**/.git"="deny", ` +
+        `":workspace_roots"={"."="write", "**/*.pem"="deny", "**/*.key"="deny", "**/*.p12"="deny", "**/*.pfx"="deny", "**/*.jks"="deny", "**/*.keystore"="deny", "**/id_rsa*"="deny", "**/id_ed25519*"="deny", "**/.npmrc"="deny", "**/.pypirc"="deny", "**/.netrc"="deny", "**/secrets/**"="deny", "**/.git/**"="deny", "**/company/*.secret"="deny", "**/private-config"="deny", "**/.git"="deny"}}`,
     );
     expect(configs).toContain('permissions.stardraft.network.enabled=true');
     expect(configs).toContain('permissions.stardraft.workspace_roots={}');

@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path';
 import type { ProcessRunner } from '../agent/process-runner';
 import type { Logger } from '../logging/logger';
 import type { AgentId } from '../ports/executor';
-import { DEFAULT_SETTINGS, type ReproductionToolMode, type Settings, type SettingsStore } from '../ports/settings-store';
+import { DEFAULT_SETTINGS, type ReproductionRepoSetting, type ReproductionToolMode, type Settings, type SettingsStore } from '../ports/settings-store';
 import { SerialQueue } from '../serial-queue';
 import { parseClaudeMcpServers, parseCodexMcpServers, type McpServerEntry } from './mcp-servers';
 
@@ -158,7 +158,7 @@ export class ReproductionSettings {
    * 저장소의 재현 허용과 재현용 환경 파일. 진단을 시작할 때 쓴다. 재현을 지원하지 않는 OS이거나 설정한 적 없으면 `null`.
    * 환경 파일이 없어졌는지는 보지 않는다(없으면 사본을 만들지 못해 그 진단의 재현이 불가(환경 실패)가 된다).
    */
-  settingFor(path: string): { enabled: boolean; envFile: string | null } | null {
+  settingFor(path: string): ReproductionRepoSetting | null {
     /** 저장소의 설정. */
     const setting = this.supported ? this.repos[path] : undefined;
     return setting ? { enabled: setting.enabled, envFile: setting.envFile ?? null } : null;

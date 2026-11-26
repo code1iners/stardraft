@@ -6,7 +6,7 @@ import type { Preparation, PrepareContext, RunReading, TargetAdapter, TargetFail
 import { errorFields, type LogFields, type Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { ConnectSentry, SentryApiFailure } from '../ports/sentry-api';
-import type { SettingsStore } from '../ports/settings-store';
+import type { ReproductionRepoSetting, SettingsStore } from '../ports/settings-store';
 import type { ReproductionCopies } from '../reproduction/reproduction-copies';
 import type { DeviceSnapshot, Simulators } from '../reproduction/simulators';
 import type { RepoGitState } from '../repos/repo-git-state';
@@ -60,20 +60,12 @@ export type PendingDiagnosisReport = Omit<DiagnosisReport, 'run'> & {
   attachmentChange: ReportAttachments;
 };
 
-/** 저장소 하나의 재현 설정. */
-export interface RepoReproductionSetting {
-  /** 재현 허용. */
-  enabled: boolean;
-  /** 재현용 환경 파일 절대 경로. `null`이면 원본 `.env`를 쓴다. */
-  envFile: string | null;
-}
-
 /** 재현하는 진단에 필요한 것. 없으면 모든 진단이 읽기 전용으로 돈다. */
 export interface SentryReproductionOptions {
   /** 지금 OS. macOS(`darwin`)에서만 재현한다. */
   platform: NodeJS.Platform;
   /** 프로젝트에 매핑된 저장소의 재현 설정. 매핑이 없거나 설정이 없으면 `null`. 대기열이 꺼낼 때마다 부르므로 바로 답한다. */
-  setting: (projectId: string) => RepoReproductionSetting | null;
+  setting: (projectId: string) => ReproductionRepoSetting | null;
   /** 재현 사본. */
   copies: Pick<ReproductionCopies, 'create' | 'remove'>;
   /** 실행이 새로 켠 시뮬레이터·에뮬레이터 정리. */
@@ -139,6 +131,9 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   /** 준비하는 동안 보일 진행 단계. */
   readonly preparingStep = FETCHING_SENTRY_EVENT_STEP;
 
+  /** 생성을 시작할 때(재현 자원을 쥘 때) 재현하는 진단으로 판단했는지. 진단 ID → 판단. 준비가 꺼내 쓴다. */
+  private readonly startedReproducing = new Map<number, boolean>();
+
   constructor(private readonly options: SentryTargetAdapterOptions) {}
 
   generatingTargets(): number[] {
@@ -170,7 +165,10 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   begin(id: number): number | null {
     /** 실행할 진단. */
     const diagnosis = this.options.diagnoses.get(id);
-    return diagnosis?.status === 'queued' ? diagnosis.detectedAt : null;
+    if (diagnosis?.status !== 'queued') return null;
+    // 대기열은 꺼낼 때 `exclusiveResource`로 재현 자원을 쥐었다. 준비하는 사이 재현 허용이 켜져도 자원 없이 재현하지 않도록 지금 판단을 남긴다.
+    this.startedReproducing.set(id, this.reproduces(diagnosis));
+    return diagnosis.detectedAt;
   }
 
   /** 진단이 대기(진행 중 포함)이고, 감지 시각이 주어졌으면 생성을 시작할 때의 진단과 같은지 본다. 등록 해제나 취소로 빠지면 거짓이다. */
@@ -181,6 +179,9 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   }
 
   async prepare(id: number, _detectedAt: number, context: PrepareContext): Promise<Preparation<SentryTargetTypes>> {
+    /** 생성을 시작할 때의 재현 판단. */
+    const startedReproducing = this.startedReproducing.get(id) ?? false;
+    this.startedReproducing.delete(id);
     /** 실행할 진단. */
     const diagnosis = this.options.diagnoses.get(id);
     if (!diagnosis || diagnosis.status !== 'queued') return { kind: 'skipped' };
@@ -255,12 +256,14 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
         run: { repository: repo.path, headCommit: git.headCommit, uncommittedChanges: git.uncommittedChanges, reproductionAllowed: setting?.enabled === true },
       },
     };
-    // 재현을 끈 다시 진단은 앞선 보고서의 재현 칸과 첨부를 그대로 옮긴다.
+    /** 지금 저장소가 재현을 허용하는지 여부. */
+    const allowed = setting?.enabled === true;
+    // 재현을 끈 다시 진단은 앞선 보고서의 재현 칸과 첨부를 그대로 옮긴다. 그사이 재현 허용을 껐으면 옮기지 않고 불가(허용 안 됨)다.
     /** 옮길 앞선 재현. */
-    const carried = rediagnosing && diagnosis.keepReproduction && diagnosis.report ? diagnosis.report : null;
-    /** 이어서 돌릴 실행. */
+    const carried = allowed && rediagnosing && diagnosis.keepReproduction && diagnosis.report ? diagnosis.report : null;
+    /** 이어서 돌릴 실행. 재현은 시작할 때 재현 자원을 쥔 진단만 한다. */
     const run =
-      setting?.enabled === true && carried === null && this.options.reproduction
+      allowed && startedReproducing && carried === null && this.options.reproduction
         ? this.reproducingRun(diagnosis, input, setting.envFile, this.options.reproduction)
         : this.readOnlyRun(diagnosis, input, carried);
     return { kind: 'ready', next: { kind: 'run', run } };
@@ -299,7 +302,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   }
 
   /** 프로젝트 저장소의 재현 설정. 재현하지 않는 OS이거나 재현 준비가 없으면 `null`. */
-  private reproductionSetting(projectId: string): RepoReproductionSetting | null {
+  private reproductionSetting(projectId: string): ReproductionRepoSetting | null {
     /** 재현에 필요한 것. */
     const reproduction = this.options.reproduction;
     return reproduction && reproduction.platform === 'darwin' ? reproduction.setting(projectId) : null;
@@ -415,7 +418,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
       omittedContextItems: 0,
       request: async (model) => {
         session.devicesBefore ??= await reproduction.devices.snapshot().catch((error: unknown) => {
-          this.options.logger.warn('sentry-adapter.devices-snapshot-failed', { diagnosisId: diagnosis.id, ...errorName(error) });
+          this.options.logger.warn('sentry-adapter.devices-snapshot-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
           return { ios: [], android: [] };
         });
         // 다시 실행은 앞 실행이 고친 사본을 쓰지 않고 새 사본에서 돈다.
@@ -425,7 +428,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
           session.copyFailed = false;
         } catch (error) {
           session.copyFailed = true;
-          this.options.logger.warn('sentry-adapter.copy-failed', { diagnosisId: diagnosis.id, ...errorName(error) });
+          this.options.logger.warn('sentry-adapter.copy-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
         }
         if (session.copy === null) return this.readOnlyRequest(input, model);
         /** 지금 설정. */
@@ -438,7 +441,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
           secretPatterns: [...settings.extraSecretPatterns],
           model,
           timeoutMs: DIAGNOSIS_TIMEOUT_MS,
-          reproduction: { copyRoot: session.copy },
+          reproduction: { copyRoot: session.copy, sourceRoot: input.repository },
         };
       },
       read: (output) => (session.copyFailed ? readDiagnosisReading(output) : readReproducingReading(output)),
@@ -501,7 +504,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
         dropCopy();
         if (session.devicesBefore !== null) {
           await reproduction.devices.shutDownNew(session.devicesBefore).catch((error: unknown) =>
-            this.options.logger.warn('sentry-adapter.devices-shutdown-failed', { diagnosisId: diagnosis.id, ...errorName(error) }),
+            this.options.logger.warn('sentry-adapter.devices-shutdown-failed', { diagnosisId: diagnosis.id, ...errorKind(error) }),
           );
         }
         // 보고서를 저장했으면 이미 진단 폴더로 넣어 없는 폴더다.
@@ -570,7 +573,7 @@ function reportBody(output: DiagnosisOutput, evidence: DiagnosisReport['evidence
 }
 
 /** 로그에 남길 오류 이름과 코드. 오류 문장에는 경로가 들 수 있어 남기지 않는다. */
-function errorName(error: unknown): Pick<LogFields, 'errorName' | 'errorCode'> {
+function errorKind(error: unknown): Pick<LogFields, 'errorName' | 'errorCode'> {
   /** 오류 칸. */
   const fields = errorFields(error);
   return { errorName: fields.errorName ?? null, errorCode: fields.errorCode ?? null };

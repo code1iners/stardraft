@@ -1170,6 +1170,19 @@ describe('Sentry 어댑터: 재현도 다시 하기', () => {
     expect(await env.folders.list(id)).toEqual(['first.png']);
   });
 
+  it('그사이 저장소의 재현 허용을 껐으면 재현을 끈 다시 진단이어도 앞선 재현을 옮기지 않고 불가(허용 안 됨)로 채운다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    const id = await readyWithReproduction(env);
+    env.reproductionState.enabled = false;
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+    await env.queue.changeByUser({ kind: SENTRY_TARGET_KIND, targetId: id }, async () => void (await env.diagnoses.rediagnose(id, '원인을 더 자세히', { reproduce: false })));
+    await settle();
+
+    expect(env.byIssue('101')!.report).toMatchObject({ reproduction: { result: 'impossible', impossibleReason: 'not-allowed' }, attachments: [], run: { reproductionAllowed: false } });
+    expect(await env.folders.list(id)).toEqual([]);
+  });
+
   it('지시 없는 다시 진단과 재현도 다시 하기를 켠 다시 진단은 다시 재현하고 재현 칸과 첨부를 새 결과로 바꾼다', async () => {
     const env = await setup({ reproduction: { enabled: true } });
     const id = await readyWithReproduction(env);

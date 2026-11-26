@@ -175,7 +175,8 @@ export class HttpSentryApi implements SentryApi {
 
   /**
    * `GET /api/0/organizations/{조직}/issues/{ID}/?collapse=stats,tags`로 상태와 release를 읽는다.
-   * 다른 오류 이슈로 병합된 ID는 Sentry가 병합된 쪽으로 리디렉트하므로, 리디렉트를 따라가지 않고 병합됨으로 본다.
+   * 다른 오류 이슈로 병합된 ID는 병합된 쪽으로 리디렉트된다고 보고(실측하지 않은 가정), 리디렉트를 따라가지 않고 병합됨으로 본다.
+   * 따라가지 않으므로 토큰 헤더가 다른 주소로 가지 않는다.
    */
   async errorIssueState(organization: SentryOrganization, issueId: string): Promise<SentryApiResult<SentryIssueState>> {
     /** 토큰을 실을 기준 주소. */

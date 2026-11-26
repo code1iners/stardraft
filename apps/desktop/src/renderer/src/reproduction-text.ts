@@ -5,14 +5,14 @@ export const ENV_FILE_UNSET_TEXT = '지정 안 함 · 원본 .env 사용';
 
 /** 재현을 켜는 확인 모달에서 허용되는 일. */
 export const ALLOWED_THINGS: readonly string[] = [
-  '셸 명령 실행(저장소의 사본 폴더 안에서만 파일을 바꿉니다. 원본은 그대로입니다)',
+  '셸 명령 사용(저장소의 사본 폴더 안에서만 파일을 바꿉니다. 원본은 그대로입니다)',
   '네트워크 사용',
   '내가 에이전트에 등록해 둔 MCP 도구 사용(브라우저, 시뮬레이터 조작 등)',
 ];
 
 /** MCP 서버 연결 종류를 사용자 말로 바꾼 이름. */
 export const SERVER_KIND_LABELS: Record<ReproductionServerKind, string> = {
-  stdio: '내 PC에서 실행',
+  stdio: '내 PC에서 돌아감',
   http: '원격 주소',
   sse: '원격 주소',
   ws: '원격 주소',

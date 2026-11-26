@@ -88,7 +88,8 @@ describe('재현을 켜는 확인 모달', () => {
 
     expect(html).toContain('modal-backdrop');
     expect(html).toContain('role="dialog"');
-    expect(text).toContain('셸 명령 실행');
+    expect(text).toContain('셸 명령 사용');
+    expect(text).not.toContain('셸 명령 실행');
     expect(text).toContain('네트워크 사용');
     expect(text).toContain('MCP 도구 사용');
     expect(text).toContain('재현용 환경 파일');
@@ -164,6 +165,8 @@ describe('재현 도구 권한 패널', () => {
 
     expect(rows).toHaveLength(3);
     expect(rows[0]).toContain('playwright');
+    expect(rows[0]).toContain('내 PC에서 돌아감');
+    expect(rows[0]).not.toContain('내 PC에서 실행');
     expect(rows[0]).toContain('Claude Code');
     expect(rows[0]).toContain('앱이 뺀 도구: browser_run_code_unsafe, browser_file_upload');
     expect(rows[0]).not.toContain('외부로 보냄');

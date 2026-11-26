@@ -1,5 +1,6 @@
 import { app, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 import { mkdir } from 'node:fs/promises';
+import { testNotification } from '../shared/notification-test-text';
 import type { MentionBundles } from '../core/bundles/mention-bundles';
 import { evidenceFileOf, type EditorOpener, type EditorOpenerState } from '../core/editors/editor-opener';
 import type { DraftQueue } from '../core/drafts/draft-queue';
@@ -723,11 +724,6 @@ export async function openSite(section: SiteSection, logger: Logger): Promise<vo
   } catch (error) {
     logger.warn('site.open-failed', { section, ...errorFields(error) });
   }
-}
-
-/** [알림 시험]이 띄우는 알림. 초안 준비됨 알림처럼 보이되 묶음을 가리키지 않아 누르면 작은 창만 띄운다. */
-function testNotification(appName: string) {
-  return { title: `${appName} 알림 시험`, body: '알림이 이렇게 보입니다. 초안이 준비되면 같은 방식으로 알려 드립니다.' };
 }
 
 /** core의 설정 "초안" 칸 상태를 렌더러에 넘길 모양으로 바꾼다. */

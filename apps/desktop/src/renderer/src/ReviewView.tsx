@@ -1,9 +1,10 @@
-import { BUNDLE_GROUPS, type AppSnapshot, type BundleSnapshot } from '../../shared/ipc';
+import type { AppSnapshot, BundleSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleSections, ManualTag, OpenInFlowButton, PostStatusLine, RunLine, StatusTag, ToastStack } from './BundleDetail';
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerModal } from './EditorPickerModal';
 import { RepoPickerModal } from './RepoPickerModal';
-import { assignmentSourceText, BUNDLE_GROUP_LABELS, BUNDLE_PLACE_LABELS, formatTime, postLine, postTitleOf, RETENTION_NOTE, senderLine } from './review-text';
+import { ListKindGroup, ListRetentionNote, ListRow } from './ReviewList';
+import { assignmentSourceText, BUNDLE_PLACE_LABELS, DRAFT_KIND_LABEL, formatTime, postLine, postTitleOf, senderLine } from './review-text';
 import { useBundleActions, useBundleSelection } from './useReview';
 import { useSnapshot } from './useSnapshot';
 
@@ -30,7 +31,7 @@ interface ReviewContentProps {
 }
 
 /**
- * 펼친 창 내용. 왼쪽 목록은 검토 대기·생성 중·실패·처리됨으로 묶고, 오른쪽에 고른 묶음의 상세를 모두 펼쳐 보인다.
+ * 펼친 창 내용. 왼쪽 목록은 종류별로 묶고(상태는 줄의 태그로 보인다), 오른쪽에 고른 묶음의 상세를 모두 펼쳐 보인다.
  * "접어 보기"로 보고 있던 묶음을 연 작은 창으로 돌아간다.
  */
 export function ReviewContent({ snapshot, initialBundleId = null }: ReviewContentProps) {
@@ -130,45 +131,35 @@ interface BundleListProps {
 }
 
 /**
- * 펼친 창 왼쪽 목록. 비어 있지 않은 목록 묶음만 이름과 개수를 달아 보이고, 처리됨 아래에 보관 안내를 둔다.
- * 행에는 송신자, 시각, 요구 요약(초안이 없으면 게시물), 상태를 보인다.
+ * 펼친 창 왼쪽 목록. 종류별로 묶어 이름과 개수를 단 머리 아래에 줄을 둔다. 지금은 Flow 초안 한 종류이고, 상태는 줄의 태그로만 보인다.
+ * 행에는 송신자, 시각, 요구 요약(초안이 없으면 게시물), 태그를 보인다.
+ * 끝낸 항목(처리됨)이 하나라도 있으면 목록 맨 아래에 보관 안내를 한 줄 둔다.
  */
 function BundleList({ bundles, selectedId, onSelect }: BundleListProps) {
   return (
     <aside className="review-list">
-      {BUNDLE_GROUPS.map((group) => {
-        /** 이 목록 묶음에 든 멘션 묶음. */
-        const items = bundles.filter((bundle) => bundle.group === group);
-        if (items.length === 0) return null;
-        return (
-          <section key={group}>
-            <h3 className="list-group-head">
-              {BUNDLE_GROUP_LABELS[group]} {items.length}
-            </h3>
-            {items.map((bundle) => (
-              <button
-                key={bundle.id}
-                type="button"
-                className="list-row"
-                aria-current={bundle.id === selectedId ? 'true' : undefined}
-                onClick={() => onSelect(bundle.id)}
-              >
-                <span className="list-row-top">
-                  <strong>{senderLine(bundle.senderNames)}</strong>
-                  <span className="small muted">{formatTime(bundle.lastMentionAt)}</span>
-                </span>
-                <span className="list-row-sub">{bundle.draft?.requirement.summary || postLine(bundle)}</span>
-                <span className="list-row-tags">
+      {bundles.length > 0 && (
+        <ListKindGroup title={DRAFT_KIND_LABEL} count={bundles.length}>
+          {bundles.map((bundle) => (
+            <ListRow
+              key={bundle.id}
+              selected={bundle.id === selectedId}
+              onSelect={() => onSelect(bundle.id)}
+              title={senderLine(bundle.senderNames)}
+              time={formatTime(bundle.lastMentionAt)}
+              summary={bundle.draft?.requirement.summary || postLine(bundle)}
+              tags={
+                <>
                   {bundle.assignment && <span className="tag">{assignmentSourceText(bundle)}</span>}
                   <ManualTag bundle={bundle} />
                   <StatusTag status={bundle.status} repoCheck={bundle.repoCheck} />
-                </span>
-              </button>
-            ))}
-            {group === 'processed' && <p className="list-note">{RETENTION_NOTE}</p>}
-          </section>
-        );
-      })}
+                </>
+              }
+            />
+          ))}
+        </ListKindGroup>
+      )}
+      {bundles.some((bundle) => bundle.group === 'processed') && <ListRetentionNote />}
       {bundles.length === 0 && <p className="list-empty muted">아직 멘션이 없습니다.</p>}
     </aside>
   );

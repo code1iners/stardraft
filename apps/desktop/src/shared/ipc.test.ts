@@ -143,8 +143,8 @@ describe('렌더러가 보낸 명령 검사', () => {
     for (const count of [0, 6, 2.5, '3', null]) expect(parseAppCommand({ type: 'set-parallel-work-count', count })).toBeNull();
   });
 
-  it('묶음 무시·되돌리기·생성 취소·다시 시도·Flow에서 열기 명령은 묶음 ID(양의 정수)를 받는다', () => {
-    for (const type of ['ignore-bundle', 'restore-bundle', 'cancel-generation', 'retry-bundle', 'open-bundle-in-flow'] as const) {
+  it('묶음 무시·되돌리기·생성 취소·다시 시도·Flow에서 열기·저장소 매핑 열기 명령은 묶음 ID(양의 정수)를 받는다', () => {
+    for (const type of ['ignore-bundle', 'restore-bundle', 'cancel-generation', 'retry-bundle', 'open-bundle-in-flow', 'open-repo-mapping'] as const) {
       expect(parseAppCommand({ type, bundleId: 3 })).toEqual({ type, bundleId: 3 });
       expect(parseAppCommand({ type, bundleId: 0 })).toBeNull();
       expect(parseAppCommand({ type, bundleId: 1.5 })).toBeNull();

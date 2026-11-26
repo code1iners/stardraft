@@ -1,6 +1,5 @@
 import {
   POST_BODY_CHAR_LIMIT,
-  type BundleGroup,
   type BundleSnapshot,
   type BundleStatusSnapshot,
   type DraftFailureReasonSnapshot,
@@ -13,6 +12,7 @@ import {
   type PostStopSnapshot,
   type RepoCheckSnapshot,
   type RepoChoiceGroupSnapshot,
+  type RepoWaitSnapshot,
   type RunLineSnapshot,
   type WritingChangeSnapshot,
 } from '../../shared/ipc';
@@ -41,13 +41,8 @@ export function statusTagOf(status: BundleStatusSnapshot, repoCheck: RepoCheckSn
   return status === 'repo-check-needed' && repoCheck?.kind === 'unmapped' ? REPO_MAPPING_NEEDED_TAG : BUNDLE_STATUS_TAGS[status];
 }
 
-/** 펼친 창의 목록 묶음 이름. */
-export const BUNDLE_GROUP_LABELS: Record<BundleGroup, string> = {
-  'awaiting-review': '검토 대기',
-  generating: '생성 중',
-  failed: '실패',
-  processed: '처리됨',
-};
+/** 펼친 창 목록에서 Flow 초안을 묶는 종류 이름. 진단은 자기 종류 이름으로 같은 묶음 머리를 쓴다. */
+export const DRAFT_KIND_LABEL = '초안';
 
 /** 멘션 묶음 자리의 이름. 본문 묶음과 댓글 스레드 묶음이다. */
 export const BUNDLE_PLACE_LABELS: Record<BundleSnapshot['place'], string> = {
@@ -112,8 +107,8 @@ export function noticeText({ newMentionCount, changes, draft }: Pick<BundleSnaps
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-/** 처리됨 목록 아래의 보관 안내. */
-export const RETENTION_NOTE = '처리한 지 7일이 지나면 목록에서 사라지고 되돌릴 수 없습니다.';
+/** 끝낸 항목이 하나라도 있을 때 목록 맨 아래에 한 줄로 보이는 보관 안내. 종류를 가리지 않는다. */
+export const RETENTION_NOTE = '끝낸 항목은 7일이 지나면 목록에서 사라집니다.';
 
 /** 오늘 시각 표기. 예: 오전 9:50 */
 const TIME_FORMAT = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
@@ -254,11 +249,36 @@ export function failureText(failure: FailureSnapshot): string {
   return FAILURE_REASON_TEXT[failure.reason];
 }
 
-/** 저장소 대기의 사유마다 저장소 영역 첫 줄에 보일 문장. */
-export const REPO_CHECK_TEXT: Record<RepoCheckSnapshot['kind'], string> = {
-  unmapped: '이 Flow 프로젝트에 연결한 저장소가 없음',
-  'missing-folders': '연결된 저장소 폴더를 찾을 수 없음',
-};
+/** 저장소 대기의 노란 바닥 줄 글. 굵은 첫 문장(`lead`)과 이어지는 문장(`before`, 폴더 경로, `after`)이다. 경로가 없으면 `path`는 `null`이다. */
+export interface RepoWaitText {
+  /** 굵게 보이는 첫 문장. */
+  lead: string;
+  /** 첫 문장 뒤, 경로 앞의 글. 경로가 없으면 이어지는 글 전부다. */
+  before: string;
+  /** 찾을 수 없는 폴더 경로들. 쉼표로 이어 코드체로 보인다. 경로가 없으면 `null`. */
+  path: string | null;
+  /** 경로 뒤의 글. */
+  after: string;
+}
+
+/**
+ * 저장소 대기의 노란 바닥 줄 글. 저장소 매핑 필요는 기다리는 건수를, 저장소 확인 필요는 찾을 수 없는 폴더 경로를 알린다.
+ * 진단 바닥 줄은 건수를 "오류 n건"으로 쓰므로 이 글을 쓰지 않고 자기 글을 만든다.
+ */
+export function repoWaitText(repoCheck: RepoWaitSnapshot): RepoWaitText {
+  if (repoCheck.kind === 'unmapped') {
+    return { lead: '이 프로젝트에 연결한 저장소가 없습니다.', before: `매핑하면 기다리는 멘션 ${repoCheck.waitingCount}건의 초안을 만듭니다.`, path: null, after: '' };
+  }
+  return { lead: '연결한 저장소 폴더를 찾을 수 없습니다.', before: '', path: repoCheck.paths.join(', '), after: '폴더가 돌아오거나 매핑을 고치면 이어 갑니다.' };
+}
+
+/** 저장소 대기의 주 버튼 이름. 매핑이 없으면 만들고, 있으면 고친다. */
+export function repoWaitMainButton(repoCheck: RepoCheckSnapshot): string {
+  return repoCheck.kind === 'unmapped' ? '저장소 매핑하기' : '매핑 고치기';
+}
+
+/** 저장소가 정해지지 않은 초안의 저장소 영역 글. */
+export const NO_DETERMINED_REPOSITORY_NOTE = '정해진 저장소가 없습니다.';
 
 /** 연결 버튼 문구. 저장소 매핑이 이미 있으면(같은 구성이어도) "매핑을 이 구성으로 바꾸기"다. */
 export function linkButtonText(mapping: MappingMatchSnapshot): string {
@@ -274,11 +294,6 @@ export const REPO_CHOICE_GROUP_LABELS: Record<RepoChoiceGroupSnapshot, string> =
   mapping: '다른 매핑에 쓰인 저장소',
   added: '직접 고른 폴더',
 };
-
-/** 저장소 확인 필요 사유의 첫 줄. 저장소 선택 창에서 고른 폴더가 사라졌으면 연결(매핑)된 폴더가 아니라고 밝힌다. */
-export function repoCheckText(repoCheck: RepoCheckSnapshot): string {
-  return repoCheck.kind === 'missing-folders' && repoCheck.chosenByUser ? '고른 저장소 폴더를 찾을 수 없음' : REPO_CHECK_TEXT[repoCheck.kind];
-}
 
 /** 걸린 시간을 보인다. 1분이 넘으면 "2분 14초", 넘지 않으면 "45초"다. */
 export function formatDuration(durationMs: number): string {

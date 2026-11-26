@@ -473,7 +473,7 @@ describe('초안 실행: 생성 중에서 준비됨으로', () => {
       createdAt: NOW,
     });
     expect(bundles.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', bundleId: ready?.id }]);
+    expect(notifier.sent).toEqual([{ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', target: { kind: 'draft', id: ready?.id } }]);
   });
 });
 
@@ -653,7 +653,7 @@ describe('초안 실행: 형식 위반과 실패', () => {
     ]);
     expect(second?.status).toBe('ready');
     expect(executor.requests).toHaveLength(2);
-    expect(notifier.sent.map((sent) => sent.bundleId)).toEqual([second?.id]);
+    expect(notifier.sent.map((sent) => sent.target?.id)).toEqual([second?.id]);
   });
 
   it('사용자가 추가한 비밀 파일 패턴에 맞는 근거도 결과 전체를 버린다', async () => {
@@ -935,7 +935,7 @@ describe('초안 실행: 저장소 매핑', () => {
     const [bundle] = bundles.state();
     expect(bundle).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: [repos.b] }, draft: null });
     expect(bundles.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: bundle?.id }]);
+    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '이 프로젝트에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.', target: { kind: 'draft', id: bundle?.id } }]);
     expect(executor.requests).toEqual([]);
   });
 
@@ -966,7 +966,7 @@ describe('저장소 매핑 필요', () => {
     const [bundle] = bundles.state();
     expect(bundle).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' }, draft: null, userRepos: null });
     expect(bundles.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '저장소 매핑 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: bundle?.id }]);
+    expect(notifier.sent).toEqual([{ title: '저장소 매핑 필요', body: '이 프로젝트에 연결한 저장소가 없습니다. 매핑하면 기다리는 초안을 만듭니다.', target: { kind: 'draft', id: bundle?.id } }]);
     expect(executor.requests).toEqual([]);
     // 원문 영역의 "스레드 보기"에 보일 맥락은 조회해 둔다.
     expect(bundle?.context?.post.title).toBe('가짜 게시물');
@@ -4089,7 +4089,7 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
       { manual: true, status: 'ready', mentions: [expect.objectContaining({ alarmId: '99' })] },
     ]);
     expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 닷새 전 질문', '@테스트 사용자 재시도는 몇 번 하나요?']);
-    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', bundleId: results[0]!.bundleId });
+    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', target: { kind: 'draft', id: results[0]!.bundleId } });
     expect(bundles.reviewCount()).toBe(2);
     expect(stateStore.baselineAlarmId).toBe('100');
 
@@ -4276,7 +4276,7 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
     /** 고른 결과. */
     const { bundleId } = await check.request(candidate!);
     expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } });
-    expect(notifier.sent).toContainEqual({ title: '저장소 매핑 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId });
+    expect(notifier.sent).toContainEqual({ title: '저장소 매핑 필요', body: '이 프로젝트에 연결한 저장소가 없습니다. 매핑하면 기다리는 초안을 만듭니다.', target: { kind: 'draft', id: bundleId } });
     // 감지로 들어온 묶음이 하나 더 기다리는 동안 매핑을 저장한다.
     await poll(addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
     await repoMappings.replaceRepos(UNMAPPED_PROJECT_ID, [repos.a]);
@@ -4745,7 +4745,7 @@ describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
     expect(evidenced?.assignment).toEqual({ taskId: 'task-before-task', authorId: SENDER, authorName: '업무 작성자', assignedAt: '20261020085000' });
     expect(executor.requests.map((request) => request.input.includes('담당 업무'))).toEqual([true, true]);
     expect(bundleRecipients(estimated!)).toEqual([{ id: SENDER, name: '업무 작성자' }]);
-    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '담당 업무 초안이 준비됐습니다.', bundleId: estimated!.id });
+    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '담당 업무 초안이 준비됐습니다.', target: { kind: 'draft', id: estimated!.id } });
     expect(bundles.reviewCount()).toBe(2);
     expect(await stateStore.getAssignmentState()).toEqual(stateBefore);
     expect(stateStore.baselineAlarmId).toBe('100');

@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { bundleChanges, type BundleChanges } from '../core/bundles/bundle-changes';
-import { activeMentions, canEditDraft, canRegenerate, isRepoUndetermined, isRestorable, isUnassignedBlocked, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
+import { activeMentions, repoWaitKey, canEditDraft, canRegenerate, isRepoUndetermined, isRestorable, isUnassignedBlocked, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
 import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
@@ -62,8 +62,16 @@ export function reviewSnapshot(
   repoPicker: RepoPickerState | null,
   countdownOf: CountdownLookup,
 ): ReviewSnapshot {
+  /** 프로젝트와 사유별로 기다리는 저장소 대기 묶음 수. 바닥 줄 글의 "기다리는 n건"이다. */
+  const waitCounts = new Map<string, number>();
+  for (const bundle of bundles) {
+    if (bundle.draft !== null || bundle.status !== 'repo-check-needed') continue;
+    /** 센 키. */
+    const key = repoWaitKey(bundle);
+    waitCounts.set(key, (waitCounts.get(key) ?? 0) + 1);
+  }
   return {
-    bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf)),
+    bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf, (item) => waitCounts.get(repoWaitKey(item)) ?? 1)),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
     repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
   };
@@ -177,6 +185,7 @@ export function bundleSnapshot(
   generationOf: GenerationLookup = () => null,
   mappingOf: MappingLookup = () => 'unmapped',
   countdownOf: CountdownLookup = () => null,
+  repoWaitCountOf: (bundle: MentionBundle) => number = () => 1,
 ): BundleSnapshot {
   /** 묶음에 남은 멘션. */
   const active = activeMentions(bundle);
@@ -215,7 +224,7 @@ export function bundleSnapshot(
     run: runLine(bundle),
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
     failure: bundle.failure && { ...bundle.failure },
-    repoCheck: bundle.repoCheck && repoCheckSnapshot(bundle.repoCheck, bundle.userRepos !== null),
+    repoCheck: bundle.repoCheck && { ...repoCheckSnapshot(bundle.repoCheck, bundle.userRepos !== null), waitingCount: repoWaitCountOf(bundle) },
     posting: postingSnapshot(bundle, countdownOf),
     postFailure: bundle.status === 'post-failed' ? (bundle.posting?.failure ?? 'no-response') : null,
     // 그 뒤 게시 중이 되었거나 처리한 묶음에는 보이지 않는다.

@@ -5,7 +5,7 @@ import type {
   DraftSnapshot,
   FailureSnapshot,
   GenerationSnapshot,
-  RepoCheckSnapshot,
+  RepoWaitSnapshot,
   ReviewSection,
   ReviewSnapshot,
   ReviewWindow,
@@ -40,7 +40,9 @@ import {
   processedNote,
   QUIT_DURING_COUNTDOWN_TEXT,
   UNASSIGNED_TEXT,
-  repoCheckText,
+  NO_DETERMINED_REPOSITORY_NOTE,
+  repoWaitMainButton,
+  repoWaitText,
   runLineText,
   senderLine,
   WRITING_CHANGE_LABELS,
@@ -50,15 +52,12 @@ import { useSecondsLeft, type FailedToastState, type IgnoreToastState, type Stop
 /** 문체 검사에 걸린 문장과 근거 설명 옆에 작게 붙이는 말. */
 const DEVELOPER_TERMS_NOTE = '개발자 용어가 있을 수 있음';
 
-/** 사유가 남지 않은 옛 저장소 대기 묶음의 저장소 영역 안내. */
-const NO_REPOSITORY_NOTE = '아직 이 묶음에 쓸 저장소를 정하지 않았습니다.';
-
 /** 상태 태그에 넘기는 값. */
 interface StatusTagProps {
   /** 묶음 상태. */
   status: BundleStatusSnapshot;
   /** 저장소 대기의 사유. 저장소 매핑 필요와 저장소 확인 필요를 가른다. */
-  repoCheck?: RepoCheckSnapshot | null;
+  repoCheck?: RepoWaitSnapshot | null;
 }
 
 /** 묶음 상태 태그. */
@@ -596,6 +595,8 @@ interface DraftRepositoriesProps {
  * 연결 버튼은 이 구성으로 Flow 프로젝트의 저장소 매핑을 덮어쓴다. 이미 이 구성이 매핑이면 꺼 두고 그렇다고 알린다.
  */
 function DraftRepositories({ bundleId, draft }: DraftRepositoriesProps) {
+  // 저장소가 정해지지 않은 초안은 읽은 저장소 목록도 [연결]도 없이 알림만 둔다. 매핑하는 길은 초안 위 알림 줄에 있다.
+  if (draft.repoUndetermined) return <p className="small muted">{NO_DETERMINED_REPOSITORY_NOTE}</p>;
   /** 이 구성으로 저장소 매핑을 덮어쓴다. 구성은 main이 묶음에서 읽는다. */
   const handleLink = () => {
     void window.stardraft.send({ type: 'link-bundle-repos', bundleId });
@@ -612,70 +613,6 @@ function DraftRepositories({ bundleId, draft }: DraftRepositoriesProps) {
       </div>
     </>
   );
-}
-
-/** 저장소 확인 필요 묶음의 저장소 영역 내용에 넘기는 값. */
-interface RepoCheckBodyProps {
-  /** 묶음 ID. 저장소 선택 창을 열 때 실어 보낸다. */
-  bundleId: number;
-  /** 사유. 사유가 남지 않은 옛 묶음이면 `null`. */
-  repoCheck: RepoCheckSnapshot | null;
-}
-
-/** 저장소 확인 필요 묶음의 저장소 영역 내용. 사유와 그 내용 아래에 저장소 선택 창을 여는 [저장소를 골라 만들기]를 둔다. */
-function RepoCheckBody({ bundleId, repoCheck }: RepoCheckBodyProps) {
-  /** 저장소 선택 창을 연다. */
-  const handleOpenPicker = () => {
-    void window.stardraft.send({ type: 'open-repo-picker', bundleId });
-  };
-
-  return (
-    <>
-      <RepoCheckReason repoCheck={repoCheck} />
-      <div className="repo-check-actions">
-        <button type="button" className="btn" onClick={handleOpenPicker}>
-          저장소를 골라 만들기
-        </button>
-      </div>
-    </>
-  );
-}
-
-/** 저장소 확인 필요의 사유와 내용에 넘기는 값. */
-interface RepoCheckReasonProps {
-  /** 사유. */
-  repoCheck: RepoCheckSnapshot;
-}
-
-/** 저장소 확인 필요의 사유. 첫 줄에 사유를 쓰고 그 아래에 사유마다 내용을 둔다. 사유가 없는 옛 묶음은 안내만 보인다. */
-function RepoCheckReason({ repoCheck }: Pick<RepoCheckBodyProps, 'repoCheck'>) {
-  if (!repoCheck) return <p className="small muted">{NO_REPOSITORY_NOTE}</p>;
-  return (
-    <>
-      <p className="warning-text">{repoCheckText(repoCheck)}</p>
-      <RepoCheckDetail repoCheck={repoCheck} />
-    </>
-  );
-}
-
-/**
- * 저장소 대기 사유의 내용. 매핑이 없으면 매핑하면 저절로 만든다는 안내를, 정해 둔 폴더가 사라졌으면 그 폴더를 보인다.
- */
-function RepoCheckDetail({ repoCheck }: RepoCheckReasonProps) {
-  switch (repoCheck.kind) {
-    case 'unmapped':
-      return <p className="small muted">이 Flow 프로젝트에 저장소를 매핑하면 저절로 초안을 만듭니다.</p>;
-    case 'missing-folders':
-      return (
-        <ul className="repository-list">
-          {repoCheck.paths.map((path) => (
-            <li key={path}>
-              <span className="small muted">{path}</span>
-            </li>
-          ))}
-        </ul>
-      );
-  }
 }
 
 /** 진행 영역에 넘기는 값. */
@@ -754,10 +691,10 @@ export function BundleSections({ bundle, windowKind, sections, movedWhileViewing
     if (!open.requirement) void window.stardraft.send({ type: 'set-review-section', window: windowKind, section: 'requirement', open: true });
     setRequirementBundleId(bundle.id);
   };
-  /** 저장소 영역. 초안을 만들 때 쓴 저장소, 또는 저장소 대기 사유를 보인다. */
-  const repository = (draft || bundle.status === 'repo-check-needed') && (
+  /** 저장소 영역. 초안을 만들 때 쓴 저장소를 보인다. 저장소 대기 묶음은 이유를 노란 바닥 줄이 알리므로 이 영역이 없다. */
+  const repository = draft && (
     <ReviewSectionBlock windowKind={windowKind} section="repository" open={open.repository} title="저장소">
-      {draft ? <DraftRepositories bundleId={bundle.id} draft={draft} /> : <RepoCheckBody bundleId={bundle.id} repoCheck={bundle.repoCheck} />}
+      <DraftRepositories bundleId={bundle.id} draft={draft} />
     </ReviewSectionBlock>
   );
 
@@ -828,16 +765,19 @@ interface BundleFooterProps extends BundleProps {
   onPost: () => void;
   /** 카운트다운 중인 게시의 [취소]를 눌렀다. */
   onCancelPost: () => void;
+  /** 바닥 줄이 놓인 창. 작은 창의 노란 바닥 줄은 글을 윗줄에, 버튼을 아랫줄에 둔다. 기본은 펼친 창이다. */
+  windowKind?: 'compact' | 'expanded';
 }
 
 /**
  * 상세 바닥 줄. 처리되지 않은 묶음은 왼쪽에 [무시], 처리됨 묶음은 안내와 [되돌리기]다.
+ * 저장소 대기 묶음은 노란 바닥 줄에 이유와 [무시]·[저장소를 골라 만들기]·주 버튼([저장소 매핑하기]나 [매핑 고치기])을 둔다.
  * 생성 중 묶음은 [취소]만 있고, 실패 묶음은 오른쪽에 [다시 시도]가, 준비됨 묶음은 오른쪽에 재생성 메뉴와 [게시]가 있다.
  * 게시 실패 묶음은 오른쪽에 [다시 게시]만 있다. 편집해 다시 게시할 수는 있지만 다시 만들지는 않는다.
  * 게시 중 묶음은 카운트다운 중이면 남은 초와 [취소]만, 게시 요청을 보냈으면 결과를 기다린다는 말과 꺼진 [게시]만 있다.
  * 재생성 메뉴에서 지시를 덧붙이기로 하면 바닥 줄이 지시를 쓰는 칸이 되고, 편집한 초안이 있으면 다시 만들기 전에 바닥 줄에서 버릴지 묻는다.
  */
-export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, onPost, onCancelPost }: BundleFooterProps) {
+export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, onPost, onCancelPost, windowKind = 'expanded' }: BundleFooterProps) {
   // 바닥 줄의 칸은 보고 있는 묶음에만 연다. 다른 묶음으로 넘어가거나 준비됨이 아니게 되면 닫힌다.
   /** 바닥 줄에 연 칸과 그 묶음 ID. 지시를 쓰는 칸이거나, 그 경로로 다시 만들기 전에 편집본을 버릴지 묻는 칸이다. 열지 않았으면 `null`. */
   const [pane, setPane] = useState<{ bundleId: number; kind: RegenerateChoice } | null>(null);
@@ -886,6 +826,9 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
     // 카운트다운이 바뀌면 남은 초를 새로 세도록 다시 만든다.
     return <PostingFooter key={`${bundle.id}-${bundle.posting.phase}`} posting={bundle.posting} onCancel={onCancelPost} />;
   }
+  if (bundle.status === 'repo-check-needed') {
+    return <RepoWaitFooter bundle={bundle} windowKind={windowKind} onIgnore={onIgnore} />;
+  }
   if (bundle.group === 'processed') {
     return (
       <footer className="review-foot">
@@ -925,6 +868,50 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
           </button>
         </>
       )}
+    </footer>
+  );
+}
+
+/** 저장소 대기의 노란 바닥 줄에 넘기는 값. */
+interface RepoWaitFooterProps extends BundleProps {
+  /** 바닥 줄이 놓인 창. */
+  windowKind: 'compact' | 'expanded';
+  /** [무시]를 눌렀다. */
+  onIgnore: () => void;
+}
+
+/**
+ * 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)의 노란 바닥 줄. 이유 상자 대신 이 줄이 이유를 알린다.
+ * 펼친 창은 한 줄(왼쪽 [무시], 글, 오른쪽 버튼)이고, 작은 창은 글을 윗줄에, 버튼을 아랫줄에 둔다(스타일이 정한다).
+ * [저장소를 골라 만들기]는 이 묶음만 만들고, 주 버튼은 설정의 그 프로젝트 매핑 편집으로 보낸다.
+ */
+function RepoWaitFooter({ bundle, windowKind, onIgnore }: RepoWaitFooterProps) {
+  /** 사유. 사유가 남지 않은 옛 묶음은 저장소 매핑 필요로 본다. */
+  const repoCheck: RepoWaitSnapshot = bundle.repoCheck ?? { kind: 'unmapped', waitingCount: 1 };
+  /** 바닥 줄 글. */
+  const text = repoWaitText(repoCheck);
+  /** 저장소 선택 창을 연다. */
+  const handleOpenPicker = () => {
+    void window.stardraft.send({ type: 'open-repo-picker', bundleId: bundle.id });
+  };
+
+  return (
+    <footer className={`review-foot warn ${windowKind}`}>
+      <button type="button" className="btn repo-wait-ignore" onClick={onIgnore}>
+        무시
+      </button>
+      <p className="repo-wait-text">
+        <strong>{text.lead}</strong> {text.before}
+        {text.path !== null && <code>{text.path}</code>} {text.after}
+      </p>
+      <div className="repo-wait-actions">
+        <button type="button" className="btn" onClick={handleOpenPicker}>
+          저장소를 골라 만들기
+        </button>
+        <button type="button" className="btn primary" onClick={() => sendOpenRepoMapping(bundle.id)}>
+          {repoWaitMainButton(repoCheck)}
+        </button>
+      </div>
     </footer>
   );
 }
@@ -1199,6 +1186,8 @@ function BundleNotice({ bundle, movedWhileViewing }: BundleNoticeProps) {
     if (bundle.draft?.edited) setConfirmingBundleId(bundle.id);
     else sendRegeneration(bundle.id, 'again');
   };
+  /** [저장소 매핑하기]를 눌렀다. 설정에서 이 프로젝트의 저장소 매핑 편집으로 간다. */
+  const handleMapRepos = () => sendOpenRepoMapping(bundle.id);
   /** [되돌리기]를 눌렀다. 묶음은 초안을 가진 채 준비됨으로 돌아오고, 보고 있던 화면은 그대로다. */
   const handleRestore = () => {
     void window.stardraft.send({ type: 'restore-bundle', bundleId: bundle.id });
@@ -1237,8 +1226,18 @@ function BundleNotice({ bundle, movedWhileViewing }: BundleNoticeProps) {
           다시 만들기
         </button>
       )}
+      {bundle.draft?.repoUndetermined && (
+        <button type="button" className="btn sm" onClick={handleMapRepos}>
+          저장소 매핑하기
+        </button>
+      )}
     </div>
   );
+}
+
+/** 묶음의 Flow 프로젝트 저장소 매핑 편집으로 간다. 검토 화면 안에서 폴더를 고르지 않고 설정으로 보낸다. */
+function sendOpenRepoMapping(bundleId: number) {
+  void window.stardraft.send({ type: 'open-repo-mapping', bundleId });
 }
 
 /** 창 아래 토스트 자리에 넘기는 값. */

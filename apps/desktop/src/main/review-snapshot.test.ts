@@ -434,11 +434,11 @@ describe('묶음 스냅숏: 초안 실행', () => {
       run: { kind: 'draft', agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
       draft: null,
     });
-    expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false });
+    expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 });
     // 저장소 선택 창에서 고른 구성의 폴더가 사라졌으면 연결(매핑)된 폴더가 아니라고 넘긴다.
     expect(
       bundleSnapshot(bundle({ userRepos: ['/fake/work/gone'], repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).repoCheck,
-    ).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true });
+    ).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true, waitingCount: 1 });
   });
 });
 
@@ -454,7 +454,7 @@ describe('묶음 스냅숏: 저장소 대기', () => {
   };
 
   it('매핑도 고른 저장소도 없어 기다리는 묶음은 저장소 매핑 필요 사유를 넘기고, 폴더가 없으면 저장소 확인 필요 사유를 넘긴다', () => {
-    expect(bundleSnapshot(bundle({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } }), () => null).repoCheck).toEqual({ kind: 'unmapped' });
+    expect(bundleSnapshot(bundle({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } }), () => null).repoCheck).toEqual({ kind: 'unmapped', waitingCount: 1 });
     expect(bundleSnapshot(bundle({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }), () => null).repoCheck).toMatchObject({
       kind: 'missing-folders',
     });
@@ -480,11 +480,12 @@ describe('묶음 스냅숏: 저장소 대기', () => {
 
 describe('묶음 스냅숏: 저장소 대기와 폐지된 선택 실행', () => {
   it('저장소 대기 묶음은 저장소 매핑 필요와 저장소 확인 필요의 사유만 넘긴다. 고른 구성이 있으면 그 구성의 폴더라고 알린다', () => {
-    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'unmapped' } }), () => null).repoCheck).toEqual({ kind: 'unmapped' });
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'unmapped' } }), () => null).repoCheck).toEqual({ kind: 'unmapped', waitingCount: 1 });
     expect(bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).repoCheck).toEqual({
       kind: 'missing-folders',
       paths: ['/fake/work/gone'],
       chosenByUser: false,
+      waitingCount: 1,
     });
     expect(
       bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] }, userRepos: ['/fake/work/gone'] }), () => null).repoCheck,
@@ -550,6 +551,25 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
 
     expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', picker, () => null).repoPicker).toEqual(picker);
     expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).repoPicker).toBeNull();
+  });
+});
+
+describe('묶음 스냅숏: 저장소 대기 건수', () => {
+  it('같은 프로젝트에서 같은 사유로 기다리는 묶음 수를 바닥 줄 글에 쓰도록 넘긴다. 사유나 프로젝트가 다르면 따로 센다', () => {
+    /** 영역 펼침 상태. */
+    const sections = { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true };
+    /** 같은 프로젝트의 저장소 매핑 필요 묶음 둘, 다른 프로젝트의 하나, 같은 프로젝트의 저장소 확인 필요 하나. */
+    const bundles = [
+      bundle({ id: 1, repoCheck: { kind: 'unmapped' } }),
+      bundle({ id: 2, repoCheck: { kind: 'unmapped' } }),
+      bundle({ id: 3, projectId: '900002', repoCheck: { kind: 'unmapped' } }),
+      bundle({ id: 4, repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }),
+    ];
+
+    /** 건수만 모은 값. */
+    const counts = reviewSnapshot(bundles, { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).bundles.map((item) => item.repoCheck?.waitingCount);
+
+    expect(counts).toEqual([2, 2, 1, 1]);
   });
 });
 

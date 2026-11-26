@@ -26,7 +26,6 @@ import {
   canRegenerate,
   compareBundles,
   compareMentions,
-  countsForReview,
   hasUnpostedDraft,
   isBeforePostRequest,
   isProcessed,
@@ -57,7 +56,7 @@ import {
 export interface MentionBundlesOptions {
   /** 묶음을 두는 상태 저장소. */
   stateStore: StateStore;
-  /** 초안 준비됨과 저장소 확인 필요 묶음을 알릴 OS 알림. */
+  /** 초안 준비됨과 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)를 알릴 OS 알림. */
   notifier: Notifier;
   /** 묶음을 만들고 처리한 시각을 읽는 시계. */
   clock: Clock;
@@ -69,6 +68,8 @@ export interface MentionBundlesOptions {
   collectContext: (bundle: MentionBundle) => Promise<BundleContextResult | null>;
   /** Flow 프로젝트의 저장소 매핑을 지금 폴더 상태로 확인한다. 초안 없는 묶음을 생성 중으로 올릴지 정하고, 초안 실행 직전에 다시 확인한다. */
   resolveRepos: (projectId: string) => Promise<RepoResolution>;
+  /** 저장소 대기 알림 본문에 넣을 프로젝트 이름. 모르거나 없으면 "이 프로젝트"로 쓴다. */
+  projectTitleOf?: (projectId: string) => string | null;
 }
 
 /**
@@ -217,9 +218,11 @@ export class MentionBundles {
       .map((bundle) => bundle.id);
   }
 
-  /** 트레이 검토 수. 검토 대기 가운데 준비됨과 저장소 확인 필요 묶음 수다. */
+  /** 트레이 검토 수. 준비됨 묶음은 건마다, 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)는 프로젝트마다 1로 센다. */
   reviewCount(): number {
-    return this.bundles.filter((bundle) => countsForReview(bundle.status)).length;
+    /** 저장소 대기 묶음이 있는 프로젝트. */
+    const waitingProjects = new Set(this.bundles.filter(isRepoWaiting).map((bundle) => bundle.projectId));
+    return this.bundles.filter((bundle) => bundle.status === 'ready').length + waitingProjects.size;
   }
 
   /** 이 PC가 게시해 기록한 글의 ID(`commentId`, `replyId`) 전부. 처리됨 목록에서 빠져 최소 기록만 남은 글도 넣는다. */
@@ -303,7 +306,7 @@ export class MentionBundles {
       this.emit();
       return saved;
     });
-    if (created && countsForReview(created.status)) this.options.notifier.notify(repoCheckNotification([created]));
+    if (created && isRepoWaiting(created)) this.announceRepoWait([created]);
     if (created && showsContextWithoutDraft(created)) await this.refreshContexts([created.id]);
   }
 
@@ -397,9 +400,8 @@ export class MentionBundles {
         this.emitStopped(bundleId, stop);
       }
 
-      /** 새로 저장소 확인 필요가 된 묶음. 대기열 순서다. 생성 중 묶음은 초안이 준비될 때 알린다. */
-      const waiting = saved.filter((bundle) => createdIds.has(bundle.id) && countsForReview(bundle.status)).sort(compareBundles);
-      if (waiting.length > 0) this.options.notifier.notify(repoCheckNotification(waiting));
+      /** 새로 저장소 대기가 된 묶음. 생성 중 묶음은 초안이 준비될 때 알린다. */
+      this.announceRepoWait(saved.filter((bundle) => createdIds.has(bundle.id) && isRepoWaiting(bundle)));
       return saved.filter(showsContextWithoutDraft).map((bundle) => bundle.id);
     });
     // 초안 없이 기다리는 묶음은 원문 영역의 "스레드 보기"에 보일 맥락을 새로 조회한다.
@@ -655,7 +657,7 @@ export class MentionBundles {
       latest.status === 'generating' ? { ...latest, ...statusWithoutDraft(resolution) } : null,
     );
     if (changed) {
-      this.options.notifier.notify(repoCheckNotification([changed]));
+      this.announceRepoWait([changed]);
       // 초안 실행 직전에 조회하지 못했으므로, 원문 영역에 보일 맥락을 지금 조회한다.
       await this.refreshContexts([bundleId]);
     }
@@ -692,6 +694,26 @@ export class MentionBundles {
       });
     }
     return resumed;
+  }
+
+  /**
+   * 방금 저장소 대기가 된 묶음을 프로젝트 단위로 OS 알림에 띄운다. 프로젝트마다 한 번이다.
+   * 같은 프로젝트에 이미 저장소 대기로 기다리는 묶음이 있으면 풀리기 전이므로 알리지 않고 목록의 수만 늘어난다.
+   * 그 묶음이 모두 풀린 뒤 다시 대기가 되면 다시 알린다. 알림을 누르면 새로 대기가 된 묶음 가운데 대기열 순서로 첫 건을 연다.
+   * 묶음은 이미 `this.bundles`에 들어 있어야 한다.
+   */
+  private announceRepoWait(waiting: readonly MentionBundle[]): void {
+    /** 프로젝트별로 모은 새 대기 묶음. */
+    const groups = new Map<string, MentionBundle[]>();
+    for (const bundle of waiting) groups.set(bundle.projectId, [...(groups.get(bundle.projectId) ?? []), bundle]);
+    for (const [projectId, group] of groups) {
+      /** 이번 묶음 말고 이미 같은 프로젝트에서 기다리는 묶음. 있으면 이미 알렸다. */
+      const alreadyWaiting = this.bundles.some((bundle) => isRepoWaiting(bundle) && bundle.projectId === projectId && !group.some((item) => item.id === bundle.id));
+      if (alreadyWaiting) continue;
+      /** 알림이 열 첫 건. */
+      const first = [...group].sort(compareBundles)[0]!;
+      this.options.notifier.notify(repoWaitNotification(first, this.options.projectTitleOf?.(projectId) ?? null));
+    }
   }
 
   /**
@@ -756,7 +778,7 @@ export class MentionBundles {
       status: 'repo-check-needed',
       repoCheck: structuredClone(repoCheck),
     }));
-    if (changed) this.options.notifier.notify(repoCheckNotification([changed]));
+    if (changed) this.announceRepoWait([changed]);
     return changed !== null;
   }
 
@@ -1275,7 +1297,7 @@ export class MentionBundles {
       return { kind: 'created', bundle: saved };
     });
     if (outcome.kind === 'created') {
-      if (countsForReview(outcome.bundle.status)) this.options.notifier.notify(repoCheckNotification([outcome.bundle]));
+      if (isRepoWaiting(outcome.bundle)) this.announceRepoWait([outcome.bundle]);
       if (showsContextWithoutDraft(outcome.bundle)) await this.refreshContexts([outcome.bundle.id]);
     }
     return { kind: outcome.kind, bundleId: outcome.bundle.id };
@@ -1738,27 +1760,22 @@ function latestSenderName(bundle: MentionBundle): string {
 }
 
 /**
- * 새로 저장소 확인 필요가 된 묶음의 OS 알림. 송신자 이름만 넣고 Flow 글 본문은 넣지 않는다. 누르면 첫 묶음을 연다.
+ * 프로젝트가 저장소 대기가 될 때의 OS 알림. 프로젝트 이름만 넣고 송신자와 글 본문은 넣지 않는다. 누르면 `first`를 연다.
+ * 문구는 멘션 묶음과 담당 업무 초안에 같다.
  */
-function repoCheckNotification(waiting: readonly MentionBundle[]): AppNotification {
-  /** 대기열에서 가장 앞의 묶음. */
-  const first = waiting[0]!;
-  /** 그 묶음에서 답할 멘션의 송신자 이름. */
-  const sender = latestSenderName(first);
-  /** 알림 제목에 쓸 상태 이름. 매핑이 없어 기다리면 저장소 매핑 필요, 그 밖에는 저장소 확인 필요다. */
-  const state = first.repoCheck?.kind === 'unmapped' ? '저장소 매핑 필요' : '저장소 확인 필요';
-  if (waiting.length === 1) {
+function repoWaitNotification(first: MentionBundle, projectTitle: string | null): AppNotification {
+  /** 본문에 쓸 프로젝트 이름. */
+  const project = projectTitle || '이 프로젝트';
+  /** 알림이 가리키는 첫 건. */
+  const target = { kind: 'draft', id: first.id } as const;
+  if (first.repoCheck?.kind === 'missing-folders') {
     return {
-      title: state,
-      body: first.assignment ? '담당 업무 초안에 사용할 저장소를 확인해주세요.' : sender ? `${sender}님이 나를 멘션했습니다.` : '나를 지목한 멘션이 왔습니다.',
-      bundleId: first.id,
+      title: '저장소 확인 필요',
+      body: `${project}에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.`,
+      target,
     };
   }
-  return {
-    title: `${state} ${waiting.length}건`,
-    body: sender ? `${sender}님 외 ${waiting.length - 1}건의 멘션이 왔습니다.` : `나를 지목한 멘션 ${waiting.length}건이 왔습니다.`,
-    bundleId: first.id,
-  };
+  return { title: '저장소 매핑 필요', body: `${project}에 연결한 저장소가 없습니다. 매핑하면 기다리는 초안을 만듭니다.`, target };
 }
 
 /** 초안이 준비된 묶음의 OS 알림. 송신자 이름만 넣고 Flow 글 본문과 초안은 넣지 않는다. 누르면 그 묶음을 연다. */
@@ -1768,6 +1785,6 @@ function draftReadyNotification(bundle: MentionBundle): AppNotification {
   return {
     title: '초안 준비됨',
     body: bundle.assignment ? '담당 업무 초안이 준비됐습니다.' : sender ? `${sender}님 멘션에 답할 초안이 준비됐습니다.` : '나를 지목한 멘션에 답할 초안이 준비됐습니다.',
-    bundleId: bundle.id,
+    target: { kind: 'draft', id: bundle.id },
   };
 }

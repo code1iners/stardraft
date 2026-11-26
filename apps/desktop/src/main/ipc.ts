@@ -11,6 +11,7 @@ import type { AgentConnections } from '../core/agent/agent-connections';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import type { SentryConnection, SentryConnectionState, SentryTokenCheckOutcome } from '../core/sentry/sentry-connection';
+import type { SentryProjects, SentryProjectsState, SentryRegisterOutcome, SentryUpdateOutcome } from '../core/sentry/sentry-projects';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
 import type { Notifier } from '../core/ports/notifier';
@@ -39,6 +40,8 @@ import {
   type FlowAccountProfile,
   type FlowAccountSnapshot,
   type SentryConnectionSnapshot,
+  type SentryProjectSaveResult,
+  type SentryProjectsSnapshot,
   type GlobalProblemSnapshot,
   type OnboardingSnapshot,
   type RepoMappingsSnapshot,
@@ -62,6 +65,8 @@ export interface IpcServices {
   flowAccount: FlowAccount;
   /** "Sentry" 칸의 토큰 확인과 조직. */
   sentryConnection: SentryConnection;
+  /** "Sentry" 칸의 프로젝트 등록과 "저장소" 칸 `Sentry` 탭의 저장소 매핑. */
+  sentryProjects: SentryProjects;
   /** 작은 창 띠에 보일 전역 문제. */
   globalProblems: GlobalProblems;
   /** "에이전트" 칸의 연결 확인. 이 OS의 후보 에이전트마다 하나씩 있다. */
@@ -119,6 +124,9 @@ export function registerIpc(services: IpcServices): void {
   );
   services.sentryConnection.onChange((state) =>
     services.windows.broadcast({ type: 'sentry-changed', sentry: sentrySnapshot(state) }),
+  );
+  services.sentryProjects.onChange(() =>
+    services.windows.broadcast({ type: 'sentry-projects-changed', sentryProjects: sentryProjectsSnapshot(services.sentryProjects.state()) }),
   );
   services.globalProblems.onChange((current) =>
     services.windows.broadcast({ type: 'global-problem-changed', globalProblem: activeProblemSnapshot(current) }),
@@ -234,13 +242,14 @@ function projectLookup(repoMappings: RepoMappings): ProjectLookup {
 /** 지금 앱 상태의 스냅숏. */
 function currentSnapshot(services: IpcServices): AppSnapshot {
   /** 상태를 읽을 main의 일. */
-  const { flowAccount, sentryConnection, globalProblems, agentConnections, agentPreferences, repoMappings, onboarding, launchAtLogin } = services;
+  const { flowAccount, sentryConnection, sentryProjects, globalProblems, agentConnections, agentPreferences, repoMappings, onboarding, launchAtLogin } = services;
   return {
     appName: app.name,
     version: app.getVersion(),
     platform: appPlatform(),
     flowAccount: flowAccountSnapshot(flowAccount.state()),
     sentry: sentrySnapshot(sentryConnection.state()),
+    sentryProjects: sentryProjectsSnapshot(sentryProjects.state()),
     globalProblem: activeProblemSnapshot(globalProblems.current()),
     agentConnections: agentConnectionsSnapshot(agentConnections),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
@@ -264,6 +273,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     logger,
     flowAccount,
     sentryConnection,
+    sentryProjects,
     agentConnections,
     agentPreferences,
     repoMappings,
@@ -306,6 +316,44 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'disconnect-sentry':
       await sentryConnection.disconnect();
       return;
+    case 'refresh-sentry-projects':
+      await sentryProjects.refresh();
+      return;
+    case 'load-sentry-candidates':
+      await sentryProjects.loadCandidates();
+      return;
+    case 'register-sentry-project': {
+      /** 등록한 결과. */
+      const outcome = await sentryProjects.register(command.projectId, command);
+      if (outcome.kind === 'registered') await showRejectedFolders(outcome.rejected ? [outcome.rejected] : []);
+      windows.broadcast({ type: 'sentry-project-saved', result: saveResultOf(outcome) });
+      return;
+    }
+    case 'update-sentry-project': {
+      /** 저장한 결과. */
+      const outcome = await sentryProjects.update(command.projectId, command);
+      if (outcome.kind === 'updated') await showRejectedFolders(outcome.rejected ? [outcome.rejected] : []);
+      windows.broadcast({ type: 'sentry-project-saved', result: saveResultOf(outcome) });
+      return;
+    }
+    case 'unregister-sentry-project':
+      await sentryProjects.unregister(command.projectId);
+      return;
+    case 'pick-sentry-draft-folder': {
+      /** 고른 폴더. 고르지 않고 닫으면 `null`. */
+      const path = await pickSingleFolder(windows);
+      if (path !== null) windows.broadcast({ type: 'sentry-draft-folder-picked', path });
+      return;
+    }
+    case 'pick-sentry-project-repo': {
+      /** 고른 폴더. 고르지 않고 닫으면 `null`. */
+      const path = await pickSingleFolder(windows);
+      if (path === null) return;
+      /** 받지 않은 폴더. */
+      const rejected = await sentryProjects.setRepo(command.projectId, path);
+      await showRejectedFolders(rejected ? [rejected] : []);
+      return;
+    }
     case 'check-agents':
       await agentConnections.checkAll();
       return;
@@ -705,6 +753,52 @@ function announceKeyCheckOutcome(windows: AppWindows, outcome: FlowKeyCheckOutco
 function announceTokenCheckOutcome(windows: AppWindows, outcome: SentryTokenCheckOutcome): void {
   if (outcome.kind === 'connected') windows.broadcast({ type: 'sentry-token-check-finished', result: 'connected' });
   if (outcome.kind === 'failed') windows.broadcast({ type: 'sentry-token-check-finished', result: outcome.reason });
+}
+
+/** 프로젝트 등록·편집의 결과를 렌더러에 알릴 값으로 바꾼다. */
+function saveResultOf(outcome: SentryRegisterOutcome | SentryUpdateOutcome): SentryProjectSaveResult {
+  if (outcome.kind === 'registered') return 'registered';
+  if (outcome.kind === 'updated') return 'updated';
+  return outcome.reason;
+}
+
+/** 폴더 선택 창으로 저장소 폴더를 하나 받는다. 고르지 않고 닫으면 `null`. */
+async function pickSingleFolder(windows: AppWindows): Promise<string | null> {
+  /** 폴더 선택 창 설정. git 저장소가 아닌 코드 폴더도 고를 수 있다. */
+  const options: OpenDialogOptions = { title: '저장소 폴더 고르기', buttonLabel: '선택', properties: ['openDirectory'] };
+  /** 설정 창. 있으면 그 위에 시트로 띄운다. */
+  const parent = windows.settingsWindow();
+  /** 고른 결과. */
+  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+/** core의 Sentry 프로젝트 상태를 렌더러에 넘길 모양으로 바꾼다. 조직·프로젝트 slug와 등록 시각은 화면에 쓰지 않으므로 넘기지 않는다. */
+function sentryProjectsSnapshot(state: SentryProjectsState): SentryProjectsSnapshot {
+  return {
+    projects: state.projects.map(({ registration, access, repo }) => ({
+      projectId: registration.projectId,
+      organizationName: registration.organizationName,
+      projectName: registration.projectName,
+      environment: registration.environment,
+      levels: [...registration.levels],
+      repo: repo && { ...repo },
+      access,
+    })),
+    candidates:
+      state.candidates.status === 'loaded'
+        ? {
+            status: 'loaded',
+            incomplete: state.candidates.incomplete,
+            projects: state.candidates.projects.map(({ projectId, organizationName, projectName, environments }) => ({
+              projectId,
+              organizationName,
+              projectName,
+              environments: [...environments],
+            })),
+          }
+        : state.candidates,
+  };
 }
 
 /** core의 Sentry 연결 상태를 렌더러에 넘길 모양으로 바꾼다. 조직 이름만 넘기고 지역 주소와 ID는 화면에 쓰지 않으므로 넘기지 않는다. */

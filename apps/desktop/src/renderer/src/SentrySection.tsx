@@ -1,11 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { globalProblemText } from '../../shared/global-problem-text';
 import {
   SENTRY_TOKEN_MAX_LENGTH,
   type AppSnapshot,
   type SentryConnectionSnapshot,
+  type SentryProjectSnapshot,
+  type SentryProjectsSnapshot,
   type SentryTokenCheckFailure,
 } from '../../shared/ipc';
+import { SentryProjectModal } from './SentryProjectModal';
+import { PROJECT_STATUS_TEXT, projectFilterSummary, projectStatus } from './sentry-project-text';
 
 /** 토큰 확인이 실패했을 때 입력 칸 아래에 보일 문구. 권한이 모자라면 빠진 scope 이름을 짚는다. */
 const FAILURE_MESSAGES: Record<SentryTokenCheckFailure, string> = {
@@ -25,15 +29,17 @@ const RETRYABLE_FAILURES: ReadonlySet<SentryTokenCheckFailure> = new Set(['netwo
 interface SentrySectionProps {
   /** "Sentry" 칸의 상태. */
   sentry: SentryConnectionSnapshot;
+  /** 진단하려고 등록한 프로젝트와 등록할 수 있는 프로젝트 목록. */
+  projects: SentryProjectsSnapshot;
   /** 실행 중인 OS. 읽을 수 없는 이유의 문구가 OS마다 다르다. */
   platform: AppSnapshot['platform'];
 }
 
 /**
- * 설정 "Sentry" 칸. 토큰이 없으면 토큰 입력만, 있으면 토큰 카드(조직 수와 이름, 권한, 상태)를 보인다.
+ * 설정 "Sentry" 칸. 토큰이 없으면 토큰 입력만, 있으면 토큰 카드(조직 수와 이름, 권한, 상태)와 "진단할 프로젝트" 목록을 보인다.
  * 토큰은 [확인]으로 Sentry에 확인되었을 때만 main이 저장하므로 저장 버튼은 없다. 토큰 문제는 이 칸의 Sentry만 멈춘다.
  */
-export function SentrySection({ sentry, platform }: SentrySectionProps) {
+export function SentrySection({ sentry, projects, platform }: SentrySectionProps) {
   /** 토큰 연결 여부, 확인의 진행 상태, "토큰 확인 필요"의 이유. */
   const { connected, tokenCheck, tokenProblem } = sentry;
   /** 연결된 토큰이 있을 때 [토큰 바꾸기]로 입력 칸을 연 상태. */
@@ -95,12 +101,15 @@ export function SentrySection({ sentry, platform }: SentrySectionProps) {
     <>
       <p className="section-lead muted">Sentry의 새 오류 이슈를 감지하는 데 쓰는 개인 토큰입니다. 토큰이 문제여도 Flow 감지와 Flow 초안은 멈추지 않습니다.</p>
       {connected && !editing ? (
-        <TokenCard
-          sentry={sentry}
-          problemMessage={tokenProblem && globalProblemText({ cause: 'sentry-token', reason: tokenProblem }, platform).message}
-          onEdit={handleEdit}
-          onDisconnect={handleDisconnect}
-        />
+        <>
+          <TokenCard
+            sentry={sentry}
+            problemMessage={tokenProblem && globalProblemText({ cause: 'sentry-token', reason: tokenProblem }, platform).message}
+            onEdit={handleEdit}
+            onDisconnect={handleDisconnect}
+          />
+          <ProjectList projects={projects} tokenProblem={tokenProblem !== null} />
+        </>
       ) : (
         <form className="field" onSubmit={handleSubmit}>
           <label className="field-label" htmlFor="sentry-token">
@@ -197,5 +206,103 @@ function TokenCard({ sentry, problemMessage, onEdit, onDisconnect }: TokenCardPr
       )}
       <p className="field-note muted">토큰은 이 PC에만 암호화해 보관합니다. 연결을 끊으면 토큰만 지우고 다른 설정은 그대로 둡니다.</p>
     </div>
+  );
+}
+
+/** 진단할 프로젝트 목록에 넘기는 값. */
+interface ProjectListProps {
+  /** 등록한 프로젝트와 등록할 수 있는 프로젝트 목록. */
+  projects: SentryProjectsSnapshot;
+  /** "토큰 확인 필요"인지 여부. 그렇다면 [프로젝트 추가…]를 막고 모든 줄이 멈춘 것으로 보인다. */
+  tokenProblem: boolean;
+}
+
+/** 모달이 열린 상태. 닫혀 있으면 `null`, 추가면 `'add'`, 편집이면 고치는 프로젝트의 ID다. */
+type OpenModal = null | 'add' | { editing: string };
+
+/** "진단할 프로젝트" 목록: 줄마다 `조직 / 프로젝트`, `환경 · 레벨 · 저장소 이름`, 상태, [편집]. [프로젝트 추가…]와 두 모달을 가진다. */
+function ProjectList({ projects, tokenProblem }: ProjectListProps) {
+  /** 열려 있는 모달. */
+  const [modal, setModal] = useState<OpenModal>(null);
+  /** 모달을 닫는다. 늘 같은 함수라 모달의 이벤트 구독이 다시 걸리지 않는다. */
+  const closeModal = useCallback(() => setModal(null), []);
+
+  useEffect(function refreshOnOpen() {
+    // 칸을 열 때마다 등록한 프로젝트에 닿는지와 매핑된 폴더가 있는지 다시 확인한다.
+    void window.stardraft.send({ type: 'refresh-sentry-projects' });
+  }, []);
+
+  /** 고치는 프로젝트. */
+  const editing = typeof modal === 'object' && modal !== null ? (projects.projects.find((project) => project.projectId === modal.editing) ?? null) : null;
+
+  return (
+    <div className="field">
+      <span className="field-label">진단할 프로젝트</span>
+      {projects.projects.length === 0 ? (
+        <p className="field-help muted">등록한 프로젝트가 없습니다. 프로젝트를 추가하면 그 프로젝트의 새 오류 이슈를 진단합니다.</p>
+      ) : (
+        <ul className="sentry-project-list">
+          {projects.projects.map((project) => (
+            <ProjectRow key={project.projectId} project={project} tokenProblem={tokenProblem} onEdit={() => setModal({ editing: project.projectId })} />
+          ))}
+        </ul>
+      )}
+      <div className="row">
+        <button
+          type="button"
+          className="btn"
+          disabled={tokenProblem}
+          title={tokenProblem ? '토큰을 다시 확인한 뒤 추가할 수 있습니다.' : undefined}
+          onClick={() => setModal('add')}
+        >
+          프로젝트 추가…
+        </button>
+      </div>
+      {modal === 'add' && (
+        <SentryProjectModal
+          editing={null}
+          registeredIds={new Set(projects.projects.map((project) => project.projectId))}
+          candidates={projects.candidates}
+          onClose={closeModal}
+        />
+      )}
+      {editing && (
+        <SentryProjectModal editing={editing} registeredIds={new Set()} candidates={projects.candidates} onClose={closeModal} />
+      )}
+    </div>
+  );
+}
+
+/** 프로젝트 줄에 넘기는 값. */
+interface ProjectRowProps {
+  /** 등록한 프로젝트. */
+  project: SentryProjectSnapshot;
+  /** "토큰 확인 필요"인지 여부. */
+  tokenProblem: boolean;
+  /** [편집]을 눌렀을 때. */
+  onEdit: () => void;
+}
+
+/** 프로젝트 줄. 상태는 감지 중, 저장소 매핑 없음, 접근 불가, 토큰 확인 필요 중 하나다. */
+function ProjectRow({ project, tokenProblem, onEdit }: ProjectRowProps) {
+  /** 줄의 상태. */
+  const status = projectStatus(project, tokenProblem);
+  return (
+    <li className="sentry-project-item">
+      <div className="sentry-project-info">
+        <div className="account-name">
+          <strong>
+            {project.organizationName} / {project.projectName}
+          </strong>
+        </div>
+        <div className="muted small">{projectFilterSummary(project)}</div>
+      </div>
+      <span className={status === 'watching' ? 'ok-text small' : status === 'unmapped' ? 'warning-text small' : 'danger-text small'}>
+        {PROJECT_STATUS_TEXT[status]}
+      </span>
+      <button type="button" className="btn sm" onClick={onEdit}>
+        편집
+      </button>
+    </li>
   );
 }

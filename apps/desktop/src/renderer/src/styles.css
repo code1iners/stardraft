@@ -2326,3 +2326,68 @@ textarea.instructions-input {
 .help-tip[data-open='true'] .help-tip-body {
   display: block;
 }
+
+/* Sentry 칸: 진단할 프로젝트 목록과 프로젝트 모달. */
+.btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.sentry-project-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.sentry-project-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.sentry-project-item + .sentry-project-item {
+  border-top: 1px solid var(--border);
+}
+
+.sentry-project-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sentry-project-info > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal.sentry-project-modal {
+  width: 460px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}
+
+.sentry-project-modal .field {
+  margin-top: 12px;
+}
+
+.level-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.sentry-repo-row {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sentry-unregister {
+  margin-right: auto;
+}
+
+.sentry-project-modal .modal-actions .btn.danger:first-child {
+  margin-right: auto;
+}

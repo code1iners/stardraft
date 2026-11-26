@@ -37,6 +37,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
     platform: 'darwin',
     flowAccount: { account: null, keyCheck: { status: 'idle' } },
     sentry: { connected: false, organizations: [], tokenCheck: { status: 'idle' }, tokenProblem: null },
+    sentryProjects: { projects: [], candidates: { status: 'idle' } },
     globalProblem: null,
     agentConnections: [
       {

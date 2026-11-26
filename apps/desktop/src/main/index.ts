@@ -10,6 +10,7 @@ import { AccountRecords } from '../core/account/account-records';
 import { FlowAccount, type FlowAccountRecords } from '../core/account/flow-account';
 import { HttpSentryApi } from '../core/sentry/http-sentry-api';
 import { SentryConnection, type SentryConnectionState } from '../core/sentry/sentry-connection';
+import { SentryProjects } from '../core/sentry/sentry-projects';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { BundleRetention } from '../core/bundles/retention';
 import { RepoWaitMonitor } from '../core/bundles/repo-wait-monitor';
@@ -167,6 +168,15 @@ function start(): void {
       problems: globalProblems,
     });
     await sentryConnection.load();
+    /** 진단할 Sentry 프로젝트의 등록과 저장소 매핑. 이 단계에서는 등록만 하고 감지는 돌지 않는다. */
+    const sentryProjects = new SentryProjects({
+      connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
+      connection: sentryConnection,
+      settingsStore: appData.settingsStore,
+      clock: systemClock,
+      logger,
+    });
+    await sentryProjects.load();
 
     /** 작은 창과 설정 창. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로도 잡는다. */
     const appWindows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
@@ -432,6 +442,7 @@ function start(): void {
       logger,
       flowAccount,
       sentryConnection,
+      sentryProjects,
       globalProblems,
       agentConnections,
       agentPreferences,

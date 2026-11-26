@@ -318,6 +318,7 @@ function checkFailureOf(failure: SentryApiFailure): SentryTokenCheckFailure {
     case 'rate-limited':
       return 'rate-limited';
     case 'http':
+    case 'not-found':
     case 'unexpected-response':
       return 'unexpected';
   }

@@ -81,10 +81,7 @@ export function SettingsView({ initialSection, initialProjectId = null }: Settin
               <FlowAccountSection flowAccount={snapshot.flowAccount} keyNeedsCheck={snapshot.globalProblem?.cause === 'flow-key'} />
             )}
             {section === 'sentry' && snapshot && (
-              <SentrySection
-                sentry={snapshot.sentry}
-                platform={snapshot.platform}
-              />
+              <SentrySection sentry={snapshot.sentry} projects={snapshot.sentryProjects} platform={snapshot.platform} />
             )}
             {section === 'agent' && snapshot && (
               <AgentSection
@@ -94,7 +91,9 @@ export function SettingsView({ initialSection, initialProjectId = null }: Settin
                 platform={snapshot.platform}
               />
             )}
-            {section === 'repositories' && snapshot && <RepositoriesSection repoMappings={snapshot.repoMappings} focusProjectId={focusProjectId} />}
+            {section === 'repositories' && snapshot && (
+              <RepositoriesSection repoMappings={snapshot.repoMappings} sentryProjects={snapshot.sentryProjects} focusProjectId={focusProjectId} />
+            )}
             {section === 'drafts' && snapshot && <DraftsSection snapshot={snapshot} />}
             {section === 'general' && <GeneralSection snapshot={snapshot} />}
           </main>

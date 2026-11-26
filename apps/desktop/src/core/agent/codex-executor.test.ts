@@ -396,6 +396,22 @@ describe('Codex 실행기: 재현 경계', () => {
   });
 });
 
+describe('Codex 실행기: 실행 중 전달', () => {
+  it('실행 중 전달 능력이 없다. 전달을 쓰겠다는 요청을 받아도 보내는 함수를 넘기지 않고 입력은 한 번에 닫는다', async () => {
+    const { runner, executor } = setup();
+    /** 보내는 함수를 받은 횟수. */
+    let offered = 0;
+    answerCli(runner, exited(0, codexSuccessStream({ requirement: '가짜 요구' })));
+
+    await executor.run(draftRequest({ onSteerable: () => (offered += 1) }));
+
+    expect('supportsSteering' in executor).toBe(false);
+    expect(offered).toBe(0);
+    expect(runner.requests[0]?.onStdin).toBeUndefined();
+    expect(runner.requests[0]?.args).not.toContain('--input-format');
+  });
+});
+
 describe('Codex 실행기: 진행 단계와 결과', () => {
   it('명령 이벤트를 진행 단계 한 줄로 바꾼다. 파일 읽기는 파일 이름, 내용 검색은 검색어, 파일 이름 찾기는 패턴, 그 밖의 명령은 명령 줄을 보인다', async () => {
     const { runner, executor } = setup();

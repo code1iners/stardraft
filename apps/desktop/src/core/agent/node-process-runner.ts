@@ -72,7 +72,26 @@ export class NodeProcessRunner implements ProcessRunner {
       // 넘길 내용이 없으면 표준 입력을 바로 닫아 자식이 입력을 기다리지 않게 한다.
       // 자식이 표준 입력을 다 읽기 전에 끝나면 EPIPE가 난다. 결과는 종료 코드로 알 수 있으므로 무시한다.
       child.stdin.on('error', () => {});
-      child.stdin.end(request.stdin ?? '');
+      if (request.onStdin) {
+        // 입력을 열어 둔 채 호출한 쪽에 넘긴다. 프로세스가 끝나면 아래 `settle`이 닫는다.
+        /** 입력을 이미 닫았는지 여부. */
+        let stdinClosed = false;
+        child.stdin.write(request.stdin ?? '');
+        request.onStdin({
+          write: (text) => {
+            if (stdinClosed || settled || child.stdin.destroyed || !child.stdin.writable) return false;
+            child.stdin.write(text);
+            return true;
+          },
+          end: () => {
+            if (stdinClosed) return;
+            stdinClosed = true;
+            child.stdin.end();
+          },
+        });
+      } else {
+        child.stdin.end(request.stdin ?? '');
+      }
 
       /** 결과를 한 번만 돌려주고 타이머, 중단 신호 구독, 출력을 정리한다. */
       const settle = (result: ProcessResult) => {
@@ -87,6 +106,7 @@ export class NodeProcessRunner implements ProcessRunner {
         partialLine = '';
         child.stdout.destroy();
         child.stderr.destroy();
+        child.stdin.destroy();
         resolve(result);
       };
 

@@ -32,6 +32,30 @@ export function diagnosisStatusTag(diagnosis: Pick<DiagnosisSnapshot, 'status' |
   }
 }
 
+/**
+ * 연장을 묻는 동안 진단 상태 태그 앞에 붙는 노란 `확인 필요` 태그. 묻는 중이 아니면 `null`이다.
+ * 마무리를 기다리는 동안과 묻지 않는 진행 중에는 붙지 않는다.
+ */
+export function diagnosisAttentionTag(diagnosis: Pick<DiagnosisSnapshot, 'progress'>): { label: string; tone: DiagnosisTagTone } | null {
+  return diagnosis.progress?.status === 'running' && diagnosis.progress.extension?.phase === 'asking' ? { label: '확인 필요', tone: 'warn' } : null;
+}
+
+/**
+ * 연장 묻기 노란 바닥 줄의 글. 굵은 첫 문장 뒤에 이어진다. 실행 중 전달이 되는 에이전트는 답이 없으면 보고서를 마무리하고,
+ * 안 되는 에이전트는 멈추거나 답이 없으면 보고서 없이 끝나므로 둘째 문장이 다르다.
+ */
+export function diagnosisExtensionAskText(canSteer: boolean): { lead: string; body: string } {
+  return {
+    lead: '5분 뒤 멈춥니다. 계속할까요?',
+    body: canSteer
+      ? '계속하면 10분을 더 씁니다. 답이 없으면 지금까지 알아낸 것으로 보고서를 마무리합니다.'
+      : '계속하면 10분을 더 씁니다. 멈추거나 답이 없으면 보고서 없이 끝납니다.',
+  };
+}
+
+/** [멈추기] 뒤 보고서를 마무리하기를 기다리는 동안의 바닥 줄 글. */
+export const DIAGNOSIS_WRAP_UP_TEXT = '보고서를 마무리하는 중입니다. 5분 안에 끝납니다.';
+
 /** 대기·진행 중 진단의 `진행` 한 줄. 대기면 앞에 있는 수, 진행 중이면 마지막 진행 단계다. */
 export function diagnosisProgressText(progress: DiagnosisProgressSnapshot): string {
   if (progress.status === 'running') return progress.step;
@@ -51,7 +75,8 @@ export function diagnosisRunningText(startedAt: number, now = Date.now()): strin
  */
 const DIAGNOSIS_FAILURE_TEXT: Partial<Record<DiagnosisFailureSnapshot['reason'], string>> = {
   cancelled: '취소함: 진단을 취소했습니다.',
-  'timed-out': '에이전트가 20분 안에 끝내지 못해 멈췄습니다.',
+  // 재현하는 진단은 연장해서 20분을 넘길 수 있으므로 몇 분이라고 적지 않는다.
+  'timed-out': '에이전트가 정해진 시간 안에 끝내지 못해 멈췄습니다.',
   'app-error': '앱 안에서 오류가 나서 진단하지 못했습니다.',
 };
 

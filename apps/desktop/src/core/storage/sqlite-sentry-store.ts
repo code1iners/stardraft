@@ -69,6 +69,8 @@ interface DiagnosisRow {
   rediagnosis_failure: string | null;
   /** 재현을 끈 다시 진단인지(1) 아닌지(0). */
   keep_reproduction: number;
+  /** 시간 초과 뒤 재현 없이 다시 시도하는 진단인지(1) 아닌지(0). */
+  without_reproduction: number;
 }
 
 /**
@@ -128,6 +130,7 @@ export class SqliteSentryStore implements SentryStore {
           directives: [],
           rediagnosisFailure: null,
           keepReproduction: false,
+          withoutReproduction: false,
         });
       });
     })();
@@ -140,7 +143,7 @@ export class SqliteSentryStore implements SentryStore {
   async updateDiagnosis(diagnosis: SentryDiagnosis): Promise<void> {
     this.db
       .prepare(
-        'UPDATE sentry_diagnosis SET status = ?, repo_check = ?, report = ?, failure = ?, runs = ?, completed_at = ?, last_export = ?, directives = ?, rediagnosis_failure = ?, keep_reproduction = ? WHERE id = ?',
+        'UPDATE sentry_diagnosis SET status = ?, repo_check = ?, report = ?, failure = ?, runs = ?, completed_at = ?, last_export = ?, directives = ?, rediagnosis_failure = ?, keep_reproduction = ?, without_reproduction = ? WHERE id = ?',
       )
       .run(
         diagnosis.status,
@@ -153,6 +156,7 @@ export class SqliteSentryStore implements SentryStore {
         JSON.stringify(diagnosis.directives),
         jsonOrNull(diagnosis.rediagnosisFailure),
         diagnosis.keepReproduction ? 1 : 0,
+        diagnosis.withoutReproduction ? 1 : 0,
         diagnosis.id,
       );
   }
@@ -166,7 +170,7 @@ export class SqliteSentryStore implements SentryStore {
     const blankIssue = JSON.stringify(BLANK_ISSUE);
     /** 줄 하나를 비우는 문장. 완료가 아닌 줄은 건드리지 않는다. */
     const scrub = this.db.prepare(
-      "UPDATE sentry_diagnosis SET issue = ?, report = NULL, failure = NULL, runs = '[]', repo_check = NULL, directives = '[]', rediagnosis_failure = NULL, keep_reproduction = 0 WHERE id = ? AND status = 'completed'",
+      "UPDATE sentry_diagnosis SET issue = ?, report = NULL, failure = NULL, runs = '[]', repo_check = NULL, directives = '[]', rediagnosis_failure = NULL, keep_reproduction = 0, without_reproduction = 0 WHERE id = ? AND status = 'completed'",
     );
     this.db.transaction(() => {
       for (const id of ids) scrub.run(blankIssue, id);
@@ -211,6 +215,7 @@ function diagnosisOf(row: DiagnosisRow): SentryDiagnosis {
     directives: JSON.parse(row.directives) as string[],
     rediagnosisFailure: row.rediagnosis_failure === null ? null : (JSON.parse(row.rediagnosis_failure) as DiagnosisFailure),
     keepReproduction: row.keep_reproduction === 1,
+    withoutReproduction: row.without_reproduction === 1,
   };
 }
 

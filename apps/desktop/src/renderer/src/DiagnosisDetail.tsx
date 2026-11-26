@@ -6,7 +6,10 @@ import {
   attachmentSizeText,
   CONFIDENCE_TEXT,
   causeParts,
+  diagnosisAttentionTag,
+  DIAGNOSIS_WRAP_UP_TEXT,
   diagnosisEvidenceLocation,
+  diagnosisExtensionAskText,
   EXPORT_CONFIRM_TEXT,
   diagnosisFailureText,
   diagnosisMetaLine,
@@ -61,11 +64,18 @@ export function useDirectivePane(): DirectivePane {
   return { openId, open: setOpenId, close: () => setOpenId(null) };
 }
 
-/** 진단의 상태 태그. 대기는 회색, 저장소 대기는 노랑이다. */
+/** 진단의 상태 태그. 대기는 회색, 저장소 대기는 노랑이다. 연장을 묻는 동안에는 노란 `확인 필요`가 앞에 붙는다. */
 export function DiagnosisStatusTag({ diagnosis }: DiagnosisProps) {
   /** 태그 이름과 색. */
   const tag = diagnosisStatusTag(diagnosis);
-  return <StateTag label={tag.label} tone={tag.tone} />;
+  /** 연장을 묻는 동안의 `확인 필요`. */
+  const attention = diagnosisAttentionTag(diagnosis);
+  return (
+    <>
+      {attention && <StateTag label={attention.label} tone={attention.tone} />}
+      <StateTag label={tag.label} tone={tag.tone} />
+    </>
+  );
 }
 
 /** 목록 줄의 재현 태그. 보고서가 있을 때만 붙고, 없으면 그리지 않는다. */
@@ -741,10 +751,45 @@ interface DiagnosisFooterProps extends DiagnosisProps {
  * 대기와 진행 중은 안내와 [취소], 진단 실패는 [완료]와 [다시 시도], 완료함은 안내만 둔다.
  */
 export function DiagnosisFooter({ diagnosis, windowKind = 'expanded', directivePane }: DiagnosisFooterProps) {
-  /** 이 진단에 취소·다시 시도·완료 명령을 보낸다. */
-  const send = (type: 'cancel-diagnosis' | 'retry-diagnosis' | 'complete-diagnosis') => {
+  /** 이 진단에 취소·다시 시도·완료·연장 답 명령을 보낸다. */
+  const send = (
+    type: 'cancel-diagnosis' | 'retry-diagnosis' | 'retry-diagnosis-without-reproduction' | 'complete-diagnosis' | 'continue-diagnosis' | 'stop-diagnosis',
+  ) => {
     void window.stardraft.send({ type, diagnosisId: diagnosis.id });
   };
+  /** 진행 중인 재현하는 진단의 시간 연장 상태. 연장을 묻거나 마무리를 기다리는 중이 아니면 없다. */
+  const extension = diagnosis.progress?.status === 'running' ? diagnosis.progress.extension : undefined;
+
+  if (extension?.phase === 'asking') {
+    /** 바닥 줄 글. */
+    const ask = diagnosisExtensionAskText(extension.canSteer);
+    return (
+      <footer className={windowKind === 'compact' ? 'review-foot warn compact' : 'review-foot warn expanded'}>
+        <p className="repo-wait-text">
+          <strong>{ask.lead}</strong> {ask.body}
+        </p>
+        <div className="repo-wait-actions">
+          <button type="button" className="btn" onClick={() => send('stop-diagnosis')}>
+            멈추기
+          </button>
+          <button type="button" className="btn primary" onClick={() => send('continue-diagnosis')}>
+            계속 진행
+          </button>
+        </div>
+      </footer>
+    );
+  }
+  if (extension?.phase === 'wrapping-up') {
+    return (
+      <footer className="review-foot">
+        <span className="small muted">{DIAGNOSIS_WRAP_UP_TEXT}</span>
+        <span className="spacer" />
+        <button type="button" className="btn" onClick={() => send('cancel-diagnosis')}>
+          취소
+        </button>
+      </footer>
+    );
+  }
 
   if (diagnosis.repoWait) {
     /** 바닥 줄 글. */
@@ -794,6 +839,11 @@ export function DiagnosisFooter({ diagnosis, windowKind = 'expanded', directiveP
             완료
           </button>
           <span className="spacer" />
+          {diagnosis.canRetryWithoutReproduction && (
+            <button type="button" className="btn" onClick={() => send('retry-diagnosis-without-reproduction')}>
+              재현 없이 다시 시도
+            </button>
+          )}
           <button type="button" className="btn primary" onClick={() => send('retry-diagnosis')}>
             다시 시도
           </button>

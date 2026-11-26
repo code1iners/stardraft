@@ -22,7 +22,7 @@ import { openStateDatabase, STATE_MIGRATIONS } from '../storage/state-database';
 import { SqliteSentryStore } from '../storage/sqlite-sentry-store';
 import { ReproductionCopies } from '../reproduction/reproduction-copies';
 import { DiagnosisAttachmentFolders } from './diagnosis-attachments';
-import { DIAGNOSIS_TIMEOUT_MS } from './diagnosis-run';
+import { DIAGNOSIS_EXTENDED_MESSAGE, DIAGNOSIS_TIMEOUT_MS, DIAGNOSIS_WRAP_UP_MESSAGE } from './diagnosis-run';
 import { SentryConnection } from './sentry-connection';
 import { SentryDiagnoses } from './sentry-diagnoses';
 import { SentryProjects } from './sentry-projects';
@@ -200,7 +200,7 @@ interface ReproductionFixture {
   failClone?: boolean;
 }
 
-async function setup({ mapped = true, reproduction = null }: { mapped?: boolean; reproduction?: ReproductionFixture | null } = {}) {
+async function setup({ mapped = true, reproduction = null, steering = false }: { mapped?: boolean; reproduction?: ReproductionFixture | null; steering?: boolean } = {}) {
   const clock = new FakeClock(NOW);
   /** 로그 줄. */
   const logged: string[] = [];
@@ -254,7 +254,7 @@ async function setup({ mapped = true, reproduction = null }: { mapped?: boolean;
     discardAttachments: (staged) => folders.discard(staged),
   });
   await diagnoses.load();
-  const executor = new FakeExecutor('claude-code');
+  const executor = new FakeExecutor('claude-code', { steering });
   /** 지금 그 자리에 있는 것으로 보는 내보낸 파일 경로. */
   const existingExports = new Set<string>();
   /** 재현 사본을 두는 폴더. */
@@ -338,6 +338,7 @@ async function setup({ mapped = true, reproduction = null }: { mapped?: boolean;
     connection,
     projects,
     diagnoses,
+    notifier,
     store,
     executor,
     queue,
@@ -1277,5 +1278,187 @@ describe('Sentry 어댑터: 재현에 MCP 싣기', () => {
     await settle();
     expect(noCopy.mcpLoads).toEqual([]);
     expect(noCopy.byIssue('101')!.report!.run.mcpServers).toBeNull();
+  });
+});
+
+describe('Sentry 어댑터: 시간 연장과 재현 없이 다시 시도', () => {
+  /** 진단 101의 생성 대기열 대상. */
+  const target = (env: Awaited<ReturnType<typeof setup>>) => ({ kind: SENTRY_TARGET_KIND, targetId: env.byIssue('101')!.id });
+
+  it('재현하는 진단은 상한 5분 전에 한 번 묻는다. OS 알림은 프로젝트 이름만 담고 누르면 그 진단을 열며, 트레이의 검토 수와 실패 표시는 그대로다', async () => {
+    const env = await setup({ reproduction: { enabled: true, envFile: 'FAKE=1\n' }, steering: true });
+    await env.detect('101');
+    env.executor.script({ outcome: 'wait-for-abort' });
+    await env.queue.start();
+    await settle();
+
+    /** 실행기가 받은 요청. */
+    const request = env.executor.requests[0]!;
+    expect(request.timeoutMs).toBe(65 * MINUTE);
+    expect(request.onSteerable).toBeTypeOf('function');
+    env.clock.advance(15 * MINUTE - 1);
+    expect(env.notifier.sent.filter((item) => item.title === '진단이 5분 뒤 멈춥니다')).toEqual([]);
+    expect(env.queue.progress(target(env))).not.toHaveProperty('extension');
+    env.clock.advance(1);
+
+    expect(env.queue.progress(target(env))).toMatchObject({ status: 'running', extension: { phase: 'asking', canSteer: true } });
+    expect(env.notifier.sent).toEqual([
+      { title: '진단이 5분 뒤 멈춥니다', body: '프로젝트 11의 오류를 재현하는 중입니다. 계속하려면 눌러서 답해 주세요.', target: { kind: 'diagnosis', id: env.byIssue('101')!.id } },
+    ]);
+    expect(env.diagnoses.reviewCount()).toBe(0);
+    expect(env.diagnoses.hasFailure()).toBe(false);
+    // 오류 제목과 메시지는 알림에 넣지 않는다.
+    expect(JSON.stringify(env.notifier.sent)).not.toContain('가짜 오류');
+    await env.queue.stop();
+  });
+
+  it('[계속 진행]이면 "10분이 더 있다"가 가고 새 상한 5분 전에 다시 묻는다. 알림은 묻는 때마다 한 번이다', async () => {
+    const env = await setup({ reproduction: { enabled: true, envFile: 'FAKE=1\n' }, steering: true });
+    await env.detect('101');
+    env.executor.script({ outcome: 'wait-for-abort' });
+    await env.queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+
+    env.queue.answerTimeExtension(target(env), 'continue');
+    expect(env.executor.sentMessages).toEqual([DIAGNOSIS_EXTENDED_MESSAGE]);
+    env.clock.advance(9 * MINUTE + 59_000);
+    expect(env.notifier.sent).toHaveLength(1);
+    env.clock.advance(1_000);
+    expect(env.notifier.sent).toHaveLength(2);
+    expect(env.queue.progress(target(env))).toMatchObject({ extension: { phase: 'asking' } });
+    await env.queue.stop();
+  });
+
+  it('[멈추기]로 마무리한 결과가 5분 안에 나오면 보통의 검토 대기 보고서가 되고 재현 결과는 에이전트가 적은 그대로다', async () => {
+    const env = await setup({ reproduction: { enabled: true, envFile: 'FAKE=1\n' }, steering: true });
+    await env.detect('101');
+    /** 마무리 메시지를 받으면 낼 결과. */
+    let finish!: (outcome: ExecutorOutcome) => void;
+    env.executor.script({ outcome: new Promise<ExecutorOutcome>((resolve) => (finish = resolve)) });
+    await env.queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+
+    env.queue.answerTimeExtension(target(env), 'stop');
+    expect(env.executor.sentMessages).toEqual([DIAGNOSIS_WRAP_UP_MESSAGE]);
+    finish({ type: 'completed', output: reproducingOutput(env.repo, { result: 'failure', method: '시도한 만큼만: 3번 중 0번', steps: ['pnpm dev'] }) });
+    await settle();
+
+    expect(env.byIssue('101')).toMatchObject({
+      status: 'ready',
+      report: { reproduction: { result: 'failure', method: '시도한 만큼만: 3번 중 0번' } },
+    });
+    expect(env.diagnoses.reviewCount()).toBe(1);
+  });
+
+  it('전달이 안 되는 에이전트에서 [멈추기]를 누르면 바로 끊고 진단 실패(시간 초과)가 되며, 재현하던 진단이라고 기록된다', async () => {
+    const env = await setup({ reproduction: { enabled: true, envFile: 'FAKE=1\n' }, steering: false });
+    await env.detect('101');
+    env.executor.script({ outcome: 'wait-for-abort' });
+    await env.queue.start();
+    await settle();
+    env.clock.advance(15 * MINUTE);
+    expect(env.queue.progress(target(env))).toMatchObject({ extension: { phase: 'asking', canSteer: false } });
+
+    env.queue.answerTimeExtension(target(env), 'stop');
+    await settle();
+
+    expect(env.byIssue('101')).toMatchObject({ status: 'failed', failure: { reason: 'timed-out', reproducing: true } });
+    expect(await copiesLeft(env.copiesRoot)).toEqual([]);
+  });
+
+  it('읽기 전용 진단은 묻지 않고 처음 상한에서 끊긴다', async () => {
+    const env = await setup({ reproduction: { enabled: false }, steering: true });
+    await env.detect('101');
+    env.executor.script({ outcome: { type: 'timed-out' } });
+    await env.queue.start();
+    await settle();
+
+    expect(env.executor.requests[0]!.timeoutMs).toBe(DIAGNOSIS_TIMEOUT_MS);
+    expect(env.executor.requests[0]!.onSteerable).toBeUndefined();
+    expect(env.notifier.sent).toEqual([]);
+    // 재현하던 진단이 아니라 [재현 없이 다시 시도] 대상이 아니다.
+    expect(env.byIssue('101')!.failure).toMatchObject({ reason: 'timed-out' });
+    expect(env.byIssue('101')!.failure!.reproducing).toBeUndefined();
+    expect(await env.diagnoses.retryWithoutReproduction(env.byIssue('101')!.id)).toBe(false);
+    expect(env.byIssue('101')!.status).toBe('failed');
+  });
+
+  it('사본을 만들지 못해 읽기 전용으로 돈 실행도 묻지 않는다', async () => {
+    const env = await setup({ reproduction: { enabled: true, failClone: true }, steering: true });
+    await env.detect('101');
+    env.executor.script({ outcome: { type: 'timed-out' } });
+    await env.queue.start();
+    await settle();
+
+    expect(env.executor.requests[0]!.onSteerable).toBeUndefined();
+    expect(env.executor.requests[0]!.timeoutMs).toBe(DIAGNOSIS_TIMEOUT_MS);
+    expect(env.byIssue('101')!.failure!.reproducing).toBeUndefined();
+  });
+
+  it('[재현 없이 다시 시도]는 시간 초과로 실패한 재현하던 진단만 대기로 돌려 읽기 전용으로 돌리고, 그 보고서의 재현 칸은 불가(시간 초과)다. 다음 [다시 시도]는 다시 재현한다', async () => {
+    const env = await setup({ reproduction: { enabled: true, envFile: 'FAKE=1\n' }, steering: false });
+    await env.detect('101');
+    env.executor.script({ outcome: 'wait-for-abort' });
+    await env.queue.start();
+    await settle();
+    env.clock.advance(20 * MINUTE);
+    await settle();
+    expect(env.byIssue('101')).toMatchObject({ status: 'failed', failure: { reason: 'timed-out', reproducing: true } });
+
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+    expect(await env.queue.changeByUser(target(env), async () => void (await env.diagnoses.retryWithoutReproduction(env.byIssue('101')!.id)))).toBeUndefined();
+    await settle();
+
+    /** 두 번째 실행의 요청. */
+    const second = env.executor.requests[1]!;
+    expect(second.reproduction ?? null).toBeNull();
+    expect(second.readRoots).toEqual([env.repo]);
+    expect(second.onSteerable).toBeUndefined();
+    expect(env.byIssue('101')).toMatchObject({
+      status: 'ready',
+      withoutReproduction: false,
+      report: { reproduction: { result: 'impossible', impossibleReason: 'timed-out' }, run: { reproductionAllowed: true } },
+    });
+  });
+
+  it('[재현 없이 다시 시도]한 진단이 또 실패해도 그 실패는 재현하던 진단이 아니고 표시는 지워지며, [다시 시도]는 다시 재현한다', async () => {
+    const env = await setup({ reproduction: { enabled: true, envFile: 'FAKE=1\n' }, steering: false });
+    await env.detect('101');
+    env.executor.script({ outcome: { type: 'timed-out' } });
+    await env.queue.start();
+    await settle();
+    expect(env.byIssue('101')!.failure!.reproducing).toBe(true);
+
+    env.executor.script({ outcome: { type: 'timed-out' } });
+    await env.queue.changeByUser(target(env), async () => void (await env.diagnoses.retryWithoutReproduction(env.byIssue('101')!.id)));
+    await settle();
+    expect(env.byIssue('101')).toMatchObject({ status: 'failed', withoutReproduction: false });
+    expect(env.byIssue('101')!.failure!.reproducing).toBeUndefined();
+
+    env.executor.script({ outcome: { type: 'completed', output: reproducingOutput(env.repo) } });
+    await env.queue.changeByUser(target(env), () => env.diagnoses.retry(env.byIssue('101')!.id));
+    await settle();
+    expect(env.executor.requests[2]!.reproduction).toBeTruthy();
+    expect(env.byIssue('101')!.report!.reproduction.result).toBe('success');
+  });
+
+  it('다시 진단도 같은 규칙이다. 재현하는 다시 진단은 상한 5분 전에 묻는다', async () => {
+    const env = await setup({ reproduction: { enabled: true, envFile: 'FAKE=1\n' }, steering: true });
+    await env.detect('101');
+    env.executor.script({ outcome: { type: 'completed', output: reproducingOutput(env.repo) } });
+    await env.queue.start();
+    await settle();
+    expect(env.byIssue('101')!.status).toBe('ready');
+
+    env.executor.script({ outcome: 'wait-for-abort' });
+    await env.queue.changeByUser(target(env), async () => void (await env.diagnoses.rediagnose(env.byIssue('101')!.id, null)));
+    await settle();
+    env.clock.advance(15 * MINUTE);
+
+    expect(env.queue.progress(target(env))).toMatchObject({ extension: { phase: 'asking' } });
+    expect(env.notifier.sent.filter((item) => item.title === '진단이 5분 뒤 멈춥니다')).toHaveLength(1);
+    await env.queue.stop();
   });
 });

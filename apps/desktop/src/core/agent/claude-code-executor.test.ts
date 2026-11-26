@@ -9,7 +9,7 @@ import type { ExecutorProgress, ExecutorRunRequest, ReproductionMcp } from '../p
 import type { AgentLaunch, AgentRunReport } from './agent-launch';
 import { ClaudeCodeExecutor } from './claude-code-executor';
 import { NodeProcessRunner } from './node-process-runner';
-import type { ProcessRequest } from './process-runner';
+import type { ProcessInput, ProcessRequest } from './process-runner';
 
 /** 테스트마다 만드는 임시 폴더. 지침 파일을 여기에 쓴다. */
 let tempRoot: string;
@@ -376,6 +376,105 @@ describe('Claude Code 실행기: 재현 경계', () => {
     const report = await executor.run(reproductionRequest());
 
     expect(report.outcome).toEqual({ type: 'completed', output: { summary: '가짜 요약' } });
+  });
+});
+
+describe('Claude Code 실행기: 실행 중 전달', () => {
+  /** 입력을 기록하는 가짜 표준 입력. */
+  function fakeInput() {
+    /** 쓴 내용. */
+    const written: string[] = [];
+    /** 닫은 횟수. */
+    const state = { ended: 0 };
+    const input: ProcessInput = {
+      write: (text) => {
+        written.push(text);
+        return true;
+      },
+      end: () => {
+        state.ended += 1;
+      },
+    };
+    return { input, written, state };
+  }
+
+  it('전달을 쓰지 않는 실행은 입력 형식 플래그도 열린 표준 입력도 없이 입력 문서를 그대로 넘긴다. 이 실행기는 전달 능력이 있다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+    expect(executor.supportsSteering).toBe(true);
+
+    await executor.run(reproductionRequest());
+
+    const [request] = runner.requests;
+    expect(request?.args).not.toContain('--input-format');
+    expect(request?.onStdin).toBeUndefined();
+    expect(request?.stdin).toBe('## 데이터\n가짜 멘션 원문');
+  });
+
+  it('전달을 쓰면 입력을 stream-json으로 받아 사용자 메시지 한 줄로 넘기고 표준 입력을 열어 둔 채, 보내는 함수를 넘긴다', async () => {
+    const { runner, executor } = setup();
+    const { input, written } = fakeInput();
+    /** 보내는 함수. */
+    let send: ((message: string) => boolean) | null = null;
+    answerCli(runner, (request) => {
+      request.onStdin?.(input);
+      for (const line of [fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} })]) request.onStdoutLine?.(line);
+      return exited(0);
+    });
+
+    await executor.run(reproductionRequest({ onSteerable: (fn) => (send = fn) }));
+
+    const [request] = runner.requests;
+    /** 인수에서 입력 형식 플래그의 위치. */
+    const at = request?.args.indexOf('--input-format') ?? -1;
+    expect(request?.args.slice(at, at + 2)).toEqual(['--input-format', 'stream-json']);
+    expect(request?.args).toContain('--output-format');
+    expect(JSON.parse(request?.stdin ?? '')).toEqual({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '## 데이터\n가짜 멘션 원문' }] } });
+    expect(request?.stdin?.endsWith('\n')).toBe(true);
+    expect(send).toBeTypeOf('function');
+    // 이 시험의 가짜 CLI는 입력을 쓰기 전에 끝났다.
+    expect(written).toEqual([]);
+  });
+
+  it('보낸 메시지는 사용자 메시지 한 줄(JSON)로 표준 입력에 쓰이고, 결과를 받으면 표준 입력을 닫아 그 뒤의 메시지는 보내지지 않는다', async () => {
+    const { runner, executor } = setup();
+    const { input, written, state } = fakeInput();
+    /** 보낸 결과. */
+    const sent: boolean[] = [];
+    /** 보내는 함수. */
+    let send: (message: string) => boolean = () => false;
+    answerCli(runner, (request) => {
+      request.onStdin?.(input);
+      request.onStdoutLine?.(fakeClaudeEvent.init());
+      sent.push(send('지금 멈추고 보고서를 써라'));
+      request.onStdoutLine?.(fakeClaudeEvent.result({ structured_output: { summary: '마무리' } }));
+      sent.push(send('늦은 메시지'));
+      return exited(0);
+    });
+
+    const report = await executor.run(reproductionRequest({ onSteerable: (fn) => (send = fn) }));
+
+    expect(written.map((line) => JSON.parse(line))).toEqual([{ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '지금 멈추고 보고서를 써라' }] } }]);
+    expect(written[0]?.endsWith('\n')).toBe(true);
+    expect(sent).toEqual([true, false]);
+    expect(state.ended).toBe(1);
+    expect(report.outcome).toEqual({ type: 'completed', output: { summary: '마무리' } });
+  });
+
+  it('실행이 끝난 뒤에는 보내는 함수가 보내지 않는다', async () => {
+    const { runner, executor } = setup();
+    const { input, written } = fakeInput();
+    /** 보내는 함수. */
+    let send: (message: string) => boolean = () => false;
+    answerCli(runner, (request) => {
+      request.onStdin?.(input);
+      return exited(1, '', '비정상 종료');
+    });
+
+    await executor.run(reproductionRequest({ onSteerable: (fn) => (send = fn) }));
+
+    expect(send('늦은 메시지')).toBe(false);
+    expect(written).toEqual([]);
   });
 });
 

@@ -15,6 +15,7 @@ import type {
   TargetRef,
 } from './generation-run';
 import type { NextStep, TargetAdapter, TargetFailure, TargetRun, TargetRunRequest, TargetTypes } from './target-adapter';
+import { TimeExtension, type TimeExtensionAnswer } from './time-extension';
 
 /** 실행 단계마다 실행하는 최대 횟수. 처음 실행과 일시적 실패의 자동 재시도 1회다. */
 const MAX_ATTEMPTS = 2;
@@ -63,8 +64,11 @@ export function queueAgentFrom(preferences: AgentPreferencesState, agents: reado
 export type GenerationProgress =
   /** 대기열에서 차례를 기다린다. 에이전트 연결을 기다리는 것과 멈춘 대기열·어댑터에서 기다리는 것도 여기에 든다. */
   | { status: 'waiting' }
-  /** 실행하고 있다. */
-  | { status: 'running'; step: string; filesRead: number };
+  /**
+   * 실행하고 있다. `extension`은 연장을 묻는 실행이 사용자에게 묻는 중(`asking`)이거나 보고서를 마무리하기를 기다리는 중(`wrapping-up`)일 때만 있다.
+   * `canSteer`는 그 실행기가 실행 중 전달을 하는지 여부다.
+   */
+  | { status: 'running'; step: string; filesRead: number; extension?: { phase: 'asking' | 'wrapping-up'; canSteer: boolean } };
 
 /** 병렬 작업 수. 생성 대기열이 함께 돌리는 실행의 최대 수다. */
 export interface ParallelWorkLimit {
@@ -147,6 +151,8 @@ interface RunningTarget extends TargetRef {
   filesRead: number;
   /** 마지막으로 시작한 실행 단계의 종류. 실행 단계를 시작하기 전이면 `null`. 실패에 남긴다. */
   runKind: GenerationRunKind | null;
+  /** 지금 도는 실행의 시간 연장. 연장을 묻지 않는 실행이거나 실행 중이 아니면 `null`. */
+  extension: TimeExtension | null;
   /** 생성이 끝나(실행 기록까지 남기고) 실행 중에서 빠지면 풀리는 약속. */
   finished: Promise<void>;
 }
@@ -283,8 +289,25 @@ export class GenerationQueue {
   progress(target: TargetRef): GenerationProgress | null {
     /** 실행 중이면 그 실행. */
     const entry = this.runningEntry(target);
-    if (entry) return { status: 'running', step: entry.step, filesRead: entry.filesRead };
+    if (entry) {
+      /** 연장을 묻거나 마무리를 기다리는 중이면 그 단계. */
+      const extension = entry.extension;
+      return {
+        status: 'running',
+        step: entry.step,
+        filesRead: entry.filesRead,
+        ...(extension && extension.phase !== 'running' ? { extension: { phase: extension.phase, canSteer: extension.canSteer } } : {}),
+      };
+    }
     return this.isWaiting(target) ? { status: 'waiting' } : null;
+  }
+
+  /**
+   * 연장을 묻는 중인 실행에 사용자의 답을 전한다. [계속 진행]은 상한을 늘리고, [멈추기]는 마무리하게 하거나 끊는다.
+   * 묻는 중이 아니면(답하는 사이에 상한이 지났거나 실행이 끝남) 아무 일도 하지 않는다.
+   */
+  answerTimeExtension(target: TargetRef, answer: TimeExtensionAnswer): void {
+    this.runningEntry(target)?.extension?.answer(answer);
   }
 
   /**
@@ -586,6 +609,7 @@ export class GenerationQueue {
       step: slot.adapter.preparingStep,
       filesRead: 0,
       runKind: null,
+      extension: null,
       finished: new Promise((resolve) => {
         markFinished = resolve;
       }),
@@ -844,7 +868,8 @@ export class GenerationQueue {
       }
       // 일시적 실패는 한 번 더 실행한다. 다시 실행도 새 실행이라 실행 직전 확인을 다시 거친다.
       // 두 번째도 실패면 실패로 둔다. 연결 확인이 통과하는데도 같은 실패가 되풀이되며 대기열이 끝없이 돌지 않게 하려는 것이다.
-      if (ran.verdict.kind === 'failed' && (ran.verdict.retry || recovered) && attempt < MAX_ATTEMPTS) {
+      // 연장을 묻던 실행이 마무리 단계(멈추기, 답 없음)까지 갔으면 상한을 이미 쓴 것이라 다시 실행하지 않는다. 다시 실행하면 상한을 처음부터 다시 센다.
+      if (ran.verdict.kind === 'failed' && (ran.verdict.retry || recovered) && !ran.wrappedUp && attempt < MAX_ATTEMPTS) {
         this.options.logger.info('generation.run-retrying', { kind: entry.kind, targetId: entry.targetId, runKind: run.kind, reason: ran.verdict.reason });
         runs.push(ran.record);
         continue;
@@ -859,23 +884,45 @@ export class GenerationQueue {
     agent: QueueAgent,
     request: TargetRunRequest,
     run: TargetRun<TargetTypes>,
-  ): Promise<{ verdict: RunVerdict; record: RunRecord }> {
+  ): Promise<{ verdict: RunVerdict; record: RunRecord; wrappedUp: boolean }> {
     /** 시작 시각. */
     const startedAt = this.options.clock.now();
     this.options.logger.info('generation.run-started', { kind: entry.kind, targetId: entry.targetId, runKind: run.kind, agent: agent.executor.agent });
 
+    /** 실행기에 넘길 요청. 연장을 묻는 규칙은 대기열이 맡으므로 실행기에는 넘기지 않는다. */
+    const { timeExtension, ...executorRequest } = request;
+    /** 연장을 묻는 실행이면 상한을 세고 묻는 장치. 끊으면 실행기는 취소로 돌아오고, 그것을 시간 초과로 읽는다. */
+    const extension = timeExtension
+      ? new TimeExtension({
+          policy: timeExtension,
+          canSteer: agent.executor.supportsSteering === true,
+          clock: this.options.clock,
+          onChange: () => this.emit(),
+          stop: () => entry.abort.abort(),
+        })
+      : null;
+    entry.extension = extension;
+
     /** 실행기가 알려 준 것. 실행기가 예외를 던지면 `null`. */
     let report: ExecutorReport | null = null;
     try {
+      extension?.begin();
       report = await agent.executor.run({
         kind: run.kind,
-        ...request,
+        ...executorRequest,
+        ...(extension ? { timeoutMs: extension.backstopMs, onSteerable: (send: (message: string) => boolean) => extension.attach(send) } : {}),
         signal: entry.abort.signal,
         onProgress: ({ step, filesRead }) => this.setProgress(entry, step, filesRead),
       });
     } catch (error) {
       this.options.logger.error('generation.executor-crashed', { kind: entry.kind, targetId: entry.targetId, ...errorFields(error) });
+    } finally {
+      extension?.end();
+      entry.extension = null;
+      if (extension && extension.phase !== 'running') this.emit();
     }
+    // 상한이 되어 앱이 끊은 실행은 취소로 돌아오므로 시간 초과로 바꾼다. 사용자의 [취소]나 앱 종료로 끊긴 실행은 그대로 취소다.
+    if (extension?.timedOut && entry.interruption === null && report?.outcome.type === 'cancelled') report = { ...report, outcome: { type: 'timed-out' } };
 
     /** 결과를 읽은 것. */
     const verdict: RunVerdict = report ? verdictOf(report, run) : failedVerdict('app-error', null);
@@ -902,7 +949,7 @@ export class GenerationQueue {
       durationMs: record.finishedAt - record.startedAt,
       filesRead: entry.filesRead,
     });
-    return { verdict, record };
+    return { verdict, record, wrappedUp: extension?.wrappedUp === true };
   }
 
   /**

@@ -17,7 +17,7 @@ import type { AgentExecutorOptions } from './agent-launch';
 import { CLAUDE_MAX_TURNS } from './claude-cli';
 import { withoutAgentApiKeys } from './cli-discovery';
 import { asRecord, failedOutcome, numberOrNull, parseJsonObject } from './executor-output';
-import type { ProcessResult } from './process-runner';
+import type { ProcessInput, ProcessResult } from './process-runner';
 import { readingFileStep, searchingStep } from './progress-steps';
 import { copySecretPatterns, ENV_FILE_PATTERNS, PERSONAL_SECRET_PATHS, reproductionEnv } from './reproduction-boundary';
 import { withDefaultSecretPatterns } from './secret-patterns';
@@ -29,6 +29,8 @@ import { withDefaultSecretPatterns } from './secret-patterns';
 export class ClaudeCodeExecutor implements Executor {
   /** 이 실행기가 부르는 에이전트. */
   readonly agent: AgentId = 'claude-code';
+  /** 실행 중 전달을 한다. `--input-format stream-json`으로 표준 입력을 열어 두고 사용자 메시지를 줄 단위 JSON으로 더 넣는다. */
+  readonly supportsSteering = true;
 
   constructor(private readonly options: AgentExecutorOptions) {}
 
@@ -67,6 +69,10 @@ export class ClaudeCodeExecutor implements Executor {
       // 재현하는 진단은 결과를 낸 뒤에도 백그라운드 명령(dev 서버 등)이 끝나기를 기다리며 CLI가 열려 있으므로, 결과가 오면 남은 프로세스를 끝낸다.
       /** 결과를 받아 앱이 끝낸 실행을 끊는 장치. 사용자의 중단 신호도 함께 받는다. */
       const stopAfterResult = new AbortController();
+      /** 실행 중 전달을 쓰는 실행의 표준 입력. 띄우기 전이거나 쓰지 않으면 `null`. */
+      let steerInput: ProcessInput | null = null;
+      /** 실행 중 전달을 받을 수 있는지 여부. 실행이 끝나면 거짓이 되어 늦은 메시지를 보내지 않는다. */
+      let steerOpen = request.onSteerable !== undefined;
       /** 결과를 받아 앱이 끝냈는지 여부. */
       let stoppedAfterResult = false;
       /** 사용자의 중단 신호를 끊는 장치로 넘긴다. */
@@ -84,9 +90,23 @@ export class ClaudeCodeExecutor implements Executor {
           env: reproducing ? { ...(mcp?.env ?? {}), ...reproductionEnv(withoutAgentApiKeys(launch.env)), ...reproductionExtraEnv(request.timeoutMs) } : withoutAgentApiKeys(launch.env),
           cwd,
           timeoutMs: request.timeoutMs,
-          stdin: request.input,
+          // 실행 중 전달을 쓰면 입력도 사용자 메시지 한 줄(JSON)로 넘기고 표준 입력을 열어 둔다.
+          stdin: request.onSteerable ? claudeUserMessageLine(request.input) : request.input,
+          ...(request.onSteerable
+            ? {
+                onStdin: (input: ProcessInput) => {
+                  steerInput = input;
+                  request.onSteerable?.((message) => steerOpen && input.write(claudeUserMessageLine(message)));
+                },
+              }
+            : {}),
           onStdoutLine: (line) => {
             reader.push(line);
+            // 결과를 받았으면 더 보낼 메시지가 없다. 표준 입력을 닫지 않으면 CLI가 다음 입력을 기다리며 끝나지 않는다.
+            if (reader.result !== null && steerOpen) {
+              steerOpen = false;
+              steerInput?.end();
+            }
             if (reproducing && reader.result !== null && !stopAfterResult.signal.aborted) {
               stoppedAfterResult = true;
               stopAfterResult.abort();
@@ -106,6 +126,7 @@ export class ClaudeCodeExecutor implements Executor {
           ...(mcp ? { mcpFailedServers: reader.failedMcpServers(mcp) } : {}),
         };
       } finally {
+        steerOpen = false;
         request.signal.removeEventListener('abort', forwardAbort);
       }
     } finally {
@@ -124,6 +145,7 @@ function claudeRunArgs(request: ExecutorRunRequest, instructionsFile: string, ex
   const settings = { permissions: { deny: withDefaultSecretPatterns(request.secretPatterns).map((pattern) => `Read(//**/${pattern})`) } };
   return [
     '-p',
+    ...streamInputArgs(request),
     '--output-format',
     'stream-json',
     // stream-json은 --verbose가 없으면 오류로 끝난다.
@@ -150,6 +172,19 @@ function claudeRunArgs(request: ExecutorRunRequest, instructionsFile: string, ex
     ...extraRoots.flatMap((dir) => ['--add-dir', dir]),
     ...(request.model === null ? [] : ['--model', request.model]),
   ];
+}
+
+/**
+ * 실행 중 전달을 쓰는 실행의 입력 형식 플래그. 입력을 stream-json으로 받아야 표준 입력을 열어 둔 채 메시지를 더 넣을 수 있다.
+ * 앞의 `-p`와 뒤의 `--output-format stream-json`이 이 플래그와 짝이다.
+ */
+function streamInputArgs(request: ExecutorRunRequest): string[] {
+  return request.onSteerable ? ['--input-format', 'stream-json'] : [];
+}
+
+/** stream-json 입력으로 넘기는 사용자 메시지 한 줄. */
+function claudeUserMessageLine(text: string): string {
+  return `${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } })}\n`;
 }
 
 /** 재현하는 진단의 인수 묶음에 넣을 경로와 MCP. */
@@ -203,6 +238,7 @@ function claudeReproductionArgs(request: ExecutorRunRequest, input: Reproduction
   };
   return [
     '-p',
+    ...streamInputArgs(request),
     '--output-format',
     'stream-json',
     '--verbose',

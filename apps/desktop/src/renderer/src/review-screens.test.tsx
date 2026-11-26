@@ -1733,6 +1733,7 @@ describe('펼친 창: 진단', () => {
       progress: null,
       report: null,
       failure: null,
+      canRetryWithoutReproduction: false,
       rediagnosing: false,
       directives: [],
       rediagnosisFailure: null,
@@ -1858,13 +1859,118 @@ describe('펼친 창: 진단', () => {
     expect(text).toContain('진단하는 중입니다 · 3분 지남 취소');
   });
 
+  describe('시간 연장 묻기', () => {
+    /** 재현하는 진단이 연장을 묻거나 마무리를 기다리는 중인 진단. */
+    const extending = (extension: { phase: 'asking' | 'wrapping-up'; canSteer: boolean }, overrides: Partial<DiagnosisSnapshot> = {}) =>
+      diagnosis(1, {
+        status: 'running',
+        repoWait: null,
+        progress: { status: 'running', step: '재현 중', filesRead: 4, startedAt: Date.now() - 16 * 60_000, extension },
+        ...overrides,
+      });
+    /** 그린 HTML에서 태그를 지운 글자. 공백은 하나로 줄인다. */
+    const flat = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+    it('묻는 동안 목록 태그에 노란 `확인 필요`가 `진단 중` 앞에 붙고, 묻지 않는 진행 중과 마무리 기다림에는 붙지 않는다', () => {
+      /** 목록의 태그 줄. */
+      const tags = (item: DiagnosisSnapshot) => /<span class="tag[^"]*">[^<]*<\/span>(<span class="tag[^"]*">[^<]*<\/span>)*/.exec(renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([item])} initialDiagnosisId={1} />))?.[0];
+
+      expect(renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([extending({ phase: 'asking', canSteer: true })])} initialDiagnosisId={1} />)).toContain(
+        '<span class="tag warn">확인 필요</span><span class="tag generating">진단 중</span>',
+      );
+      expect(tags(extending({ phase: 'wrapping-up', canSteer: true }))).not.toContain('확인 필요');
+      const plain = diagnosis(1, { status: 'running', repoWait: null, progress: { status: 'running', step: '재현 중', filesRead: 0, startedAt: Date.now() } });
+      expect(renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([plain])} initialDiagnosisId={1} />)).not.toContain('확인 필요');
+    });
+
+    it('묻는 동안 노란 바닥 줄에 글과 [멈추기] · 주 버튼 [계속 진행]이 보인다. 전달이 되는 에이전트는 답이 없으면 보고서를 마무리한다', () => {
+      const markup = renderToStaticMarkup(<DiagnosisFooter diagnosis={extending({ phase: 'asking', canSteer: true })} />);
+
+      expect(markup).toContain('review-foot warn expanded');
+      expect(markup).toContain('<strong>5분 뒤 멈춥니다. 계속할까요?</strong>');
+      expect(flat(markup)).toContain('5분 뒤 멈춥니다. 계속할까요? 계속하면 10분을 더 씁니다. 답이 없으면 지금까지 알아낸 것으로 보고서를 마무리합니다. 멈추기 계속 진행');
+      expect(markup).toMatch(/<button[^>]*class="btn"[^>]*>멈추기<\/button><button[^>]*class="btn primary"[^>]*>계속 진행<\/button>/);
+    });
+
+    it('전달이 안 되는 에이전트는 글의 둘째 문장이 "멈추거나 답이 없으면 보고서 없이 끝납니다."다', () => {
+      const text = flat(renderToStaticMarkup(<DiagnosisFooter diagnosis={extending({ phase: 'asking', canSteer: false })} />));
+
+      expect(text).toContain('계속하면 10분을 더 씁니다. 멈추거나 답이 없으면 보고서 없이 끝납니다.');
+      expect(text).not.toContain('마무리합니다');
+    });
+
+    it('작은 창의 노란 바닥 줄은 글을 윗줄에, 버튼을 아랫줄에 둔다', () => {
+      const markup = renderToStaticMarkup(<DiagnosisFooter diagnosis={extending({ phase: 'asking', canSteer: true })} windowKind="compact" />);
+
+      expect(markup).toContain('review-foot warn compact');
+      expect(flat(renderToStaticMarkup(<PopoverContent snapshot={withDiagnoses([extending({ phase: 'asking', canSteer: true })])} initialDiagnosisId={1} />))).toContain('계속 진행');
+    });
+
+    it('마무리를 기다리는 동안 바닥 줄은 "보고서를 마무리하는 중입니다. 5분 안에 끝납니다."와 [취소]다', () => {
+      const markup = renderToStaticMarkup(<DiagnosisFooter diagnosis={extending({ phase: 'wrapping-up', canSteer: true })} />);
+
+      expect(markup).toMatch(/<footer class="review-foot"><span class="small muted">보고서를 마무리하는 중입니다. 5분 안에 끝납니다.<\/span><span class="spacer"><\/span><button[^>]*>취소<\/button><\/footer>/);
+      expect(markup).not.toContain('warn');
+    });
+
+    it('다시 진단하는 중에도 묻는 줄이 먼저 보이고, 묻지 않을 때는 다시 진단 글이 보인다', () => {
+      /** 다시 진단하는 중에 연장을 묻는 진단. */
+      const rediagnosing = extending({ phase: 'asking', canSteer: true }, { rediagnosing: true });
+
+      expect(flat(renderToStaticMarkup(<DiagnosisFooter diagnosis={rediagnosing} />))).toContain('5분 뒤 멈춥니다');
+      expect(flat(renderToStaticMarkup(<DiagnosisFooter diagnosis={{ ...rediagnosing, progress: { status: 'running', step: '재현 중', filesRead: 0, startedAt: Date.now() } }} />))).toContain('다시 진단하는 중입니다.');
+    });
+
+    it('[멈추기]와 [계속 진행]은 그 진단의 명령을 보낸다', () => {
+      /** main으로 보낸 명령. */
+      const send = vi.fn();
+      vi.stubGlobal('window', { stardraft: { send } });
+      try {
+        for (const button of pressables(DiagnosisFooter({ diagnosis: extending({ phase: 'asking', canSteer: true }) }))) (button.onClick as () => void)();
+
+        expect(send.mock.calls.map(([command]) => command)).toEqual([
+          { type: 'stop-diagnosis', diagnosisId: 1 },
+          { type: 'continue-diagnosis', diagnosisId: 1 },
+        ]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('시간 초과로 실패한 재현하던 진단에만 [재현 없이 다시 시도]가 [완료] 오른쪽, 주 버튼 [다시 시도] 앞에 보이고 그 명령을 보낸다', () => {
+      /** 시간 초과로 실패한 진단. */
+      const failed = (canRetryWithoutReproduction: boolean) =>
+        diagnosis(2, { status: 'failed', repoWait: null, failure: { reason: 'timed-out', detail: null, lastStep: '재현 중' }, canRetryWithoutReproduction });
+
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={failed(true)} />)).toMatch(
+        /<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><button[^>]*class="btn"[^>]*>재현 없이 다시 시도<\/button><button[^>]*class="btn primary"[^>]*>다시 시도<\/button><\/footer>/,
+      );
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={failed(false)} />)).not.toContain('재현 없이 다시 시도');
+
+      /** main으로 보낸 명령. */
+      const send = vi.fn();
+      vi.stubGlobal('window', { stardraft: { send } });
+      try {
+        for (const button of pressables(DiagnosisFooter({ diagnosis: failed(true) }))) (button.onClick as () => void)();
+
+        expect(send.mock.calls.map(([command]) => command)).toEqual([
+          { type: 'complete-diagnosis', diagnosisId: 2 },
+          { type: 'retry-diagnosis-without-reproduction', diagnosisId: 2 },
+          { type: 'retry-diagnosis', diagnosisId: 2 },
+        ]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
   it('진단 실패는 `진단 실패` 태그와 빨간 오류 상자(사유와 마지막 단계), 왼쪽 [완료]와 오른쪽 주 버튼 [다시 시도]를 보인다', () => {
     /** 시간 초과로 실패한 진단. */
     const failed = diagnosis(1, { status: 'failed', repoWait: null, failure: { reason: 'timed-out', detail: null, lastStep: '오류 진단하는 중' } });
     const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([failed])} initialDiagnosisId={1} />);
 
     expect(markup).toContain('<span class="tag failed">진단 실패</span>');
-    expect(markup).toContain('<div class="failure-box"><strong>에이전트가 20분 안에 끝내지 못해 멈췄습니다.</strong><p class="failure-detail">마지막 단계: 오류 진단하는 중</p></div>');
+    expect(markup).toContain('<div class="failure-box"><strong>에이전트가 정해진 시간 안에 끝내지 못해 멈췄습니다.</strong><p class="failure-detail">마지막 단계: 오류 진단하는 중</p></div>');
     expect(markup).toMatch(/<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><button[^>]*class="btn primary"[^>]*>다시 시도<\/button><\/footer>/);
   });
 

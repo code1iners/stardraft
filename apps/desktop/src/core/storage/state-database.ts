@@ -482,6 +482,11 @@ export const STATE_MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE sentry_diagnosis ADD COLUMN keep_reproduction INTEGER NOT NULL DEFAULT 0;
   `,
+  // 30: 시간 연장. 시간 초과로 실패한 재현하는 진단을 [재현 없이 다시 시도]해 읽기 전용으로 돌고 있는지를 둔다.
+  // 기존 줄은 그런 다시 시도가 없어 0이다. 진단 실패의 까닭(JSON)에 재현하던 진단이었는지 칸이 생기지만 JSON 안이라 열을 더하지 않는다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN without_reproduction INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 /** 계정에 매이는 대기열 줄의 종류. Flow 초안만 계정에 매이고, 다른 종류(진단 등)는 계정과 무관하다. */

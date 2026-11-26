@@ -14,7 +14,7 @@ import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
 import type { ManualCheckState } from '../core/manual-check/manual-check-session';
 import type { ManualAssignmentCandidate, ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
-import { hasExportedCurrentReport, isRediagnosing, isRepoWaiting, openableSentryUrl, type DiagnosisFailure, type DiagnosisReport, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
+import { hasExportedCurrentReport, isRediagnosing, isRepoWaiting, openableSentryUrl, timedOutWhileReproducing, type DiagnosisFailure, type DiagnosisReport, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
 import type {
   BundleMentionSnapshot,
   DiagnosisFailureSnapshot,
@@ -120,6 +120,7 @@ export function diagnosisSnapshots(
       progress,
       report: diagnosis.report && reportSnapshot(diagnosis.report),
       failure: diagnosis.failure && failureSnapshot(diagnosis.failure),
+      canRetryWithoutReproduction: diagnosis.status === 'failed' && timedOutWhileReproducing(diagnosis.failure),
       rediagnosing: isRediagnosing(diagnosis),
       directives: [...diagnosis.directives],
       rediagnosisFailure: diagnosis.rediagnosisFailure && failureSnapshot(diagnosis.rediagnosisFailure),

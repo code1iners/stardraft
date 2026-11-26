@@ -143,15 +143,8 @@ export class Posting {
    */
   async stop(): Promise<void> {
     this.stopped = true;
-    for (const attempt of this.attempts.values()) attempt.cancel();
-    this.attempts.clear();
-    for (const cancel of this.waits.values()) cancel();
-    this.waits.clear();
-    this.resendWaits.clear();
-    if (this.pendingSends.size === 0) return;
-
-    this.options.logger.info('posting.waiting-before-quit', { count: this.pendingSends.size });
-    await waitAtMost(this.options.clock, Promise.all(this.pendingSends), QUIT_RESPONSE_WAIT_MS);
+    this.cancelScheduled();
+    await this.waitForPendingSends('posting.waiting-before-quit');
   }
 
   /**
@@ -162,18 +155,27 @@ export class Posting {
   async leaveAccount(): Promise<void> {
     /** 카운트다운 중(확인을 기다리는 시간 포함)이던 묶음. */
     const countingDown = [...this.attempts.keys()];
+    this.cancelScheduled();
+    this.emit();
+    for (const bundleId of countingDown) {
+      if (await this.options.bundles.cancelPosting(bundleId)) this.options.logger.info('posting.countdown-stopped-by-account-switch', { bundleId });
+    }
+    await this.waitForPendingSends('posting.waiting-before-account-switch');
+  }
+
+  /** 카운트다운과 기다리던 일(`429` 뒤 다시 보내기, 올라갔는지 다시 확인하기)을 모두 지운다. 예약된 게시 요청은 보내지 않는다. */
+  private cancelScheduled(): void {
     for (const attempt of this.attempts.values()) attempt.cancel();
     this.attempts.clear();
     for (const cancel of this.waits.values()) cancel();
     this.waits.clear();
     this.resendWaits.clear();
-    this.emit();
-    for (const bundleId of countingDown) {
-      if (await this.options.bundles.cancelPosting(bundleId)) this.options.logger.info('posting.countdown-stopped-by-account-switch', { bundleId });
-    }
-    if (this.pendingSends.size === 0) return;
+  }
 
-    this.options.logger.info('posting.waiting-before-account-switch', { count: this.pendingSends.size });
+  /** 응답을 기다리는 게시 요청이 있으면 결과를 기록하기를 최대 5초 기다린다. `event`는 기다리기 시작할 때 남길 로그다. */
+  private async waitForPendingSends(event: string): Promise<void> {
+    if (this.pendingSends.size === 0) return;
+    this.options.logger.info(event, { count: this.pendingSends.size });
     await waitAtMost(this.options.clock, Promise.all(this.pendingSends), QUIT_RESPONSE_WAIT_MS);
   }
 

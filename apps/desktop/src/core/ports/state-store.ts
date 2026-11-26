@@ -4,6 +4,14 @@ import type { MentionLocation } from '../detection/mention';
 import type { UpdateAttempt } from '../update/update-restart';
 import type { FlowEmployee } from './flow-api';
 
+/** 계정을 바꿀 때 떠나는 계정에 남기는 것. */
+export interface AccountLeaving {
+  /** 떠나는 시각. 떠나는 계정이 마지막으로 쓴 시각이 되어 30일 삭제의 기준이 된다. */
+  now: number;
+  /** 떠날 때의 비밀 파일 패턴(기본 목록과 추가 패턴 전부). 돌아왔을 때 그 사이에 추가된 패턴이 있는지 견준다. */
+  secretPatterns: readonly string[];
+}
+
 /** 계정을 바꾼 결과. */
 export interface AccountSwitchResult {
   /** 보관해 둔 계정으로 돌아왔는지 여부. 처음 넣는 계정(30일이 지나 지운 계정 포함)이면 거짓이다. */
@@ -39,7 +47,7 @@ export interface StateStore {
    * 보관해 둔 계정이면 그 계정의 기록이 다시 움직이고, 처음 넣는 계정이면 빈 기록으로 시작한다.
    * 이 뒤로 계정에 매인 읽기와 쓰기(묶음, 최소 기록, 기준점, 담당 업무, 대기열의 Flow 줄)는 새 계정의 기록만 다룬다.
    */
-  switchAccount(account: FlowEmployee, options: { now: number; secretPatterns: readonly string[] }): Promise<AccountSwitchResult>;
+  switchAccount(account: FlowEmployee, leaving: AccountLeaving): Promise<AccountSwitchResult>;
   /** 이 사용자의 기록을 보관해 두었는지 본다. 움직이는 계정이거나 지워진 계정이면 거짓이다. */
   isStoredAccount(userId: string): Promise<boolean>;
   /**
@@ -51,8 +59,11 @@ export interface StateStore {
   listStoredBundles(): Promise<MentionBundle[]>;
   /** 이미 본 가장 큰 `alarmId`(기준점). 감지를 시작하기 전이면 `null`. */
   getBaselineAlarmId(): Promise<string | null>;
-  /** 기준점을 저장한다. */
-  setBaselineAlarmId(alarmId: string): Promise<void>;
+  /**
+   * 움직이는 계정의 기준점을 저장한다. `accountId`를 주면 그 계정이 지금 움직이는 계정일 때만 저장한다.
+   * 조회하는 사이에 계정을 바꿨으면 떠난 계정의 조회 결과로 새 계정의 기준점을 덮지 않게 한다.
+   */
+  setBaselineAlarmId(alarmId: string, accountId?: string): Promise<void>;
   /**
    * 이 멘션 위치를 이미 기록해 두었는지 본다. 같은 멘션 위치에서 다시 온 알림은 글이 수정됐더라도 다시 감지하지 않는다.
    * 묶음에 든 멘션과 처리됨 목록에서 빠진 묶음의 최소 기록을 함께 본다.

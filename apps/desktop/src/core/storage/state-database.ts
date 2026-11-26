@@ -17,7 +17,7 @@ import type { BundleContext } from '../flow/bundle-context';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
-import type { AccountSwitchResult, StateStore } from '../ports/state-store';
+import type { AccountLeaving, AccountSwitchResult, StateStore } from '../ports/state-store';
 import { FLOW_TARGET_KIND } from '../drafts/flow-target-adapter';
 import { isSameFlowUser } from '../flow/user-id';
 import type { UpdateAttempt } from '../update/update-restart';
@@ -553,7 +553,7 @@ export class SqliteStateStore implements StateStore, GenerationQueueStore {
     })();
   }
 
-  async switchAccount(account: FlowEmployee, { now, secretPatterns }: { now: number; secretPatterns: readonly string[] }): Promise<AccountSwitchResult> {
+  async switchAccount(account: FlowEmployee, { now, secretPatterns }: AccountLeaving): Promise<AccountSwitchResult> {
     return this.db.transaction((): AccountSwitchResult => {
       // 떠나는 계정은 기록을 그대로 두고 보관한다. 돌아왔을 때 떠나 있던 동안 더한 비밀 파일 패턴을 알 수 있게 그때의 패턴을 남긴다.
       /** 떠나는 계정이 있었는지 여부. */
@@ -579,17 +579,16 @@ export class SqliteStateStore implements StateStore, GenerationQueueStore {
     );
     if (expired.length === 0) return 0;
 
-    // 기준점과 최소 기록까지 그 계정의 기록 전체를 한 트랜잭션으로 지운다. 최소 기록의 멘션 위치·답한 범위는 외래 키로 함께 지워진다.
+    /** 계정에 매인 표. */
+    const tables = this.accountBoundTables();
+    // 기준점과 최소 기록까지 그 계정의 기록 전체를 한 트랜잭션으로 지운다. 최소 기록의 답한 범위는 외래 키로 함께 지워진다.
     this.db.transaction(() => {
+      // 표끼리 외래 키가 있어도 지우는 순서와 상관없이 지우도록 검사를 커밋 때로 미룬다.
+      this.db.pragma('defer_foreign_keys = ON');
       for (const accountId of expired) {
-        this.db.prepare('DELETE FROM mention WHERE account_id = ?').run(accountId);
+        // 내 답은 계정 열 없이 묶음을 따르므로 묶음을 지우기 전에 지운다.
         this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id IN (SELECT id FROM mention_bundle WHERE account_id = ?)').run(accountId);
-        this.db.prepare('DELETE FROM mention_bundle WHERE account_id = ?').run(accountId);
-        this.db.prepare('DELETE FROM minimal_record WHERE account_id = ?').run(accountId);
-        this.db.prepare('DELETE FROM assignment_record WHERE account_id = ?').run(accountId);
-        this.db.prepare('DELETE FROM assignment_detection WHERE account_id = ?').run(accountId);
-        this.db.prepare('DELETE FROM detection WHERE account_id = ?').run(accountId);
-        this.db.prepare('DELETE FROM draft_queue WHERE account_id = ?').run(accountId);
+        for (const table of tables) this.db.prepare(`DELETE FROM ${table} WHERE account_id = ?`).run(accountId);
         this.db.prepare('DELETE FROM account WHERE user_id = ?').run(accountId);
       }
     })();
@@ -614,7 +613,7 @@ export class SqliteStateStore implements StateStore, GenerationQueueStore {
     return this.activeAccountId() ?? NO_ACCOUNT;
   }
 
-  /** 보관 중인(움직이지 않는) 계정의 줄. 사용자 ID는 대소문자와 앞뒤 공백을 가리지 않는다. 없으면 `null`. */
+  /** 보관 중인(움직이지 않는) 계정의 줄. 사용자 ID는 `isSameFlowUser`와 같게 대소문자와 앞뒤 공백을 가리지 않는다. 없으면 `null`. */
   private storedAccountRow(userId: string): { user_id: string; secret_patterns: string | null } | null {
     /** 같은 사람의 계정 줄. */
     const row = this.db
@@ -645,9 +644,22 @@ export class SqliteStateStore implements StateStore, GenerationQueueStore {
 
   /** 계정 없이 쌓인 Flow 기록을 `accountId`의 것으로 옮긴다. 트랜잭션 안에서만 부른다. */
   private adoptUnboundRecords(accountId: string): void {
-    for (const table of ['mention_bundle', 'mention', 'minimal_record', 'minimal_record_mention', 'assignment_record', 'assignment_detection', 'detection', 'draft_queue']) {
-      this.db.prepare(`UPDATE ${table} SET account_id = ? WHERE account_id = ?`).run(accountId, NO_ACCOUNT);
-    }
+    for (const table of this.accountBoundTables()) this.db.prepare(`UPDATE ${table} SET account_id = ? WHERE account_id = ?`).run(accountId, NO_ACCOUNT);
+  }
+
+  /**
+   * 계정 열(`account_id`)이 있는 표. 뒤 티켓이 계정에 매인 표를 더해도 이어받기와 30일 삭제에서 빠지지 않게, 표 목록을 코드에 적지 않고 DB에서 읽는다.
+   * 계정 열 없이 뿌리를 따르는 표(내 답, 최소 기록의 답한 범위)는 들지 않는다.
+   */
+  private accountBoundTables(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c
+           WHERE m.type = 'table' AND c.name = 'account_id' ORDER BY m.name`,
+        )
+        .all() as { name: string }[]
+    ).map((row) => `"${row.name.replaceAll('"', '""')}"`);
   }
 
   async getBaselineAlarmId(): Promise<string | null> {
@@ -658,7 +670,10 @@ export class SqliteStateStore implements StateStore, GenerationQueueStore {
     return row?.baseline_alarm_id ?? null;
   }
 
-  async setBaselineAlarmId(alarmId: string): Promise<void> {
+  async setBaselineAlarmId(alarmId: string, accountId?: string): Promise<void> {
+    /** 움직이는 계정. */
+    const active = this.activeAccountId();
+    if (accountId !== undefined && (active === null || !isSameFlowUser(active, accountId))) return;
     this.writeBaseline(alarmId);
   }
 

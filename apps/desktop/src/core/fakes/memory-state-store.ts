@@ -6,11 +6,11 @@ import { isSameFlowUser } from '../flow/user-id';
 import type { QueuedTarget } from '../generation/generation-run';
 import type { FlowEmployee } from '../ports/flow-api';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
-import type { AccountSwitchResult, StateStore } from '../ports/state-store';
+import type { AccountLeaving, AccountSwitchResult, StateStore } from '../ports/state-store';
 import type { UpdateAttempt } from '../update/update-restart';
 
 /** 한 계정의 Flow 기록. SQLite 저장소처럼 계정마다 따로 보관한다. */
-interface AccountRecords {
+interface AccountBucket {
   /** 계정. 계정을 넣기 전의 기록이면 `null`. */
   profile: FlowEmployee | null;
   /** 보관할 때(떠날 때) 적은 마지막으로 쓴 시각. */
@@ -37,7 +37,7 @@ const NO_ACCOUNT = '';
 /** 메모리에만 두는 상태 저장소. SQLite 저장소처럼 Flow 기록을 계정마다 보관하고 움직이는 계정의 기록만 다룬다. */
 export class MemoryStateStore implements StateStore, GenerationQueueStore {
   /** 계정마다의 기록. 키는 계정의 사용자 ID다. */
-  private readonly accounts = new Map<string, AccountRecords>([[NO_ACCOUNT, emptyRecords(null)]]);
+  private readonly accounts = new Map<string, AccountBucket>([[NO_ACCOUNT, emptyRecords(null)]]);
   /** 움직이는 계정의 키. 계정을 넣기 전이면 빈 키다. */
   private activeKey = NO_ACCOUNT;
   /** 저장한 멘션 묶음 전부. 묶음 ID마다 하나다. 어느 계정의 것인지는 계정 기록이 안다. */
@@ -102,7 +102,7 @@ export class MemoryStateStore implements StateStore, GenerationQueueStore {
     this.activate(account, 0);
   }
 
-  async switchAccount(account: FlowEmployee, { now, secretPatterns }: { now: number; secretPatterns: readonly string[] }): Promise<AccountSwitchResult> {
+  async switchAccount(account: FlowEmployee, { now, secretPatterns }: AccountLeaving): Promise<AccountSwitchResult> {
     /** 떠나는 계정의 기록. */
     const leaving = this.account ? this.active() : null;
     if (leaving) {
@@ -142,7 +142,8 @@ export class MemoryStateStore implements StateStore, GenerationQueueStore {
     return this.baselineAlarmId;
   }
 
-  async setBaselineAlarmId(alarmId: string): Promise<void> {
+  async setBaselineAlarmId(alarmId: string, accountId?: string): Promise<void> {
+    if (accountId !== undefined && (!this.account || !isSameFlowUser(this.account.userId, accountId))) return;
     this.baselineAlarmId = alarmId;
   }
 
@@ -249,7 +250,7 @@ export class MemoryStateStore implements StateStore, GenerationQueueStore {
   }
 
   /** 움직이는 계정의 기록. */
-  private active(): AccountRecords {
+  private active(): AccountBucket {
     return this.accounts.get(this.activeKey)!;
   }
 
@@ -307,7 +308,7 @@ export class MemoryStateStore implements StateStore, GenerationQueueStore {
 }
 
 /** 빈 계정 기록. */
-function emptyRecords(profile: FlowEmployee | null): AccountRecords {
+function emptyRecords(profile: FlowEmployee | null): AccountBucket {
   return {
     profile,
     lastUsedAt: 0,

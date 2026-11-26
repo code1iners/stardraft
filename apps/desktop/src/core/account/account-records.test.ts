@@ -176,17 +176,22 @@ async function openApp({ clock, flows, executor, settingsStore, dbPath }: Return
   records = new AccountRecords({ bundles, drafts, posting, stateStore, settingsStore, logger });
   const detection = new MentionDetection({ stateStore, bundles, clock, logger, connectFlow });
   const retention = new BundleRetention({ bundles, clock, logger });
-  /** 감지를 시작한 키. */
-  let detectionKey: string | null = null;
-  flowAccount.onChange(() => {
-    if (flowAccount.apiKey() === detectionKey) return;
-    detectionKey = flowAccount.apiKey();
-    void detection.start();
-  });
   if (!(await stateStore.getAccount())) {
     await flowAccount.checkKey('key-me');
     await stateStore.setBaselineAlarmId('100');
   }
+  /** 감지를 시작한 키. */
+  let detectionKey: string | null = null;
+  /** 앱처럼 키가 바뀌면 그 키로 감지를 다시 시작한다. */
+  const syncDetection = () => {
+    if (flowAccount.apiKey() === detectionKey) return;
+    detectionKey = flowAccount.apiKey();
+    void detection.start();
+  };
+  flowAccount.onChange(syncDetection);
+  // 앱 시작 때 저장된 키로 감지를 시작한다. 첫 조회를 마쳐 다음 폴링이 예약된 뒤에 테스트가 시계를 돌린다.
+  detectionKey = flowAccount.apiKey();
+  await detection.start();
   await drafts.start();
 
   /** 다른 계정의 키를 넣고 확인 창에서 [계정 바꾸기]를 누른다. 떠나는 계정의 응답을 기다리는 게시가 있으면 5초를 흘려보낸다. */
@@ -422,6 +427,28 @@ describe('Flow 기록의 계정별 보관', { timeout: 20_000 }, () => {
 
     executor.script({ outcome: { type: 'completed', output: draftOutput(repo) } });
     await app.switchTo('key-me');
+    await nextPoll(clock);
+    expect(app.bundles.state()).toMatchObject([{ remarkId: '701', status: 'ready' }]);
+    await app.quit();
+  });
+
+  it('처음 넣는 계정의 기준점을 잡는 사이에 원래 계정으로 돌아오면, 그 조회 결과가 돌아온 계정의 기준점을 덮지 않는다', async () => {
+    const world = createWorld();
+    const { clock, flows, executor, repo } = world;
+    const me = flows.get('key-me')!;
+    const other = flows.get('key-other')!;
+    other.addAlarm({ ...addThreadMention(other, '9999', '799'), receiverId: OTHER.userId });
+    const app = await openApp(world);
+    /** 다른 회사 Flow의 알림 목록 조회를 붙잡아 둔 것을 푸는 함수. 새 계정의 기준점을 잡는 조회다. */
+    const release = other.hold('GET /user/alarms');
+    await app.switchTo('key-other');
+    await app.switchTo('key-me');
+    release();
+    await settle();
+
+    await expect(app.stateStore.getBaselineAlarmId()).resolves.toBe('100');
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repo) } });
+    addThreadMention(me, '101', '701');
     await nextPoll(clock);
     expect(app.bundles.state()).toMatchObject([{ remarkId: '701', status: 'ready' }]);
     await app.quit();

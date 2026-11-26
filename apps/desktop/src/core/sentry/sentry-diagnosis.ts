@@ -91,10 +91,16 @@ export interface SentryDiagnosis {
 /** 아직 저장하지 않은 진단. 감지가 만든 진단은 대기나 저장소 대기라 보고서·실패·실행 기록·완료 시각이 없다. */
 export type UnsavedDiagnosis = Omit<SentryDiagnosis, 'id' | 'report' | 'failure' | 'runs' | 'completedAt'>;
 
-/** 진단 실패의 까닭. 사유는 Flow 초안의 실패 사유를 그대로 쓴다(결과 형식 오류, 시간 초과, 취소함, 비밀 파일 근거 등). */
+/**
+ * 진단을 실행하기 전에 생기는 실패 사유. Flow 초안의 맥락 조회 실패(`flow-unavailable`)에 해당한다.
+ * `sentry-unavailable`: 기다려도 풀리지 않을 까닭(접근 거부, 최신 이벤트 없음, 앱이 모르는 응답 등)으로 Sentry에서 오류 데이터를 가져오지 못했다.
+ */
+export type SentryFailureReason = 'sentry-unavailable';
+
+/** 진단 실패의 까닭. 사유는 Flow 초안의 실패 사유를 그대로 쓰고(결과 형식 오류, 시간 초과, 취소함, 비밀 파일 근거 등), Sentry 조회 실패를 더한다. */
 export interface DiagnosisFailure {
   /** 사유. */
-  reason: RunFailureReason;
+  reason: RunFailureReason | SentryFailureReason;
   /** 에이전트가 알려 준 오류 원문. 없으면 `null`. */
   detail: string | null;
   /** 실패할 때의 마지막 진행 단계. 실행을 시작하기 전이면 `null`. */

@@ -1,5 +1,6 @@
 import { objectSchema, type AgentEvidence } from '../drafts/draft';
-import type { SentryEvent, SentryEventException, SentryIssueState } from '../ports/sentry-api';
+import { asRecord } from '../agent/executor-output';
+import type { SentryEvent, SentryEventException, SentryEventFrame, SentryIssueState } from '../ports/sentry-api';
 import type { DiagnosisConfidence, DiagnosisEventFacts, DiagnosisIssue, DiagnosisOrigin, SourceMapStatus } from './sentry-diagnosis';
 
 /** 진단 한 번의 시간 상한(밀리초). 읽기 전용 진단은 묻지 않고 이 시간에 끊는다. 설정에서 바꿀 수 없다. */
@@ -107,8 +108,9 @@ export function readDiagnosisOutput(output: unknown): DiagnosisOutput | null {
   const cause = asRecord(root?.cause);
   if (!root || !cause || typeof root.summary !== 'string' || typeof cause.text !== 'string') return null;
   if (!CONFIDENCES.includes(cause.confidence as DiagnosisConfidence)) return null;
-  /** 개선 방향과 남은 의문. */
+  /** 개선 방향. */
   const improvements = stringList(root.improvements);
+  /** 남은 의문. */
   const openQuestions = stringList(root.open_questions);
   if (improvements === null || openQuestions === null || !Array.isArray(root.evidence)) return null;
   if (root.summary.trim() === '' || cause.text.trim() === '') return null;
@@ -282,20 +284,15 @@ function exceptionLine(exception: SentryEventException): string {
 }
 
 /** 프레임 위치 한 줄. `파일:줄:열 함수`이고 앱 코드 프레임이면 `[앱]`을 붙인다. */
-function frameLine(frame: SentryEvent['exceptions'][number]['frames'][number]): string {
+function frameLine(frame: SentryEventFrame): string {
   /** `파일:줄:열`. */
   const place = [frame.filename ?? '(파일 모름)', frame.lineNo, frame.colNo].filter((part) => part !== null).join(':');
   return `${frame.inApp ? '[앱] ' : ''}${place}${frame.function ? ` ${frame.function}` : ''}`;
 }
 
 /** 프레임의 줄. 위치 한 줄 아래에 주변 소스 줄을 들여 쓴다. */
-function frameLines(frame: SentryEvent['exceptions'][number]['frames'][number]): string[] {
+function frameLines(frame: SentryEventFrame): string[] {
   return [`- ${frameLine(frame)}`, ...frame.context.slice(0, MAX_CONTEXT_LINES).map(([line, text]) => `    ${line}${line === frame.lineNo ? ' >' : ' '} ${text}`)];
-}
-
-/** 객체면 필드를 읽을 수 있게, 아니면 `null`. */
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 /** 문자열 배열이면 앞뒤 공백을 떼고 빈 항목을 뺀 것, 아니면 `null`. */

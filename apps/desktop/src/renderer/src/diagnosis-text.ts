@@ -1,6 +1,6 @@
 import { AGENT_INFO } from '../../shared/agent-info';
 import type { DiagnosisFailureSnapshot, DiagnosisProgressSnapshot, DiagnosisReportSnapshot, DiagnosisRepoWaitSnapshot, DiagnosisSnapshot } from '../../shared/ipc';
-import { failureText, formatDuration, formatTime, type RepoWaitText } from './review-text';
+import { evidenceLocation, failureText, formatDuration, formatTime, type RepoWaitText } from './review-text';
 
 /** 펼친 창 목록에서 Sentry 진단을 묶는 종류 이름. 초안 묶음보다 위에 온다. */
 export const DIAGNOSIS_KIND_LABEL = '진단';
@@ -43,9 +43,22 @@ export function diagnosisRunningText(startedAt: number, now = Date.now()): strin
   return `진단하는 중입니다 · ${minutes === 0 ? '1분 안' : `${minutes}분 지남`}`;
 }
 
-/** 진단 실패의 오류 문장. Flow 초안의 실패 사유 문장을 그대로 쓴다. */
+/**
+ * 진단에서 초안과 다르게 보일 실패 문장. 사유는 Flow 초안과 같지만, 초안이나 초안의 시간 상한(10분)을 가리키는 문장은 진단에 맞게 바꾼다.
+ */
+const DIAGNOSIS_FAILURE_TEXT: Partial<Record<DiagnosisFailureSnapshot['reason'], string>> = {
+  cancelled: '취소함: 진단을 취소했습니다.',
+  'timed-out': '에이전트가 20분 안에 끝내지 못해 멈췄습니다.',
+  'app-error': '앱 안에서 오류가 나서 진단하지 못했습니다.',
+};
+
+/** Sentry에서 오류 데이터를 가져오지 못한 진단 실패의 문장. 초안에는 없는 사유다. */
+const SENTRY_UNAVAILABLE_TEXT = 'Sentry에서 오류 데이터를 가져오지 못했습니다. 볼 권한이 없거나 이벤트가 남아 있지 않을 수 있습니다.';
+
+/** 진단 실패의 오류 문장. Flow 초안의 실패 사유 문장을 쓰고, 초안을 가리키는 문장만 진단에 맞게 바꾼다. */
 export function diagnosisFailureText(failure: DiagnosisFailureSnapshot): string {
-  return failureText({ ...failure, runKind: 'diagnosis' });
+  if (failure.reason === 'sentry-unavailable') return SENTRY_UNAVAILABLE_TEXT;
+  return DIAGNOSIS_FAILURE_TEXT[failure.reason] ?? failureText({ ...failure, reason: failure.reason, runKind: 'diagnosis' });
 }
 
 /** 재현 결과의 이름. 불가면 까닭을 괄호로 붙인다. */
@@ -107,13 +120,11 @@ export function reportRunFacts(report: DiagnosisReportSnapshot, now = Date.now()
   ];
 }
 
-/** 근거의 위치. "저장소 이름 · 파일 이름 · 88번째 줄"이고 여러 줄이면 "10–14번째 줄"이다. */
-export function diagnosisEvidenceLocation({ repository, path, startLine, endLine }: DiagnosisReportSnapshot['evidence'][number]): string {
+/** 근거의 위치. Flow 초안의 근거와 같은 "저장소 이름 · 파일 이름 · 88번째 줄"이다. 저장소 이름은 경로의 마지막 폴더다. */
+export function diagnosisEvidenceLocation(evidence: DiagnosisReportSnapshot['evidence'][number]): string {
   /** 저장소 폴더 이름. */
-  const repositoryName = repository.split(/[\\/]/).filter(Boolean).at(-1) ?? repository;
-  /** 파일 이름. */
-  const fileName = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-  return `${repositoryName} · ${fileName} · ${startLine === endLine ? `${startLine}번째 줄` : `${startLine}–${endLine}번째 줄`}`;
+  const repositoryName = evidence.repository.split(/[\\/]/).filter(Boolean).at(-1) ?? evidence.repository;
+  return evidenceLocation({ ...evidence, repositoryName, developerTerms: [] });
 }
 
 /** 상세 머리의 둘째 줄: `프로젝트 · 신규/재발 · 감지 시각`. */

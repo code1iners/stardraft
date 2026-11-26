@@ -147,7 +147,7 @@ export class SentryDiagnoses {
   }
 
   /**
-   * 기다리는 사이 매핑이나 폴더가 사라져 실행하지 못한 진단을 저장소 대기로 둔다. 그 프로젝트에 기다리던 진단이 없었으면 프로젝트 단위로 알린다.
+   * 기다리는 사이 매핑이나 폴더가 사라져 실행하지 못한 진단을 저장소 대기로 둔다. 그 Sentry 프로젝트에 기다리던 진단이 없었으면 Sentry 프로젝트 단위로 알린다.
    * 그사이 대기가 아니게 되었으면 거짓이다.
    */
   async markRepoWaiting(id: number, repoCheck: DiagnosisRepoCheck, runs: readonly RunRecord[]): Promise<boolean> {
@@ -177,23 +177,26 @@ export class SentryDiagnoses {
 
   /** 진단 실패를 [다시 시도]한다. 대기가 되고 사용자 요청이라 생성 대기열의 `user` 칸에 선다. */
   async retry(id: number): Promise<void> {
-    await this.change(id, (diagnosis) => {
-      if (diagnosis.status !== 'failed') return false;
-      Object.assign(diagnosis, { status: 'queued', failure: null });
-      this.userRequested.add(id);
-      return true;
-    });
+    await this.change(
+      id,
+      (diagnosis) => {
+        if (diagnosis.status !== 'failed') return false;
+        Object.assign(diagnosis, { status: 'queued', failure: null });
+        return true;
+      },
+      { requestedByUser: true },
+    );
   }
 
   /**
-   * 진단을 완료한다. 최소 기록(오류 이슈 ID, 재발 식별자, 완료 시각)만 남기고 보고서·실패·실행 기록을 지운다.
-   * 진단 실패의 [완료]는 지울 본문이 없어 확인 없이 부른다. Sentry에는 아무 요청도 보내지 않는다.
+   * 진단 실패를 완료한다. 최소 기록(오류 이슈 ID, 재발 식별자, 완료 시각)만 남기고 실패·실행 기록을 지운다.
+   * 지울 본문이 없어 확인 없이 부른다. Sentry에는 아무 요청도 보내지 않는다. 검토 대기 보고서의 완료는 검토 화면 단계가 더한다.
    */
   async complete(id: number): Promise<void> {
     /** 완료 시각. */
     const now = this.options.clock?.now() ?? Date.now();
     await this.change(id, (diagnosis) => {
-      if (diagnosis.status !== 'failed' && diagnosis.status !== 'ready') return false;
+      if (diagnosis.status !== 'failed') return false;
       Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now });
       return true;
     });
@@ -356,10 +359,10 @@ export class SentryDiagnoses {
   }
 
   /**
-   * 진단 하나를 `apply`로 바꿔 저장하고 알린다. `apply`가 거짓이면 바꾸지 않는다. 대기를 벗어나면 사용자 요청 표시를 지운다.
-   * 저장하지 못하면 메모리의 진단도 그대로 둔다.
+   * 진단 하나를 `apply`로 바꿔 저장하고 알린다. `apply`가 거짓이면 바꾸지 않는다. 대기를 벗어나면 사용자 요청 표시를 지우고,
+   * `requestedByUser`면 저장한 뒤에 사용자 요청 표시를 단다. 저장하지 못하면 메모리의 진단도 표시도 그대로 둔다.
    */
-  private async change(id: number, apply: (diagnosis: SentryDiagnosis) => boolean): Promise<boolean> {
+  private async change(id: number, apply: (diagnosis: SentryDiagnosis) => boolean, { requestedByUser = false } = {}): Promise<boolean> {
     /** 바꿨는지 여부. */
     const changed = await this.updates.run(async () => {
       /** 바꿀 진단. */
@@ -371,6 +374,7 @@ export class SentryDiagnoses {
       await this.options.store.updateDiagnosis(next);
       Object.assign(current, next);
       if (next.status !== 'queued') this.userRequested.delete(id);
+      else if (requestedByUser) this.userRequested.add(id);
       return true;
     });
     if (changed) this.emit();

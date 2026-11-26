@@ -1849,8 +1849,23 @@ describe('펼친 창: 진단', () => {
     const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([failed])} initialDiagnosisId={1} />);
 
     expect(markup).toContain('<span class="tag failed">진단 실패</span>');
-    expect(markup).toMatch(/<div class="failure-box"><strong>[^<]+<\/strong><p class="failure-detail">마지막 단계: 오류 진단하는 중<\/p><\/div>/);
+    expect(markup).toContain('<div class="failure-box"><strong>에이전트가 20분 안에 끝내지 못해 멈췄습니다.</strong><p class="failure-detail">마지막 단계: 오류 진단하는 중</p></div>');
     expect(markup).toMatch(/<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><button[^>]*class="btn primary"[^>]*>다시 시도<\/button><\/footer>/);
+  });
+
+  it('진단 실패의 사유 문장은 초안 대신 진단을 가리키고, Sentry 조회 실패도 쉬운 말로 보인다', () => {
+    /** 사유만 다른 진단 실패. */
+    const failedWith = (reason: NonNullable<DiagnosisSnapshot['failure']>['reason']) =>
+      textOf(
+        <ReviewContent
+          snapshot={withDiagnoses([diagnosis(1, { status: 'failed', repoWait: null, failure: { reason, detail: null, lastStep: null } })])}
+          initialDiagnosisId={1}
+        />,
+      );
+
+    expect(failedWith('cancelled')).toContain('취소함: 진단을 취소했습니다.');
+    expect(failedWith('sentry-unavailable')).toContain('Sentry에서 오류 데이터를 가져오지 못했습니다.');
+    expect(failedWith('secret-evidence')).toContain('비밀 파일을 근거로 듦');
   });
 
   it('진단 실패의 [완료]와 [다시 시도], 대기의 [취소]는 그 진단의 명령을 보낸다', () => {
@@ -1888,7 +1903,7 @@ describe('펼친 창: 진단', () => {
     expect(markup).toContain('<span class="tag ready">준비됨</span>');
     /** 구역 이름의 순서. */
     const titles = [...markup.matchAll(/<h3 class="section-title">([^<]+)/g)].map((match) => match[1]);
-    expect(titles).toEqual(['요약', '재현', '원인', '개선 방향', '근거 1개', '남은 의문', '오류 이슈 정보', '실행 정보']);
+    expect(titles).toEqual(['요약', '재현', '원인', '개선 방향', '근거 1개', '남은 의문', '오류 이슈 정보', '진단 정보']);
     expect(text).toContain('재현 · 불가(허용 안 됨) 이 저장소는 재현을 허용하지 않아 코드만 읽고 진단했습니다');
     expect(text).toContain('원인 · 확신도 중간 빈 배열을 확인하지 않습니다. [근거 1]');
     expect(text).toContain('① 첫 항목을 읽는 자리 web · order.ts · 4–6번째 줄');

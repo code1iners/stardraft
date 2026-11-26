@@ -159,9 +159,15 @@ class PassingFlowAdapter implements TargetAdapter {
   async addRuns(): Promise<void> {}
 }
 
-/** 가짜 시계와 포트의 응답이 모두 끝나도록 대기 중인 비동기 일을 돌린다. */
+/**
+ * 가짜 시계와 포트의 응답이 모두 끝나도록 대기 중인 비동기 일을 돌린다. 근거 검사와 폴더 확인은 파일 시스템을 거치는데,
+ * 부하가 큰 PC에서는 그 일이 즉시 큐만 돌려서는 끝나지 않으므로 사이사이 실제 시간도 조금 기다린다.
+ */
 async function settle(): Promise<void> {
-  for (let turn = 0; turn < 80; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+  for (let round = 0; round < 8; round += 1) {
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 /** 읽기 전용 진단의 올바른 출력. 근거는 저장소의 `src/fake.ts` 1~2줄이다. */
@@ -366,6 +372,39 @@ describe('Sentry 어댑터: 읽기 전용 진단', () => {
     expect(env.connection.state().problem).toBe('rejected');
     expect(env.byIssue('101')!.status).toBe('queued');
     expect(env.executor.requests).toHaveLength(0);
+  });
+
+  it.each([
+    ['접근 거부(403)', 'latestEvent', { kind: 'forbidden' }],
+    ['최신 이벤트 없음(404)', 'latestEvent', { kind: 'not-found' }],
+    ['앱이 모르는 응답', 'errorIssueState', { kind: 'unexpected-response' }],
+    ['그 밖의 4xx', 'latestEvent', { kind: 'http', status: 400 }],
+  ] as const)('기다려도 풀리지 않을 %s는 그 진단만 "Sentry에서 오류 데이터를 가져오지 못함" 실패로 두고 다음 진단은 계속한다', async (_label, method, failure) => {
+    const env = await setup();
+    await env.detect('101', '102');
+    env.api.failNext(method, failure, '101');
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+    await env.queue.start();
+    await settle();
+
+    expect(env.byIssue('101')).toMatchObject({ status: 'failed', failure: { reason: 'sentry-unavailable', runKind: null } });
+    expect(env.byIssue('102')!.status).toBe('ready');
+  });
+
+  it('`5xx`는 일시적 실패라 Sentry 어댑터만 잠시 멈췄다가 다시 진단한다', async () => {
+    const env = await setup();
+    await env.detect('101');
+    env.api.failNext('errorIssueState', { kind: 'http', status: 502 });
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+    await env.queue.start();
+    await settle();
+    expect(env.byIssue('101')!.status).toBe('queued');
+
+    env.clock.advance(60_000);
+    await settle();
+    expect(env.byIssue('101')!.status).toBe('ready');
   });
 
   it('`429`면 한도 초기화 시각까지 Sentry 어댑터만 멈춘다', async () => {

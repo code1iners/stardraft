@@ -19,7 +19,7 @@ import {
 } from './diagnosis-run';
 import type { SentryConnection } from './sentry-connection';
 import type { SentryDiagnoses } from './sentry-diagnoses';
-import type { DiagnosisRepoCheck, DiagnosisReport, DiagnosisRunInfo, SentryDiagnosis } from './sentry-diagnosis';
+import type { DiagnosisRepoCheck, DiagnosisReport, DiagnosisRunInfo, SentryDiagnosis, SentryFailureReason } from './sentry-diagnosis';
 import type { SentryProjects } from './sentry-projects';
 
 /** Sentry 진단의 대상 종류. 생성 대기열 표에 남는 값이라 바꾸지 않는다. */
@@ -29,8 +29,6 @@ export const SENTRY_TARGET_KIND = 'sentry';
 const SENTRY_RETRY_DELAY_MS = 60_000;
 /** 요청 한도에 걸려 멈춘 Sentry 어댑터가 기다리는 가장 짧은 시간(밀리초). */
 const MIN_SENTRY_RETRY_DELAY_MS = 1_000;
-/** 오류 이슈를 볼 수 없게 됐을 때(`403`, 조직 목록에서 사라짐) 다시 준비하기까지 기다리는 시간(밀리초). 감지 폴링 주기와 같다. */
-const SENTRY_ACCESS_RETRY_DELAY_MS = 5 * 60_000;
 
 /** 결과를 저장할 때 실행 기록으로 채울 칸을 뺀 보고서. 실행 정보의 에이전트·버전·걸린 시간·생성 시각은 저장할 때 채운다. */
 export type PendingDiagnosisReport = Omit<DiagnosisReport, 'run'> & {
@@ -40,7 +38,7 @@ export type PendingDiagnosisReport = Omit<DiagnosisReport, 'run'> & {
 
 /**
  * Sentry 어댑터의 타입 묶음. 시작 표식은 진단을 감지한 시각, 결과는 실행 정보를 채우기 전의 보고서,
- * 저장소 대기는 저장소 대기 사유다. 실행 전에 남기는 어댑터 고유의 실패 사유는 없다.
+ * 저장소 대기는 저장소 대기 사유, 실행 전 실패는 Sentry에서 오류 데이터를 가져오지 못함이다.
  */
 export interface SentryTargetTypes {
   /** 진단을 감지한 시각. */
@@ -49,15 +47,15 @@ export interface SentryTargetTypes {
   result: PendingDiagnosisReport;
   /** 저장소 대기 사유. */
   repoWait: DiagnosisRepoCheck;
-  /** 실행 전 실패 사유. 없다. */
-  failureReason: never;
+  /** 실행 전 실패 사유. */
+  failureReason: SentryFailureReason;
 }
 
 /** Sentry 어댑터에 필요한 것. */
 export interface SentryTargetAdapterOptions {
   /** 진단을 찾고 결과를 맡길 진단 목록. */
   diagnoses: SentryDiagnoses;
-  /** 진단할 프로젝트의 저장소와 조직을 정한다. */
+  /** 진단할 Sentry 프로젝트의 저장소와 조직을 정한다. */
   projects: Pick<SentryProjects, 'resolveRepo' | 'organizationFor'>;
   /** Sentry 토큰과 "토큰 확인 필요". 토큰 문제는 Sentry 어댑터만 멈춘다. */
   connection: Pick<SentryConnection, 'token' | 'state' | 'reportApiFailure' | 'onChange'>;
@@ -113,6 +111,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
     return diagnosis?.status === 'queued' ? diagnosis.detectedAt : null;
   }
 
+  /** 진단이 대기(진행 중 포함)이고, 감지 시각이 주어졌으면 생성을 시작할 때의 진단과 같은지 본다. 등록 해제나 취소로 빠지면 거짓이다. */
   isGenerating(id: number, detectedAt: number | null): boolean {
     /** 지금 진단. */
     const diagnosis = this.options.diagnoses.get(id);
@@ -134,11 +133,11 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
     /** 쓸 토큰. 없거나 "토큰 확인 필요"면 토큰이 다시 들어올 때까지 Sentry 어댑터만 멈춘다. */
     const token = this.usableToken();
     if (token === null) return { kind: 'adapter-paused' };
-    /** 부를 조직. 조직 목록에 없으면 부를 주소를 모르므로 감지 주기만큼 기다렸다가 다시 본다. */
+    /** 부를 조직. 조직 목록에 없으면 부를 주소를 모르므로 이 진단만 실패로 두고 다른 진단은 계속한다. */
     const organization = this.options.projects.organizationFor(diagnosis.projectId);
     if (organization === null) {
       this.options.logger.warn('sentry-adapter.organization-missing', { diagnosisId: id });
-      return { kind: 'retry-later', afterMs: SENTRY_ACCESS_RETRY_DELAY_MS };
+      return { kind: 'ready', next: { kind: 'fail', reason: 'sentry-unavailable' } };
     }
     /** 이 토큰으로 부르는 Sentry API. */
     const api = this.options.connectSentry(token);
@@ -147,7 +146,12 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
     /** 오류 이슈 상태. */
     const state = await api.errorIssueState(organization, diagnosis.issueId);
     if (context.stopped()) return { kind: 'skipped' };
-    if (!state.ok) return this.unavailable(id, token, state.failure);
+    if (!state.ok) {
+      // 시작 직전 확인의 `404`는 그사이 지워진 오류 이슈라 조용히 뺀다.
+      if (state.failure.kind !== 'not-found') return this.unavailable(id, token, state.failure);
+      await this.options.diagnoses.dropBeforeStart(id, 'deleted');
+      return { kind: 'skipped' };
+    }
     if (state.value.status !== 'unresolved') {
       await this.options.diagnoses.dropBeforeStart(id, state.value.status);
       return { kind: 'skipped' };
@@ -183,7 +187,7 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
     return this.options.diagnoses.saveReport(id, { ...pending, run: this.runInfo(pending.run, runs) }, runs);
   }
 
-  async fail(id: number, _detectedAt: number | null, failure: TargetFailure<never>, runs: readonly RunRecord[]): Promise<boolean> {
+  async fail(id: number, _detectedAt: number | null, failure: TargetFailure<SentryFailureReason>, runs: readonly RunRecord[]): Promise<boolean> {
     return this.options.diagnoses.markFailed(id, failure, runs);
   }
 
@@ -201,30 +205,31 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
   }
 
   /**
-   * 시작 직전 확인이나 이벤트 받기가 실패했다. 지워진 오류 이슈(`404`)는 조용히 빼고, 나머지는 진단 실패로 두지 않고 Sentry 어댑터만 멈춘다.
+   * 시작 직전 확인이나 이벤트 받기가 실패했다. 일시적 실패(네트워크, `5xx`, `429`)와 토큰 문제는 진단 실패로 두지 않고 Sentry 어댑터만 멈춘다.
    * 토큰 거부(`401`)는 "토큰 확인 필요"를 올리고 토큰이 바뀔 때까지, 한도는 초기화 시각까지, 나머지는 잠시 기다렸다가 다시 준비한다.
-   * `403`은 등록할 때 `event:read`를 확인했으므로 감지처럼 그 프로젝트를 볼 수 없게 된 것으로 보고 감지 주기만큼 기다린다.
+   * 기다려도 풀리지 않을 실패(`403`, `404`, 그 밖의 `4xx`, 앱이 모르는 응답 모양)는 그 진단만 "Sentry에서 오류 데이터를 가져오지 못함" 실패로 둔다.
+   * 멈추면 이 진단이 대기열 맨 앞에서 기다리므로, 이런 실패로 멈추면 다른 진단까지 막히기 때문이다. 사용자가 [다시 시도]할 수 있다.
    */
-  private async unavailable(id: number, token: string, failure: SentryApiFailure): Promise<Preparation<SentryTargetTypes>> {
+  private unavailable(id: number, token: string, failure: SentryApiFailure): Preparation<SentryTargetTypes> {
     this.options.logger.warn('sentry-adapter.sentry-unavailable', { diagnosisId: id, failure: failure.kind });
     switch (failure.kind) {
-      case 'not-found':
-        await this.options.diagnoses.dropBeforeStart(id, 'deleted');
-        return { kind: 'skipped' };
       case 'unauthorized':
         this.options.connection.reportApiFailure(token, failure);
         return { kind: 'adapter-paused' };
-      case 'forbidden':
-        return { kind: 'retry-later', afterMs: SENTRY_ACCESS_RETRY_DELAY_MS };
       case 'rate-limited':
         return {
           kind: 'retry-later',
           afterMs: Math.max(failure.resetAt === undefined ? SENTRY_RETRY_DELAY_MS : failure.resetAt - this.options.clock.now(), MIN_SENTRY_RETRY_DELAY_MS),
         };
       case 'network':
-      case 'http':
-      case 'unexpected-response':
         return { kind: 'retry-later', afterMs: SENTRY_RETRY_DELAY_MS };
+      case 'http':
+        if (failure.status >= 500) return { kind: 'retry-later', afterMs: SENTRY_RETRY_DELAY_MS };
+        return { kind: 'ready', next: { kind: 'fail', reason: 'sentry-unavailable' } };
+      case 'forbidden':
+      case 'not-found':
+      case 'unexpected-response':
+        return { kind: 'ready', next: { kind: 'fail', reason: 'sentry-unavailable' } };
     }
   }
 
@@ -287,8 +292,9 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
 
   /** 실행 정보를 채운다. 에이전트와 버전은 마지막 실행, 걸린 시간은 이번 생성의 첫 실행 시작부터 마지막 실행 끝까지다. */
   private runInfo(base: PendingDiagnosisReport['run'], runs: readonly RunRecord[]): DiagnosisRunInfo {
-    /** 첫 실행과 마지막 실행. 결과를 저장할 때는 실행이 하나 이상 있다. */
+    /** 이번 생성의 첫 실행. 결과를 저장할 때는 실행이 하나 이상 있다. */
     const first = runs[0];
+    /** 이번 생성의 마지막 실행. 결과를 낸 실행이다. */
     const last = runs.at(-1);
     return {
       ...base,

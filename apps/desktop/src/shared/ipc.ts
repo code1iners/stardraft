@@ -975,8 +975,8 @@ export interface DiagnosisReportSnapshot {
 
 /** 진단 실패의 까닭. Flow 초안과 같은 빨간 상자에 사유와 마지막 단계로 보인다. */
 export interface DiagnosisFailureSnapshot {
-  /** 사유. */
-  reason: DraftFailureReasonSnapshot;
+  /** 사유. `sentry-unavailable`은 Sentry에서 오류 데이터를 가져오지 못한 것이다. */
+  reason: DraftFailureReasonSnapshot | 'sentry-unavailable';
   /** 에이전트가 알려 준 오류 원문. 없으면 `null`. */
   detail: string | null;
   /** 마지막 단계. 없으면 `null`. */

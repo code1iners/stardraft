@@ -60,6 +60,7 @@ export function DiagnosisHead({ diagnosis, onCollapse }: DiagnosisHeadProps) {
 
 /**
  * 진단의 몸통. 보고서가 있으면 보고서를 순서대로(요약 → 재현 → 원인과 확신도 → 개선 방향 → 근거 → 남은 의문 → 오류 이슈 정보 → 실행 정보) 한 화면에 보인다.
+ * 실행 정보는 화면에 "실행"을 쓰지 않는 규칙에 따라 검토 화면 `정보` 탭의 이름과 같은 "진단 정보"로 보인다.
  * 보고서가 없으면 대기·진행 중은 `진행`, 진단 실패는 `오류` 상자, 완료함은 `기록`을 두고, 그 아래에 `오류 정보`를 둔다.
  * 저장소 대기는 이유 상자를 두지 않고 노란 바닥 줄이 이유를 알린다.
  */
@@ -151,7 +152,7 @@ function DiagnosisReport({ diagnosis, report }: DiagnosisReportProps) {
       <Section title="오류 이슈 정보">
         <FactList facts={[...issueFacts(diagnosis), ...reportEventFacts(report)]} />
       </Section>
-      <Section title="실행 정보">
+      <Section title="진단 정보">
         <FactList facts={reportRunFacts(report)} />
       </Section>
     </>
@@ -181,8 +182,14 @@ function Section({ title, aside, children }: SectionProps) {
   );
 }
 
+/** 이름과 값 표에 넘기는 값. */
+interface FactListProps {
+  /** 표의 줄. */
+  facts: readonly IssueFact[];
+}
+
 /** 이름과 값 표. */
-function FactList({ facts }: { facts: readonly IssueFact[] }) {
+function FactList({ facts }: FactListProps) {
   return (
     <dl className="diagnosis-facts">
       {facts.map((fact) => (
@@ -195,8 +202,16 @@ function FactList({ facts }: { facts: readonly IssueFact[] }) {
   );
 }
 
+/** 글 목록에 넘기는 값. */
+interface TextListProps {
+  /** 목록 항목. */
+  items: readonly string[];
+  /** 번호 목록인지 여부. 재현 순서처럼 차례가 있는 목록이다. */
+  ordered?: boolean;
+}
+
 /** 글 목록. 비어 있으면 "없습니다."를 보인다. */
-function TextList({ items, ordered = false }: { items: readonly string[]; ordered?: boolean }) {
+function TextList({ items, ordered = false }: TextListProps) {
   if (items.length === 0) return <p className="small muted">없습니다.</p>;
   /** 목록 요소. */
   const List = ordered ? 'ol' : 'ul';
@@ -284,8 +299,14 @@ export function DiagnosisFooter({ diagnosis }: DiagnosisProps) {
 /** 30초마다 지금 시각을 다시 읽는 간격(밀리초). 바닥 줄의 "n분 지남"은 분 단위라 이 정도면 충분하다. */
 const NOW_TICK_MS = 30_000;
 
+/** 진행 중 바닥 줄 글에 넘기는 값. */
+interface RunningTextProps {
+  /** 진행을 시작한 시각(Unix epoch 밀리초). */
+  startedAt: number;
+}
+
 /** 진행 중 바닥 줄 글. "진단하는 중입니다 · n분 지남"이고 30초마다 다시 그린다. */
-function RunningText({ startedAt }: { startedAt: number }) {
+function RunningText({ startedAt }: RunningTextProps) {
   /** 지금 시각. */
   const [now, setNow] = useState(() => Date.now());
   // 진행 중 바닥 줄이 보이는 동안만 시계를 돌려 지난 분을 새로 그리고, 진행이 끝나거나 화면을 떠나면 멈춘다.

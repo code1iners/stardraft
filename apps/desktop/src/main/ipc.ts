@@ -226,10 +226,15 @@ function currentReviewSnapshot({ bundles, sentryDiagnoses, drafts, posting, revi
   );
 }
 
+/** 진단 ID를 생성 대기열의 대상으로 바꾼다. */
+function sentryTarget(diagnosisId: number): { kind: string; targetId: number } {
+  return { kind: SENTRY_TARGET_KIND, targetId: diagnosisId };
+}
+
 /** 진단의 생성 대기열 진행. 진행 중이면 단계와 시작 시각, 기다리면 앞에 있는 수다. 대기열에 없으면 `null`. */
 function diagnosisProgress(drafts: IpcServices['drafts'], diagnosisId: number): DiagnosisProgressSnapshot | null {
   /** 생성 대기열의 대상. */
-  const target = { kind: SENTRY_TARGET_KIND, targetId: diagnosisId };
+  const target = sentryTarget(diagnosisId);
   /** 진행. */
   const progress = drafts.targetProgress(target);
   if (!progress) return null;
@@ -440,10 +445,10 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       await openBundleInFlow(services, command.bundleId);
       return;
     case 'cancel-diagnosis':
-      await services.drafts.cancelTarget({ kind: SENTRY_TARGET_KIND, targetId: command.diagnosisId });
+      await services.drafts.cancelTarget(sentryTarget(command.diagnosisId));
       return;
     case 'retry-diagnosis':
-      await services.drafts.changeTargetByUser({ kind: SENTRY_TARGET_KIND, targetId: command.diagnosisId }, () =>
+      await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), () =>
         services.sentryDiagnoses.retry(command.diagnosisId),
       );
       return;

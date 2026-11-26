@@ -10,6 +10,7 @@ import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-
 import type { AgentConnections } from '../core/agent/agent-connections';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
+import type { SentryConnection, SentryConnectionState, SentryTokenCheckOutcome } from '../core/sentry/sentry-connection';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
 import type { Notifier } from '../core/ports/notifier';
@@ -37,6 +38,7 @@ import {
   type EditorSnapshot,
   type FlowAccountProfile,
   type FlowAccountSnapshot,
+  type SentryConnectionSnapshot,
   type GlobalProblemSnapshot,
   type OnboardingSnapshot,
   type RepoMappingsSnapshot,
@@ -58,6 +60,8 @@ export interface IpcServices {
   logger: Logger;
   /** "Flow 계정" 칸의 키 확인과 계정. */
   flowAccount: FlowAccount;
+  /** "Sentry" 칸의 토큰 확인과 조직. */
+  sentryConnection: SentryConnection;
   /** 작은 창 띠에 보일 전역 문제. */
   globalProblems: GlobalProblems;
   /** "에이전트" 칸의 연결 확인. 이 OS의 후보 에이전트마다 하나씩 있다. */
@@ -112,6 +116,9 @@ export function registerIpc(services: IpcServices): void {
 
   services.flowAccount.onChange((state) =>
     services.windows.broadcast({ type: 'flow-account-changed', flowAccount: flowAccountSnapshot(state) }),
+  );
+  services.sentryConnection.onChange((state) =>
+    services.windows.broadcast({ type: 'sentry-changed', sentry: sentrySnapshot(state) }),
   );
   services.globalProblems.onChange((current) =>
     services.windows.broadcast({ type: 'global-problem-changed', globalProblem: activeProblemSnapshot(current) }),
@@ -227,12 +234,13 @@ function projectLookup(repoMappings: RepoMappings): ProjectLookup {
 /** 지금 앱 상태의 스냅숏. */
 function currentSnapshot(services: IpcServices): AppSnapshot {
   /** 상태를 읽을 main의 일. */
-  const { flowAccount, globalProblems, agentConnections, agentPreferences, repoMappings, onboarding, launchAtLogin } = services;
+  const { flowAccount, sentryConnection, globalProblems, agentConnections, agentPreferences, repoMappings, onboarding, launchAtLogin } = services;
   return {
     appName: app.name,
     version: app.getVersion(),
     platform: appPlatform(),
     flowAccount: flowAccountSnapshot(flowAccount.state()),
+    sentry: sentrySnapshot(sentryConnection.state()),
     globalProblem: activeProblemSnapshot(globalProblems.current()),
     agentConnections: agentConnectionsSnapshot(agentConnections),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
@@ -255,6 +263,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     windows,
     logger,
     flowAccount,
+    sentryConnection,
     agentConnections,
     agentPreferences,
     repoMappings,
@@ -287,6 +296,15 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'cancel-flow-key-check':
       flowAccount.cancelKeyCheck();
+      return;
+    case 'check-sentry-token':
+      announceTokenCheckOutcome(windows, await sentryConnection.checkToken(command.token));
+      return;
+    case 'cancel-sentry-token-check':
+      sentryConnection.cancelTokenCheck();
+      return;
+    case 'disconnect-sentry':
+      await sentryConnection.disconnect();
       return;
     case 'check-agents':
       await agentConnections.checkAll();
@@ -683,6 +701,22 @@ function announceKeyCheckOutcome(windows: AppWindows, outcome: FlowKeyCheckOutco
   if (outcome.kind === 'failed') windows.broadcast({ type: 'flow-key-check-finished', result: outcome.reason });
 }
 
+/** 토큰 확인이 연결이나 실패로 끝났으면 열린 창에 알린다. 그만둔 경우는 상태 변경으로 충분하다. */
+function announceTokenCheckOutcome(windows: AppWindows, outcome: SentryTokenCheckOutcome): void {
+  if (outcome.kind === 'connected') windows.broadcast({ type: 'sentry-token-check-finished', result: 'connected' });
+  if (outcome.kind === 'failed') windows.broadcast({ type: 'sentry-token-check-finished', result: outcome.reason });
+}
+
+/** core의 Sentry 연결 상태를 렌더러에 넘길 모양으로 바꾼다. 조직 이름만 넘기고 지역 주소와 ID는 화면에 쓰지 않으므로 넘기지 않는다. */
+function sentrySnapshot(state: SentryConnectionState): SentryConnectionSnapshot {
+  return {
+    connected: state.connected,
+    organizations: state.organizations.map(({ name }) => ({ name })),
+    tokenCheck: { status: state.tokenCheck.status },
+    tokenProblem: state.problem,
+  };
+}
+
 /** core의 Flow 계정 상태를 렌더러에 넘길 모양으로 바꾼다. */
 function flowAccountSnapshot(state: FlowAccountState): FlowAccountSnapshot {
   return {
@@ -696,7 +730,14 @@ function flowAccountSnapshot(state: FlowAccountState): FlowAccountSnapshot {
 
 /** core의 전역 문제를 렌더러·트레이·알림 문구가 쓰는 모양으로 바꾼다. */
 export function globalProblemSnapshot(problem: GlobalProblem): GlobalProblemSnapshot {
-  return problem.cause === 'agent' ? { cause: 'agent', agent: problem.agent, reason: problem.reason } : { cause: 'flow-key', reason: problem.reason };
+  switch (problem.cause) {
+    case 'agent':
+      return { cause: 'agent', agent: problem.agent, reason: problem.reason };
+    case 'sentry-token':
+      return { cause: 'sentry-token', reason: problem.reason };
+    case 'flow-key':
+      return { cause: 'flow-key', reason: problem.reason };
+  }
 }
 
 /** 지금 보일 전역 문제를 렌더러에 넘길 모양으로 바꾼다. 없으면 `null`. */

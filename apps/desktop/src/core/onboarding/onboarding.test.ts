@@ -11,11 +11,13 @@ import { LaunchAtLogin } from './launch-at-login';
 import { Onboarding, type SetupInputs } from './onboarding';
 
 /** 필수 설정을 마치고 Flow도 연결한 입력. */
-const ALL_DONE: SetupInputs = { keyVerified: true, agent: 'connected' };
+const ALL_DONE: SetupInputs = { keyVerified: true, sentryConnected: false, agent: 'connected' };
 /** 필수 설정만 마치고 Flow는 연결하지 않은 입력. */
-const AGENT_ONLY: SetupInputs = { keyVerified: false, agent: 'connected' };
+const AGENT_ONLY: SetupInputs = { keyVerified: false, sentryConnected: false, agent: 'connected' };
+/** 필수 설정을 마치고 Sentry만 연결한 입력. */
+const SENTRY_ONLY: SetupInputs = { keyVerified: false, sentryConnected: true, agent: 'connected' };
 /** 아무것도 하지 않은 입력(첫 실행). */
-const NOTHING_DONE: SetupInputs = { keyVerified: false, agent: 'not-connected' };
+const NOTHING_DONE: SetupInputs = { keyVerified: false, sentryConnected: false, agent: 'not-connected' };
 
 /** 가짜 멘션 알림. 실제 사람이나 회사가 아니다. */
 function alarm(alarmId: string): FlowAlarm {
@@ -102,8 +104,23 @@ describe('온보딩: 필수 설정 하나와 감지할 대상', () => {
       requirements: { agent: 'needed' },
       ready: false,
       hasDetectionTarget: false,
+      flowConnected: false,
+      sentryConnected: false,
       start: { status: 'idle' },
     });
+  });
+
+  it('Sentry만 연결해도 감지할 대상이 있다고 알리고, Flow 줄과 Sentry 줄은 따로 따른다', async () => {
+    const { onboarding, setInputs, changes } = await setup(AGENT_ONLY);
+
+    setInputs(SENTRY_ONLY);
+
+    expect(onboarding.state()).toMatchObject({ ready: true, hasDetectionTarget: true, flowConnected: false, sentryConnected: true });
+    expect(changes.count).toBe(1);
+
+    setInputs(ALL_DONE);
+
+    expect(onboarding.state()).toMatchObject({ hasDetectionTarget: true, flowConnected: true, sentryConnected: false });
   });
 
   it('필수는 에이전트 연결 하나라서 Flow 키 없이도 감지를 시작할 수 있다', async () => {

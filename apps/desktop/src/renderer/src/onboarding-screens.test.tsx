@@ -10,6 +10,8 @@ const FIRST_RUN: OnboardingSnapshot = {
   requirements: { agent: 'needed' },
   ready: false,
   hasDetectionTarget: false,
+  flowConnected: false,
+  sentryConnected: false,
   start: { status: 'idle' },
 };
 
@@ -19,11 +21,13 @@ const READY: OnboardingSnapshot = {
   requirements: { agent: 'done' },
   ready: true,
   hasDetectionTarget: true,
+  flowConnected: true,
+  sentryConnected: false,
   start: { status: 'idle' },
 };
 
 /** 필수 설정만 마치고 연결한 서비스는 없는 온보딩 상태. */
-const READY_WITHOUT_TARGET: OnboardingSnapshot = { ...READY, hasDetectionTarget: false };
+const READY_WITHOUT_TARGET: OnboardingSnapshot = { ...READY, hasDetectionTarget: false, flowConnected: false };
 
 /** 가짜 앱 상태 스냅숏. 실제 사람이나 회사가 아니다. */
 function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot> = {}): AppSnapshot {
@@ -32,6 +36,7 @@ function snapshot(onboarding: OnboardingSnapshot, overrides: Partial<AppSnapshot
     version: '0.0.0-test',
     platform: 'darwin',
     flowAccount: { account: null, keyCheck: { status: 'idle' } },
+    sentry: { connected: false, organizations: [], tokenCheck: { status: 'idle' }, tokenProblem: null },
     globalProblem: null,
     agentConnections: [
       {
@@ -97,7 +102,7 @@ describe('작은 창: 필수 설정 전', () => {
     const text = textOf(
       <PopoverContent
         snapshot={snapshot(
-          { ...FIRST_RUN, requirements: { agent: 'checking' }, hasDetectionTarget: true },
+          { ...FIRST_RUN, requirements: { agent: 'checking' }, hasDetectionTarget: true, flowConnected: true },
           { flowAccount: { account: { name: '테스트 사용자', division: '테스트 팀', email: 'me@example.test' }, keyCheck: { status: 'idle' } } },
         )}
       />,
@@ -106,7 +111,24 @@ describe('작은 창: 필수 설정 전', () => {
     expect(text).toContain('✓');
     expect(text).toContain('테스트 사용자 · 테스트 팀');
     expect(text).toContain('확인 중');
-    expect(text).not.toContain('연결 안 함');
+    // Flow 줄은 연결됐고 Sentry 줄만 연결 안 함이다.
+    expect(text.match(/연결 안 함/g)).toHaveLength(1);
+  });
+
+  it('감지할 대상 묶음에 Flow 계정 다음으로 Sentry 줄이 있고, 연결하면 ✓와 조직 수를 보인다', () => {
+    /** Sentry만 연결한 온보딩 상태. */
+    const sentryOnly: OnboardingSnapshot = { ...READY, hasDetectionTarget: true, flowConnected: false, sentryConnected: true };
+    const text = textOf(
+      <PopoverContent
+        snapshot={snapshot(sentryOnly, { sentry: { connected: true, organizations: [{ name: '조직 A' }, { name: '조직 B' }], tokenCheck: { status: 'idle' }, tokenProblem: null } })}
+      />,
+    );
+
+    expect(text.indexOf('Flow 계정')).toBeLessThan(text.indexOf('Sentry'));
+    expect(text).toContain('조직 2개');
+    expect(text.match(/✓/g)).toHaveLength(2);
+    expect(text.match(/연결 안 함/g)).toHaveLength(1);
+    expect(text).not.toContain('연결한 서비스가 없어');
   });
 
   it('필수를 마치면 완료 문장과 하단 안내 없이 [감지 시작]을 보인다. Flow를 연결했으면 연결한 서비스가 없다는 안내는 없다', () => {

@@ -101,4 +101,21 @@ describe('전역 문제', () => {
 
     expect(received).toEqual([KEY_REJECTED, KEY_UNREADABLE, null]);
   });
+
+  it('토큰 문제는 Flow 키 문제와 따로 서고 알림도 따로 뜬다. 둘이 겹치면 Flow 키 문제가 먼저 보이고 에이전트 문제는 그 뒤다', () => {
+    const { notifier, problems } = setup();
+    /** Sentry가 토큰을 거부한 문제. */
+    const tokenRejected: GlobalProblem = { cause: 'sentry-token', reason: 'rejected' };
+
+    problems.raise({ cause: 'agent', agent: 'claude-code', reason: 'check-failed' });
+    problems.raise(tokenRejected);
+    expect(problems.current()?.problem).toEqual(tokenRejected);
+    problems.raise(KEY_REJECTED);
+    expect(problems.current()?.problem).toEqual(KEY_REJECTED);
+
+    problems.resolve('flow-key');
+    expect(problems.current()?.problem).toEqual(tokenRejected);
+    expect(problems.has('flow-key')).toBe(false);
+    expect(notifier.sent.map((sent) => sent.title)).toEqual(['agent', 'sentry-token', 'flow-key']);
+  });
 });

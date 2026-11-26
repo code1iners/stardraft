@@ -83,6 +83,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     version: '0.0.0-test',
     platform: 'darwin',
     flowAccount: { account: null, keyCheck: { status: 'idle' } },
+    sentry: { connected: false, organizations: [], tokenCheck: { status: 'idle' }, tokenProblem: null },
     globalProblem: null,
     agentConnections: [
       {
@@ -109,6 +110,8 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
       requirements: { agent: 'done' },
       ready: true,
       hasDetectionTarget: true,
+      flowConnected: true,
+      sentryConnected: false,
       start: { status: 'idle' },
     },
     launchAtLogin: true,

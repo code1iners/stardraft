@@ -1726,6 +1726,10 @@ describe('펼친 창: 진단', () => {
       detectedAt: DETECTED_AT,
       status: 'repo-check-needed',
       repoWait: { kind: 'unmapped', waitingCount: 2 },
+      progress: null,
+      report: null,
+      failure: null,
+      completedAt: null,
       issue: {
         shortId: `WEB-${id}`,
         culprit: 'app/checkout',
@@ -1750,7 +1754,10 @@ describe('펼친 창: 진단', () => {
 
   it('목록은 `진단 n` 묶음이 `초안 n` 위에 오고, 진단 줄에 오류 제목·감지 시각·`프로젝트 · 자리`·상태 태그가 보인다', () => {
     const text = textOf(
-      <ReviewContent snapshot={withDiagnoses([diagnosis(1), diagnosis(2, { status: 'queued', repoWait: null })], [bundle(7)])} initialDiagnosisId={1} />,
+      <ReviewContent
+        snapshot={withDiagnoses([diagnosis(1), diagnosis(2, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 1 } })], [bundle(7)])}
+        initialDiagnosisId={1}
+      />,
     );
 
     expect(text).toMatch(/진단 2 시험 오류 1 \S+ \S+ 가짜 프로젝트 · app\/checkout 저장소 매핑 필요 시험 오류 2 \S+ \S+ 가짜 프로젝트 · app\/checkout 대기 초안 1 /);
@@ -1779,11 +1786,144 @@ describe('펼친 창: 진단', () => {
   });
 
   it('대기 진단은 `대기` 태그와 기다린다는 바닥 줄을 보이고 노란 바닥 줄은 없다', () => {
-    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([diagnosis(1, { status: 'queued', repoWait: null })])} initialDiagnosisId={1} />);
+    const markup = renderToStaticMarkup(
+      <ReviewContent snapshot={withDiagnoses([diagnosis(1, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 2 } })])} initialDiagnosisId={1} />,
+    );
 
     expect(markup).toContain('<span class="tag generating">대기</span>');
     expect(markup).toContain('차례를 기다리는 중입니다.');
     expect(markup).not.toContain('review-foot warn');
+  });
+
+  /** 가짜 보고서. 읽기 전용 진단이라 재현은 불가(허용 안 됨)다. */
+  const REPORT: NonNullable<DiagnosisSnapshot['report']> = {
+    summary: '빈 주문 목록에서 첫 항목을 읽어 오류가 납니다.',
+    reproduction: { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
+    cause: { text: '빈 배열을 확인하지 않습니다. [근거 1]', confidence: 'medium' },
+    improvements: ['빈 목록을 먼저 확인합니다.'],
+    openQuestions: ['빈 목록이 언제 오는지 모릅니다.'],
+    evidence: [{ id: 1, explanation: '첫 항목을 읽는 자리', repository: '/fake/web', path: 'src/order.ts', startLine: 4, endLine: 6, located: true }],
+    event: { release: 'web@1.2.0', firstRelease: 'web@1.0.0', lastRelease: null, sourceMaps: 'applied', missingData: [], stackHead: [] },
+    run: {
+      repository: '/fake/web',
+      headCommit: 'a'.repeat(40),
+      uncommittedChanges: false,
+      agent: 'claude-code',
+      cliVersion: '2.1.300',
+      reproductionAllowed: false,
+      durationMs: 134_000,
+      createdAt: DETECTED_AT,
+    },
+  };
+
+  it('대기 진단의 상세는 `진행`에 "앞에 n개가 있습니다."를 보이고 바닥 줄에 [취소]가 있다', () => {
+    const markup = renderToStaticMarkup(
+      <ReviewContent snapshot={withDiagnoses([diagnosis(1, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 2 } })])} initialDiagnosisId={1} />,
+    );
+    const text = textOf(
+      <ReviewContent snapshot={withDiagnoses([diagnosis(1, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 2 } })])} initialDiagnosisId={1} />,
+    );
+
+    expect(text).toContain('진행 앞에 2개가 있습니다. 오류 정보');
+    expect(markup).toMatch(/<footer class="review-foot"><span class="small muted">차례를 기다리는 중입니다.<\/span><span class="spacer"><\/span><button[^>]*>취소<\/button><\/footer>/);
+  });
+
+  it('진행 중 진단은 `진단 중` 태그와 단계·읽은 파일 수, "진단하는 중입니다 · n분 지남"과 [취소]를 보인다', () => {
+    /** 3분 전에 시작한 진단. */
+    const running = diagnosis(1, {
+      status: 'running',
+      repoWait: null,
+      progress: { status: 'running', step: '파일 읽는 중: order.ts', filesRead: 4, startedAt: Date.now() - 3 * 60_000 - 5_000 },
+    });
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([running])} initialDiagnosisId={1} />);
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([running])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<span class="tag generating">진단 중</span>');
+    expect(text).toContain('진행 파일 읽는 중: order.ts 읽은 파일 4개');
+    expect(text).toContain('진단하는 중입니다 · 3분 지남 취소');
+  });
+
+  it('진단 실패는 `진단 실패` 태그와 빨간 오류 상자(사유와 마지막 단계), 왼쪽 [완료]와 오른쪽 주 버튼 [다시 시도]를 보인다', () => {
+    /** 시간 초과로 실패한 진단. */
+    const failed = diagnosis(1, { status: 'failed', repoWait: null, failure: { reason: 'timed-out', detail: null, lastStep: '오류 진단하는 중' } });
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([failed])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<span class="tag failed">진단 실패</span>');
+    expect(markup).toContain('<div class="failure-box"><strong>에이전트가 20분 안에 끝내지 못해 멈췄습니다.</strong><p class="failure-detail">마지막 단계: 오류 진단하는 중</p></div>');
+    expect(markup).toMatch(/<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><button[^>]*class="btn primary"[^>]*>다시 시도<\/button><\/footer>/);
+  });
+
+  it('진단 실패의 사유 문장은 초안 대신 진단을 가리키고, Sentry 조회 실패도 쉬운 말로 보인다', () => {
+    /** 사유만 다른 진단 실패. */
+    const failedWith = (reason: NonNullable<DiagnosisSnapshot['failure']>['reason']) =>
+      textOf(
+        <ReviewContent
+          snapshot={withDiagnoses([diagnosis(1, { status: 'failed', repoWait: null, failure: { reason, detail: null, lastStep: null } })])}
+          initialDiagnosisId={1}
+        />,
+      );
+
+    expect(failedWith('cancelled')).toContain('취소함: 진단을 취소했습니다.');
+    expect(failedWith('sentry-unavailable')).toContain('Sentry에서 오류 데이터를 가져오지 못했습니다.');
+    expect(failedWith('secret-evidence')).toContain('비밀 파일을 근거로 듦');
+  });
+
+  it('진단 실패의 [완료]와 [다시 시도], 대기의 [취소]는 그 진단의 명령을 보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 요소 트리에서 누를 수 있는 요소를 모두 찾는다. */
+      const find = (node: unknown): Record<string, unknown>[] => {
+        if (Array.isArray(node)) return node.flatMap((child) => find(child));
+        if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+        /** 요소의 속성. */
+        const props = (node as { props: Record<string, unknown> }).props;
+        return [...(typeof props.onClick === 'function' ? [props] : []), ...find(props.children)];
+      };
+      for (const button of find(DiagnosisFooter({ diagnosis: diagnosis(3, { status: 'failed', repoWait: null }) }))) (button.onClick as () => void)();
+      for (const button of find(DiagnosisFooter({ diagnosis: diagnosis(4, { status: 'queued', repoWait: null }) }))) (button.onClick as () => void)();
+
+      expect(send.mock.calls.map(([command]) => command)).toEqual([
+        { type: 'complete-diagnosis', diagnosisId: 3 },
+        { type: 'retry-diagnosis', diagnosisId: 3 },
+        { type: 'cancel-diagnosis', diagnosisId: 4 },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('보고서는 요약 → 재현 → 원인과 확신도 → 개선 방향 → 근거 → 남은 의문 → 오류 이슈 정보 → 실행 정보 순서로 한 화면에 보인다', () => {
+    /** 보고서가 있는 진단. */
+    const ready = diagnosis(1, { status: 'ready', repoWait: null, report: REPORT });
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([ready])} initialDiagnosisId={1} />);
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([ready])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<span class="tag ready">준비됨</span>');
+    /** 구역 이름의 순서. */
+    const titles = [...markup.matchAll(/<h3 class="section-title">([^<]+)/g)].map((match) => match[1]);
+    expect(titles).toEqual(['요약', '재현', '원인', '개선 방향', '근거 1개', '남은 의문', '오류 이슈 정보', '진단 정보']);
+    expect(text).toContain('재현 · 불가(허용 안 됨) 이 저장소는 재현을 허용하지 않아 코드만 읽고 진단했습니다');
+    expect(text).toContain('원인 · 확신도 중간 빈 배열을 확인하지 않습니다. [근거 1]');
+    expect(text).toContain('① 첫 항목을 읽는 자리 web · order.ts · 4–6번째 줄');
+    expect(text).toContain('release(이벤트 · 최초 · 최근) web@1.2.0 · web@1.0.0 · 없음 소스맵 적용됨 없는 데이터 없음');
+    expect(text).toContain(`저장소 /fake/web HEAD ${'a'.repeat(40)} 커밋하지 않은 변경 없음 에이전트 Claude Code 2.1.300 재현 허용 허용 안 함 걸린 시간 2분 14초`);
+    // 목록 줄의 둘째 줄은 보고서 요약이다.
+    expect(text).toContain('빈 주문 목록에서 첫 항목을 읽어 오류가 납니다. 준비됨');
+  });
+
+  it('완료한 진단은 `완료함` 태그와 `기록`만 보이고 바닥 줄은 안내뿐이다', () => {
+    /** 완료한 진단. */
+    const completed = diagnosis(1, { status: 'completed', repoWait: null, completedAt: DETECTED_AT });
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([completed])} initialDiagnosisId={1} />);
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([completed])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<span class="tag done">완료함</span>');
+    expect(text).toContain('기록 완료한 때');
+    expect(text).not.toContain('오류 정보');
+    expect(text).toContain('완료한 진단입니다. 보고서는 지웠습니다.');
+    expect(markup).not.toMatch(/<footer[^>]*>[\s\S]*<button/);
   });
 
   it('[저장소 매핑하기]는 그 진단의 Sentry 매핑 편집을 연다', () => {

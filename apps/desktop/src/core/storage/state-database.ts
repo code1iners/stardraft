@@ -458,6 +458,14 @@ export const STATE_MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX sentry_diagnosis_project_id ON sentry_diagnosis (project_id);
   `,
+  // 26: 읽기 전용 진단. 진단에 보고서(JSON), 진단 실패의 까닭(JSON), 실행 기록(JSON 배열), 완료 시각을 둔다.
+  // 기존 줄은 감지만 된 진단(대기, 저장소 대기)이라 보고서·실패·완료 시각이 없고 실행 기록은 빈 배열이다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN report TEXT;
+  ALTER TABLE sentry_diagnosis ADD COLUMN failure TEXT;
+  ALTER TABLE sentry_diagnosis ADD COLUMN runs TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE sentry_diagnosis ADD COLUMN completed_at INTEGER;
+  `,
 ];
 
 /** 계정에 매이는 대기열 줄의 종류. Flow 초안만 계정에 매이고, 다른 종류(진단 등)는 계정과 무관하다. */

@@ -14,9 +14,11 @@ import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
 import type { ManualCheckState } from '../core/manual-check/manual-check-session';
 import type { ManualAssignmentCandidate, ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
-import { isRepoWaiting, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
+import { isRepoWaiting, type DiagnosisReport, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
 import type {
   BundleMentionSnapshot,
+  DiagnosisProgressSnapshot,
+  DiagnosisReportSnapshot,
   DiagnosisSnapshot,
   BundleSnapshot,
   DraftSnapshot,
@@ -51,6 +53,9 @@ export type GenerationLookup = (bundleId: number) => GenerationSnapshot | null;
 /** Flow 프로젝트의 저장소 매핑과 저장소 구성을 견준다. */
 export type MappingLookup = (projectId: string, repos: readonly string[]) => MappingMatch;
 
+/** 진단 ID로 생성 대기열의 진행을 찾는다. 대기열에 없으면 `null`. */
+export type DiagnosisProgressLookup = (diagnosisId: number) => DiagnosisProgressSnapshot | null;
+
 /** 묶음 ID로 게시 카운트다운이 끝날 시각을 찾는다. 카운트다운 중이 아니면 `null`. */
 export type CountdownLookup = (bundleId: number) => number | null;
 
@@ -64,6 +69,7 @@ export function reviewSnapshot(
   mappingOf: MappingLookup,
   repoPicker: RepoPickerState | null,
   countdownOf: CountdownLookup,
+  diagnosisProgressOf: DiagnosisProgressLookup = () => null,
 ): ReviewSnapshot {
   /** 프로젝트와 사유별로 기다리는 저장소 대기 묶음 수. 바닥 줄 글의 "기다리는 n건"이다. */
   const waitCounts = new Map<string, number>();
@@ -75,7 +81,7 @@ export function reviewSnapshot(
   }
   return {
     bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf, (item) => waitCounts.get(repoWaitKey(item)) ?? 1)),
-    diagnoses: diagnosisSnapshots(diagnoses),
+    diagnoses: diagnosisSnapshots(diagnoses, diagnosisProgressOf),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
     repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
   };
@@ -83,9 +89,9 @@ export function reviewSnapshot(
 
 /**
  * 진단을 렌더러에 넘길 모양으로 바꾼다. 저장소 대기는 같은 프로젝트·사유로 기다리는 진단 수를 함께 넘겨 바닥 줄의 "기다리는 오류 n건"이 된다.
- * 오류 제목은 검토 화면에만 보이고 OS 알림에는 넣지 않는다.
+ * 대기 진단은 생성 대기열이 진행하고 있으면 진행 중(`running`)으로 넘긴다. 오류 제목은 검토 화면에만 보이고 OS 알림에는 넣지 않는다.
  */
-export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[]): DiagnosisSnapshot[] {
+export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[], progressOf: DiagnosisProgressLookup = () => null): DiagnosisSnapshot[] {
   /** 프로젝트와 사유별로 기다리는 진단 수. */
   const waitCounts = new Map<string, number>();
   /** 프로젝트와 사유를 묶는 키. */
@@ -96,13 +102,19 @@ export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[]): Diagn
     const waitingCount = waitCounts.get(waitKey(diagnosis)) ?? 1;
     /** 오류 이슈 정보와 저장소 대기 사유. */
     const { issue, repoCheck } = diagnosis;
+    /** 대기 진단의 진행. 대기가 아니면 `null`. */
+    const progress = diagnosis.status === 'queued' ? (progressOf(diagnosis.id) ?? { status: 'waiting', ahead: null }) : null;
     return {
       id: diagnosis.id,
       projectId: diagnosis.projectId,
       origin: diagnosis.origin,
       title: issue.title,
       detectedAt: diagnosis.detectedAt,
-      status: diagnosis.status,
+      status: progress?.status === 'running' ? 'running' : diagnosis.status,
+      progress,
+      report: diagnosis.report && reportSnapshot(diagnosis.report),
+      failure: diagnosis.failure && { reason: diagnosis.failure.reason, detail: diagnosis.failure.detail, lastStep: diagnosis.failure.lastStep },
+      completedAt: diagnosis.completedAt,
       repoWait:
         !isRepoWaiting(diagnosis) || repoCheck === null
           ? null
@@ -124,6 +136,27 @@ export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[]): Diagn
       },
     };
   });
+}
+
+/** 진단 보고서를 렌더러에 넘길 모양으로 바꾼다. */
+function reportSnapshot(report: DiagnosisReport): DiagnosisReportSnapshot {
+  return {
+    summary: report.summary,
+    reproduction: { ...report.reproduction, steps: [...report.reproduction.steps] },
+    cause: { ...report.cause },
+    improvements: [...report.improvements],
+    openQuestions: [...report.openQuestions],
+    evidence: report.evidence.map((item) => ({ ...item })),
+    event: {
+      release: report.event.release,
+      firstRelease: report.event.firstRelease,
+      lastRelease: report.event.lastRelease,
+      sourceMaps: report.event.sourceMaps,
+      missingData: [...report.event.missingData],
+      stackHead: [...report.event.stackHead],
+    },
+    run: { ...report.run },
+  };
 }
 
 /** 멘션 위치에 있는 기존 기록을 찾는 함수. */

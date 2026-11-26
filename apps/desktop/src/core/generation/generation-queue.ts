@@ -139,6 +139,8 @@ interface RunningTarget extends TargetRef {
   job: unknown;
   /** 시작 표식을 받았는지 여부. 표식 자체는 어댑터마다 `null`일 수도 있어 따로 둔다. */
   begun: boolean;
+  /** 대기열에서 꺼내 진행을 시작한 시각(Unix epoch 밀리초). */
+  startedAt: number;
   /** 마지막 진행 단계. */
   step: string;
   /** 지금 실행에서 읽은 파일 수. */
@@ -281,6 +283,21 @@ export class GenerationQueue {
     const entry = this.runningEntry(target);
     if (entry) return { status: 'running', step: entry.step, filesRead: entry.filesRead };
     return this.isWaiting(target) ? { status: 'waiting' } : null;
+  }
+
+  /**
+   * 기다리는 대상의 앞에 있는 대상 수. 진행 중인 대상과 대기열에서 그 앞에 선 대상을 더한 것이다. 상세의 "앞에 n개가 있습니다."다.
+   * 기다리는 대상이 아니면 `null`.
+   */
+  aheadOf(target: TargetRef): number | null {
+    /** 대기열에서의 위치. */
+    const index = this.waiting.findIndex((queued) => sameTarget(queued, target));
+    return index === -1 ? null : this.running.length + index;
+  }
+
+  /** 진행 중인 대상을 대기열에서 꺼내 진행을 시작한 시각. 진행 중이 아니면 `null`. 상세의 "n분 지남"이다. */
+  runningSince(target: TargetRef): number | null {
+    return this.runningEntry(target)?.startedAt ?? null;
   }
 
   /** 에이전트 실행이 진행 중인지 본다. 앱 내 업데이트는 실행이 끝날 때까지 다시 시작을 미룬다. */
@@ -563,6 +580,7 @@ export class GenerationQueue {
       interruption: null,
       job: null,
       begun: false,
+      startedAt: this.options.clock.now(),
       step: slot.adapter.preparingStep,
       filesRead: 0,
       runKind: null,

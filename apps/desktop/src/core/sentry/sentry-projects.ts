@@ -241,6 +241,13 @@ export class SentryProjects {
     return this.registered[registration.projectId]?.registeredAt === registration.registeredAt;
   }
 
+  /** 등록한 프로젝트의 조직. 등록이 없거나 조직 목록에 없으면 `null`. 진단을 시작할 때 부를 지역 주소를 얻는다. */
+  organizationFor(projectId: string): SentryOrganization | null {
+    /** 등록. */
+    const registration = this.registered[projectId];
+    return registration ? this.organizationOf(registration) : null;
+  }
+
   /** 감지 조회가 알아낸, 프로젝트에 닿는지를 남긴다. `404`나 접근 거부면 그 프로젝트만 "접근 불가"이고 다시 읽히면 풀린다. */
   reportAccess(projectId: string, access: Exclude<SentryProjectAccess, 'unchecked'>): void {
     if (!(projectId in this.registered)) return;

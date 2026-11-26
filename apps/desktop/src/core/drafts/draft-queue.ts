@@ -4,6 +4,7 @@ import { GenerationQueue, queueAgentFrom, type GenerationProgress, type Parallel
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
+import type { TargetAdapter } from '../generation/target-adapter';
 import type { SettingsStore } from '../ports/settings-store';
 import { FLOW_TARGET_KIND, FlowTargetAdapter } from './flow-target-adapter';
 
@@ -47,6 +48,8 @@ export interface DraftQueueOptions {
   clock: Clock;
   /** 진단 로그. ID와 개수만 남기고 Flow 글과 초안은 남기지 않는다. */
   logger: Logger;
+  /** Flow 어댑터 뒤에 붙일 대상 어댑터(Sentry 어댑터 등). 같은 차례의 대상끼리는 Flow 묶음 뒤에 선다. */
+  extraAdapters?: readonly TargetAdapter[];
 }
 
 /**
@@ -73,7 +76,7 @@ export class DraftQueue {
       clock: options.clock,
     });
     this.queue = new GenerationQueue({
-      adapters: [flow],
+      adapters: [flow, ...(options.extraAdapters ?? [])],
       agent: options.agent,
       onAgentChange: options.onAgentChange,
       parallelWork: options.parallelWork ?? ONE_AT_A_TIME,
@@ -165,6 +168,31 @@ export class DraftQueue {
   /** 처리됨 묶음을 되돌린다. 초안이 없어 새로 만들게 되면 사용자 행동이라 감지해서 기다리는 묶음보다 앞에 들어간다. */
   restore(bundleId: number): Promise<void> {
     return this.changeByUser(bundleId, (bundles) => bundles.restore(bundleId));
+  }
+
+  /** 생성 대기열의 대상(진단 등)의 진행. 대기열에 없으면 `null`. */
+  targetProgress(target: TargetRef): DraftProgress | null {
+    return this.queue.progress(target);
+  }
+
+  /** 기다리는 대상의 앞에 있는 대상 수. 기다리는 대상이 아니면 `null`. */
+  aheadOf(target: TargetRef): number | null {
+    return this.queue.aheadOf(target);
+  }
+
+  /** 진행 중인 대상의 진행을 시작한 시각. 진행 중이 아니면 `null`. */
+  runningSince(target: TargetRef): number | null {
+    return this.queue.runningSince(target);
+  }
+
+  /** 줄 서 있거나 진행 중인 대상(진단 등)을 취소한다. 그 어댑터가 "취소함" 실패로 둔다. */
+  cancelTarget(target: TargetRef): Promise<void> {
+    return this.queue.cancel(target);
+  }
+
+  /** 사용자 행동으로 대상(진단 등)을 바꾼다. 바꾸는 사이에 대상이 생성 중이 되면 `user` 칸에 선다. */
+  changeTargetByUser(target: TargetRef, change: () => Promise<void>): Promise<void> {
+    return this.queue.changeByUser(target, change);
   }
 
   /** 사용자 행동으로 묶음을 바꾼다. 바꾸는 사이에 묶음이 생성 중이 되면 사용자 행동 자리에 넣는다. */

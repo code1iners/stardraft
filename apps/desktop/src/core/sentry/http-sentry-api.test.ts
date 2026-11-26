@@ -394,3 +394,122 @@ describe('Sentry 어댑터: 감지 조회', () => {
     expect(await connect(server).latestRegression(organization(1), '101')).toEqual({ ok: false, failure: { kind: 'not-found' } });
   });
 });
+
+describe('Sentry 어댑터: 진단 시작 때의 조회', () => {
+  it('시작 직전 확인은 오류 이슈 상세를 리디렉트를 따라가지 않고 불러 상태와 최초·최근 release를 읽는다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 200, body: { id: '101', status: 'unresolved', firstRelease: { version: 'web@1.0.0' }, lastRelease: { version: 'web@1.2.0' } } });
+
+    const result = await connect(server).errorIssueState(organization(1), '101');
+
+    expect(server.requests[0]).toMatchObject({ url: 'https://us.sentry.io/api/0/organizations/org-1/issues/101/?collapse=stats,tags', redirect: 'manual' });
+    expect(result).toEqual({ ok: true, value: { status: 'unresolved', firstRelease: 'web@1.0.0', lastRelease: 'web@1.2.0' } });
+  });
+
+  it.each([
+    ['resolved', 'resolved'],
+    ['ignored', 'ignored'],
+    ['pending_deletion', 'deleted'],
+    ['deletion_in_progress', 'deleted'],
+    ['pending_merge', 'merged'],
+    ['reprocessing', 'unresolved'],
+  ])('오류 이슈 상세의 status %s는 %s로 읽는다', async (status, expected) => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 200, body: { id: '101', status, firstRelease: null, lastRelease: null } });
+
+    expect(await connect(server).errorIssueState(organization(1), '101')).toEqual({ ok: true, value: { status: expected, firstRelease: null, lastRelease: null } });
+  });
+
+  it('다른 오류 이슈로 병합되어 리디렉트되면 병합됨이고, 404면 not-found다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 302, headers: { location: 'https://us.sentry.io/api/0/organizations/org-1/issues/202/' } }, { status: 404, body: { detail: 'x' } });
+
+    expect(await connect(server).errorIssueState(organization(1), '101')).toEqual({ ok: true, value: { status: 'merged', firstRelease: null, lastRelease: null } });
+    expect(await connect(server).errorIssueState(organization(1), '101')).toEqual({ ok: false, failure: { kind: 'not-found' } });
+  });
+
+  it('최신 이벤트에서 스택트레이스·breadcrumbs·요청·사용자·컨텍스트·release·태그·플랫폼을 읽고, 요청 주소의 쿼리와 사용자 이메일은 버린다', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({
+      status: 200,
+      body: {
+        id: 'abc',
+        eventID: 'e'.repeat(32),
+        platform: 'javascript',
+        release: { version: 'web@1.2.0' },
+        tags: [
+          { key: 'environment', value: 'production' },
+          { key: 'level', value: 'error' },
+        ],
+        user: { id: 7, email: 'someone@fake.test', ip_address: '10.0.0.1' },
+        contexts: { browser: { name: 'Chrome', version: '120.0' }, empty: {} },
+        errors: [{ type: 'js_no_source', data: {} }],
+        entries: [
+          {
+            type: 'exception',
+            data: {
+              values: [
+                {
+                  type: 'TypeError',
+                  value: "Cannot read properties of undefined (reading 'id')",
+                  module: null,
+                  stacktrace: {
+                    frames: [
+                      { filename: 'node_modules/lib.js', function: 'call', lineNo: 10, colNo: 1, inApp: false, context: [] },
+                      { filename: './src/order.ts', function: 'firstOrder', lineNo: 42, colNo: 7, inApp: true, context: [[42, '  return orders[0].id;']] },
+                    ],
+                  },
+                  rawStacktrace: { frames: [] },
+                },
+              ],
+            },
+          },
+          { type: 'breadcrumbs', data: { values: [{ timestamp: '2026-11-26T11:59:00Z', category: 'fetch', level: 'info', message: 'GET /orders' }] } },
+          { type: 'request', data: { method: 'GET', url: 'https://app.fake.test/orders?token=fake-secret#top', headers: [['Cookie', 'x']] } },
+        ],
+      },
+    });
+
+    const result = await connect(server).latestEvent(organization(1), '101');
+
+    expect(server.requests[0]?.url).toBe('https://us.sentry.io/api/0/organizations/org-1/issues/101/events/latest/');
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        eventId: 'e'.repeat(32),
+        platform: 'javascript',
+        release: 'web@1.2.0',
+        message: null,
+        tags: [
+          { key: 'environment', value: 'production' },
+          { key: 'level', value: 'error' },
+        ],
+        exceptions: [
+          {
+            type: 'TypeError',
+            value: "Cannot read properties of undefined (reading 'id')",
+            module: null,
+            frames: [
+              { filename: 'node_modules/lib.js', function: 'call', lineNo: 10, colNo: 1, inApp: false, context: [] },
+              { filename: './src/order.ts', function: 'firstOrder', lineNo: 42, colNo: 7, inApp: true, context: [[42, '  return orders[0].id;']] },
+            ],
+            hasRawStacktrace: true,
+          },
+        ],
+        breadcrumbs: [{ timestamp: '2026-11-26T11:59:00Z', category: 'fetch', level: 'info', message: 'GET /orders' }],
+        request: { method: 'GET', url: 'https://app.fake.test/orders' },
+        user: { id: '7', username: null },
+        contexts: [{ name: 'browser', summary: 'Chrome 120.0' }],
+        processingErrors: ['js_no_source'],
+      },
+    });
+  });
+
+  it('최신 이벤트를 받지 못하면 실패 이유를 그대로 돌려준다(429는 한도 초기화 시각과 함께)', async () => {
+    const server = new FakeSentryServer();
+    server.replyNext({ status: 429, headers: { 'x-sentry-rate-limit-reset': '1800000000' } }, { network: 'error' });
+
+    expect(await connect(server).latestEvent(organization(1), '101')).toEqual({ ok: false, failure: { kind: 'rate-limited', resetAt: 1_800_000_000_000 } });
+    expect(await connect(server).latestEvent(organization(1), '101')).toEqual({ ok: false, failure: { kind: 'network' } });
+  });
+});

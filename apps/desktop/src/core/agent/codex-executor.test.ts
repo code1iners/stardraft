@@ -192,6 +192,24 @@ describe('Codex 실행기: 인수 묶음', () => {
     expect(runner.requests[0]?.args.slice(7, 10)).toEqual(['-C', workFolder, '--skip-git-repo-check']);
   });
 
+  it('진단 실행은 초안 실행과 같은 읽기 전용 경계(같은 권한 프로필, MCP 없음)로 돈다. 첫 저장소가 git 저장소 안이면 --skip-git-repo-check를 붙이지 않는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, codexSuccessStream({ requirement: '가짜 요구' })));
+    /** git 저장소가 아닌 코드 폴더. */
+    const plainCode = makeDir('plain-diagnosis');
+
+    await executor.run(draftRequest({ readRoots: [repoA] }));
+    await executor.run(draftRequest({ kind: 'diagnosis', readRoots: [repoA], timeoutMs: 1_200_000 }));
+    await executor.run(draftRequest({ kind: 'diagnosis', readRoots: [plainCode] }));
+
+    /** 스키마 파일 경로를 뺀 인수. 실행마다 다르다. */
+    const [draft, diagnosis] = runner.requests.map((request) => request.args.map((arg) => (arg === flagValue(request, '--output-schema') ? '<스키마>' : arg)));
+    expect(diagnosis).toEqual(draft);
+    expect(diagnosis!.some((arg) => arg.startsWith('mcp_servers'))).toBe(false);
+    expect(runner.requests[1]?.timeoutMs).toBe(1_200_000);
+    expect(runner.requests[2]?.args).toContain('--skip-git-repo-check');
+  });
+
   it('고른 모델은 표준 입력 표시(-) 앞에 -m으로 넘기고, 기본 모델이면 넘기지 않는다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, exited(0, codexSuccessStream({ requirement: '가짜 요구' })));

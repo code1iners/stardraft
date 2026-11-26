@@ -68,6 +68,94 @@ export interface SentryRegression {
   at: number;
 }
 
+/**
+ * 진단을 시작하기 직전에 읽는 오류 이슈의 상태. 상세 응답의 `status`를 앱이 쓰는 갈래로 줄였다.
+ * - `unresolved`: 미해결. 진단한다.
+ * - `resolved`: 해결됨. `ignored`: 보관됨. `deleted`: 지우는 중. `merged`: 다른 오류 이슈로 병합 중.
+ */
+export type SentryIssueStatus = 'unresolved' | 'resolved' | 'ignored' | 'deleted' | 'merged';
+
+/** 오류 이슈 상세에서 읽은 상태와 release. `GET /api/0/organizations/{조직}/issues/{id}/`. */
+export interface SentryIssueState {
+  /** 상태. */
+  status: SentryIssueStatus;
+  /** 최초 release 버전. 없으면 `null`. */
+  firstRelease: string | null;
+  /** 최근 release 버전. 없으면 `null`. */
+  lastRelease: string | null;
+}
+
+/** 스택트레이스의 프레임 하나. */
+export interface SentryEventFrame {
+  /** 파일 이름(소스맵을 적용했으면 원본 경로). 없으면 `null`. */
+  filename: string | null;
+  /** 함수 이름. 없으면 `null`. */
+  function: string | null;
+  /** 줄 번호. 없으면 `null`. */
+  lineNo: number | null;
+  /** 열 번호. 없으면 `null`. */
+  colNo: number | null;
+  /** 앱 코드의 프레임인지 여부. */
+  inApp: boolean;
+  /** 프레임 주변 소스 줄(줄 번호와 내용). 없으면 비어 있다. */
+  context: [number, string][];
+}
+
+/** 이벤트의 예외 하나. 체인 예외는 바깥부터 안쪽 순서다. */
+export interface SentryEventException {
+  /** 예외 종류. 없으면 빈 문자열. */
+  type: string;
+  /** 예외 메시지. 없으면 빈 문자열. */
+  value: string;
+  /** 모듈. 없으면 `null`. */
+  module: string | null;
+  /** 프레임. Sentry 순서 그대로 가장 바깥 호출부터 오류가 난 자리까지다. 스택트레이스가 없으면 비어 있다. */
+  frames: SentryEventFrame[];
+  /** 변환 전 스택트레이스(`rawStacktrace`)가 있는지. 있으면 소스맵 등으로 프레임을 바꾼 것이다. */
+  hasRawStacktrace: boolean;
+}
+
+/** 이벤트의 breadcrumb 하나. */
+export interface SentryEventBreadcrumb {
+  /** 시각(ISO). 없으면 `null`. */
+  timestamp: string | null;
+  /** 분류. 없으면 `null`. */
+  category: string | null;
+  /** 레벨. 없으면 `null`. */
+  level: string | null;
+  /** 메시지. 없으면 `null`. */
+  message: string | null;
+}
+
+/**
+ * 오류 이슈의 최신 이벤트. `GET /api/0/organizations/{조직}/issues/{id}/events/latest/`에서 앱이 진단에 쓰는 값이다.
+ * 스택트레이스, breadcrumbs, 요청, 사용자, 컨텍스트, release, 태그, 플랫폼이다. 환경과 레벨은 태그 안에 있다.
+ */
+export interface SentryEvent {
+  /** 이벤트 ID. */
+  eventId: string;
+  /** 플랫폼. 없으면 `null`. */
+  platform: string | null;
+  /** release 버전. 없으면 `null`. */
+  release: string | null;
+  /** 이벤트 메시지. 예외가 없는 이벤트에서 쓴다. 없으면 `null`. */
+  message: string | null;
+  /** 태그. */
+  tags: { key: string; value: string }[];
+  /** 예외. 없으면 비어 있다. */
+  exceptions: SentryEventException[];
+  /** breadcrumbs. 오래된 것부터다. */
+  breadcrumbs: SentryEventBreadcrumb[];
+  /** 요청의 방법과 주소(쿼리는 뺀다). 없으면 `null`. */
+  request: { method: string | null; url: string | null } | null;
+  /** 사용자. 식별 값의 종류만 남기고 이메일·IP 같은 개인 정보는 받지 않는다. 없으면 `null`. */
+  user: { id: string | null; username: string | null } | null;
+  /** 컨텍스트(브라우저, OS, 런타임 등)의 이름과 짧은 요약. */
+  contexts: { name: string; summary: string }[];
+  /** 이벤트 처리 오류의 종류(`js_invalid_sourcemap_location` 등). 소스맵 적용 여부를 정할 때 쓴다. */
+  processingErrors: string[];
+}
+
 /** Sentry API 호출이 실패한 이유. */
 export type SentryApiFailure =
   /** `404`. 조직이나 프로젝트가 없거나 이 토큰으로 볼 수 없다. */
@@ -114,6 +202,10 @@ export interface SentryApi {
   listRegressedErrorIssues(organization: SentryOrganization, filter: SentryIssueFilter): Promise<SentryApiResult<SentryErrorIssue[]>>;
   /** 오류 이슈 상세의 활동에서 가장 최근 재발을 읽는다. 재발 활동이 없으면 `null`. */
   latestRegression(organization: SentryOrganization, issueId: string): Promise<SentryApiResult<SentryRegression | null>>;
+  /** 진단을 시작하기 직전에 오류 이슈의 상태와 release를 읽는다. 지워진 오류 이슈는 `not-found`다. `event:read` scope가 필요하다. */
+  errorIssueState(organization: SentryOrganization, issueId: string): Promise<SentryApiResult<SentryIssueState>>;
+  /** 진단을 시작할 때 오류 이슈의 최신 이벤트를 읽는다. `event:read` scope가 필요하다. */
+  latestEvent(organization: SentryOrganization, issueId: string): Promise<SentryApiResult<SentryEvent>>;
 }
 
 /** 토큰 하나로 Sentry API를 부르는 클라이언트를 만든다. */

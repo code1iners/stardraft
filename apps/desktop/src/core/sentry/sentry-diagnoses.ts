@@ -1,15 +1,20 @@
+import type { RunRecord } from '../generation/generation-run';
 import type { Logger } from '../logging/logger';
+import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
-import type { SentryErrorIssue } from '../ports/sentry-api';
+import type { SentryErrorIssue, SentryIssueStatus } from '../ports/sentry-api';
 import type { SentryProjectRegistration } from '../ports/settings-store';
 import type { SentryStore } from '../ports/sentry-store';
 import { SerialQueue } from '../serial-queue';
 import {
   absorbsRegression,
   isRepoWaiting,
+  replacedByRegression,
   STATUSES_REMOVED_ON_UNREGISTER,
   type DetectionKey,
+  type DiagnosisFailure,
   type DiagnosisOrigin,
+  type DiagnosisReport,
   type DiagnosisRepoCheck,
   type DiagnosisStatus,
   type SentryDiagnosis,
@@ -51,15 +56,20 @@ export interface SentryDiagnosesOptions {
   resolveRepo: (projectId: string) => Promise<SentryRepoResolution>;
   /** 조회 결과를 저장하기 직전에 등록이 그대로인지 본다. 없으면 늘 그대로로 본다. */
   isRegistered?: (registration: SentryProjectRegistration) => boolean;
+  /** 완료 시각을 읽는 시계. 없으면 시스템 시각이다. */
+  clock?: Clock;
 }
 
 /**
  * Sentry 진단 목록. 감지 결과를 중복 억제 규칙대로 진단으로 만들고, 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)를
- * 프로젝트 단위로 알리고 다시 판정해 재개한다. 이 단계에서는 진단을 실행하지 않는다.
+ * 프로젝트 단위로 알리고 다시 판정해 재개한다. 진단 실행은 생성 대기열의 Sentry 어댑터가 하고, 그 결과(보고서, 진단 실패,
+ * 저장소 대기)와 사용자 행동([다시 시도], [완료])을 이 목록이 저장한다.
  */
 export class SentryDiagnoses {
   /** 진단 전부. ID 순서다. */
   private diagnoses: SentryDiagnosis[] = [];
+  /** 사용자가 [다시 시도]로 대기가 된 진단 ID. 생성 대기열의 `user` 칸에 선다. 대기를 벗어나면 뺀다. */
+  private readonly userRequested = new Set<number>();
   /** 저장과 다시 판정, 등록 해제가 서로 끼어들지 않게 한다. */
   private readonly updates = new SerialQueue();
   /** 바뀔 때 부를 함수. */
@@ -78,6 +88,118 @@ export class SentryDiagnoses {
   /** 진단 전부. ID 순서다. */
   list(): SentryDiagnosis[] {
     return structuredClone(this.diagnoses);
+  }
+
+  /** 진단 하나. 없으면 `undefined`. */
+  get(id: number): SentryDiagnosis | undefined {
+    /** 찾은 진단. */
+    const diagnosis = this.diagnoses.find((item) => item.id === id);
+    return diagnosis && structuredClone(diagnosis);
+  }
+
+  /** 생성 대기열에서 차례를 기다려야 하는 진단 ID. 대기(진행 중 포함)인 진단이고, 감지한 순서(ID 순서)다. */
+  generatingIds(): number[] {
+    return this.diagnoses.filter((item) => item.status === 'queued').map((item) => item.id);
+  }
+
+  /** 사용자가 [다시 시도]로 대기가 된 진단인지 본다. */
+  requestedByUser(id: number): boolean {
+    return this.userRequested.has(id);
+  }
+
+  /**
+   * 시작 직전 확인에서 오류 이슈가 해결·보관·삭제·병합됐으면 진단을 조용히 뺀다. 화면에 남기지 않고 로그에만 적는다.
+   * 중복 억제 기록은 남겨, 같은 신규나 재발을 다시 진단하지 않는다. 그사이 대기가 아니게 되었으면 그대로 둔다.
+   */
+  async dropBeforeStart(id: number, status: Exclude<SentryIssueStatus, 'unresolved'>): Promise<void> {
+    /** 뺐는지 여부. */
+    const dropped = await this.updates.run(async () => {
+      if (this.find(id)?.status !== 'queued') return false;
+      await this.options.store.removeDiagnosis(id);
+      this.diagnoses = this.diagnoses.filter((item) => item.id !== id);
+      this.userRequested.delete(id);
+      return true;
+    });
+    if (!dropped) return;
+    this.options.logger.info('sentry-diagnoses.dropped-before-start', { diagnosisId: id, issueStatus: status });
+    this.emit();
+  }
+
+  /** 보고서를 저장해 검토 대기로 둔다. 그사이 대기가 아니게 되었으면(취소, 등록 해제) 저장하지 않고 거짓이다. */
+  async saveReport(id: number, report: DiagnosisReport, runs: readonly RunRecord[]): Promise<boolean> {
+    return this.change(id, (diagnosis) => {
+      if (diagnosis.status !== 'queued') return false;
+      Object.assign(diagnosis, { status: 'ready', report, failure: null, runs: [...diagnosis.runs, ...runs] });
+      return true;
+    });
+  }
+
+  /**
+   * 진단 실패로 둔다. 재시도 뒤에도 실패했거나 취소한 진단이고 자동으로 더 재시도하지 않는다.
+   * 그사이 대기가 아니게 되었으면 기록하지 않고 거짓이다.
+   */
+  async markFailed(id: number, failure: DiagnosisFailure, runs: readonly RunRecord[]): Promise<boolean> {
+    return this.change(id, (diagnosis) => {
+      if (diagnosis.status !== 'queued') return false;
+      Object.assign(diagnosis, { status: 'failed', failure, runs: [...diagnosis.runs, ...runs] });
+      return true;
+    });
+  }
+
+  /**
+   * 기다리는 사이 매핑이나 폴더가 사라져 실행하지 못한 진단을 저장소 대기로 둔다. 그 Sentry 프로젝트에 기다리던 진단이 없었으면 Sentry 프로젝트 단위로 알린다.
+   * 그사이 대기가 아니게 되었으면 거짓이다.
+   */
+  async markRepoWaiting(id: number, repoCheck: DiagnosisRepoCheck, runs: readonly RunRecord[]): Promise<boolean> {
+    /** 알릴 진단. 이미 기다리던 프로젝트면 `null`. */
+    let announce: SentryDiagnosis | null = null;
+    /** 기록했는지 여부. */
+    const recorded = await this.change(id, (diagnosis) => {
+      if (diagnosis.status !== 'queued') return false;
+      /** 이 프로젝트가 이미 저장소 대기였는지 여부. */
+      const alreadyWaiting = this.diagnoses.some((item) => item.projectId === diagnosis.projectId && isRepoWaiting(item));
+      Object.assign(diagnosis, { status: 'repo-check-needed', repoCheck, runs: [...diagnosis.runs, ...runs] });
+      if (!alreadyWaiting) announce = structuredClone(diagnosis);
+      return true;
+    });
+    if (announce) this.announceRepoWait([announce]);
+    return recorded;
+  }
+
+  /** 진단을 그대로 두고 실행 기록만 더한다. */
+  async addRuns(id: number, runs: readonly RunRecord[]): Promise<void> {
+    if (runs.length === 0) return;
+    await this.change(id, (diagnosis) => {
+      diagnosis.runs = [...diagnosis.runs, ...runs];
+      return true;
+    });
+  }
+
+  /** 진단 실패를 [다시 시도]한다. 대기가 되고 사용자 요청이라 생성 대기열의 `user` 칸에 선다. */
+  async retry(id: number): Promise<void> {
+    await this.change(
+      id,
+      (diagnosis) => {
+        if (diagnosis.status !== 'failed') return false;
+        Object.assign(diagnosis, { status: 'queued', failure: null });
+        return true;
+      },
+      { requestedByUser: true },
+    );
+  }
+
+  /**
+   * 진단 실패를 완료한다. 최소 기록(오류 이슈 ID, 재발 식별자, 완료 시각)만 남기고 실패·실행 기록을 지운다.
+   * 지울 본문이 없어 확인 없이 부른다. Sentry에는 아무 요청도 보내지 않는다. 검토 대기 보고서의 완료는 검토 화면 단계가 더한다.
+   */
+  async complete(id: number): Promise<void> {
+    /** 완료 시각. */
+    const now = this.options.clock?.now() ?? Date.now();
+    await this.change(id, (diagnosis) => {
+      if (diagnosis.status !== 'failed') return false;
+      Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now });
+      return true;
+    });
   }
 
   /** 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
@@ -106,6 +228,8 @@ export class SentryDiagnoses {
       const keys: DetectionKey[] = [];
       /** 만들 진단. */
       const created: UnsavedDiagnosis[] = [];
+      /** 새 진단에 자리를 내주고 지울 진단 실패. */
+      const replaced: number[] = [];
       /** 이 프로젝트의 저장소. 진단을 만들 때만 확인한다. */
       let repo: SentryRepoResolution | null = null;
       for (const { origin, issue, eventId } of detected) {
@@ -116,6 +240,8 @@ export class SentryDiagnoses {
         /** 같은 오류 이슈의 진단 가운데 새 재발을 흡수하는 것. 이번 조회에서 만든 것도 본다. */
         const absorbing = [...this.diagnoses, ...created].some((item) => item.issueId === issue.id && absorbsRegression(item.status));
         if (absorbing) continue;
+        // 진단 실패가 남은 오류 이슈면 그 실패를 새 진단으로 바꾼다. 새 진단은 끝에 서서 `auto` 칸에 들어간다.
+        for (const item of this.diagnoses) if (item.issueId === issue.id && replacedByRegression(item.status) && !replaced.includes(item.id)) replaced.push(item.id);
         repo ??= await this.options.resolveRepo(registration.projectId);
         created.push({
           projectId: registration.projectId,
@@ -142,10 +268,11 @@ export class SentryDiagnoses {
         });
       }
       /** 저장한 진단. */
-      const saved = await this.options.store.recordDetection({ projectId: registration.projectId, checkpoint, keys, diagnoses: created });
+      const saved = await this.options.store.recordDetection({ projectId: registration.projectId, checkpoint, keys, diagnoses: created, replaced });
       /** 이 프로젝트가 저장 전에 이미 저장소 대기였는지 여부. 그렇다면 이미 알렸다. */
       const alreadyWaiting = this.diagnoses.some((item) => item.projectId === registration.projectId && isRepoWaiting(item));
-      this.diagnoses = [...this.diagnoses, ...saved];
+      this.diagnoses = [...this.diagnoses.filter((item) => !replaced.includes(item.id)), ...saved];
+      if (replaced.length > 0) this.options.logger.info('sentry-diagnoses.failed-replaced', { count: replaced.length });
       if (saved.length > 0) this.options.logger.info('sentry-diagnoses.detected', { count: saved.length, absorbed: keys.length - saved.length });
       return alreadyWaiting ? [] : saved.filter(isRepoWaiting);
     });
@@ -174,6 +301,7 @@ export class SentryDiagnoses {
         const next = statusOf(repos.get(diagnosis.projectId)!);
         if (next.status === diagnosis.status && JSON.stringify(next.repoCheck) === JSON.stringify(diagnosis.repoCheck)) continue;
         await this.options.store.setDiagnosisStatus(diagnosis.id, next.status, next.repoCheck);
+        if (next.status !== 'queued') this.userRequested.delete(diagnosis.id);
         diagnosis.status = next.status;
         diagnosis.repoCheck = next.repoCheck;
         changed = true;
@@ -197,6 +325,7 @@ export class SentryDiagnoses {
       /** 지운 진단 ID. */
       const ids = await this.options.store.removeProject(projectId, STATUSES_REMOVED_ON_UNREGISTER);
       this.diagnoses = this.diagnoses.filter((item) => !ids.includes(item.id));
+      for (const id of ids) this.userRequested.delete(id);
       return ids;
     });
     this.options.logger.info('sentry-diagnoses.project-removed', { count: removed.length });
@@ -222,6 +351,34 @@ export class SentryDiagnoses {
     const firsts = new Map<string, SentryDiagnosis>();
     for (const diagnosis of waiting) if (!firsts.has(diagnosis.projectId)) firsts.set(diagnosis.projectId, diagnosis);
     for (const first of firsts.values()) this.options.notifier.notify(repoWaitNotification(first));
+  }
+
+  /** 진단 하나. 복사하지 않은 원본이다. */
+  private find(id: number): SentryDiagnosis | undefined {
+    return this.diagnoses.find((item) => item.id === id);
+  }
+
+  /**
+   * 진단 하나를 `apply`로 바꿔 저장하고 알린다. `apply`가 거짓이면 바꾸지 않는다. 대기를 벗어나면 사용자 요청 표시를 지우고,
+   * `requestedByUser`면 저장한 뒤에 사용자 요청 표시를 단다. 저장하지 못하면 메모리의 진단도 표시도 그대로 둔다.
+   */
+  private async change(id: number, apply: (diagnosis: SentryDiagnosis) => boolean, { requestedByUser = false } = {}): Promise<boolean> {
+    /** 바꿨는지 여부. */
+    const changed = await this.updates.run(async () => {
+      /** 바꿀 진단. */
+      const current = this.find(id);
+      if (!current) return false;
+      /** 바꾼 사본. 저장에 성공한 뒤에만 원본을 바꾼다. */
+      const next = structuredClone(current);
+      if (!apply(next)) return false;
+      await this.options.store.updateDiagnosis(next);
+      Object.assign(current, next);
+      if (next.status !== 'queued') this.userRequested.delete(id);
+      else if (requestedByUser) this.userRequested.add(id);
+      return true;
+    });
+    if (changed) this.emit();
+    return changed;
   }
 
   /** 바뀌었다고 알린다. */

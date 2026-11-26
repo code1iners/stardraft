@@ -236,7 +236,7 @@ function start(): void {
       // 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
       agent: () => draftAgentFrom(agentPreferences.state(), agentConnections.all),
       onAgentChange: (listener) => unsubscribeAll([agentConnections.onChange(listener), agentPreferences.onChange(listener)]),
-      // "키 확인 필요"인 동안은 맥락을 조회할 수 없어 대기열을 멈춘다. 키를 다시 넣어 풀리면 다시 돈다.
+      // "키 확인 필요"인 동안은 맥락을 조회할 수 없어 Flow 묶음만 멈춘다(Flow 어댑터 멈춤). 키를 다시 넣어 풀리면 다시 돈다.
       flowKeyUsable: () => flowAccount.apiKey() !== null && !globalProblems.has('flow-key'),
       onFlowKeyChange: (listener) => unsubscribeAll([globalProblems.onChange(listener), flowAccount.onChange(listener)]),
       settingsStore: appData.settingsStore,

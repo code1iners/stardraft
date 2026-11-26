@@ -24,6 +24,21 @@ const coreRestrictedImports = {
   ],
 };
 
+/**
+ * 생성 대기열이 프로바이더와 무관하게 남도록 Flow 모듈을 막는 import 규칙. 대상마다 다른 일은 대상 어댑터가 맡는다.
+ * core 규칙을 함께 담는다. 같은 규칙을 다시 걸면 앞의 설정을 덮어쓰기 때문이다.
+ */
+const generationRestrictedImports = {
+  paths: [...coreRestrictedImports.paths, { name: '../ports/flow-api', message: '생성 대기열은 Flow 타입을 import하지 않는다. Flow 일은 Flow 어댑터가 맡는다.' }],
+  patterns: [
+    ...coreRestrictedImports.patterns,
+    {
+      group: ['**/drafts', '**/drafts/**', '**/bundles', '**/bundles/**', '**/flow', '**/flow/**', '**/detection/**', '**/posting/**', '**/manual-check/**', '**/account/**'],
+      message: '생성 대기열은 Flow 타입을 import하지 않는다. Flow 일은 Flow 어댑터가 맡는다.',
+    },
+  ],
+};
+
 /** 렌더러가 preload의 IPC 말고 다른 길로 시스템에 닿지 않게 막는 import 규칙. */
 const rendererRestrictedImports = {
   paths: [
@@ -69,6 +84,10 @@ export default defineConfig(
     // .mts는 빌드 스크립트도 Node로 직접 불러오는 core 모듈이다.
     files: ['src/core/**/*.{ts,mts}'],
     rules: { 'no-restricted-imports': ['error', coreRestrictedImports] },
+  },
+  {
+    files: ['src/core/generation/**/*.ts'],
+    rules: { 'no-restricted-imports': ['error', generationRestrictedImports] },
   },
   {
     files: ['src/shared/**/*.ts'],

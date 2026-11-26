@@ -331,10 +331,10 @@ describe('다시 켜기: 생성 중이던 묶음', () => {
       seededBundle('702', '103', { status: 'generating', runs: [QUIT_RUN] }),
     ]);
     // 끌 때 댓글 702의 실행이 끊겼고, 701은 [다시 시도]로 사용자 행동 자리에, 700은 감지한 자리에서 기다렸다.
-    await env.stateStore.setDraftQueue([
-      { bundleId: 3, priority: 'resume' },
-      { bundleId: 2, priority: 'user' },
-      { bundleId: 1, priority: 'auto' },
+    await env.stateStore.setGenerationQueue([
+      { kind: 'flow', targetId: 3, priority: 'resume' },
+      { kind: 'flow', targetId: 2, priority: 'user' },
+      { kind: 'flow', targetId: 1, priority: 'auto' },
     ]);
     for (const summary of ['첫째', '둘째', '셋째']) env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repo, summary) } });
 
@@ -346,7 +346,7 @@ describe('다시 켜기: 생성 중이던 묶음', () => {
       ['702', 'ready', '첫째'],
     ]);
     expect(bundles.get(3)?.runs.map(({ result }) => result)).toEqual(['app-quit', 'succeeded']);
-    await expect(env.stateStore.getDraftQueue()).resolves.toEqual([]);
+    await expect(env.stateStore.getGenerationQueue()).resolves.toEqual([]);
   });
 
   it('남긴 대기열이 없으면(읽지 못했거나 대기열을 남기기 전의 형식) 생성 중 묶음을 작은 창 순서로 넣는다', async () => {
@@ -363,7 +363,7 @@ describe('다시 켜기: 생성 중이던 묶음', () => {
 
   it('꺼져 있던 사이에 Flow에서 답한 묶음은 생성 직전의 확인에서 이미 답함이 되고 실행하지 않는다', async () => {
     const env = await environment([seededBundle('700', '101', { status: 'generating', runs: [QUIT_RUN] })]);
-    await env.stateStore.setDraftQueue([{ bundleId: 1, priority: 'resume' }]);
+    await env.stateStore.setGenerationQueue([{ kind: 'flow', targetId: 1, priority: 'resume' }]);
     env.flow.addReply(POST_ID, '700', { replyId: '890', contents: '답했습니다', registerId: ME, registeredDateTime: '20261020085500' });
 
     const { bundles } = await launch(env);

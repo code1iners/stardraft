@@ -1,7 +1,6 @@
 import type { AssignmentState } from '../detection/assignment-detection';
 import type { MentionBundle, MinimalRecord, UnsavedBundle } from '../bundles/mention-bundle';
 import type { MentionLocation } from '../detection/mention';
-import type { QueuedDraft } from '../drafts/draft';
 import type { UpdateAttempt } from '../update/update-restart';
 import type { FlowEmployee } from './flow-api';
 
@@ -66,10 +65,6 @@ export interface StateStore {
    * 지운 Flow 글과 초안이 파일에 남지 않게 한다. 저장하지 않은 묶음이 하나라도 있으면 실패하고 아무것도 지우지 않는다.
    */
   deleteBundles(bundleIds: readonly number[]): Promise<void>;
-  /** 마지막으로 남긴 초안 대기열. 앞에서부터 실행할 순서다. 앱을 다시 켤 때 읽는다. 남긴 것이 없으면 빈 배열이다. */
-  getDraftQueue(): Promise<QueuedDraft[]>;
-  /** 초안 대기열을 남긴다. 앞서 남긴 것은 통째로 바꾼다. 대기열이 바뀔 때마다와 앱을 끌 때 남긴다. */
-  setDraftQueue(queue: readonly QueuedDraft[]): Promise<void>;
   /**
    * 받은 파일의 서명 검증에 실패한 업데이트 버전들. 이 버전들은 앱을 다시 켠 뒤에도 자동으로 다시 받지 않는다. 없으면 빈 배열이다.
    * 계정과 상관없는 앱의 기록이라 다른 계정으로 처음부터 시작해도 남는다.

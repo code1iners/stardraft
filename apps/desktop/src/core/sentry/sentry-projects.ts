@@ -163,7 +163,18 @@ export interface SentryProjectsOptions {
   clock: Clock;
   /** 진단 로그. 토큰, 프로젝트와 조직 이름, 경로는 남기지 않는다. */
   logger: Logger;
+  /** 등록을 풀고 설정에 저장한 뒤 부른다. 그 프로젝트의 체크포인트, 중복 억제 기록, 기다리던 진단을 치운다. */
+  onUnregistered?: (projectId: string) => Promise<void>;
 }
+
+/** 감지가 진단을 만들 때 정하는 프로젝트의 저장소. */
+export type SentryRepoResolution =
+  /** 매핑된 폴더가 있다. */
+  | { kind: 'mapped'; path: string }
+  /** 매핑이 없다(저장소 매핑 필요). */
+  | { kind: 'unmapped' }
+  /** 매핑된 폴더가 없다(저장소 확인 필요). */
+  | { kind: 'missing-folder'; path: string };
 
 /**
  * 진단할 Sentry 프로젝트의 등록과 저장소 매핑. 등록은 프로젝트 ID가 키이고, 등록한 시각이 기준 시각이다.
@@ -171,7 +182,7 @@ export interface SentryProjectsOptions {
  */
 export class SentryProjects {
   /** 등록한 프로젝트. 키는 프로젝트 ID다. */
-  private registrations: Record<string, SentryProjectRegistration> = {};
+  private registered: Record<string, SentryProjectRegistration> = {};
   /** Sentry 저장소 매핑. 키는 프로젝트 ID다. */
   private mappings: Record<string, string[]> = {};
   /** 프로젝트마다 닿는지 확인한 상태. */
@@ -198,8 +209,8 @@ export class SentryProjects {
     await this.updates.run(async () => {
       /** 저장된 설정. */
       const settings = await this.options.settingsStore.load();
-      this.registrations = readRegistrations(settings.sentryProjects);
-      this.mappings = readMappings(settings.sentryRepoMappings, this.registrations);
+      this.registered = readRegistrations(settings.sentryProjects);
+      this.mappings = readMappings(settings.sentryRepoMappings, this.registered);
     });
     this.emit();
   }
@@ -207,7 +218,7 @@ export class SentryProjects {
   /** 지금 상태. */
   state(): SentryProjectsState {
     return {
-      projects: Object.values(this.registrations).map((registration) => {
+      projects: Object.values(this.registered).map((registration) => {
         /** 매핑된 저장소 폴더. */
         const path = this.mappings[registration.projectId]?.[0];
         return {
@@ -218,6 +229,39 @@ export class SentryProjects {
       }),
       candidates: this.candidates.status === 'loaded' ? { ...this.candidates, projects: [...this.candidates.projects] } : this.candidates,
     };
+  }
+
+  /** 등록한 프로젝트. 등록한 순서다. 감지가 이 순서로 하나씩 조회한다. */
+  registrations(): SentryProjectRegistration[] {
+    return Object.values(this.registered).map((registration) => ({ ...registration, levels: [...registration.levels] }));
+  }
+
+  /** 이 등록이 아직 그대로인지 본다. 등록을 풀었거나 풀었다 다시 등록했으면(기준 시각이 다름) 거짓이다. */
+  isRegistered(registration: Pick<SentryProjectRegistration, 'projectId' | 'registeredAt'>): boolean {
+    return this.registered[registration.projectId]?.registeredAt === registration.registeredAt;
+  }
+
+  /** 감지 조회가 알아낸, 프로젝트에 닿는지를 남긴다. `404`나 접근 거부면 그 프로젝트만 "접근 불가"이고 다시 읽히면 풀린다. */
+  reportAccess(projectId: string, access: Exclude<SentryProjectAccess, 'unchecked'>): void {
+    if (!(projectId in this.registered)) return;
+    this.setAccess(projectId, access);
+  }
+
+  /**
+   * 프로젝트의 저장소를 지금 폴더 상태로 정한다. 감지가 진단을 만들 때와 저장소 대기를 다시 판정할 때 쓴다.
+   * 확인한 폴더 상태는 설정 칸의 표시에도 남긴다.
+   */
+  async resolveRepo(projectId: string): Promise<SentryRepoResolution> {
+    /** 매핑된 폴더. */
+    const path = this.mappings[projectId]?.[0];
+    if (path === undefined) return { kind: 'unmapped' };
+    /** 폴더가 있는지 여부. */
+    const found = await isFolder(path);
+    if (this.mappings[projectId]?.[0] === path && this.folderStatuses.get(path) !== (found ? 'found' : 'missing')) {
+      this.folderStatuses.set(path, found ? 'found' : 'missing');
+      this.emit();
+    }
+    return found ? { kind: 'mapped', path } : { kind: 'missing-folder', path };
   }
 
   /** 상태가 바뀔 때마다 `listener`를 부른다. 돌려준 함수를 부르면 그만 부른다. */
@@ -291,7 +335,7 @@ export class SentryProjects {
     const token = this.options.connection.token();
     if (token === null) return failedRegister('no-token');
     if (this.options.connection.state().problem !== null) return failedRegister('token-problem');
-    if (projectId in this.registrations) return failedRegister('already-registered');
+    if (projectId in this.registered) return failedRegister('already-registered');
     /** 목록에서 찾은 프로젝트. 화면이 보낸 이름은 믿지 않고 받아 둔 목록의 값을 쓴다. */
     const candidate = this.candidates.status === 'loaded' ? this.candidates.projects.find((item) => item.projectId === projectId) : undefined;
     if (!candidate) return failedRegister('unknown-project');
@@ -316,7 +360,7 @@ export class SentryProjects {
     /** 등록한 결과. */
     const outcome = await this.updates.run(async (): Promise<SentryRegisterOutcome> => {
       // 확인하는 사이에 같은 프로젝트가 등록됐을 수 있다.
-      if (projectId in this.registrations) return failedRegister('already-registered');
+      if (projectId in this.registered) return failedRegister('already-registered');
       /** 새 등록. 기준 시각은 등록을 확인한 지금이다. */
       const registration: SentryProjectRegistration = {
         projectId: candidate.projectId,
@@ -331,7 +375,7 @@ export class SentryProjects {
       };
       /** 저장할 매핑. */
       const mappings = repo?.path ? { ...this.mappings, [projectId]: [repo.path] } : this.mappings;
-      if (!(await this.save({ ...this.registrations, [projectId]: registration }, mappings))) return failedRegister('save-failed');
+      if (!(await this.save({ ...this.registered, [projectId]: registration }, mappings))) return failedRegister('save-failed');
       this.access.set(projectId, 'ok');
       return { kind: 'registered', rejected: repo?.rejected ?? null };
     });
@@ -356,13 +400,13 @@ export class SentryProjects {
     /** 저장한 결과. */
     const outcome = await this.updates.run(async (): Promise<SentryUpdateOutcome> => {
       /** 지금 등록. */
-      const current = this.registrations[projectId];
+      const current = this.registered[projectId];
       if (!current) return { kind: 'failed', reason: 'not-registered' };
       /** 바꾼 뒤의 매핑. 받지 않은 폴더를 골랐으면 저장소는 그대로 둔다. */
       let mappings = this.mappings;
       if (input.repoPath === null) mappings = withoutKey(this.mappings, projectId);
       else if (repo?.path) mappings = { ...this.mappings, [projectId]: [repo.path] };
-      if (!(await this.save({ ...this.registrations, [projectId]: { ...current, ...filters } }, mappings))) return { kind: 'failed', reason: 'save-failed' };
+      if (!(await this.save({ ...this.registered, [projectId]: { ...current, ...filters } }, mappings))) return { kind: 'failed', reason: 'save-failed' };
       return { kind: 'updated', rejected: repo?.rejected ?? null };
     });
     if (outcome.kind === 'updated') {
@@ -382,8 +426,8 @@ export class SentryProjects {
     if (repo.path === null) return repo.rejected;
     /** 저장한 결과. */
     const saved = await this.updates.run(async () => {
-      if (!(projectId in this.registrations)) return false;
-      return this.save(this.registrations, { ...this.mappings, [projectId]: [repo.path!] });
+      if (!(projectId in this.registered)) return false;
+      return this.save(this.registered, { ...this.mappings, [projectId]: [repo.path!] });
     });
     if (saved) {
       this.emit();
@@ -399,10 +443,13 @@ export class SentryProjects {
   async unregister(projectId: string): Promise<boolean> {
     /** 지웠는지 여부. */
     const removed = await this.updates.run(async () => {
-      if (!(projectId in this.registrations)) return true;
-      return this.save(withoutKey(this.registrations, projectId), withoutKey(this.mappings, projectId));
+      if (!(projectId in this.registered)) return true;
+      return this.save(withoutKey(this.registered, projectId), withoutKey(this.mappings, projectId));
     });
-    if (removed) this.emit();
+    if (removed) {
+      this.emit();
+      await this.options.onUnregistered?.(projectId);
+    }
     return removed;
   }
 
@@ -411,14 +458,14 @@ export class SentryProjects {
     /** 쓸 토큰. */
     const token = this.usableToken();
     if (token === null) return;
-    for (const registration of Object.values(this.registrations)) {
+    for (const registration of Object.values(this.registered)) {
       /** 이 프로젝트의 조직. */
       const organization = this.organizationOf(registration);
       if (!organization) continue;
       /** 읽은 결과. */
       const result = await this.options.connectSentry(token).probeErrorIssues(organization, registration.projectId);
       // 확인하는 사이에 등록이 풀렸으면 결과를 버린다.
-      if (!(registration.projectId in this.registrations)) continue;
+      if (!(registration.projectId in this.registered)) continue;
       if (result.ok) {
         this.setAccess(registration.projectId, 'ok');
       } else if (result.failure.kind === 'not-found' || result.failure.kind === 'forbidden') {
@@ -463,7 +510,7 @@ export class SentryProjects {
       this.options.logger.error('sentry-projects.save-failed', errorFields(error));
       return false;
     }
-    this.registrations = registrations;
+    this.registered = registrations;
     this.mappings = mappings;
     // 풀린 등록의 확인 결과와 어느 매핑도 가리키지 않는 폴더의 확인 결과는 버린다.
     for (const projectId of [...this.access.keys()]) if (!(projectId in registrations)) this.access.delete(projectId);

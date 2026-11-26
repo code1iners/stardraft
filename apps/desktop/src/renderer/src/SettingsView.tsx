@@ -26,13 +26,15 @@ interface SettingsViewProps {
   initialSection: string | null;
   /** 창을 열 때 main이 짚은 Flow 프로젝트 ID. 저장소 매핑에서 그 줄을 보인다. 없으면 `null`. */
   initialProjectId?: string | null;
+  /** 창을 열 때 main이 짚은 Sentry 프로젝트 ID. 저장소 매핑 `Sentry` 탭에서 그 줄을 보인다. 없으면 `null`. */
+  initialSentryProjectId?: string | null;
 }
 
 /**
  * 설정 창. 왼쪽 칸 목록과 오른쪽 내용으로 이뤄진다. 아직 내용이 없는 칸은 제목만 보인다.
  * 감지를 시작하기 전에는 맨 위에 첫 설정 띠를 두고, 끝나지 않은 필수 칸에 점을 찍는다.
  */
-export function SettingsView({ initialSection, initialProjectId = null }: SettingsViewProps) {
+export function SettingsView({ initialSection, initialProjectId = null, initialSentryProjectId = null }: SettingsViewProps) {
   /** 앱 상태 스냅숏. */
   const snapshot = useSnapshot();
   /** 지금 보이는 칸. */
@@ -42,12 +44,18 @@ export function SettingsView({ initialSection, initialProjectId = null }: Settin
 
   /** 저장소 매핑에서 짚어 보일 Flow 프로젝트 ID. 짚지 않으면 `null`. */
   const [focusProjectId, setFocusProjectId] = useState<string | null>(initialProjectId);
+  /** 저장소 매핑 `Sentry` 탭에서 짚어 보일 Sentry 프로젝트 ID. 짚지 않으면 `null`. */
+  const [focusSentryProjectId, setFocusSentryProjectId] = useState<string | null>(initialSentryProjectId);
+  /** 칸 요청을 받은 횟수. 같은 프로젝트를 다시 짚어도 저장소 칸을 새로 그려 짚은 탭과 줄로 돌아가게 한다. */
+  const [sectionRequests, setSectionRequests] = useState(0);
 
   useEffect(function followSectionRequests() {
     return window.stardraft.onEvent((event) => {
       if (event.type !== 'settings-section-requested') return;
       setSection(event.section);
       setFocusProjectId(event.projectId ?? null);
+      setFocusSentryProjectId(event.sentryProjectId ?? null);
+      setSectionRequests((count) => count + 1);
     });
   }, []);
 
@@ -92,7 +100,13 @@ export function SettingsView({ initialSection, initialProjectId = null }: Settin
               />
             )}
             {section === 'repositories' && snapshot && (
-              <RepositoriesSection repoMappings={snapshot.repoMappings} sentryProjects={snapshot.sentryProjects} focusProjectId={focusProjectId} />
+              <RepositoriesSection
+                key={sectionRequests}
+                repoMappings={snapshot.repoMappings}
+                sentryProjects={snapshot.sentryProjects}
+                focusProjectId={focusProjectId}
+                focusSentryProjectId={focusSentryProjectId}
+              />
             )}
             {section === 'drafts' && snapshot && <DraftsSection snapshot={snapshot} />}
             {section === 'general' && <GeneralSection snapshot={snapshot} />}

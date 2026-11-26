@@ -52,10 +52,16 @@ export function projectStatus(project: SentryProjectSnapshot, tokenProblem: bool
   return project.repo === null ? 'unmapped' : 'watching';
 }
 
-/** 프로젝트 줄 상태 문구. */
-export const PROJECT_STATUS_TEXT: Record<SentryProjectStatus, string> = {
-  'token-problem': '토큰 확인 필요',
-  inaccessible: '접근 불가',
-  unmapped: '저장소 매핑 없음',
-  watching: '감지 중',
-};
+/** 프로젝트 줄 상태 문구. 저장소 매핑이 없으면 기다리는 진단 수를 붙인다. */
+export function projectStatusText(project: SentryProjectSnapshot, status: SentryProjectStatus): string {
+  switch (status) {
+    case 'token-problem':
+      return '토큰 확인 필요';
+    case 'inaccessible':
+      return '접근 불가';
+    case 'unmapped':
+      return `저장소 매핑 없음 · ${project.waitingCount}건 대기`;
+    case 'watching':
+      return '감지 중';
+  }
+}

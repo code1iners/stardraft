@@ -10,6 +10,8 @@ import { AccountRecords } from '../core/account/account-records';
 import { FlowAccount, type FlowAccountRecords } from '../core/account/flow-account';
 import { HttpSentryApi } from '../core/sentry/http-sentry-api';
 import { SentryConnection, type SentryConnectionState } from '../core/sentry/sentry-connection';
+import { SentryDetection } from '../core/sentry/sentry-detection';
+import { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
 import { SentryProjects } from '../core/sentry/sentry-projects';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { BundleRetention } from '../core/bundles/retention';
@@ -70,6 +72,10 @@ let posting: Posting | null = null;
 let retention: BundleRetention | null = null;
 /** 저장소 대기 묶음의 자동 재개. 끝낼 때 다음 확인을 멈춘다. */
 let repoWait: RepoWaitMonitor | null = null;
+/** Sentry 오류 이슈 감지. 끝낼 때 폴링을 멈춘다. */
+let sentryDetection: SentryDetection | null = null;
+/** 저장소 대기 진단의 자동 재개. 끝낼 때 다음 확인을 멈춘다. */
+let sentryRepoWait: RepoWaitMonitor | null = null;
 /** 앱 내 업데이트. 끝낼 때 다음 확인을 멈춘다. 소스 실행에서는 없다. */
 let appUpdate: InAppUpdate | null = null;
 /** 앱 내 업데이트의 다시 시작. 작은 창이 닫히면 다시 시작 확인 화면을 거둔다. 소스 실행에서는 없다. */
@@ -125,8 +131,14 @@ function start(): void {
     appData = await openDataOrQuit();
     if (!appData) return;
 
-    /** OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 Flow 초안이 있으면 그 묶음을 연다. 진단 대상은 진단 화면이 생길 때 잇는다. */
-    const notifier = new OsNotifier((target) => windows?.openPopover(target?.kind === 'draft' ? target.id : null), logger);
+    /**
+     * OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 Flow 초안이 있으면 그 묶음을 연다.
+     * 진단을 가리키면 펼친 창에 그 진단을 연다. 작은 창은 아직 진단을 그리지 않는다.
+     */
+    const notifier = new OsNotifier((target) => {
+      if (target?.kind === 'diagnosis') windows?.openReview(null, target.id);
+      else windows?.openPopover(target?.kind === 'draft' ? target.id : null);
+    }, logger);
     /** 감지를 멈추게 하는 전역 문제. 알림을 누르면 띠가 보이는 작은 창을 띄운다. */
     const globalProblems = new GlobalProblems({
       notifier,
@@ -168,15 +180,28 @@ function start(): void {
       problems: globalProblems,
     });
     await sentryConnection.load();
-    /** 진단할 Sentry 프로젝트의 등록과 저장소 매핑. 이 단계에서는 등록만 하고 감지는 돌지 않는다. */
-    const sentryProjects = new SentryProjects({
+    /**
+     * 감지한 Sentry 진단. 저장소 대기 진단은 프로젝트 단위로 알리고 매핑이나 폴더가 생기면 대기로 돌린다. 이 단계에서는 진단을 실행하지 않는다.
+     * 저장소 해석과 등록 확인은 아래 프로젝트 등록에 묻는다. 둘 다 등록을 만든 뒤에만 불린다.
+     */
+    const sentryDiagnoses: SentryDiagnoses = new SentryDiagnoses({
+      store: appData.sentryStore,
+      notifier,
+      logger,
+      resolveRepo: (projectId) => sentryProjects.resolveRepo(projectId),
+      isRegistered: (registration) => sentryProjects.isRegistered(registration),
+    });
+    /** 진단할 Sentry 프로젝트의 등록과 저장소 매핑. 등록을 풀면 그 프로젝트의 감지 기록과 기다리던 진단을 치운다. */
+    const sentryProjects: SentryProjects = new SentryProjects({
       connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
       connection: sentryConnection,
       settingsStore: appData.settingsStore,
       clock: systemClock,
       logger,
+      onUnregistered: (projectId) => sentryDiagnoses.removeProject(projectId),
     });
     await sentryProjects.load();
+    await sentryDiagnoses.load();
 
     /** 작은 창과 설정 창. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로도 잡는다. */
     const appWindows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
@@ -267,6 +292,11 @@ function start(): void {
     repoWait = repoWaitMonitor;
     repoWaitMonitor.start();
     repoMappings.onChange(() => repoWaitMonitor.checkNow());
+    /** 저장소 대기 진단을 재개하는 감시. 묶음과 같은 때(앱을 켤 때, 매핑이 바뀔 때, 절전에서 깰 때, 폴더 없음이 있는 동안 60초마다) 다시 판정한다. */
+    const sentryRepoWaitMonitor = new RepoWaitMonitor({ bundles: sentryDiagnoses, clock: systemClock, logger });
+    sentryRepoWait = sentryRepoWaitMonitor;
+    sentryRepoWaitMonitor.start();
+    sentryProjects.onChange(() => sentryRepoWaitMonitor.checkNow());
     // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
     retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
     retention.start();
@@ -443,6 +473,7 @@ function start(): void {
       flowAccount,
       sentryConnection,
       sentryProjects,
+      sentryDiagnoses,
       globalProblems,
       agentConnections,
       agentPreferences,
@@ -498,12 +529,44 @@ function start(): void {
     onboarding.onChange(syncDetection);
     flowAccount.onChange(syncDetection);
     globalProblems.onChange(syncDetection);
+    /** Sentry 오류 이슈 감지. 감지를 시작했고 "토큰 확인 필요"가 없는 토큰이 있을 때 5분마다 조회한다. Flow 감지와 따로 돈다. */
+    const sentryErrorDetection = new SentryDetection({
+      connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
+      connection: sentryConnection,
+      projects: sentryProjects,
+      diagnoses: sentryDiagnoses,
+      clock: systemClock,
+      logger,
+    });
+    sentryDetection = sentryErrorDetection;
+    /** Sentry 폴링을 마지막으로 시작한 토큰. 같은 토큰으로 거듭 시작하지 않으려고 둔다. */
+    let sentryDetectionToken: string | null = null;
+    /**
+     * 감지를 시작했고 쓸 수 있는 토큰이 있으면 Sentry 폴링을 시작한다. [감지 시작] 직후, 앱 시작 때 저장된 토큰을 읽은 뒤,
+     * 새 토큰을 확인했을 때("토큰 확인 필요"가 풀렸을 때) 바로 조회하며 시작한다. 쓸 토큰이 없으면 폴링을 멈춘다.
+     */
+    const syncSentryDetection = () => {
+      /** 지금 쓰는 토큰. "토큰 확인 필요"가 있으면 쓰지 않는다. */
+      const token = sentryConnection.state().problem === null ? sentryConnection.token() : null;
+      if (!onboarding.state().detectionStarted || token === null) {
+        sentryDetectionToken = null;
+        sentryErrorDetection.stop();
+        return;
+      }
+      if (token === sentryDetectionToken) return;
+      sentryDetectionToken = token;
+      void sentryErrorDetection.start();
+    };
+    onboarding.onChange(syncSentryDetection);
+    sentryConnection.onChange(syncSentryDetection);
     // 잠자기에서 깨어나면 밀린 멘션을 바로 조회하고, 잠든 동안 멈춘 하루 타이머 대신 처리됨 목록도 정리한다.
     // 앱 내 업데이트는 마지막 확인이 4시간보다 오래됐을 때만 바로 확인한다.
     powerMonitor.on('resume', () => {
       void mentionDetection.checkNow();
+      void sentryErrorDetection.checkNow();
       retention?.cleanUpNow();
       repoWait?.checkNow();
+      sentryRepoWait?.checkNow();
       void inAppUpdate?.checkIfDue();
     });
 
@@ -521,7 +584,7 @@ function start(): void {
       appTray.show(
         trayView(globalProblems.current(), {
           setupNeeded: !onboarding.state().detectionStarted,
-          reviewCount: mentionBundles.reviewCount(),
+          reviewCount: mentionBundles.reviewCount() + sentryDiagnoses.reviewCount(),
           hasFailure: mentionBundles.hasFailure(),
           generating: mentionBundles.idsWithStatus('generating').length > 0,
         }),
@@ -530,6 +593,7 @@ function start(): void {
     globalProblems.onChange(refreshTray);
     onboarding.onChange(refreshTray);
     mentionBundles.onChange(refreshTray);
+    sentryDiagnoses.onChange(refreshTray);
     // 감지를 시작하기 전이면 첫 실행처럼 필수 설정 전 작은 창을 트레이 옆에 띄운다. 메뉴 막대 앱이라 창이 없으면 앱을 놓친다.
     // 앱이 앞에 오지 않은 채 열면 작은 창이 포커스를 잃어 바로 닫히므로, 사용자가 직접 켠 이 경우에는 앞으로 가져온다.
     if (!onboarding.state().detectionStarted) {
@@ -551,8 +615,10 @@ function start(): void {
         bundlePosting.recoverAfterRestart();
       });
     // 저장된 Sentry 토큰도 트레이를 띄운 뒤에 읽는다. 키체인 재허용 때문에 끝나지 않을 수 있어 시작을 막지 않는다. 실패는 상태로 남기고 던지지 않는다.
+    // 토큰을 읽으면 감지를 시작한 앱은 바로 Sentry를 조회한다.
     void sentryConnection
       .checkStoredToken()
+      .then(syncSentryDetection)
       .catch((error: unknown) => logger.error('sentry-connection.stored-token-check-failed', errorFields(error)));
     // 앱을 시작할 때 후보 에이전트의 연결을 확인한다(작동 확인 포함). 쓸 에이전트가 없으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
     void agentConnections.checkAll();
@@ -573,8 +639,10 @@ async function prepareQuit(): Promise<void> {
   tray?.destroy();
   // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
   detection?.stop();
+  sentryDetection?.stop();
   retention?.stop();
   repoWait?.stop();
+  sentryRepoWait?.stop();
   appUpdate?.stop();
   migrationBackups?.stop();
   try {

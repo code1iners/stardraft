@@ -23,6 +23,7 @@ const REGISTERED: SentryProjectSnapshot = {
   levels: ['fatal', 'error'],
   repo: { path: '/fake/work/web-app', status: 'found' },
   access: 'ok',
+  waitingCount: 0,
 };
 
 /** 모달을 그린 마크업. */

@@ -202,6 +202,11 @@ describe('렌더러가 보낸 명령 검사', () => {
     }
   });
 
+  it('진단의 Sentry 저장소 매핑 열기 명령은 진단 ID(양의 정수)를 받는다', () => {
+    expect(parseAppCommand({ type: 'open-sentry-repo-mapping', diagnosisId: 4 })).toEqual({ type: 'open-sentry-repo-mapping', diagnosisId: 4 });
+    for (const diagnosisId of [0, 1.5, '4', null]) expect(parseAppCommand({ type: 'open-sentry-repo-mapping', diagnosisId })).toBeNull();
+  });
+
   it('[게시]와 게시 취소 명령은 묶음 ID만 받고, 렌더러가 실은 게시 본문은 버린다', () => {
     for (const type of ['post-bundle', 'cancel-posting'] as const) {
       expect(parseAppCommand({ type, bundleId: 3, body: '렌더러가 만든 본문' })).toEqual({ type, bundleId: 3 });

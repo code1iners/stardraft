@@ -179,6 +179,8 @@ export interface SentryProjectSnapshot {
   repo: SentryRepoSnapshot | null;
   /** 프로젝트에 닿는지 확인한 상태. */
   access: SentryProjectAccessSnapshot;
+  /** 저장소 매핑이 없어 기다리는 진단 수. "저장소 매핑 없음 · n건 대기"의 n이다. */
+  waitingCount: number;
 }
 
 /** 등록할 수 있는 Sentry 프로젝트 하나. */
@@ -899,10 +901,65 @@ export const REVIEW_SECTIONS = ['original', 'requirement', 'draft', 'evidence', 
 /** 접고 펴는 상세 영역 하나. */
 export type ReviewSection = (typeof REVIEW_SECTIONS)[number];
 
-/** 작은 창과 펼친 창이 그릴 멘션 묶음 상태. */
+/** 진단의 상태. 이 단계에서는 대기와 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)만 있다. */
+export type DiagnosisStatusSnapshot = 'queued' | 'repo-check-needed';
+
+/** 저장소 대기 진단의 사유와 바닥 줄 글의 "기다리는 n건". */
+export type DiagnosisRepoWaitSnapshot =
+  /** 저장소 매핑 필요. `waitingCount`는 같은 프로젝트에서 매핑을 기다리는 진단 수다. */
+  | { kind: 'unmapped'; waitingCount: number }
+  /** 저장소 확인 필요. `path`는 찾을 수 없는 폴더다. */
+  | { kind: 'missing-folder'; path: string; waitingCount: number };
+
+/** 검토 화면이 그릴 Sentry 진단 하나. */
+export interface DiagnosisSnapshot {
+  /** 진단 ID. */
+  id: number;
+  /** 등록한 Sentry 프로젝트 ID. [저장소 매핑하기]가 짚는다. */
+  projectId: string;
+  /** 신규인지 재발인지. */
+  origin: 'new' | 'regression';
+  /** 오류 제목. */
+  title: string;
+  /** 감지한 시각(Unix epoch 밀리초). */
+  detectedAt: number;
+  /** 상태. */
+  status: DiagnosisStatusSnapshot;
+  /** 저장소 대기의 사유. 저장소 대기가 아니면 `null`. */
+  repoWait: DiagnosisRepoWaitSnapshot | null;
+  /** 오류 정보. 감지할 때 오류 이슈 목록에서 받은 값이다. */
+  issue: {
+    /** 짧은 ID. 없으면 빈 문자열. */
+    shortId: string;
+    /** 오류가 난 자리. 없으면 빈 문자열. */
+    culprit: string;
+    /** 레벨. 없으면 빈 문자열. */
+    level: string;
+    /** 등록의 환경 필터. `null`이면 모든 환경이다. */
+    environment: string | null;
+    /** 처음 보인 시각. */
+    firstSeen: number;
+    /** 마지막으로 보인 시각. 모르면 `null`. */
+    lastSeen: number | null;
+    /** 발생 수. 모르면 `null`. */
+    count: number | null;
+    /** 사용자 수. 모르면 `null`. */
+    userCount: number | null;
+    /** 플랫폼. 없으면 `null`. */
+    platform: string | null;
+    /** 조직 이름. */
+    organizationName: string;
+    /** 프로젝트 이름. */
+    projectName: string;
+  };
+}
+
+/** 작은 창과 펼친 창이 그릴 멘션 묶음과 진단 상태. */
 export interface ReviewSnapshot {
   /** 묶음. 처리되지 않은 묶음이 작은 창 대기열 순서(가장 오래된 미처리 멘션 순)로 먼저 오고, 처리됨 묶음이 최근에 처리한 것부터 뒤에 온다. */
   bundles: BundleSnapshot[];
+  /** Sentry 진단. 묶음 배열과 따로 둔다. 감지한 순서다. */
+  diagnoses: DiagnosisSnapshot[];
   /** 창마다 영역의 펼침 상태. 다른 묶음으로 넘어가도 유지한다. */
   sections: Record<ReviewWindow, Record<ReviewSection, boolean>>;
   /** 열린 저장소 선택 창. 닫혀 있으면 `null`. */
@@ -1037,8 +1094,11 @@ export interface AppSnapshot {
 
 /** main → 렌더러 변경 이벤트. */
 export type AppEvent =
-  /** 이미 열린 설정 창에 이 칸을 보이라고 알린다. `projectId`가 있으면 그 Flow 프로젝트의 저장소 매핑을 짚어 보인다. */
-  | { type: 'settings-section-requested'; section: SettingsSection; projectId?: string }
+  /**
+   * 이미 열린 설정 창에 이 칸을 보이라고 알린다. `projectId`가 있으면 그 Flow 프로젝트의 저장소 매핑을,
+   * `sentryProjectId`가 있으면 `Sentry` 탭에서 그 Sentry 프로젝트의 저장소 매핑을 짚어 보인다.
+   */
+  | { type: 'settings-section-requested'; section: SettingsSection; projectId?: string; sentryProjectId?: string }
   /** "Flow 계정" 칸의 상태가 바뀌었다. */
   | { type: 'flow-account-changed'; flowAccount: FlowAccountSnapshot }
   /** 키 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인과 확인을 기다리는 경우는 알리지 않는다. */
@@ -1079,6 +1139,8 @@ export type AppEvent =
   | { type: 'update-changed'; update: UpdateStateSnapshot }
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
   | { type: 'review-bundle-requested'; bundleId: number }
+  /** 이미 열린 펼친 창에 이 진단을 보이라고 알린다(진단 알림을 눌렀을 때). */
+  | { type: 'review-diagnosis-requested'; diagnosisId: number }
   /** 묶음의 게시가 실패했다. 다른 묶음을 보고 있어도 토스트를 한 번 띄운다. */
   | { type: 'post-failed'; bundleId: number }
   /** 게시를 누를 때의 확인이 묶음의 게시를 멈췄다. 카운트다운 토스트 대신 "게시하지 않았습니다: …" 토스트를 한 번 띄운다. */
@@ -1090,6 +1152,8 @@ export type AppCommand =
   | { type: 'open-settings'; section?: SettingsSection }
   /** 묶음의 Flow 프로젝트 저장소 매핑 편집으로 간다. 설정 "저장소" 칸을 열고 그 프로젝트의 줄을 짚어 보인다. */
   | { type: 'open-repo-mapping'; bundleId: number }
+  /** 저장소 대기 진단의 [저장소 매핑하기]·[매핑 고치기]. 설정 "저장소" 칸 `Sentry` 탭에서 그 프로젝트를 짚는다. */
+  | { type: 'open-sentry-repo-mapping'; diagnosisId: number }
   /** 데이터 폴더나 로그 폴더를 OS 파일 관리자로 연다. */
   | { type: 'open-folder'; folder: AppFolder }
   /** 붙여 넣은 Flow 개인 API 키를 확인한다. 성공하면 main이 키를 저장한다. */
@@ -1325,6 +1389,11 @@ function isBundleIdInput(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
+/** 진단 ID인지 확인한다. 진단 ID는 `sentry_diagnosis` 행의 ID라 양의 정수다. */
+function isDiagnosisIdInput(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
 /** 초안 편집 명령에 실을 수 있는 편집기 텍스트인지 확인한다. 빈 텍스트도 받는다. */
 function isDraftTextInput(value: unknown): value is string {
   return typeof value === 'string' && value.length <= DRAFT_TEXT_MAX_LENGTH;
@@ -1484,6 +1553,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'post-bundle':
     case 'cancel-posting':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
+    case 'open-sentry-repo-mapping':
+      return isDiagnosisIdInput(candidate.diagnosisId) ? { type: 'open-sentry-repo-mapping', diagnosisId: candidate.diagnosisId } : null;
     case 'expand-review':
     case 'collapse-review':
       return candidate.bundleId === null || isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;

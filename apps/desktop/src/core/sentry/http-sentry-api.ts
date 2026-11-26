@@ -1,5 +1,14 @@
 import type { Clock } from '../ports/clock';
-import type { SentryApi, SentryApiFailure, SentryApiResult, SentryOrganization, SentryProject } from '../ports/sentry-api';
+import type {
+  SentryApi,
+  SentryApiFailure,
+  SentryApiResult,
+  SentryErrorIssue,
+  SentryIssueFilter,
+  SentryOrganization,
+  SentryProject,
+  SentryRegression,
+} from '../ports/sentry-api';
 
 /** Sentry 공식 서비스 주소. 지원하는 Sentry는 sentry.io뿐이므로 설정으로 받지 않는다. 코드에서 이 주소는 여기에만 둔다. */
 const SENTRY_BASE_URL = 'https://sentry.io';
@@ -9,6 +18,8 @@ const RESPONSE_TIMEOUT_MS = 20_000;
 const MAX_ORGANIZATION_PAGES = 50;
 /** 프로젝트 목록을 이어 받는 최대 쪽 수. */
 const MAX_PROJECT_PAGES = 50;
+/** 오류 이슈 목록을 이어 받는 최대 쪽 수(쪽당 100건). 한 바퀴에서 이보다 많이 받지 않는다. */
+const MAX_ISSUE_PAGES = 50;
 /** 헤더 값으로 보낼 수 있는 토큰. 공백 없는 ASCII 글자만이다. */
 const HEADER_SAFE_TOKEN = /^[\x21-\x7e]+$/;
 
@@ -112,6 +123,82 @@ export class HttpSentryApi implements SentryApi {
     return Array.isArray(result.value.json) ? { ok: true, value: undefined } : UNEXPECTED_RESPONSE;
   }
 
+  /**
+   * 신규 조회: `query=is:unresolved firstSeen:>{ISO} level:…`, `sort=new`. `>`와 `[`·`]`는 인코딩해서 보낸다
+   * (날 `>`를 넣으면 Sentry 앞단이 HTML 400을 준다).
+   */
+  async listNewErrorIssues(organization: SentryOrganization, filter: SentryIssueFilter, firstSeenAfter: number): Promise<SentryApiResult<SentryErrorIssue[]>> {
+    return this.listErrorIssues(organization, filter, `is:unresolved firstSeen:>${new Date(firstSeenAfter).toISOString()} ${levelQuery(filter.levels)}`, 'new');
+  }
+
+  /** 재발 조회: `query=is:regressed level:…`, `sort=date`. 환경 필터는 그 환경에서 재발했는지가 아니라 그 환경의 이벤트가 있는 오류 이슈인지로 거른다. */
+  async listRegressedErrorIssues(organization: SentryOrganization, filter: SentryIssueFilter): Promise<SentryApiResult<SentryErrorIssue[]>> {
+    return this.listErrorIssues(organization, filter, `is:regressed ${levelQuery(filter.levels)}`, 'date');
+  }
+
+  /** `GET /api/0/organizations/{조직}/issues/{ID}/`의 `activity`에서 `set_regression`을 찾아 가장 최근 것의 `data.event_id`와 `dateCreated`를 읽는다. */
+  async latestRegression(organization: SentryOrganization, issueId: string): Promise<SentryApiResult<SentryRegression | null>> {
+    /** 토큰을 실을 기준 주소. */
+    const base = readRegionUrl(organization.regionUrl);
+    if (base === null) return UNEXPECTED_RESPONSE;
+    /** 읽은 결과. */
+    const result = await this.get(base, `/api/0/organizations/${encodeURIComponent(organization.slug)}/issues/${encodeURIComponent(issueId)}/`);
+    if (!result.ok) return result;
+    if (!isRecord(result.value.json)) return UNEXPECTED_RESPONSE;
+    /** 활동 목록. 없으면 재발도 없다. */
+    const activity = Array.isArray(result.value.json.activity) ? result.value.json.activity : [];
+    /** 가장 최근 재발. */
+    let latest: SentryRegression | null = null;
+    for (const item of activity) {
+      if (!isRecord(item) || item.type !== 'set_regression' || !isRecord(item.data)) continue;
+      /** 재발을 일으킨 이벤트 ID. */
+      const eventId = item.data.event_id;
+      /** 재발 시각. */
+      const at = typeof item.dateCreated === 'string' ? Date.parse(item.dateCreated) : Number.NaN;
+      if (typeof eventId !== 'string' || eventId === '' || Number.isNaN(at)) continue;
+      if (latest === null || at > latest.at) latest = { eventId, at };
+    }
+    return { ok: true, value: latest };
+  }
+
+  /** 프로젝트·환경 필터와 검색 쿼리로 오류 이슈 목록을 끝 쪽까지 받는다. 같은 ID는 처음 것만 둔다. */
+  private async listErrorIssues(
+    organization: SentryOrganization,
+    filter: SentryIssueFilter,
+    query: string,
+    sort: 'new' | 'date',
+  ): Promise<SentryApiResult<SentryErrorIssue[]>> {
+    /** 토큰을 실을 기준 주소. */
+    const base = readRegionUrl(organization.regionUrl);
+    if (base === null) return UNEXPECTED_RESPONSE;
+    /** 쪽마다 같은 경로 앞부분. */
+    const prefix =
+      `/api/0/organizations/${encodeURIComponent(organization.slug)}/issues/?project=${encodeURIComponent(filter.projectId)}` +
+      (filter.environment === null ? '' : `&environment=${encodeURIComponent(filter.environment)}`) +
+      `&query=${encodeURIComponent(query)}&sort=${sort}&limit=100`;
+    /** 받은 오류 이슈. */
+    const issues = new Map<string, SentryErrorIssue>();
+    /** 다음 쪽을 받을 커서. 첫 쪽은 `null`. */
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_ISSUE_PAGES; page += 1) {
+      /** 이번 쪽을 읽은 결과. */
+      const result = await this.get(base, cursor === null ? prefix : `${prefix}&cursor=${encodeURIComponent(cursor)}`);
+      if (!result.ok) return result;
+      if (!Array.isArray(result.value.json)) return UNEXPECTED_RESPONSE;
+      for (const item of result.value.json) {
+        /** 읽은 오류 이슈. */
+        const issue = readErrorIssue(item);
+        if (!issue) return UNEXPECTED_RESPONSE;
+        if (!issues.has(issue.id)) issues.set(issue.id, issue);
+      }
+      /** 다음 쪽 커서. */
+      const next = nextCursor(result.value.link);
+      if (next === null || next === cursor) break;
+      cursor = next;
+    }
+    return { ok: true, value: [...issues.values()] };
+  }
+
   /** `baseUrl`의 `path`를 GET으로 불러 JSON 본문과 `Link` 헤더를 읽는다. */
   private async get(baseUrl: string, path: string): Promise<SentryApiResult<{ json: unknown; link: string | null }>> {
     // 헤더에 실을 수 없는 토큰은 fetch가 연결 오류처럼 실패하므로, 보내기 전에 맞지 않는 토큰으로 판정한다.
@@ -142,7 +229,7 @@ export class HttpSentryApi implements SentryApi {
       if (!response.ok) {
         // 실패 응답의 본문(HTML일 수 있다)은 읽지 않으므로 연결을 놓아 준다.
         void response.body?.cancel().catch(() => {});
-        return { ok: false, failure: failureOf(response.status) };
+        return { ok: false, failure: failureOf(response.status, response.headers) };
       }
 
       /** JSON으로 읽은 응답 본문. */
@@ -165,13 +252,59 @@ const NETWORK_FAILURE: SentryApiResult<never> = { ok: false, failure: { kind: 'n
 /** 성공 응답의 본문이 앱이 아는 모양이 아닌 결과. */
 const UNEXPECTED_RESPONSE: SentryApiResult<never> = { ok: false, failure: { kind: 'unexpected-response' } };
 
-/** 실패 응답 코드를 실패 이유로 바꾼다. */
-function failureOf(status: number): SentryApiFailure {
+/** 실패 응답 코드를 실패 이유로 바꾼다. `429`는 한도 초기화 시각 헤더를 함께 읽는다. */
+function failureOf(status: number, headers: Headers): SentryApiFailure {
   if (status === 401) return { kind: 'unauthorized' };
   if (status === 404) return { kind: 'not-found' };
   if (status === 403) return { kind: 'forbidden' };
-  if (status === 429) return { kind: 'rate-limited' };
+  if (status === 429) {
+    /** 한도 초기화 시각(UTC epoch 초). */
+    const reset = Number(headers.get('x-sentry-rate-limit-reset') ?? Number.NaN);
+    return Number.isFinite(reset) && reset > 0 ? { kind: 'rate-limited', resetAt: reset * 1000 } : { kind: 'rate-limited' };
+  }
   return { kind: 'http', status };
+}
+
+/** 레벨 필터의 검색 쿼리. 하나면 `level:error`, 여럿이면 목록 문법 `level:[error,fatal]`이다(`OR`은 Sentry가 거부한다). */
+function levelQuery(levels: readonly string[]): string {
+  return levels.length === 1 ? `level:${levels[0]}` : `level:[${levels.join(',')}]`;
+}
+
+/** 오류 이슈 목록 항목 하나를 읽는다. ID나 처음 보인 시각이 없으면 `null`. `count`는 Sentry가 문자열로 준다. */
+function readErrorIssue(item: unknown): SentryErrorIssue | null {
+  if (!isRecord(item)) return null;
+  /** 문자열이나 숫자로 올 수 있는 오류 이슈 ID. */
+  const id = typeof item.id === 'number' ? String(item.id) : item.id;
+  /** 처음 보인 시각. */
+  const firstSeen = typeof item.firstSeen === 'string' ? Date.parse(item.firstSeen) : Number.NaN;
+  if (typeof id !== 'string' || id === '' || Number.isNaN(firstSeen)) return null;
+  /** 마지막으로 보인 시각. */
+  const lastSeen = typeof item.lastSeen === 'string' ? Date.parse(item.lastSeen) : Number.NaN;
+  return {
+    id,
+    shortId: stringOr(item.shortId, ''),
+    title: stringOr(item.title, ''),
+    culprit: stringOr(item.culprit, ''),
+    level: stringOr(item.level, ''),
+    firstSeen,
+    lastSeen: Number.isNaN(lastSeen) ? null : lastSeen,
+    count: countOf(item.count),
+    userCount: countOf(item.userCount),
+    permalink: typeof item.permalink === 'string' && item.permalink !== '' ? item.permalink : null,
+    platform: typeof item.platform === 'string' && item.platform !== '' ? item.platform : null,
+  };
+}
+
+/** 문자열이면 그 값, 아니면 `fallback`. */
+function stringOr(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+/** 숫자나 숫자 문자열로 온 개수. 읽을 수 없으면 `null`. */
+function countOf(value: unknown): number | null {
+  /** 숫자로 바꾼 값. */
+  const count = typeof value === 'number' ? value : typeof value === 'string' && value !== '' ? Number(value) : Number.NaN;
+  return Number.isFinite(count) && count >= 0 ? count : null;
 }
 
 /** 조직 목록 항목 하나를 읽는다. 모양이 맞지 않거나 지역 주소가 sentry.io가 아니면 `null`. */

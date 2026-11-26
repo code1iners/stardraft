@@ -92,8 +92,9 @@ const SENTRY_PROJECTS: SentryProjectsSnapshot = {
       levels: ['error'],
       repo: { path: '/fake/work/web-app', status: 'found' },
       access: 'ok',
+      waitingCount: 0,
     },
-    { projectId: '12', organizationName: '조직 A', projectName: '배치', environment: null, levels: ['error'], repo: null, access: 'ok' },
+    { projectId: '12', organizationName: '조직 A', projectName: '배치', environment: null, levels: ['error'], repo: null, access: 'ok', waitingCount: 2 },
   ],
 };
 
@@ -141,10 +142,10 @@ describe('설정 "저장소" 칸 Sentry 탭', () => {
     expect(text).not.toContain('폴더 추가…');
   });
 
-  it('매핑이 없는 프로젝트가 매핑된 프로젝트보다 맨 위에 "저장소 매핑 없음"과 [폴더 고르기…]로 보인다', () => {
+  it('매핑이 없는 프로젝트가 매핑된 프로젝트보다 맨 위에 "저장소 매핑 없음 · n건 대기"와 [폴더 고르기…]로 보인다', () => {
     const text = textOfSentry(SENTRY_PROJECTS);
 
-    expect(text).toContain('조직 A / 배치 저장소 매핑 없음 폴더 고르기…');
+    expect(text).toContain('조직 A / 배치 저장소 매핑 없음 · 2건 대기 폴더 고르기…');
     expect(text.indexOf('조직 A / 배치')).toBeLessThan(text.indexOf('조직 A / 웹'));
   });
 
@@ -157,5 +158,16 @@ describe('설정 "저장소" 칸 Sentry 탭', () => {
 
   it('등록한 프로젝트가 없으면 Sentry 칸에서 추가하라고 안내한다', () => {
     expect(textOfSentry(NO_SENTRY_PROJECTS)).toContain('Sentry 칸에서 프로젝트를 추가해 주세요');
+  });
+});
+
+describe('설정 "저장소" 칸: 진단에서 짚은 Sentry 프로젝트', () => {
+  it('진단의 [저장소 매핑하기]로 Sentry 프로젝트를 짚어 열면 Sentry 탭이 보이고 그 프로젝트의 줄이 짚인다', () => {
+    const markup = renderToStaticMarkup(
+      <RepositoriesSection repoMappings={{ mappings: [], waiting: [], projects: { status: 'idle' } }} sentryProjects={SENTRY_PROJECTS} focusSentryProjectId="12" />,
+    );
+
+    expect(markup).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*>Sentry/);
+    expect(markup).toMatch(/<li class="folder-item" aria-current="true"><div class="folder-row"><span class="mapping-title">조직 A \/ 배치/);
   });
 });

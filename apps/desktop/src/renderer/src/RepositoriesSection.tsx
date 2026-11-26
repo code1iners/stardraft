@@ -31,15 +31,18 @@ interface RepositoriesSectionProps {
   sentryProjects: SentryProjectsSnapshot;
   /** 검토 화면의 [저장소 매핑하기]·[매핑 고치기]로 짚은 Flow 프로젝트 ID. 그 줄을 눈에 띄게 하고 보이는 곳으로 가져온다. 없으면 `null`. */
   focusProjectId?: string | null;
+  /** 진단의 [저장소 매핑하기]·[매핑 고치기]로 짚은 Sentry 프로젝트 ID. `Sentry` 탭을 열고 그 줄을 짚는다. 없으면 `null`. */
+  focusSentryProjectId?: string | null;
 }
 
 /**
  * 설정 "저장소" 칸. "저장소 매핑"을 `Flow` | `Sentry` 탭으로 나눠 프로젝트마다 저장소를 연결하고,
  * 매핑이 없어 기다리는 프로젝트를 탭 맨 위에 보인다. 매핑이 없는 프로젝트가 있는 탭에는 점이 찍힌다.
  */
-export function RepositoriesSection({ repoMappings, sentryProjects, focusProjectId = null }: RepositoriesSectionProps) {
-  /** 보이는 탭. */
-  const [tab, setTab] = useState<MappingTab>('flow');
+export function RepositoriesSection({ repoMappings, sentryProjects, focusProjectId = null, focusSentryProjectId = null }: RepositoriesSectionProps) {
+  /** 보이는 탭. Sentry 프로젝트를 짚었으면 `Sentry` 탭이다. 짚기 요청마다 설정 창이 이 칸을 새로 그려 다시 정한다. */
+  const [tab, setTab] = useState<MappingTab>(focusSentryProjectId === null ? 'flow' : 'sentry');
+
 
   useEffect(function refreshOnOpen() {
     // 칸을 열 때마다 연결된 폴더와 참여 Flow 프로젝트 목록, 등록한 Sentry 프로젝트에 닿는지를 다시 확인한다.
@@ -61,7 +64,7 @@ export function RepositoriesSection({ repoMappings, sentryProjects, focusProject
         {tab === 'flow' ? (
           <RepoMappingsField repoMappings={repoMappings} focusProjectId={focusProjectId} />
         ) : (
-          <SentryRepoMappingsField sentryProjects={sentryProjects} />
+          <SentryRepoMappingsField sentryProjects={sentryProjects} focusProjectId={focusSentryProjectId} />
         )}
       </div>
     </div>
@@ -213,13 +216,27 @@ function RepoMappingsField({ repoMappings, focusProjectId }: RepoMappingsFieldPr
 interface SentryRepoMappingsFieldProps {
   /** 진단하려고 등록한 Sentry 프로젝트와 그 저장소 매핑. */
   sentryProjects: SentryProjectsSnapshot;
+  /** 짚은 Sentry 프로젝트 ID. 없으면 `null`. */
+  focusProjectId?: string | null;
 }
 
 /**
  * `Sentry` 탭. 등록한 프로젝트가 모두 오른다. 저장소는 프로젝트 하나에 하나라서 [폴더 추가…] 대신 [바꾸기…]를 둔다.
- * 매핑이 없는 프로젝트는 맨 위에 "저장소 매핑 없음"과 [폴더 고르기…]로 보인다. 모달의 저장소와 같은 값이다.
+ * 매핑이 없는 프로젝트는 맨 위에 "저장소 매핑 없음 · n건 대기"와 [폴더 고르기…]로 보인다. 모달의 저장소와 같은 값이다.
+ * 진단에서 짚은 프로젝트의 줄은 눈에 띄게 하고 보이는 곳으로 가져온다.
  */
-export function SentryRepoMappingsField({ sentryProjects }: SentryRepoMappingsFieldProps) {
+export function SentryRepoMappingsField({ sentryProjects, focusProjectId = null }: SentryRepoMappingsFieldProps) {
+  /** 짚은 프로젝트의 줄. */
+  const focusedRow = useRef<HTMLLIElement | null>(null);
+  /** 짚은 프로젝트가 등록되어 줄이 있는지 여부. */
+  const hasFocusedRow = sentryProjects.projects.some((project) => project.projectId === focusProjectId);
+  useEffect(
+    function scrollToFocusedRow() {
+      if (hasFocusedRow) focusedRow.current?.scrollIntoView?.({ block: 'center' });
+    },
+    [focusProjectId, hasFocusedRow],
+  );
+
   /** 매핑이 없는 프로젝트. */
   const unmapped = sentryProjects.projects.filter((project) => project.repo === null);
   /** 저장소가 매핑된 프로젝트. */
@@ -235,12 +252,17 @@ export function SentryRepoMappingsField({ sentryProjects }: SentryRepoMappingsFi
       ) : (
         <ul className="folder-list">
           {unmapped.map((project) => (
-            <li key={project.projectId} className="folder-item">
+            <li
+              key={project.projectId}
+              className="folder-item"
+              ref={project.projectId === focusProjectId ? focusedRow : undefined}
+              aria-current={project.projectId === focusProjectId ? 'true' : undefined}
+            >
               <div className="folder-row">
                 <span className="mapping-title">
                   {project.organizationName} / {project.projectName}
                 </span>
-                <span className="warning-text">저장소 매핑 없음</span>
+                <span className="warning-text">저장소 매핑 없음 · {project.waitingCount}건 대기</span>
                 <button
                   type="button"
                   className="btn sm"
@@ -252,7 +274,12 @@ export function SentryRepoMappingsField({ sentryProjects }: SentryRepoMappingsFi
             </li>
           ))}
           {mapped.map((project) => (
-            <li key={project.projectId} className="folder-item">
+            <li
+              key={project.projectId}
+              className="folder-item"
+              ref={project.projectId === focusProjectId ? focusedRow : undefined}
+              aria-current={project.projectId === focusProjectId ? 'true' : undefined}
+            >
               <div className="folder-row">
                 <span className="mapping-title">
                   {project.organizationName} / {project.projectName}

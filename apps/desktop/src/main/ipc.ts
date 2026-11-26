@@ -11,6 +11,7 @@ import type { AgentConnections } from '../core/agent/agent-connections';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import type { SentryConnection, SentryConnectionState, SentryTokenCheckOutcome } from '../core/sentry/sentry-connection';
+import type { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
 import type { SentryProjects, SentryProjectsState, SentryRegisterOutcome, SentryUpdateOutcome } from '../core/sentry/sentry-projects';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
@@ -67,6 +68,8 @@ export interface IpcServices {
   sentryConnection: SentryConnection;
   /** "Sentry" 칸의 프로젝트 등록과 "저장소" 칸 `Sentry` 탭의 저장소 매핑. */
   sentryProjects: SentryProjects;
+  /** 감지한 Sentry 진단. 검토 화면의 `진단` 묶음과 프로젝트 줄의 "n건 대기"가 따른다. */
+  sentryDiagnoses: SentryDiagnoses;
   /** 작은 창 띠에 보일 전역 문제. */
   globalProblems: GlobalProblems;
   /** "에이전트" 칸의 연결 확인. 이 OS의 후보 에이전트마다 하나씩 있다. */
@@ -125,9 +128,11 @@ export function registerIpc(services: IpcServices): void {
   services.sentryConnection.onChange((state) =>
     services.windows.broadcast({ type: 'sentry-changed', sentry: sentrySnapshot(state) }),
   );
-  services.sentryProjects.onChange(() =>
-    services.windows.broadcast({ type: 'sentry-projects-changed', sentryProjects: sentryProjectsSnapshot(services.sentryProjects.state()) }),
-  );
+  /** 등록한 Sentry 프로젝트와 그 줄의 "n건 대기"를 열린 창에 알린다. */
+  const broadcastSentryProjects = () =>
+    services.windows.broadcast({ type: 'sentry-projects-changed', sentryProjects: currentSentryProjectsSnapshot(services) });
+  services.sentryProjects.onChange(broadcastSentryProjects);
+  services.sentryDiagnoses.onChange(broadcastSentryProjects);
   services.globalProblems.onChange((current) =>
     services.windows.broadcast({ type: 'global-problem-changed', globalProblem: activeProblemSnapshot(current) }),
   );
@@ -164,6 +169,7 @@ export function registerIpc(services: IpcServices): void {
   /** 묶음 상태를 열린 창에 알린다. */
   const broadcastReview = () => services.windows.broadcast({ type: 'review-changed', review: currentReviewSnapshot(services) });
   services.bundles.onChange(broadcastReview);
+  services.sentryDiagnoses.onChange(broadcastReview);
   services.drafts.onChange(broadcastReview);
   services.posting.onChange(broadcastReview);
   // 게시 실패는 그 순간 한 번만 토스트로 알린다. 묶음 상태에는 남지만 토스트는 다시 띄우지 않는다.
@@ -204,9 +210,10 @@ export function registerIpc(services: IpcServices): void {
 }
 
 /** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서, 게시 카운트다운은 게시에서 읽는다. */
-function currentReviewSnapshot({ bundles, drafts, posting, reviewSections, repoMappings, repoPicker }: IpcServices) {
+function currentReviewSnapshot({ bundles, sentryDiagnoses, drafts, posting, reviewSections, repoMappings, repoPicker }: IpcServices) {
   return reviewSnapshot(
     bundles.state(),
+    sentryDiagnoses.list(),
     reviewSections.state(),
     projectLookup(repoMappings),
     (bundleId) => drafts.progress(bundleId),
@@ -242,14 +249,14 @@ function projectLookup(repoMappings: RepoMappings): ProjectLookup {
 /** 지금 앱 상태의 스냅숏. */
 function currentSnapshot(services: IpcServices): AppSnapshot {
   /** 상태를 읽을 main의 일. */
-  const { flowAccount, sentryConnection, sentryProjects, globalProblems, agentConnections, agentPreferences, repoMappings, onboarding, launchAtLogin } = services;
+  const { flowAccount, sentryConnection, globalProblems, agentConnections, agentPreferences, repoMappings, onboarding, launchAtLogin } = services;
   return {
     appName: app.name,
     version: app.getVersion(),
     platform: appPlatform(),
     flowAccount: flowAccountSnapshot(flowAccount.state()),
     sentry: sentrySnapshot(sentryConnection.state()),
-    sentryProjects: sentryProjectsSnapshot(sentryProjects.state()),
+    sentryProjects: currentSentryProjectsSnapshot(services),
     globalProblem: activeProblemSnapshot(globalProblems.current()),
     agentConnections: agentConnectionsSnapshot(agentConnections),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
@@ -418,6 +425,12 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);
       return;
+    case 'open-sentry-repo-mapping': {
+      /** 저장소 대기인 진단. 없어졌으면 프로젝트를 모르므로 "저장소" 칸만 연다. */
+      const waiting = services.sentryDiagnoses.list().find((item) => item.id === command.diagnosisId);
+      windows.openSettings('repositories', undefined, waiting?.projectId);
+      return;
+    }
     case 'open-repo-mapping': {
       /** 저장소 대기인 묶음. 없어졌으면 프로젝트를 모르므로 "저장소" 칸만 연다. */
       const waiting = bundles.get(command.bundleId);
@@ -773,8 +786,16 @@ async function pickSingleFolder(windows: AppWindows): Promise<string | null> {
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
-/** core의 Sentry 프로젝트 상태를 렌더러에 넘길 모양으로 바꾼다. 조직·프로젝트 slug와 등록 시각은 화면에 쓰지 않으므로 넘기지 않는다. */
-function sentryProjectsSnapshot(state: SentryProjectsState): SentryProjectsSnapshot {
+/** 지금 등록한 Sentry 프로젝트와 프로젝트마다 매핑을 기다리는 진단 수. */
+function currentSentryProjectsSnapshot({ sentryProjects, sentryDiagnoses }: IpcServices): SentryProjectsSnapshot {
+  return sentryProjectsSnapshot(sentryProjects.state(), (projectId) => sentryDiagnoses.waitingForMapping(projectId));
+}
+
+/**
+ * core의 Sentry 프로젝트 상태를 렌더러에 넘길 모양으로 바꾼다. 조직·프로젝트 slug와 등록 시각은 화면에 쓰지 않으므로 넘기지 않는다.
+ * `waitingCountOf`는 프로젝트마다 저장소 매핑을 기다리는 진단 수다.
+ */
+function sentryProjectsSnapshot(state: SentryProjectsState, waitingCountOf: (projectId: string) => number): SentryProjectsSnapshot {
   return {
     projects: state.projects.map(({ registration, access, repo }) => ({
       projectId: registration.projectId,
@@ -784,6 +805,7 @@ function sentryProjectsSnapshot(state: SentryProjectsState): SentryProjectsSnaps
       levels: [...registration.levels],
       repo: repo && { ...repo },
       access,
+      waitingCount: waitingCountOf(registration.projectId),
     })),
     candidates:
       state.candidates.status === 'loaded'

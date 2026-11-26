@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS } from '../ports/settings-store';
+import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../ports/settings-store';
 import { FileSettingsStore } from './file-settings-store';
 
 /** 테스트마다 만드는 임시 데이터 폴더. */
@@ -74,6 +74,16 @@ describe('설정 파일 저장소', () => {
     writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 1, extraInstructions: '가짜 지침' }));
 
     await expect(createStore().load()).resolves.toEqual({ ...DEFAULT_SETTINGS, extraInstructions: '가짜 지침' });
+  });
+
+  it('재현 키가 없던 옛 파일은 재현 허용 없음과 재현 도구 권한 자동으로 읽는다. 스키마 버전은 올리지 않는다', async () => {
+    writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 1, extraInstructions: '가짜 지침' }));
+
+    const settings = await createStore().load();
+
+    expect(settings.reproductionRepos).toEqual({});
+    expect(settings.reproductionTools).toEqual({ mode: 'auto', enabledServers: {} });
+    expect(SETTINGS_SCHEMA_VERSION).toBe(1);
   });
 
   it('옛 작업 폴더 키는 설정에 없고, 파일에는 그대로 남으며 형식 버전도 그대로다', async () => {

@@ -59,6 +59,15 @@ export const SENTRY_PROJECT_ID_MAX_LENGTH = 64;
 /** Sentry 프로젝트의 환경 필터 이름의 최대 길이. */
 export const SENTRY_ENVIRONMENT_MAX_LENGTH = 64;
 
+/** 재현 도구 권한 명령이 받는 MCP 서버 이름의 최대 길이. */
+export const REPRODUCTION_SERVER_NAME_MAX_LENGTH = 200;
+
+/** 재현 도구 권한의 방식. `auto`는 범위의 MCP 서버를 모두 싣고 `manual`은 사용자가 켠 서버만 싣는다. */
+export const REPRODUCTION_TOOL_MODES = ['auto', 'manual'] as const;
+
+/** 재현 도구 권한의 방식 하나. */
+export type ReproductionToolModeId = (typeof REPRODUCTION_TOOL_MODES)[number];
+
 /** 레벨 필터로 고를 수 있는 Sentry 레벨. 심각한 순서다. */
 export const SENTRY_LEVEL_IDS = ['fatal', 'error', 'warning', 'info', 'debug'] as const;
 
@@ -230,6 +239,59 @@ export type SentryProjectSaveResult =
   | 'rate-limited'
   | 'unexpected'
   | 'save-failed';
+
+/** 재현 설정 화면의 저장소 한 줄. */
+export interface ReproductionRepoSnapshot {
+  /** 저장소 절대 경로. 명령에 실어 보낸다. */
+  path: string;
+  /** 재현 허용 여부. */
+  enabled: boolean;
+  /** 재현용 환경 파일 절대 경로. `null`이면 지정 안 함(원본 `.env` 사용)이다. */
+  envFile: string | null;
+  /** 지정한 환경 파일이 없어졌는지 여부. */
+  envFileMissing: boolean;
+}
+
+/** MCP 서버의 연결 종류. */
+export type ReproductionServerKind = 'stdio' | 'http' | 'sse' | 'ws' | 'unknown';
+
+/** 재현 도구 권한 목록의 MCP 서버 한 줄. 서버 정의의 값(환경 변수, 헤더)은 담지 않는다. */
+export interface ReproductionServerSnapshot {
+  /** 서버가 등록된 CLI. */
+  agent: AgentId;
+  /** 서버 이름. */
+  name: string;
+  /** 연결 종류. */
+  kind: ReproductionServerKind;
+  /** 외부로 보낼 수 있는 서버인지 여부. "외부로 보냄" 꼬리표를 붙인다. */
+  external: boolean;
+  /** 앱이 고정으로 뺀 위험 도구. */
+  deniedTools: string[];
+  /** `직접 선택`에서 켠 서버인지 여부. */
+  enabled: boolean;
+}
+
+/** 설정 "저장소" 칸의 재현 항목과 "에이전트" 칸 `재현` 탭이 그릴 상태. */
+export interface ReproductionSnapshot {
+  /** 재현을 지원하는 OS인지 여부. 거짓이면 재현 항목과 `재현` 탭을 그리지 않는다. */
+  supported: boolean;
+  /** 재현 허용을 정할 수 있는 저장소. 매핑된 저장소마다 한 줄이다. */
+  repos: ReproductionRepoSnapshot[];
+  /** 재현 도구 권한. */
+  tools: {
+    /** 방식. */
+    mode: ReproductionToolModeId;
+    /** MCP 서버 목록을 읽은 상태. */
+    status: 'idle' | 'loading' | 'loaded';
+    /** 목록의 서버. */
+    servers: ReproductionServerSnapshot[];
+    /** Codex 목록 명령이 실패해 Codex 서버를 읽지 못했는지 여부. */
+    codexListFailed: boolean;
+  };
+}
+
+/** 재현을 켜거나 환경 파일을 정한 결과. 확인 모달이 닫히거나 이유를 보인다. */
+export type ReproductionSaveResult = 'saved' | 'invalid-env-file' | 'not-mapped' | 'unsupported';
 
 /** 감지를 멈추게 하는 전역 문제. 작은 창 띠, 트레이 메뉴, OS 알림에 하나만 보인다. */
 export type GlobalProblemSnapshot =
@@ -1194,6 +1256,8 @@ export interface AppSnapshot {
   sentry: SentryConnectionSnapshot;
   /** 등록한 Sentry 프로젝트와 등록할 수 있는 프로젝트 목록. */
   sentryProjects: SentryProjectsSnapshot;
+  /** 저장소별 재현 허용과 재현 도구 권한. */
+  reproduction: ReproductionSnapshot;
   /** 지금 보일 전역 문제. 없으면 `null`. */
   globalProblem: GlobalProblemSnapshot | null;
   /** 이 OS의 후보 에이전트마다의 연결 확인 상태. 후보 순서다(macOS는 Claude Code와 Codex, Windows는 Claude Code). */
@@ -1243,6 +1307,12 @@ export type AppEvent =
   | { type: 'sentry-project-saved'; result: SentryProjectSaveResult }
   /** 프로젝트 모달의 [폴더 고르기…]로 폴더를 골랐다. 모달이 이 경로를 보이고 [등록]·[저장]에 싣는다. */
   | { type: 'sentry-draft-folder-picked'; path: string }
+  /** 재현 허용, 환경 파일, 재현 도구 권한, MCP 서버 목록이 바뀌었다. */
+  | { type: 'reproduction-changed'; reproduction: ReproductionSnapshot }
+  /** 재현을 켜는 확인 모달의 저장이 끝났다. 모달이 닫히거나 이유를 보인다. */
+  | { type: 'reproduction-saved'; result: ReproductionSaveResult }
+  /** 재현을 켜는 확인 모달의 [파일 고르기…]로 환경 파일을 골랐다. 모달이 이 경로를 보이고 [켜기]에 싣는다. */
+  | { type: 'reproduction-env-file-picked'; path: string }
   /** 보일 전역 문제가 바뀌었다. */
   | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null }
   /** 에이전트 연결 확인 상태가 바뀌었다. */
@@ -1360,6 +1430,23 @@ export type AppCommand =
   | { type: 'pick-sentry-draft-folder' }
   /** 폴더 선택 창으로 고른 폴더를 등록한 Sentry 프로젝트의 저장소로 정한다. "저장소" 칸의 [바꾸기…]·[폴더 고르기…]가 보낸다. */
   | { type: 'pick-sentry-project-repo'; projectId: string }
+  /** 저장소 칸의 재현 항목을 열 때 지정한 환경 파일이 아직 있는지 다시 확인한다. */
+  | { type: 'refresh-reproduction-repos' }
+  /** 에이전트 칸 `재현` 탭을 열 때 MCP 서버 목록을 다시 읽는다. */
+  | { type: 'refresh-reproduction-servers' }
+  /**
+   * 저장소의 재현 허용을 켜거나 끈다. 켤 때 `envFile`(확인 모달에서 고른 값, `null`은 지정 안 함)을 함께 보내고,
+   * 끌 때는 보내지 않아 저장해 둔 환경 파일을 그대로 둔다. 켜는 요청의 결과는 `reproduction-saved`로 알린다.
+   */
+  | { type: 'set-reproduction-enabled'; repoPath: string; enabled: boolean; envFile?: string | null }
+  /** 재현을 켠 저장소의 재현용 환경 파일을 파일 선택 창으로 고른다. */
+  | { type: 'pick-reproduction-env-file'; repoPath: string }
+  /** 재현을 켜는 확인 모달의 환경 파일을 파일 선택 창으로 고른다. 고르면 `reproduction-env-file-picked`로 알린다. */
+  | { type: 'pick-reproduction-env-file-draft' }
+  /** 재현 도구 권한의 방식을 바꾼다. */
+  | { type: 'set-reproduction-tool-mode'; mode: ReproductionToolModeId }
+  /** `직접 선택`에서 MCP 서버 하나를 켜거나 끈다. 에이전트별로 서버 이름만 저장한다. */
+  | { type: 'set-reproduction-server-enabled'; agent: AgentId; name: string; enabled: boolean }
   /** [감지 시작]. 필수 설정가 다 되기 전이거나 이미 시작했으면 main이 무시한다. */
   | { type: 'start-detection' }
   /** 로그인 시 자동 시작을 켜거나 끈다. */
@@ -1680,6 +1767,26 @@ export function parseAppCommand(value: unknown): AppCommand | null {
         : null;
     case 'set-launch-at-login':
       return typeof candidate.enabled === 'boolean' ? { type: 'set-launch-at-login', enabled: candidate.enabled } : null;
+    case 'set-reproduction-enabled':
+      if (!isFolderPathInput(candidate.repoPath) || typeof candidate.enabled !== 'boolean') return null;
+      if (candidate.envFile === undefined) return { type: 'set-reproduction-enabled', repoPath: candidate.repoPath, enabled: candidate.enabled };
+      return isOptionalFolderPathInput(candidate.envFile)
+        ? { type: 'set-reproduction-enabled', repoPath: candidate.repoPath, enabled: candidate.enabled, envFile: candidate.envFile }
+        : null;
+    case 'pick-reproduction-env-file':
+      return isFolderPathInput(candidate.repoPath) ? { type: 'pick-reproduction-env-file', repoPath: candidate.repoPath } : null;
+    case 'set-reproduction-tool-mode':
+      return (REPRODUCTION_TOOL_MODES as readonly unknown[]).includes(candidate.mode)
+        ? { type: 'set-reproduction-tool-mode', mode: candidate.mode as ReproductionToolModeId }
+        : null;
+    case 'set-reproduction-server-enabled':
+      return isAgentId(candidate.agent) &&
+        typeof candidate.name === 'string' &&
+        candidate.name !== '' &&
+        candidate.name.length <= REPRODUCTION_SERVER_NAME_MAX_LENGTH &&
+        typeof candidate.enabled === 'boolean'
+        ? { type: 'set-reproduction-server-enabled', agent: candidate.agent, name: candidate.name, enabled: candidate.enabled }
+        : null;
     case 'set-parallel-work-count':
       return isParallelWorkCount(candidate.count) ? { type: 'set-parallel-work-count', count: candidate.count } : null;
     case 'edit-draft':
@@ -1796,6 +1903,9 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     // 인자 없는 명령이 한 갈래에 너무 많으면 TypeScript가 합집합 대입을 검사하지 못해 갈래를 나눈다.
     case 'pick-report-folder':
     case 'open-report-folder':
+    case 'refresh-reproduction-repos':
+    case 'refresh-reproduction-servers':
+    case 'pick-reproduction-env-file-draft':
       return { type: candidate.type };
     default:
       return null;

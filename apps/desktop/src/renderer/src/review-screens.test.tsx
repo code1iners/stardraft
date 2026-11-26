@@ -9,6 +9,7 @@ import { PopoverContent } from './PopoverView';
 import { PopoverMenu, menuKeyAction } from './PopoverMenu';
 import { ReviewContent } from './ReviewView';
 import { nextBundleAfter, resolveSelection } from './useReview';
+import { UNSUPPORTED_REPRODUCTION } from './reproduction-fixtures';
 
 /** 창마다 처음 영역 펼침 상태. */
 const SECTIONS: ReviewSnapshot['sections'] = {
@@ -86,6 +87,7 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     flowAccount: { account: null, keyCheck: { status: 'idle' } },
     sentry: { connected: false, organizations: [], tokenCheck: { status: 'idle' }, tokenProblem: null },
     sentryProjects: { projects: [], candidates: { status: 'idle' } },
+    reproduction: UNSUPPORTED_REPRODUCTION,
     globalProblem: null,
     agentConnections: [
       {

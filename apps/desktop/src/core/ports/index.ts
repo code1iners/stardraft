@@ -42,6 +42,15 @@ export type {
 } from './sentry-api';
 export type { SentryTokenStore } from './sentry-token-store';
 export { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from './settings-store';
-export type { EditorChoice, SentryLevel, SentryProjectRegistration, Settings, SettingsStore } from './settings-store';
+export type {
+  EditorChoice,
+  ReproductionRepoSetting,
+  ReproductionToolMode,
+  ReproductionToolsSetting,
+  SentryLevel,
+  SentryProjectRegistration,
+  Settings,
+  SettingsStore,
+} from './settings-store';
 export type { StateStore } from './state-store';
 export type { DownloadedUpdate, DownloadOutcome, UpdateFeed, UpdateManifest } from './update-feed';

@@ -96,6 +96,7 @@ export function SettingsView({ initialSection, initialProjectId = null, initialS
                 agentConnections={snapshot.agentConnections}
                 agentPreferences={snapshot.agentPreferences}
                 parallelWork={snapshot.parallelWork}
+                reproduction={snapshot.reproduction}
                 platform={snapshot.platform}
               />
             )}
@@ -104,6 +105,7 @@ export function SettingsView({ initialSection, initialProjectId = null, initialS
                 key={sectionRequests}
                 repoMappings={snapshot.repoMappings}
                 sentryProjects={snapshot.sentryProjects}
+                reproduction={snapshot.reproduction}
                 focusProjectId={focusProjectId}
                 focusSentryProjectId={focusSentryProjectId}
               />

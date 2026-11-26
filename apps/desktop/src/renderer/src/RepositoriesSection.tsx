@@ -4,8 +4,10 @@ import type {
   ParticipantProjectsFailure,
   ParticipantProjectsSnapshot,
   RepoMappingsSnapshot,
+  ReproductionSnapshot,
   SentryProjectsSnapshot,
 } from '../../shared/ipc';
+import { ReproductionRepos } from './ReproductionRepos';
 import { tabId, tabPanelId, UnderlineTabs, type UnderlineTab } from './UnderlineTabs';
 
 /** 참여 Flow 프로젝트 목록을 받지 못한 이유 문구. */
@@ -29,6 +31,8 @@ interface RepositoriesSectionProps {
   repoMappings: RepoMappingsSnapshot;
   /** 진단하려고 등록한 Sentry 프로젝트와 그 저장소 매핑. */
   sentryProjects: SentryProjectsSnapshot;
+  /** 저장소별 재현 허용과 재현용 환경 파일. 재현을 지원하는 OS(macOS)에서만 "재현" 항목을 그린다. */
+  reproduction: ReproductionSnapshot;
   /** 검토 화면의 [저장소 매핑하기]·[매핑 고치기]로 짚은 Flow 프로젝트 ID. 그 줄을 눈에 띄게 하고 보이는 곳으로 가져온다. 없으면 `null`. */
   focusProjectId?: string | null;
   /** 진단의 [저장소 매핑하기]·[매핑 고치기]로 짚은 Sentry 프로젝트 ID. `Sentry` 탭을 열고 그 줄을 짚는다. 없으면 `null`. */
@@ -39,7 +43,7 @@ interface RepositoriesSectionProps {
  * 설정 "저장소" 칸. "저장소 매핑"을 `Flow` | `Sentry` 탭으로 나눠 프로젝트마다 저장소를 연결하고,
  * 매핑이 없어 기다리는 프로젝트를 탭 맨 위에 보인다. 매핑이 없는 프로젝트가 있는 탭에는 점이 찍힌다.
  */
-export function RepositoriesSection({ repoMappings, sentryProjects, focusProjectId = null, focusSentryProjectId = null }: RepositoriesSectionProps) {
+export function RepositoriesSection({ repoMappings, sentryProjects, reproduction, focusProjectId = null, focusSentryProjectId = null }: RepositoriesSectionProps) {
   /** 보이는 탭. Sentry 프로젝트를 짚었으면 `Sentry` 탭이다. 짚기 요청마다 설정 창이 이 칸을 새로 그려 다시 정한다. */
   const [tab, setTab] = useState<MappingTab>(focusSentryProjectId === null ? 'flow' : 'sentry');
 
@@ -57,17 +61,20 @@ export function RepositoriesSection({ repoMappings, sentryProjects, focusProject
   ];
 
   return (
-    <div className="field">
-      <span className="field-label">저장소 매핑</span>
-      <UnderlineTabs label="저장소 매핑" idPrefix={MAPPING_TABS_ID} tabs={tabs} selected={tab} onSelect={setTab} />
-      <div role="tabpanel" id={tabPanelId(MAPPING_TABS_ID, tab)} aria-labelledby={tabId(MAPPING_TABS_ID, tab)}>
-        {tab === 'flow' ? (
-          <RepoMappingsField repoMappings={repoMappings} focusProjectId={focusProjectId} />
-        ) : (
-          <SentryRepoMappingsField sentryProjects={sentryProjects} focusProjectId={focusSentryProjectId} />
-        )}
+    <>
+      <div className="field">
+        <span className="field-label">저장소 매핑</span>
+        <UnderlineTabs label="저장소 매핑" idPrefix={MAPPING_TABS_ID} tabs={tabs} selected={tab} onSelect={setTab} />
+        <div role="tabpanel" id={tabPanelId(MAPPING_TABS_ID, tab)} aria-labelledby={tabId(MAPPING_TABS_ID, tab)}>
+          {tab === 'flow' ? (
+            <RepoMappingsField repoMappings={repoMappings} focusProjectId={focusProjectId} />
+          ) : (
+            <SentryRepoMappingsField sentryProjects={sentryProjects} focusProjectId={focusSentryProjectId} />
+          )}
+        </div>
       </div>
-    </div>
+      {reproduction.supported && <ReproductionRepos repos={reproduction.repos} />}
+    </>
   );
 }
 

@@ -44,6 +44,25 @@ export interface SentryProjectRegistration {
   registeredAt: string;
 }
 
+/** 저장소 하나의 재현 설정. 설정의 키는 저장소 절대 경로다. */
+export interface ReproductionRepoSetting {
+  /** 재현 허용. 켠 저장소의 진단만 사본에서 셸로 재현한다. */
+  enabled: boolean;
+  /** 재현용 환경 파일 절대 경로. `null`이면 지정하지 않은 것이라 원본 `.env`를 쓴다. */
+  envFile: string | null;
+}
+
+/** 재현 도구 권한의 방식. `auto`는 범위의 MCP 서버를 모두 싣고, `manual`은 사용자가 켠 서버만 싣는다. */
+export type ReproductionToolMode = 'auto' | 'manual';
+
+/** 재현 도구 권한(앱 전체 설정). */
+export interface ReproductionToolsSetting {
+  /** 방식. 기본은 `auto`다. */
+  mode: ReproductionToolMode;
+  /** `manual`에서 에이전트별로 켠 MCP 서버 **이름**. 서버 정의의 값(환경 변수, 헤더)은 저장하지 않는다. 나중에 새로 등록된 서버는 여기 없으므로 꺼진 채로 나타난다. */
+  enabledServers: Partial<Record<AgentId, string[]>>;
+}
+
 /** 사용자 설정(`settings.json`). PC마다 따로 두고 동기화하지 않는다. */
 export interface Settings {
   /** 파일 형식 버전. 앱이 아는 것보다 크면 실행하지 않는다. */
@@ -54,6 +73,10 @@ export interface Settings {
   sentryProjects: Record<string, SentryProjectRegistration>;
   /** Sentry 저장소 매핑. Sentry 프로젝트 ID → 저장소 절대 경로 목록(지금은 하나). Flow 매핑과 다른 필드라 키가 겹치지 않는다. */
   sentryRepoMappings: Record<string, string[]>;
+  /** 저장소별 재현 허용과 재현용 환경 파일. 저장소 절대 경로 → 설정. 이 값이 없던 옛 파일은 빈 객체로 읽는다. */
+  reproductionRepos: Record<string, ReproductionRepoSetting>;
+  /** 재현 도구 권한. 이 값이 없던 옛 파일은 `자동`으로 읽는다. */
+  reproductionTools: ReproductionToolsSetting;
   /** 기본 에이전트. */
   defaultAgent: AgentId;
   /** 연결한 Sentry 토큰으로 보이는 조직. 토큰을 연결하지 않았으면 비어 있다. 이 값이 없던 옛 파일은 빈 목록으로 읽는다. */
@@ -88,6 +111,8 @@ export const DEFAULT_SETTINGS: Settings = {
   sentryOrganizations: [],
   sentryProjects: {},
   sentryRepoMappings: {},
+  reproductionRepos: {},
+  reproductionTools: { mode: 'auto', enabledServers: {} },
   defaultAgent: 'claude-code',
   agentCliPaths: {},
   agentModels: {},

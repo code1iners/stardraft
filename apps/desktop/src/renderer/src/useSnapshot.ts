@@ -26,6 +26,8 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, sentry: event.sentry });
       } else if (event.type === 'sentry-projects-changed') {
         setSnapshot((current) => current && { ...current, sentryProjects: event.sentryProjects });
+      } else if (event.type === 'reproduction-changed') {
+        setSnapshot((current) => current && { ...current, reproduction: event.reproduction });
       } else if (event.type === 'global-problem-changed') {
         setSnapshot((current) => current && { ...current, globalProblem: event.globalProblem });
       } else if (event.type === 'agent-connections-changed') {

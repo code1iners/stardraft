@@ -15,6 +15,7 @@ import type { DiagnosisExports, DiagnosisReportFolder } from '../core/sentry/dia
 import type { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
 import { openableSentryUrl } from '../core/sentry/sentry-diagnosis';
 import { SENTRY_TARGET_KIND } from '../core/sentry/sentry-target-adapter';
+import type { ReproductionSettings, ReproductionState } from '../core/reproduction/reproduction-settings';
 import type { SentryProjects, SentryProjectsState, SentryRegisterOutcome, SentryUpdateOutcome } from '../core/sentry/sentry-projects';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
@@ -45,6 +46,8 @@ import {
   type EditorSnapshot,
   type FlowAccountProfile,
   type FlowAccountSnapshot,
+  type ReproductionSaveResult,
+  type ReproductionSnapshot,
   type SentryConnectionSnapshot,
   type SentryProjectSaveResult,
   type SentryProjectsSnapshot,
@@ -71,6 +74,8 @@ export interface IpcServices {
   flowAccount: FlowAccount;
   /** "Sentry" 칸의 토큰 확인과 조직. */
   sentryConnection: SentryConnection;
+  /** "저장소" 칸 재현 항목과 "에이전트" 칸 `재현` 탭의 재현 허용, 환경 파일, 재현 도구 권한. */
+  reproduction: ReproductionSettings;
   /** "Sentry" 칸의 프로젝트 등록과 "저장소" 칸 `Sentry` 탭의 저장소 매핑. */
   sentryProjects: SentryProjects;
   /** 감지한 Sentry 진단. 검토 화면의 `진단` 묶음과 프로젝트 줄의 "n건 대기"가 따른다. */
@@ -142,6 +147,12 @@ export function registerIpc(services: IpcServices): void {
     services.windows.broadcast({ type: 'sentry-projects-changed', sentryProjects: currentSentryProjectsSnapshot(services) });
   services.sentryProjects.onChange(broadcastSentryProjects);
   services.sentryDiagnoses.onChange(broadcastSentryProjects);
+  /** 재현 설정을 열린 창에 알린다. 저장소 줄은 매핑에서 오므로 어느 매핑이 바뀌어도 다시 보낸다. */
+  const broadcastReproduction = () =>
+    services.windows.broadcast({ type: 'reproduction-changed', reproduction: reproductionSnapshot(services.reproduction.state()) });
+  services.reproduction.onChange(broadcastReproduction);
+  services.repoMappings.onChange(broadcastReproduction);
+  services.sentryProjects.onChange(broadcastReproduction);
   services.globalProblems.onChange((current) =>
     services.windows.broadcast({ type: 'global-problem-changed', globalProblem: activeProblemSnapshot(current) }),
   );
@@ -289,6 +300,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     flowAccount: flowAccountSnapshot(flowAccount.state()),
     sentry: sentrySnapshot(sentryConnection.state()),
     sentryProjects: currentSentryProjectsSnapshot(services),
+    reproduction: reproductionSnapshot(services.reproduction.state()),
     globalProblem: activeProblemSnapshot(globalProblems.current()),
     agentConnections: agentConnectionsSnapshot(agentConnections),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
@@ -314,6 +326,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     flowAccount,
     sentryConnection,
     sentryProjects,
+    reproduction,
     agentConnections,
     agentPreferences,
     repoMappings,
@@ -394,6 +407,40 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       await showRejectedFolders(rejected ? [rejected] : []);
       return;
     }
+    case 'refresh-reproduction-repos':
+      await reproduction.refreshRepos();
+      return;
+    case 'refresh-reproduction-servers':
+      await reproduction.refreshServers();
+      return;
+    case 'set-reproduction-enabled': {
+      /** 저장한 결과. */
+      const outcome = await reproduction.setRepoEnabled(command.repoPath, command.enabled, command.envFile);
+      // 켜는 요청만 확인 모달이 결과를 기다린다. 끄는 요청은 상태 변경으로 화면이 따라간다.
+      if (command.enabled) windows.broadcast({ type: 'reproduction-saved', result: reproductionSaveResult(outcome.kind) });
+      return;
+    }
+    case 'pick-reproduction-env-file': {
+      /** 고른 환경 파일. 고르지 않고 닫으면 `null`. */
+      const path = await pickEnvFile(windows);
+      if (path === null) return;
+      /** 지정한 결과. 거부돼도(없는 파일 등) 화면은 그대로이고 로그에 남긴다. */
+      const outcome = await reproduction.setEnvFile(command.repoPath, path);
+      if (outcome.kind !== 'saved') logger.warn('reproduction.env-file-rejected', { reason: outcome.kind });
+      return;
+    }
+    case 'pick-reproduction-env-file-draft': {
+      /** 고른 환경 파일. 고르지 않고 닫으면 `null`. */
+      const path = await pickEnvFile(windows);
+      if (path !== null) windows.broadcast({ type: 'reproduction-env-file-picked', path });
+      return;
+    }
+    case 'set-reproduction-tool-mode':
+      await reproduction.setToolMode(command.mode);
+      return;
+    case 'set-reproduction-server-enabled':
+      await reproduction.setServerEnabled(command.agent, command.name, command.enabled);
+      return;
     case 'check-agents':
       await agentConnections.checkAll();
       return;
@@ -901,6 +948,47 @@ function saveResultOf(outcome: SentryRegisterOutcome | SentryUpdateOutcome): Sen
   if (outcome.kind === 'registered') return 'registered';
   if (outcome.kind === 'updated') return 'updated';
   return outcome.reason;
+}
+
+/** 재현 설정의 결과를 렌더러에 알릴 값으로 바꾼다. */
+function reproductionSaveResult(kind: 'saved' | 'unsupported' | 'not-mapped' | 'invalid-env-file'): ReproductionSaveResult {
+  return kind;
+}
+
+/** 파일 선택 창으로 재현용 환경 파일을 하나 받는다. 점으로 시작하는 파일(`.env`)도 보이게 한다. 고르지 않고 닫으면 `null`. */
+async function pickEnvFile(windows: AppWindows): Promise<string | null> {
+  /** 파일 선택 창 설정. */
+  const options: OpenDialogOptions = {
+    title: '재현용 환경 파일 고르기',
+    buttonLabel: '선택',
+    properties: ['openFile', 'showHiddenFiles'],
+  };
+  /** 설정 창. 있으면 그 위에 띄운다. */
+  const parent = windows.settingsWindow();
+  /** 고른 결과. */
+  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+/** core의 재현 설정 상태를 렌더러에 넘길 모양으로 바꾼다. 서버 정의의 값은 core가 이미 버렸고, 여기서도 이름·종류·출처·도구만 옮긴다. */
+function reproductionSnapshot(state: ReproductionState): ReproductionSnapshot {
+  return {
+    supported: state.supported,
+    repos: state.repos.map(({ path, enabled, envFile, envFileMissing }) => ({ path, enabled, envFile, envFileMissing })),
+    tools: {
+      mode: state.tools.mode,
+      status: state.tools.status,
+      servers: state.tools.servers.map(({ agent, name, kind, external, deniedTools, enabled }) => ({
+        agent,
+        name,
+        kind,
+        external,
+        deniedTools: [...deniedTools],
+        enabled,
+      })),
+      codexListFailed: state.tools.codexListFailed,
+    },
+  };
 }
 
 /** 폴더 선택 창으로 저장소 폴더를 하나 받는다. 고르지 않고 닫으면 `null`. */

@@ -54,7 +54,7 @@ export function draftInstructions(extraInstructions: string): string {
   return extra === '' ? DRAFT_INSTRUCTIONS : `${DRAFT_INSTRUCTIONS}\n\n## 사용자의 추가 지침\n${extra}`;
 }
 
-/** 입력 문서의 데이터 구획에 넣을 Flow 내용. 선택 실행과 초안 실행이 같은 것을 넘긴다. */
+/** 입력 문서의 데이터 구획에 넣을 Flow 내용. */
 export interface RunDataSource {
   /** 멘션 대신 최신 업무 제목과 본문에 답한다. */
   assignment?: boolean;
@@ -155,7 +155,7 @@ function numberedLines(number: number, text: string): string[] {
 
 /**
  * 입력 문서 끝에 두는 "# 데이터" 구획의 줄. 이름, Flow 프로젝트 이름, 멘션, 맥락처럼 Flow에서 온 것을 모두 여기에 넣는다.
- * 선택 실행과 초안 실행의 입력 문서가 같은 구획을 쓴다. 문서 끝까지라 Flow 글이 구획을 닫는 표시를 흉내 내 빠져나올 수 없다.
+ * 초안 실행의 입력 문서가 쓰는 구획이다. 문서 끝까지라 Flow 글이 구획을 닫는 표시를 흉내 내 빠져나올 수 없다.
  */
 export function dataSectionLines(source: RunDataSource): string[] {
   /** 마지막 멘션의 순번. 답할 대상이다. */

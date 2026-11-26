@@ -18,6 +18,15 @@ export interface TargetRef {
 export type GenerationRunKind = Exclude<RunKind, 'check'>;
 
 /**
+ * 폐지된 저장소 선택 실행. 새 실행은 이 종류를 돌리지 않고, 과거 실행 기록과 실패에 남은 값을 읽을 때만 허용한다.
+ * 화면에는 "저장소 선택(폐지됨)"으로 보인다.
+ */
+export type RetiredRunKind = 'selection';
+
+/** 저장된 실행 기록과 실패에서 읽을 수 있는 실행의 종류. 폐지된 저장소 선택 실행을 포함한다. */
+export type RecordedRunKind = RunKind | RetiredRunKind;
+
+/**
  * 생성 대기열에서 대상이 들어가는 자리. 앞 자리일수록 먼저 실행하고, 같은 자리끼리는 들어온 순서대로 실행한다.
  * - `resume`: 바로 이어서 돌아야 하는 대상. 끊긴 생성을 처음부터 다시 하는 대상(실행 중에 대상이 바뀜, 전역 실패나 어댑터 멈춤으로 멈춤,
  *   앱이 꺼지며 끊음)이다. 맨 앞이다.
@@ -73,8 +82,8 @@ export type RunResult = 'succeeded' | 'bundle-changed' | 'secret-patterns-change
  * 대상의 전체 기록에 속해 대상과 함께 지운다.
  */
 export interface RunRecord {
-  /** 실행의 종류. */
-  kind: RunKind;
+  /** 실행의 종류. 옛 기록은 폐지된 저장소 선택 실행일 수 있다. */
+  kind: RecordedRunKind;
   /** 실행한 에이전트. */
   agent: AgentId;
   /** 실행에서 본 CLI 버전. 모르면 `null`. */

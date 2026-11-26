@@ -249,12 +249,8 @@ const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
   'agent-error': '에이전트가 오류로 끝났습니다.',
 };
 
-/** 선택 실행이 제한 시간(5분) 안에 끝나지 않아 실패한 묶음의 오류 문장. 초안 실행의 시간 초과(10분)와 구분한다. */
-const SELECTION_TIMED_OUT_TEXT = '에이전트가 5분 안에 저장소를 고르지 못해 멈췄습니다.';
-
-/** 실패 화면에 보일 오류 문장. 사유마다 정해 두고, 선택 실행의 시간 초과만 선택 실행의 제한 시간으로 적는다. */
+/** 실패 화면에 보일 오류 문장. 사유마다 정해 둔다. */
 export function failureText(failure: FailureSnapshot): string {
-  if (failure.reason === 'timed-out' && failure.runKind === 'selection') return SELECTION_TIMED_OUT_TEXT;
   return FAILURE_REASON_TEXT[failure.reason];
 }
 
@@ -262,9 +258,6 @@ export function failureText(failure: FailureSnapshot): string {
 export const REPO_CHECK_TEXT: Record<RepoCheckSnapshot['kind'], string> = {
   unmapped: '이 Flow 프로젝트에 연결한 저장소가 없음',
   'missing-folders': '연결된 저장소 폴더를 찾을 수 없음',
-  'no-candidates': '작업 폴더에서 저장소를 찾지 못함',
-  unsure: '에이전트가 저장소를 확신하지 못함',
-  unrelated: '에이전트가 코드와 무관한 멘션으로 판정함',
 };
 
 /** 연결 버튼 문구. 저장소 매핑이 이미 있으면(같은 구성이어도) "매핑을 이 구성으로 바꾸기"다. */
@@ -287,11 +280,6 @@ export function repoCheckText(repoCheck: RepoCheckSnapshot): string {
   return repoCheck.kind === 'missing-folders' && repoCheck.chosenByUser ? '고른 저장소 폴더를 찾을 수 없음' : REPO_CHECK_TEXT[repoCheck.kind];
 }
 
-/** 선택 실행이 적은 이유. 에이전트가 비워 두었으면 "이유 없음"이다. */
-export function reasonText(reason: string): string {
-  return reason === '' ? '이유 없음' : reason;
-}
-
 /** 걸린 시간을 보인다. 1분이 넘으면 "2분 14초", 넘지 않으면 "45초"다. */
 export function formatDuration(durationMs: number): string {
   /** 반올림한 초. */
@@ -302,9 +290,17 @@ export function formatDuration(durationMs: number): string {
   return seconds === 0 ? `${minutes}분` : `${minutes}분 ${seconds}초`;
 }
 
-/** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"이다. */
+/** 과거 기록에 남은 폐지된 저장소 선택 실행의 이름. 실행 줄 맨 앞에 붙는다. */
+export const RETIRED_SELECTION_RUN_TEXT = '저장소 선택(폐지됨)';
+
+/** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"이고, 과거의 저장소 선택 실행은 맨 앞에 "저장소 선택(폐지됨)"이 붙는다. */
 export function runLineText(run: RunLineSnapshot): string {
-  return [AGENT_INFO[run.agent].name, formatDuration(run.durationMs), ...(run.contextOmitted ? ['맥락 일부 생략'] : [])].join(' · ');
+  return [
+    ...(run.kind === 'selection' ? [RETIRED_SELECTION_RUN_TEXT] : []),
+    AGENT_INFO[run.agent].name,
+    formatDuration(run.durationMs),
+    ...(run.contextOmitted ? ['맥락 일부 생략'] : []),
+  ].join(' · ');
 }
 
 /** 근거 번호를 원문자(①②…)로 보인다. ⑳을 넘으면 괄호 숫자다. */

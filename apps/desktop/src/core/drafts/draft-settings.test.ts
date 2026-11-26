@@ -33,7 +33,7 @@ async function setup(initial: ConstructorParameters<typeof MemorySettingsStore>[
 
 describe('설정 "초안" 칸: 추가 지침', () => {
   it('저장된 추가 지침을 읽고, 바꾼 지침을 저장해 알린다. 같은 지침과 너무 긴 지침은 저장하지 않는다', async () => {
-    const { settingsStore, draftSettings, calls, changes } = await setup({ extraInstructions: '맺음말을 붙입니다.', workFolders: ['/fake/work'] });
+    const { settingsStore, draftSettings, calls, changes } = await setup({ extraInstructions: '맺음말을 붙입니다.' });
     expect(draftSettings.state().extraInstructions).toBe('맺음말을 붙입니다.');
 
     await draftSettings.setExtraInstructions('맺음말을 붙입니다.');
@@ -42,7 +42,7 @@ describe('설정 "초안" 칸: 추가 지침', () => {
 
     await draftSettings.setExtraInstructions('호칭은 "님"으로 씁니다.\n맺음말은 붙이지 않습니다.');
 
-    expect(settingsStore.settings).toMatchObject({ extraInstructions: '호칭은 "님"으로 씁니다.\n맺음말은 붙이지 않습니다.', workFolders: ['/fake/work'] });
+    expect(settingsStore.settings).toMatchObject({ extraInstructions: '호칭은 "님"으로 씁니다.\n맺음말은 붙이지 않습니다.' });
     expect(draftSettings.state().extraInstructions).toBe('호칭은 "님"으로 씁니다.\n맺음말은 붙이지 않습니다.');
     expect(changes()).toBe(1);
     // 추가 지침은 다음 실행부터 쓰므로 실행을 다시 돌리거나 초안을 다시 검사하지 않는다.

@@ -172,7 +172,7 @@ describe('Codex 실행기: 인수 묶음', () => {
     expect(schemaFileContent).toEqual(DRAFT_SCHEMA);
   });
 
-  it('선택 실행과 작동 확인(점검 실행)은 git 저장소가 아닌 폴더에서 돌므로 --skip-git-repo-check를 붙인다. 초안 실행은 첫 저장소가 git 저장소 안이면 붙이지 않는다', async () => {
+  it('작동 확인(점검 실행)은 git 저장소가 아닌 폴더에서 돌므로 --skip-git-repo-check를 붙인다. 초안 실행은 첫 저장소가 git 저장소 안이면 붙이지 않는다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, exited(0, codexSuccessStream({ requirement: '가짜 요구' })));
     /** git 저장소가 아닌 작업 폴더. */
@@ -182,13 +182,12 @@ describe('Codex 실행기: 인수 묶음', () => {
     /** git 저장소가 아닌 코드 폴더(저장소 매핑은 이런 폴더도 받는다). */
     const plainCode = makeDir('plain-code');
 
-    await executor.run(draftRequest({ kind: 'selection', readRoots: [workFolder, join(root, 'work')] }));
     await executor.run(draftRequest({ kind: 'check', readRoots: [workFolder] }));
     await executor.run(draftRequest({ kind: 'draft', readRoots: [repoA, plainCode] }));
     await executor.run(draftRequest({ kind: 'draft', readRoots: [inside] }));
     await executor.run(draftRequest({ kind: 'draft', readRoots: [plainCode, repoA] }));
 
-    expect(runner.requests.map((request) => request.args.includes('--skip-git-repo-check'))).toEqual([true, true, false, false, true]);
+    expect(runner.requests.map((request) => request.args.includes('--skip-git-repo-check'))).toEqual([true, false, false, true]);
     // 플래그는 -C 바로 뒤에 둔다.
     expect(runner.requests[0]?.args.slice(7, 10)).toEqual(['-C', workFolder, '--skip-git-repo-check']);
   });

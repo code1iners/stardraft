@@ -11,8 +11,6 @@ export type EditorChoice =
 export interface Settings {
   /** 파일 형식 버전. 앱이 아는 것보다 크면 실행하지 않는다. */
   schemaVersion: number;
-  /** 작업 폴더의 절대 경로 목록. */
-  workFolders: string[];
   /** 저장소 매핑. Flow 프로젝트 ID → 저장소 절대 경로 목록. */
   repoMappings: Record<string, string[]>;
   /** 기본 에이전트. */
@@ -41,7 +39,6 @@ export const SETTINGS_SCHEMA_VERSION = 1;
 /** 처음 실행할 때의 설정. */
 export const DEFAULT_SETTINGS: Settings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
-  workFolders: [],
   repoMappings: {},
   defaultAgent: 'claude-code',
   agentCliPaths: {},

@@ -44,8 +44,8 @@ export type AgentId = (typeof AGENT_IDS)[number];
 /** 모델 고르기 명령이 받는 모델 이름의 최대 길이. */
 export const AGENT_MODEL_MAX_LENGTH = 200;
 
-/** 작업 폴더·저장소 매핑 명령이 받는 경로의 최대 길이. */
-export const WORK_FOLDER_PATH_MAX_LENGTH = 4096;
+/** 저장소 매핑 명령이 받는 경로의 최대 길이. */
+export const REPO_FOLDER_PATH_MAX_LENGTH = 4096;
 
 /** 저장소 매핑 명령이 받는 Flow 프로젝트 ID의 최대 길이. */
 export const FLOW_PROJECT_ID_MAX_LENGTH = 64;
@@ -217,60 +217,6 @@ export interface AgentPreferencesSnapshot {
   models: Partial<Record<AgentId, ModelChoiceSnapshot>>;
 }
 
-/** 작업 폴더에서 찾은 저장소 하나. */
-export interface RepoCandidateSnapshot {
-  /** 화면에 보일 이름. 작업 폴더에서의 상대 경로이고, 작업 폴더 자체가 저장소면 폴더 이름이다. */
-  name: string;
-  /** 저장소의 절대 경로. */
-  path: string;
-}
-
-/** 작업 폴더 하나를 훑은 상태. */
-export type WorkFolderScanSnapshot =
-  /** 훑고 있다. */
-  | { status: 'scanning' }
-  /** 훑기를 마쳤다. 저장소가 없으면 빈 목록이다. */
-  | { status: 'found'; repos: RepoCandidateSnapshot[] }
-  /** 폴더가 없거나 읽을 수 없다. */
-  | { status: 'missing' };
-
-/** 작업 폴더로 받지 않은 이유. `network`는 네트워크 경로, `wsl`은 WSL 경로다. */
-export type RejectedFolderReason = 'network' | 'wsl';
-
-/** 작업 폴더 하나. */
-export interface WorkFolderSnapshot {
-  /** 작업 폴더의 절대 경로. */
-  path: string;
-  /** 훑은 상태. */
-  scan: WorkFolderScanSnapshot;
-}
-
-/** "이 PC에서 찾은 폴더" 하나. */
-export interface WorkFolderSuggestionSnapshot {
-  /** 폴더의 절대 경로. */
-  path: string;
-  /** 그 안에서 찾은 저장소 수. */
-  repoCount: number;
-}
-
-/** 작업 폴더로 받지 않은 폴더 하나. */
-export interface RejectedFolderSnapshot {
-  /** 고른 경로. */
-  path: string;
-  /** 받지 않은 이유. */
-  reason: RejectedFolderReason;
-}
-
-/** 설정 "저장소" 칸의 작업 폴더. */
-export interface WorkFoldersSnapshot {
-  /** 작업 폴더. 저장한 순서다. */
-  folders: WorkFolderSnapshot[];
-  /** 작업 폴더가 아닌 "이 PC에서 찾은 폴더". */
-  suggestions: WorkFolderSuggestionSnapshot[];
-  /** 마지막 추가에서 받지 않은 폴더. */
-  rejected: RejectedFolderSnapshot[];
-}
-
 /** 매핑된 저장소 폴더를 확인한 상태. `missing`은 폴더를 찾을 수 없는 것이다. */
 export type MappedRepoStatus = 'checking' | 'found' | 'missing';
 
@@ -312,18 +258,30 @@ export type ParticipantProjectsSnapshot =
   | { status: 'loaded'; projects: ParticipantProjectSnapshot[] }
   | { status: 'failed'; reason: ParticipantProjectsFailure };
 
+/** 저장소 매핑이 없어 묶음이 기다리는 Flow 프로젝트 하나. 설정 "저장소" 칸 맨 위에 "저장소 매핑 없음 · n건 대기"로 보인다. */
+export interface WaitingRepoProjectSnapshot {
+  /** Flow 프로젝트 ID. [폴더 고르기…] 명령에 실어 보낸다. */
+  projectId: string;
+  /** Flow 프로젝트 이름. 모르면 `null`. */
+  title: string | null;
+  /** 저장소 매핑 필요로 기다리는 묶음 수. */
+  waitingCount: number;
+}
+
 /** 설정 "저장소" 칸의 저장소 매핑. */
 export interface RepoMappingsSnapshot {
   /** 저장된 매핑. */
   mappings: RepoMappingSnapshot[];
+  /** 매핑이 없어 묶음이 기다리는 Flow 프로젝트. 대기 건수가 많은 순이다. */
+  waiting: WaitingRepoProjectSnapshot[];
   /** 매핑에서 고를 참여 Flow 프로젝트 목록. */
   projects: ParticipantProjectsSnapshot;
 }
 
-/** 감지를 시작하기 전에 필요한 필수 세 가지. 작은 창과 설정 창 띠에 이 순서로 보인다. */
-export const SETUP_REQUIREMENTS = ['flow-key', 'agent', 'work-folders'] as const;
+/** 감지를 시작하기 전에 필요한 필수 설정. 에이전트 연결 하나다. */
+export const SETUP_REQUIREMENTS = ['agent'] as const;
 
-/** 필수 설정 하나. `flow-key`는 확인된 키, `agent`는 에이전트 연결, `work-folders`는 작업 폴더 1개 이상이다. */
+/** 필수 설정 하나. `agent`는 에이전트 연결이다. */
 export type SetupRequirement = (typeof SETUP_REQUIREMENTS)[number];
 
 /** 필수 설정 하나의 상태. `checking`은 에이전트 연결을 확인하는 중이다. */
@@ -342,10 +300,12 @@ export type DetectionStartSnapshot =
 export interface OnboardingSnapshot {
   /** 감지를 시작했는지 여부. 시작한 뒤에는 첫 설정 띠와 필수 설정 전 화면이 나오지 않는다. */
   detectionStarted: boolean;
-  /** 필수 세 가지의 상태. */
+  /** 필수 설정의 상태. */
   requirements: Record<SetupRequirement, SetupRequirementStatus>;
-  /** 필수 세 가지가 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
+  /** 필수 설정이 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
   ready: boolean;
+  /** 감지할 대상(Flow 계정)을 하나라도 연결했는지 여부. 없으면 [감지 시작] 위에 안내 문구를 보인다. */
+  hasDetectionTarget: boolean;
   /** [감지 시작]의 진행 상태. */
   start: DetectionStartSnapshot;
 }
@@ -583,13 +543,6 @@ export interface RepositorySnapshot {
   path: string;
 }
 
-/** 자동 선택으로 초안의 저장소를 정한 내력. 저장소 영역에 자동으로 고른 이유로 보인다. */
-export type AutoSelectionSnapshot =
-  /** 작업 폴더에서 찾은 후보가 하나라 선택 실행 없이 그 저장소를 썼다. */
-  | { kind: 'single-candidate' }
-  /** 선택 실행이 골랐다. `reason`이 비어 있으면 "이유 없음"으로 보인다. */
-  | { kind: 'chosen'; reason: string };
-
 /** 초안 실행이 만든 초안. */
 export interface DraftSnapshot {
   /** 에이전트가 이해한 요구. `summary`는 목록 행에 보인다. */
@@ -600,8 +553,6 @@ export interface DraftSnapshot {
   evidence: EvidenceSnapshot[];
   /** 쓴 저장소. 첫 저장소가 실행의 cwd였다. */
   repositories: RepositorySnapshot[];
-  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑이나 사용자가 고른 구성으로 정했으면 `null`. */
-  autoSelection: AutoSelectionSnapshot | null;
   /** 쓴 저장소 구성을 그 Flow 프로젝트의 저장소 매핑과 견준 것. 저장소 영역의 연결 버튼 문구를 정한다. */
   mapping: MappingMatchSnapshot;
   /** 편집기 텍스트. 편집했으면 편집본, 아니면 원래 초안의 문장을 이은 것이다(근거 번호 없음). */
@@ -670,6 +621,8 @@ export interface RepoPickerSnapshot {
 
 /** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"처럼 보인다. 비용은 넘기지 않는다. */
 export interface RunLineSnapshot {
+  /** 실행의 종류. 과거 기록의 저장소 선택 실행은 `selection`이고 "저장소 선택(폐지됨)"으로 보인다. */
+  kind: GenerationRunKindSnapshot;
   /** 실행한 에이전트. */
   agent: AgentId;
   /** 걸린 시간(밀리초). */
@@ -703,7 +656,7 @@ export type DraftFailureReasonSnapshot =
   | 'max-turns'
   | 'agent-error';
 
-/** 묶음 하나를 만들 때 돌리는 실행의 종류. 선택 실행과 초안 실행이다. */
+/** 묶음 하나를 만들 때 돌리는 실행의 종류. 초안 실행과, 과거 기록에만 있는 폐지된 저장소 선택 실행(`selection`)이다. */
 export type GenerationRunKindSnapshot = 'selection' | 'draft';
 
 /** 생성이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
@@ -718,7 +671,7 @@ export interface FailureSnapshot {
   runKind: GenerationRunKindSnapshot | null;
 }
 
-/** 저장소 대기의 사유. 저장소 매핑 필요(`unmapped`)와 저장소 확인 필요(`missing-folders`)가 지금의 두 상태이고, 나머지는 자동 선택 때 멈춘 옛 묶음의 사유다. */
+/** 저장소 대기의 사유. 저장소 매핑 필요(`unmapped`)와 저장소 확인 필요(`missing-folders`)다. */
 export type RepoCheckSnapshot =
   /** 저장소 매핑 필요. 매핑도 사용자가 고른 저장소도 없어 기다린다. */
   | { kind: 'unmapped' }
@@ -726,14 +679,7 @@ export type RepoCheckSnapshot =
    * 연결된 저장소 폴더를 찾을 수 없음. `paths`는 찾을 수 없는 폴더의 절대 경로다.
    * `chosenByUser`면 저장소 매핑이 아니라 저장소 선택 창에서 고른 구성의 폴더라 "고른 저장소 폴더를 찾을 수 없음"으로 보인다.
    */
-  | { kind: 'missing-folders'; paths: string[]; chosenByUser: boolean }
-  /** 자동 선택을 하려 했지만 작업 폴더에서 저장소를 찾지 못함. */
-  | { kind: 'no-candidates' }
-  /**
-   * 선택 실행이 저장소를 확신하지 못했거나 코드와 무관한 멘션이라고 판정함. 사유와 작업 폴더의 후보(작업 폴더 안의 이름과 경로)다.
-   * 후보는 에이전트가 짚은 것(`picked`, 짚은 순서)과 나머지(`others`, 찾은 순서)로 나눈다.
-   */
-  | { kind: 'unsure' | 'unrelated'; reason: string; picked: RepositorySnapshot[]; others: RepositorySnapshot[] };
+  | { kind: 'missing-folders'; paths: string[]; chosenByUser: boolean };
 
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
@@ -789,7 +735,7 @@ export interface BundleSnapshot {
   generation: GenerationSnapshot | null;
   /** 생성이 실패한 까닭. 실패가 아니면 `null`. */
   failure: FailureSnapshot | null;
-  /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
+  /** 저장소 대기의 사유. 저장소 대기가 아니면 `null`. */
   repoCheck: RepoCheckSnapshot | null;
   /** 게시 중 묶음의 단계. 게시 중이 아니면 `null`. */
   posting: PostingSnapshot | null;
@@ -927,11 +873,9 @@ export interface AppSnapshot {
   agentConnections: AgentConnectionSnapshot[];
   /** 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferencesSnapshot;
-  /** 작업 폴더와 "이 PC에서 찾은 폴더". */
-  workFolders: WorkFoldersSnapshot;
   /** 저장소 매핑과 고를 참여 Flow 프로젝트 목록. */
   repoMappings: RepoMappingsSnapshot;
-  /** 필수 세 가지와 감지 시작 여부. */
+  /** 필수 설정와 감지 시작 여부. */
   onboarding: OnboardingSnapshot;
   /** 로그인 시 자동 시작이 켜져 있는지 여부. */
   launchAtLogin: boolean;
@@ -963,11 +907,9 @@ export type AppEvent =
   | { type: 'agent-connections-changed'; agentConnections: AgentConnectionSnapshot[] }
   /** 기본 에이전트나 모델 선택이 바뀌었다. 연결된 에이전트가 바뀔 때도 온다. */
   | { type: 'agent-preferences-changed'; agentPreferences: AgentPreferencesSnapshot }
-  /** 작업 폴더나 그 훑은 결과, "이 PC에서 찾은 폴더"가 바뀌었다. */
-  | { type: 'work-folders-changed'; workFolders: WorkFoldersSnapshot }
   /** 저장소 매핑이나 그 폴더 확인 결과, 참여 Flow 프로젝트 목록이 바뀌었다. */
   | { type: 'repo-mappings-changed'; repoMappings: RepoMappingsSnapshot }
-  /** 필수 세 가지의 상태나 감지 시작 여부, [감지 시작]의 진행 상태가 바뀌었다. */
+  /** 필수 설정의 상태나 감지 시작 여부, [감지 시작]의 진행 상태가 바뀌었다. */
   | { type: 'onboarding-changed'; onboarding: OnboardingSnapshot }
   /** 로그인 시 자동 시작이 켜지거나 꺼졌다. */
   | { type: 'launch-at-login-changed'; launchAtLogin: boolean }
@@ -1016,14 +958,6 @@ export type AppCommand =
   | { type: 'set-default-agent'; agent: AgentId }
   /** 에이전트의 모델을 고른다. `null`은 기본 모델(에이전트가 정함)이다. 목록에 없는 모델은 main이 받지 않는다. */
   | { type: 'set-agent-model'; agent: AgentId; model: string | null }
-  /** 폴더 선택 창으로 작업 폴더를 여러 개 고른다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
-  | { type: 'pick-work-folders' }
-  /** "이 PC에서 찾은 폴더"를 작업 폴더로 더한다. 지금 제안에 없는 경로는 main이 받지 않는다. */
-  | { type: 'add-suggested-work-folder'; path: string }
-  /** 작업 폴더를 지운다. 그 안을 가리키는 저장소 매핑은 그대로 둔다. */
-  | { type: 'remove-work-folder'; path: string }
-  /** 작업 폴더와 "이 PC에서 찾은 폴더"를 다시 훑는다. "저장소" 칸을 열 때 보낸다. */
-  | { type: 'refresh-work-folders' }
   /** 연결된 폴더를 다시 확인하고 참여 Flow 프로젝트 목록을 다시 받는다. "저장소" 칸을 열 때와 [다시 불러오기]에 보낸다. */
   | { type: 'refresh-repo-mappings' }
   /** 폴더 선택 창으로 고른 폴더를 Flow 프로젝트에 연결한다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
@@ -1032,7 +966,7 @@ export type AppCommand =
   | { type: 'remove-mapping-repo'; projectId: string; path: string }
   /** 매핑을 통째로 지운다. */
   | { type: 'remove-repo-mapping'; projectId: string }
-  /** [감지 시작]. 필수 세 가지가 다 되기 전이거나 이미 시작했으면 main이 무시한다. */
+  /** [감지 시작]. 필수 설정가 다 되기 전이거나 이미 시작했으면 main이 무시한다. */
   | { type: 'start-detection' }
   /** 로그인 시 자동 시작을 켜거나 끈다. */
   | { type: 'set-launch-at-login'; enabled: boolean }
@@ -1177,9 +1111,9 @@ function isAgentModelInput(value: unknown): value is string | null {
   return value === null || (typeof value === 'string' && value !== '' && value.length <= AGENT_MODEL_MAX_LENGTH);
 }
 
-/** 작업 폴더·저장소 매핑 명령에 실을 수 있는 경로인지 확인한다. 목록이나 제안에 있는 경로인지는 main이 본다. */
-function isWorkFolderPathInput(value: unknown): value is string {
-  return typeof value === 'string' && value !== '' && value.length <= WORK_FOLDER_PATH_MAX_LENGTH;
+/** 저장소 매핑 명령에 실을 수 있는 경로인지 확인한다. 목록에 있는 경로인지는 main이 본다. */
+function isFolderPathInput(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= REPO_FOLDER_PATH_MAX_LENGTH;
 }
 
 /** 저장소 매핑 명령에 실을 수 있는 Flow 프로젝트 ID인지 확인한다. 참여 목록이나 매핑에 있는 ID인지는 main이 본다. */
@@ -1285,18 +1219,15 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isAgentId(candidate.agent) && isAgentModelInput(candidate.model)
         ? { type: 'set-agent-model', agent: candidate.agent, model: candidate.model }
         : null;
-    case 'add-suggested-work-folder':
-    case 'remove-work-folder':
-      return isWorkFolderPathInput(candidate.path) ? { type: candidate.type, path: candidate.path } : null;
     case 'pick-mapping-repos':
     case 'remove-repo-mapping':
       return isFlowProjectIdInput(candidate.projectId) ? { type: candidate.type, projectId: candidate.projectId } : null;
     case 'remove-mapping-repo':
-      return isFlowProjectIdInput(candidate.projectId) && isWorkFolderPathInput(candidate.path)
+      return isFlowProjectIdInput(candidate.projectId) && isFolderPathInput(candidate.path)
         ? { type: 'remove-mapping-repo', projectId: candidate.projectId, path: candidate.path }
         : null;
     case 'set-repo-picker-checked':
-      return isWorkFolderPathInput(candidate.path) && typeof candidate.checked === 'boolean'
+      return isFolderPathInput(candidate.path) && typeof candidate.checked === 'boolean'
         ? { type: 'set-repo-picker-checked', path: candidate.path, checked: candidate.checked }
         : null;
     case 'set-launch-at-login':
@@ -1372,8 +1303,6 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
     case 'check-agents':
-    case 'pick-work-folders':
-    case 'refresh-work-folders':
     case 'refresh-repo-mappings':
     case 'start-detection':
     case 'pick-repo-picker-folders':

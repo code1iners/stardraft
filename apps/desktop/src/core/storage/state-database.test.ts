@@ -327,8 +327,8 @@ describe('멘션 묶음', () => {
       autoSelection: { kind: 'chosen', reason: '재시도 설정을 묻고 있어 서버 저장소를 골랐습니다.' },
       createdAt: 2_000,
     };
-    /** 선택 실행이 확신하지 못한 사유. */
-    const unsure: RepoCheck = {
+    /** 자동 선택 때 저장한 옛 사유. 지금 타입에는 없고 읽을 때 저장소 매핑 필요로 본다. */
+    const legacyUnsure = {
       kind: 'unsure',
       reason: '어느 저장소인지 알 수 없습니다.',
       candidates: [
@@ -336,7 +336,7 @@ describe('멘션 묶음', () => {
         { name: 'team/web', path: '/fake/work/team/web' },
       ],
       picked: ['/fake/work/team/web'],
-    };
+    } as unknown as RepoCheck;
     /** 저장할 실행 기록. */
     const run: RunRecord = {
       kind: 'draft',
@@ -362,8 +362,8 @@ describe('멘션 묶음', () => {
           runs: [{ ...run, kind: 'selection', result: 'timed-out', usage: null }],
         }),
         bundle([mention('103', { postId: '90000012' })], { repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }),
-        bundle([mention('104', { postId: '90000013' })], { repoCheck: { kind: 'no-candidates' } }),
-        bundle([mention('105', { postId: '90000014' })], { repoCheck: unsure }),
+        bundle([mention('104', { postId: '90000013' })], { repoCheck: { kind: 'no-candidates' } as unknown as RepoCheck }),
+        bundle([mention('105', { postId: '90000014' })], { repoCheck: legacyUnsure }),
       ],
       '105',
     );
@@ -381,8 +381,9 @@ describe('멘션 묶음', () => {
         runs: [{ ...run, kind: 'selection', result: 'timed-out', usage: null }],
       },
       { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] }, runs: [] },
-      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'no-candidates' }, runs: [] },
-      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: unsure, runs: [] },
+      // 옛 사유는 저장소 매핑 필요로 읽는다. 앱을 켤 때의 다시 판정이 맞는 상태로 옮긴다.
+      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'unmapped' }, runs: [] },
+      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'unmapped' }, runs: [] },
     ]);
     expect([ready?.id, failed?.id]).toEqual([1, 2]);
   });

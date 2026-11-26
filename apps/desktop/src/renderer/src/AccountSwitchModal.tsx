@@ -46,7 +46,7 @@ export function AccountSwitchModal({ account }: AccountSwitchModalProps) {
       >
         <h3 id="account-switch-title">{account.name} 계정의 키입니다</h3>
         <p id="account-switch-body">지금까지의 멘션·초안·기록을 지우고 이 계정으로 처음부터 시작합니다.</p>
-        <p className="muted small">작업 폴더, 저장소 매핑, 에이전트, 지침 같은 설정은 그대로 둡니다.</p>
+        <p className="muted small">저장소 매핑, 에이전트, 지침 같은 설정은 그대로 둡니다.</p>
         <div className="modal-actions">
           <button ref={cancelRef} type="button" className="btn" onClick={handleCancel}>
             취소

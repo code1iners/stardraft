@@ -235,7 +235,7 @@ describe('마이그레이션', () => {
   it('state.db를 올리기 직전에 state.db와 settings.json의 사본을 앱 버전 이름으로 남긴다', async () => {
     const first = await openReady({ appVersion: '0.1.0' });
     await first.stateStore.setAccount(FAKE_ACCOUNT);
-    await first.settingsStore.save({ ...DEFAULT_SETTINGS, workFolders: ['/fake/code'] });
+    await first.settingsStore.save({ ...DEFAULT_SETTINGS, extraInstructions: '가짜 지침' });
     closeOpened();
     /** 마이그레이션 전 settings.json 내용. */
     const settingsBefore = readFileSync(settingsPath(), 'utf8');

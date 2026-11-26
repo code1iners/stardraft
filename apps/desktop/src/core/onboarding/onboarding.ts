@@ -6,23 +6,21 @@ import type { SettingsStore } from '../ports/settings-store';
 import type { StateStore } from '../ports/state-store';
 import type { LaunchAtLogin } from './launch-at-login';
 
-/** 감지를 시작하기 전에 필요한 필수 세 가지. 작은 창과 설정 창 띠에 이 순서로 보인다. */
-export const SETUP_REQUIREMENTS = ['flow-key', 'agent', 'work-folders'] as const;
+/** 감지를 시작하기 전에 필요한 필수 설정. 에이전트 연결 하나다. Flow 계정은 감지할 대상이라 필수가 아니다. */
+export const SETUP_REQUIREMENTS = ['agent'] as const;
 
-/** 필수 설정 하나. `flow-key`는 확인된 키, `agent`는 에이전트 연결, `work-folders`는 작업 폴더 1개 이상이다. */
+/** 필수 설정 하나. `agent`는 에이전트 연결이다. */
 export type SetupRequirement = (typeof SETUP_REQUIREMENTS)[number];
 
 /** 필수 설정 하나의 상태. `checking`은 에이전트 연결을 확인하는 중이다. */
 export type SetupRequirementStatus = 'done' | 'needed' | 'checking';
 
-/** 필수 세 가지를 판단하는 데 쓰는 지금 앱 상태. 각 칸의 모듈이 저장한 값에서 읽는다. */
+/** 필수 설정과 감지할 대상을 판단하는 데 쓰는 지금 앱 상태. 각 칸의 모듈이 저장한 값에서 읽는다. */
 export interface SetupInputs {
-  /** Flow가 확인해 준 키로 계정이 연결되어 있고 "키 확인 필요"가 없는지 여부. */
+  /** Flow가 확인해 준 키로 계정이 연결되어 있고 "키 확인 필요"가 없는지 여부. 감지할 대상(선택)이다. */
   keyVerified: boolean;
   /** 에이전트 연결 상태. */
   agent: 'connected' | 'checking' | 'not-connected';
-  /** 작업 폴더 수. */
-  workFolderCount: number;
 }
 
 /** [감지 시작]이 실패한 이유. */
@@ -50,10 +48,12 @@ export type DetectionStart =
 export interface OnboardingState {
   /** 감지를 시작했는지 여부. 시작한 뒤에는 첫 설정 띠와 필수 설정 전 화면이 다시 나오지 않는다. */
   detectionStarted: boolean;
-  /** 필수 세 가지의 상태. */
+  /** 필수 설정의 상태. */
   requirements: Record<SetupRequirement, SetupRequirementStatus>;
-  /** 필수 세 가지가 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
+  /** 필수 설정이 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
   ready: boolean;
+  /** 감지할 대상(Flow 계정)을 하나라도 연결했는지 여부. 없으면 [감지 시작] 위에 안내 문구를 보인다. */
+  hasDetectionTarget: boolean;
   /** [감지 시작]의 진행 상태. */
   start: DetectionStart;
 }
@@ -79,7 +79,7 @@ export interface OnboardingOptions {
   logger: Logger;
   /** [감지 시작]이 켜는 로그인 시 자동 시작. */
   launchAtLogin: LaunchAtLogin;
-  /** 필수 세 가지를 판단할 지금 앱 상태. */
+  /** 필수 설정을 판단할 지금 앱 상태. */
   setupInputs: () => SetupInputs;
   /** 지금 키로 Flow 연결을 만든다. 쓸 키가 없으면 `null`. */
   connectFlow: () => FlowConnection | null;
@@ -91,7 +91,7 @@ export interface OnboardingOptions {
 const IDLE: DetectionStart = { status: 'idle' };
 
 /**
- * 첫 실행 온보딩: 필수 세 가지(확인된 키, 에이전트 연결, 작업 폴더)의 상태를 모으고, [감지 시작]으로 기준점을 잡는다.
+ * 첫 실행 온보딩: 필수 설정(에이전트 연결)의 상태를 모으고, [감지 시작]으로 감지를 시작한다. Flow를 연결했으면 그때 기준점도 잡는다.
  * 각 항목은 해당 칸의 모듈이 바로 저장하므로, 중간에 닫았다 다시 켜도 통과한 항목은 그대로다. 순서는 강제하지 않는다.
  */
 export class Onboarding {
@@ -112,14 +112,17 @@ export class Onboarding {
     this.lastState = this.state();
   }
 
-  /** 지금 상태. 필수 세 가지는 부를 때마다 입력에서 읽는다. */
+  /** 지금 상태. 필수 설정은 부를 때마다 입력에서 읽는다. */
   state(): OnboardingState {
-    /** 필수 세 가지의 상태. */
-    const requirements = requirementsOf(this.options.setupInputs());
+    /** 지금 앱 상태. */
+    const inputs = this.options.setupInputs();
+    /** 필수 설정의 상태. */
+    const requirements = requirementsOf(inputs);
     return {
       detectionStarted: this.detectionStarted,
       requirements,
       ready: SETUP_REQUIREMENTS.every((requirement) => requirements[requirement] === 'done'),
+      hasDetectionTarget: inputs.keyVerified,
       start: this.start,
     };
   }
@@ -133,37 +136,45 @@ export class Onboarding {
   }
 
   /**
-   * 필수 세 가지의 입력(계정, 전역 문제, 에이전트 연결, 작업 폴더)이 바뀌었을 수 있다. 상태가 달라졌으면 알린다.
-   * 필수 항목이 바뀌면 지난 [감지 시작] 실패 문구는 더 맞지 않으므로 지운다(예: 거부된 키를 다시 확인함).
+   * 필수 설정과 감지할 대상의 입력(계정, 전역 문제, 에이전트 연결)이 바뀌었을 수 있다. 상태가 달라졌으면 알린다.
+   * 필수 설정이나 감지할 대상이 바뀌면 지난 [감지 시작] 실패 문구는 더 맞지 않으므로 지운다(예: 거부된 키를 다시 확인함).
    */
   refresh(): void {
-    if (this.start.status === 'failed' && this.lastState && !sameRequirements(this.lastState, this.state())) this.start = IDLE;
+    if (this.start.status === 'failed' && this.lastState && !sameSetup(this.lastState, this.state())) this.start = IDLE;
     this.emitIfChanged();
   }
 
   /**
-   * [감지 시작]. 알림 목록을 한 번 조회해 가장 최근 `alarmId`를 기준점으로 저장하고, 감지 시작과 로그인 시 자동 시작을 켠 뒤 시작 알림을 띄운다.
-   * 과거 멘션은 가져오지 않는다. 기준점이나 감지 시작 여부를 저장하지 못하면 시작하지 않은 것으로 둔다.
+   * [감지 시작]. Flow를 연결했으면 알림 목록을 한 번 조회해 가장 최근 `alarmId`를 기준점으로 저장한다. 과거 멘션은 가져오지 않는다.
+   * Flow를 연결하지 않았으면 기준점 없이 시작하고, 나중에 Flow를 연결하면 그때 기준점을 잡는다.
+   * 감지 시작과 로그인 시 자동 시작을 켠 뒤 시작 알림을 띄운다. 기준점이나 감지 시작 여부를 저장하지 못하면 시작하지 않은 것으로 둔다.
    */
   async startDetection(): Promise<DetectionStartOutcome> {
     if (this.detectionStarted || this.start.status === 'starting' || !this.state().ready) return { kind: 'skipped' };
     this.setStart({ status: 'starting' });
 
-    /** 지금 키로 만든 Flow 연결. */
-    const flow = this.options.connectFlow();
-    if (!flow) return this.fail('no-key');
+    /** 기준점을 잡은 알림 수. Flow를 연결하지 않았으면 `null`. */
+    let alarmCount: number | null = null;
+    /** 기준점. Flow를 연결하지 않았으면 `null`. */
+    let baseline: string | null = null;
+    if (this.options.setupInputs().keyVerified) {
+      /** 지금 키로 만든 Flow 연결. */
+      const flow = this.options.connectFlow();
+      if (!flow) return this.fail('no-key');
 
-    /** 가장 최근 쪽의 알림 목록. */
-    const page = await flow.api.listMentionAlarms(null);
-    if (!page.ok) {
-      if (page.failure.kind === 'unauthorized') flow.reportKeyRejected();
-      return this.fail(startFailureOf(page.failure));
+      /** 가장 최근 쪽의 알림 목록. */
+      const page = await flow.api.listMentionAlarms(null);
+      if (!page.ok) {
+        if (page.failure.kind === 'unauthorized') flow.reportKeyRejected();
+        return this.fail(startFailureOf(page.failure));
+      }
+      // 알림이 하나도 없으면 0으로 잡아 그 뒤의 멘션을 모두 처리한다.
+      baseline = latestAlarmId(page.value.alarms) ?? '0';
+      alarmCount = page.value.alarms.length;
     }
 
-    /** 기준점. 알림이 하나도 없으면 0으로 잡아 그 뒤의 멘션을 모두 처리한다. */
-    const baseline = latestAlarmId(page.value.alarms) ?? '0';
     try {
-      await this.options.stateStore.setBaselineAlarmId(baseline);
+      if (baseline !== null) await this.options.stateStore.setBaselineAlarmId(baseline);
       // 다른 칸의 변경을 덮지 않게 저장 직전에 설정을 다시 읽는다.
       /** 저장 직전의 설정. */
       const settings = await this.options.settingsStore.load();
@@ -175,7 +186,7 @@ export class Onboarding {
 
     this.detectionStarted = true;
     this.start = IDLE;
-    this.options.logger.info('onboarding.detection-started', { alarmCount: page.value.alarms.length });
+    this.options.logger.info('onboarding.detection-started', { alarmCount });
     this.emitIfChanged();
     // 자동 시작을 켜지 못해도 감지는 시작한 것으로 둔다. 설정 "일반"에서 다시 켤 수 있다.
     await this.options.launchAtLogin.set(true);
@@ -211,12 +222,10 @@ export class Onboarding {
   }
 }
 
-/** 입력에서 필수 세 가지의 상태를 정한다. */
-function requirementsOf({ keyVerified, agent, workFolderCount }: SetupInputs): Record<SetupRequirement, SetupRequirementStatus> {
+/** 입력에서 필수 설정의 상태를 정한다. */
+function requirementsOf({ agent }: SetupInputs): Record<SetupRequirement, SetupRequirementStatus> {
   return {
-    'flow-key': keyVerified ? 'done' : 'needed',
     agent: agent === 'connected' ? 'done' : agent === 'checking' ? 'checking' : 'needed',
-    'work-folders': workFolderCount > 0 ? 'done' : 'needed',
   };
 }
 
@@ -232,7 +241,12 @@ function startFailureOf(failure: FlowApiFailure): DetectionStartFailure {
   }
 }
 
-/** 두 상태의 필수 세 가지가 같은지 본다. */
+/** 두 상태의 필수 설정과 감지할 대상 연결이 같은지 본다. */
+function sameSetup(a: OnboardingState, b: OnboardingState): boolean {
+  return a.hasDetectionTarget === b.hasDetectionTarget && sameRequirements(a, b);
+}
+
+/** 두 상태의 필수 설정이 같은지 본다. */
 function sameRequirements(a: OnboardingState, b: OnboardingState): boolean {
   return SETUP_REQUIREMENTS.every((requirement) => a.requirements[requirement] === b.requirements[requirement]);
 }
@@ -241,7 +255,7 @@ function sameRequirements(a: OnboardingState, b: OnboardingState): boolean {
 function sameState(a: OnboardingState, b: OnboardingState): boolean {
   return (
     a.detectionStarted === b.detectionStarted &&
-    sameRequirements(a, b) &&
+    sameSetup(a, b) &&
     a.start.status === b.start.status &&
     (a.start.status !== 'failed' || b.start.status !== 'failed' || a.start.reason === b.start.reason)
   );

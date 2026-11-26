@@ -213,6 +213,18 @@ describe('저장소 선택 창에서 고르기', () => {
     });
   });
 
+  it('"폴더 직접 고르기"에서 네트워크·WSL 폴더는 후보에 더하지 않고 받지 않은 폴더로 돌려준다', async () => {
+    const extra = await repo('elsewhere/extra');
+    const { picker } = await setup({ bundle: bundle({ repoCheck: { kind: 'unmapped' } }) });
+    picker.open(7);
+
+    /** 받지 않은 폴더. */
+    const rejected = picker.addFolders(['\\\\server\\share\\code', extra]);
+
+    expect(rejected).toEqual([{ path: '\\\\server\\share\\code', reason: 'network' }]);
+    expect(picker.state()?.choices.map((choice) => choice.path)).toEqual([extra]);
+  });
+
   it('고른 구성으로 만들면 체크한 저장소를 후보 순서대로 넘겨 다시 만들고 창을 닫는다. 고른 것이 없으면 만들지 않는다', async () => {
     const [api, web, batch] = [await repo('work/api'), await repo('work/web'), await repo('work/batch')];
     const { picker, regenerated } = await setup({

@@ -9,7 +9,6 @@ import { createLogger } from '../logging/logger';
 import type { FlowConnection, FlowProject } from '../ports/flow-api';
 import type { Settings } from '../ports/settings-store';
 import { RepoMappings } from './repo-mappings';
-import { WorkFolders } from './work-folders';
 
 /** 테스트마다 만드는 가짜 홈 폴더. */
 let home: string;
@@ -165,15 +164,41 @@ describe('저장소 연결', () => {
     expect(mappings.state().mappings.map((mapping) => mapping.projectId)).toEqual(['102']);
   });
 
+  it('네트워크·WSL 폴더는 연결하지 않고 받지 않은 폴더로 돌려준다. 로컬 폴더는 그대로 연결한다', async () => {
+    const api = await folder('api');
+    const { settingsStore, mappings } = await setup();
+    await mappings.refresh();
+
+    /** 받지 않은 폴더. */
+    const rejected = await mappings.addRepos('101', ['\\\\server\\share\\code', api, '\\\\wsl$\\Ubuntu\\repo']);
+
+    expect(rejected).toEqual([
+      { path: '\\\\server\\share\\code', reason: 'network' },
+      { path: '\\\\wsl$\\Ubuntu\\repo', reason: 'wsl' },
+    ]);
+    expect(settingsStore.settings.repoMappings).toEqual({ '101': [api] });
+  });
+
+  it('참여 목록에 없는 Flow 프로젝트는 받지 않지만, 그 프로젝트의 묶음이 매핑을 기다리는 중이면 매핑을 만든다', async () => {
+    const api = await folder('api');
+    const { settingsStore, mappings } = await setup({}, null);
+
+    await mappings.addRepos('900002', [api]);
+    expect(settingsStore.settings.repoMappings).toEqual({});
+
+    await mappings.addRepos('900002', [api], true);
+    expect(settingsStore.settings.repoMappings).toEqual({ '900002': [api] });
+  });
+
   it('저장 직전에 설정을 다시 읽어 다른 칸의 변경을 덮지 않는다', async () => {
     const api = await folder('api');
     const { settingsStore, mappings } = await setup();
     await mappings.refresh();
-    settingsStore.settings.workFolders = [home];
+    settingsStore.settings.extraInstructions = '가짜 지침';
 
     await mappings.addRepos('101', [api]);
 
-    expect(settingsStore.settings.workFolders).toEqual([home]);
+    expect(settingsStore.settings.extraInstructions).toBe('가짜 지침');
   });
 });
 
@@ -259,22 +284,6 @@ describe('사라진 폴더', () => {
     await mappings.refresh();
 
     expect(mappings.state().mappings[0]?.repos).toEqual([{ path: api, status: 'missing' }]);
-  });
-
-  it('작업 폴더를 지워도 그 안을 가리키는 매핑은 그대로 남는다', async () => {
-    const work = await folder('work');
-    const api = await folder('work/api');
-    const settingsStore = new MemorySettingsStore({ workFolders: [work], repoMappings: { '101': [api] } });
-    const logger = createLogger([], new FakeClock());
-    const workFolders = new WorkFolders({ settingsStore, logger, homeDir: home });
-    const mappings = new RepoMappings({ settingsStore, logger, connectFlow: () => null });
-    await Promise.all([workFolders.load(), mappings.load()]);
-
-    await workFolders.remove(work);
-    await mappings.refresh();
-
-    expect(settingsStore.settings.repoMappings).toEqual({ '101': [api] });
-    expect(mappings.state().mappings[0]?.repos).toEqual([{ path: api, status: 'found' }]);
   });
 });
 

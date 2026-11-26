@@ -540,7 +540,7 @@ export class SqliteStateStore implements StateStore, GenerationQueueStore {
       processedAt: row.processed_at,
       context: readJson<BundleContext>(row.context),
       watchedContext: readJson<BundleContext>(row.watched_context),
-      repoCheck: readJson<RepoCheck>(row.repo_check),
+      repoCheck: readRepoCheck(row.repo_check),
       userRepos: readJson<string[]>(row.user_repos),
       draft: readJson<Draft>(row.draft),
       editedText: row.edited_text,
@@ -875,6 +875,17 @@ function readJson<T>(json: string | null): T | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 저장소 대기의 사유를 읽는다. 자동 선택 때 저장한 옛 사유(후보 없음, 확신 없음, 코드와 무관함)는 저장소 매핑 필요로 읽는다.
+ * 저장된 값은 고치지 않으며, 앱을 켤 때의 다시 판정이 묶음을 맞는 상태로 옮긴다.
+ */
+function readRepoCheck(json: string | null): RepoCheck | null {
+  /** 저장된 사유. */
+  const stored = readJson<{ kind?: string }>(json);
+  if (stored === null) return null;
+  return stored.kind === 'missing-folders' ? (stored as RepoCheck) : { kind: 'unmapped' };
 }
 
 /** 값을 JSON으로 쓴다. `null`이면 열을 비운다. */

@@ -9,14 +9,14 @@ import { FLOW_TARGET_KIND, FlowTargetAdapter } from './flow-target-adapter';
 
 export type { RunnableAgent } from '../generation/generation-queue';
 
-/** 선택 실행과 초안 실행에 쓸 에이전트. 생성 대기열의 에이전트와 같다. */
+/** 초안 실행에 쓸 에이전트. 생성 대기열의 에이전트와 같다. */
 export type DraftAgent = QueueAgent;
 
 /** 생성 중 묶음의 진행. 생성 대기열의 진행과 같다. */
 export type DraftProgress = GenerationProgress;
 
 /**
- * 선택 실행과 초안 실행에 쓸 에이전트를 고른다. 기본 에이전트의 연결이 만든 실행기와 실행 직전 확인, 그 에이전트에 고른 모델이다.
+ * 초안 실행에 쓸 에이전트를 고른다. 기본 에이전트의 연결이 만든 실행기와 실행 직전 확인, 그 에이전트에 고른 모델이다.
  * 연결된 에이전트가 없거나(기본 에이전트가 없음) 기본 에이전트의 연결이 없으면 `null`이고, 초안 대기열은 기다린다.
  */
 export const draftAgentFrom = queueAgentFrom;
@@ -52,7 +52,7 @@ export interface DraftQueueOptions {
 /**
  * 초안 대기열. Flow 멘션 묶음을 묶음 ID로 다루는 창구로, 생성 대기열에 Flow 어댑터를 붙여 돌린다.
  * 실행 자리, 우선순위, 대기열 저장과 복원, 실행 직전 에이전트 확인, 재시도, 멈춤, 취소, 앱 종료는 생성 대기열이 맡고,
- * 맥락 조회와 자동 선택, 초안 검증, 결과 저장은 Flow 어댑터가 맡는다.
+ * 맥락 조회, 초안 검증, 결과 저장은 Flow 어댑터가 맡는다.
  */
 export class DraftQueue {
   /** Flow 어댑터를 붙인 생성 대기열. */
@@ -135,7 +135,7 @@ export class DraftQueue {
 
   /**
    * 준비됨이나 저장소 확인 필요 묶음을 저장소 선택 창에서 고른 구성으로 다시 만든다. "다른 저장소로 다시 만들기"와 "저장소를 골라 만들기"다.
-   * 매번 새 실행이고, 처음 입력에 읽을 저장소만 바꿔 넘긴다(직전 결과는 넘기지 않는다). 매핑이 없어도 선택 실행은 돌리지 않는다.
+   * 매번 새 실행이고, 처음 입력에 읽을 저장소만 바꿔 넘긴다(직전 결과는 넘기지 않는다). 매핑이 없어도 만든다.
    */
   regenerateWithRepos(bundleId: number, repos: readonly string[]): Promise<void> {
     return this.changeByUser(bundleId, (bundles) => bundles.regenerateWithRepos(bundleId, repos));
@@ -143,7 +143,7 @@ export class DraftQueue {
 
   /**
    * 준비됨 묶음을 다시 만든다. 다시 만들기, 지시를 덧붙여 다시 만들기, 요구 고치기다.
-   * 매번 새 실행이고 사용자 행동이라 감지해서 기다리는 묶음보다 앞에 들어간다. 자동 선택으로 저장소를 정한 묶음도 선택 실행은 다시 돌리지 않는다.
+   * 매번 새 실행이고 사용자 행동이라 감지해서 기다리는 묶음보다 앞에 들어간다.
    */
   regenerate(bundleId: number, request: RegenerationRequest): Promise<void> {
     return this.changeByUser(bundleId, (bundles) => bundles.regenerate(bundleId, request));

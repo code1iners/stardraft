@@ -45,7 +45,7 @@ export type RunCheck<T extends TargetTypes> =
   | { kind: 'rejected'; fixes: string[]; reason: RunFailureReason };
 
 /**
- * 에이전트 실행 하나. 대상 하나를 만드는 동안 여러 실행이 이어질 수 있다(Flow의 선택 실행 → 초안 실행).
+ * 에이전트 실행 하나. 대상 하나를 만드는 동안 여러 실행이 이어질 수 있다(실행이 이어지는 대상).
  * 대기열이 실행 직전 확인, 일시적 실패 재시도, 전역 실패 판정, 실행 기록을 맡고 어댑터는 요청과 결과 읽기만 맡는다.
  */
 export interface TargetRun<T extends TargetTypes, Output = unknown> {

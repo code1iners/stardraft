@@ -391,7 +391,6 @@ describe('묶음 스냅숏: 초안 실행', () => {
         { name: 'billing-api', path: '/fake/work/billing-api' },
         { name: 'billing-web', path: '/fake/work/billing-web' },
       ],
-      autoSelection: null,
       mapping: 'same',
       editorText: '다섯 번까지 다시 시도합니다. 테스트 환경은 세 번으로 보입니다.',
       edited: false,
@@ -403,7 +402,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
       postBodyPrefixLength: 30,
       canPost: true,
     });
-    expect(snapshot.run).toEqual({ agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
+    expect(snapshot.run).toEqual({ kind: 'draft', agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
     expect(JSON.stringify(snapshot)).not.toContain('costUsd');
   });
 
@@ -432,7 +431,7 @@ describe('묶음 스냅숏: 초안 실행', () => {
     expect(failed).toMatchObject({
       group: 'failed',
       failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry', runKind: 'selection' },
-      run: { agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
+      run: { kind: 'draft', agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
       draft: null,
     });
     expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false });
@@ -479,74 +478,37 @@ describe('묶음 스냅숏: 저장소 대기', () => {
   });
 });
 
-describe('묶음 스냅숏: 자동 선택', () => {
-  it('선택 실행이 고르지 않은 저장소 확인 필요 묶음은 선택 실행의 사유와, 에이전트가 짚은 후보(짚은 순서)와 작업 폴더의 나머지 후보를 나눠 넘긴다. 후보가 없었으면 그 사유를 넘긴다', () => {
-    /** 작업 폴더의 후보. */
-    const candidates = [
-      { name: 'billing-api', path: '/fake/work/billing-api' },
-      { name: 'team/billing-batch', path: '/fake/work/team/billing-batch' },
-      { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
-    ];
-    /** 선택 실행이 확신하지 못한 묶음의 스냅숏. */
-    const unsure = bundleSnapshot(
-      bundle({
-        repoCheck: {
-          kind: 'unsure',
-          reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽인지 알 수 없습니다.',
-          candidates,
-          picked: ['/fake/work/team/billing-web', '/fake/work/billing-api'],
-        },
-      }),
-      () => null,
-    );
-
-    expect(unsure.repoCheck).toEqual({
-      kind: 'unsure',
-      reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽인지 알 수 없습니다.',
-      picked: [
-        { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
-        { name: 'billing-api', path: '/fake/work/billing-api' },
-      ],
-      others: [{ name: 'team/billing-batch', path: '/fake/work/team/billing-batch' }],
+describe('묶음 스냅숏: 저장소 대기와 폐지된 선택 실행', () => {
+  it('저장소 대기 묶음은 저장소 매핑 필요와 저장소 확인 필요의 사유만 넘긴다. 고른 구성이 있으면 그 구성의 폴더라고 알린다', () => {
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'unmapped' } }), () => null).repoCheck).toEqual({ kind: 'unmapped' });
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).repoCheck).toEqual({
+      kind: 'missing-folders',
+      paths: ['/fake/work/gone'],
+      chosenByUser: false,
     });
-    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'unrelated', reason: '', candidates, picked: [] } }), () => null).repoCheck).toMatchObject({
-      picked: [],
-      others: candidates,
-    });
-    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'no-candidates' } }), () => null).repoCheck).toEqual({ kind: 'no-candidates' });
-  });
-
-  it('선택 실행만 돌고 저장소 확인 필요가 된 묶음은 그 선택 실행의 실행 줄을 넘기고, 매핑된 폴더가 사라져 실행하지 않은 묶음은 실행 줄이 없다', () => {
-    /** 선택 실행이 확신하지 못한 묶음의 스냅숏. */
-    const unsure = bundleSnapshot(
-      bundle({
-        repoCheck: { kind: 'unsure', reason: '모르겠습니다.', candidates: [], picked: [] },
-        runs: [run({ kind: 'selection', startedAt: 0, finishedAt: 62_000 })],
-      }),
-      () => null,
-    );
-
-    expect(unsure.run).toEqual({ agent: 'claude-code', durationMs: 62_000, contextOmitted: false });
-    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).run).toBeNull();
-  });
-
-  it('자동 선택으로 만든 준비됨 묶음의 초안은 자동 선택의 내력(선택 실행의 이유, 후보가 하나였음)을 넘긴다', () => {
-    /** 초안 하나. */
-    const draft = {
-      requirement: { text: '요구', summary: '요약' },
-      paragraphs: [{ sentences: [{ text: '문장입니다.', evidence: [] }] }],
-      evidence: [],
-      repositories: ['/fake/work/billing-api'],
-      createdAt: 144_000,
-    };
-
     expect(
-      bundleSnapshot(bundle({ status: 'ready', draft: { ...draft, autoSelection: { kind: 'chosen', reason: '서버 설정을 묻고 있습니다.' } } }), () => null).draft
-        ?.autoSelection,
-    ).toEqual({ kind: 'chosen', reason: '서버 설정을 묻고 있습니다.' });
-    expect(bundleSnapshot(bundle({ status: 'ready', draft: { ...draft, autoSelection: { kind: 'single-candidate' } } }), () => null).draft?.autoSelection).toEqual({
-      kind: 'single-candidate',
-    });
+      bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] }, userRepos: ['/fake/work/gone'] }), () => null).repoCheck,
+    ).toMatchObject({ chosenByUser: true });
+  });
+
+  it('실패한 묶음의 마지막 실행이 과거의 저장소 선택 실행이면 실행 줄이 선택 실행으로 읽히고, 초안 실행이면 초안 실행이다', () => {
+    /** 선택 실행에서 멈춘 실패 묶음의 스냅숏. */
+    const selection = bundleSnapshot(
+      bundle({ status: 'failed', failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'selection' }, runs: [run({ kind: 'selection', startedAt: 0, finishedAt: 62_000 })] }),
+      () => null,
+    );
+    /** 초안 실행에서 멈춘 실패 묶음의 스냅숏. */
+    const draft = bundleSnapshot(
+      bundle({ status: 'failed', failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'draft' }, runs: [run({ kind: 'draft', startedAt: 0, finishedAt: 62_000 })] }),
+      () => null,
+    );
+
+    expect(selection.run).toEqual({ kind: 'selection', agent: 'claude-code', durationMs: 62_000, contextOmitted: false });
+    expect(draft.run).toEqual({ kind: 'draft', agent: 'claude-code', durationMs: 62_000, contextOmitted: false });
+  });
+
+  it('매핑된 폴더가 사라져 실행하지 않은 묶음은 실행 줄이 없다', () => {
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).run).toBeNull();
   });
 });
 

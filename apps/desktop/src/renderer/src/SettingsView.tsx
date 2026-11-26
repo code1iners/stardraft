@@ -79,7 +79,7 @@ export function SettingsView({ initialSection }: SettingsViewProps) {
                 platform={snapshot.platform}
               />
             )}
-            {section === 'repositories' && snapshot && <RepositoriesSection workFolders={snapshot.workFolders} repoMappings={snapshot.repoMappings} />}
+            {section === 'repositories' && snapshot && <RepositoriesSection repoMappings={snapshot.repoMappings} />}
             {section === 'drafts' && snapshot && <DraftsSection snapshot={snapshot} />}
             {section === 'general' && <GeneralSection snapshot={snapshot} />}
           </main>

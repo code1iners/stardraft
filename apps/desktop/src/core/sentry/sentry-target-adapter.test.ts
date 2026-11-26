@@ -13,7 +13,7 @@ import type { QueuedTarget } from '../generation/generation-run';
 import { GenerationQueue } from '../generation/generation-queue';
 import type { TargetAdapter } from '../generation/target-adapter';
 import { createLogger } from '../logging/logger';
-import type { ExecutorOutcome } from '../ports/executor';
+import type { AgentId, ExecutorOutcome, ReproductionMcp } from '../ports/executor';
 import type { GenerationQueueStore } from '../ports/generation-queue-store';
 import type { SentryErrorIssue, SentryOrganization } from '../ports/sentry-api';
 import type { SentryProjectRegistration } from '../ports/settings-store';
@@ -264,6 +264,10 @@ async function setup({ mapped = true, reproduction = null }: { mapped?: boolean;
   if (envFile !== null) writeFileSync(envFile, reproduction!.envFile!);
   /** 재현 허용. 테스트가 바꿀 수 있다. */
   const reproductionState = { enabled: reproduction?.enabled ?? false };
+  /** 재현에 실을 MCP. 테스트가 바꿀 수 있다. `fail`이면 정의를 읽지 못한다. */
+  const mcpState: { mcp: ReproductionMcp; fail: boolean } = { mcp: { servers: [], env: {}, skipped: [] }, fail: false };
+  /** MCP를 읽은 에이전트와 원본 저장소. */
+  const mcpLoads: { agent: AgentId; sourceRoot: string }[] = [];
   /** 가짜 시뮬레이터. 켜진 기기 목록과 끈 기기를 기록한다. */
   const devices = { booted: ['USER-SIM'], shutDown: [] as string[] };
   const copies = new ReproductionCopies({
@@ -296,6 +300,11 @@ async function setup({ mapped = true, reproduction = null }: { mapped?: boolean;
         },
       },
       attachments: folders,
+      mcp: async (agent, sourceRoot) => {
+        mcpLoads.push({ agent, sourceRoot });
+        if (mcpState.fail) throw new Error('정의를 읽지 못함');
+        return structuredClone(mcpState.mcp);
+      },
     },
   });
   const flow = new PassingFlowAdapter();
@@ -343,6 +352,8 @@ async function setup({ mapped = true, reproduction = null }: { mapped?: boolean;
     devices,
     parallel,
     reproductionState,
+    mcpState,
+    mcpLoads,
   };
 }
 
@@ -1194,5 +1205,77 @@ describe('Sentry 어댑터: 재현도 다시 하기', () => {
     expect(env.executor.requests[1]!.reproduction).not.toBeNull();
     expect(env.byIssue('101')!.report).toMatchObject({ reproduction: { result: 'failure' }, attachments: [] });
     expect(await env.folders.list(id)).toEqual([]);
+  });
+});
+
+describe('Sentry 어댑터: 재현에 MCP 싣기', () => {
+  it('재현하는 진단은 실행하는 에이전트와 원본 저장소로 MCP를 읽어 재현 경계에 싣고, 실린 서버와 빠진 서버·까닭을 이름만 실행 정보에 적는다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    env.mcpState.mcp = {
+      servers: [
+        { name: 'playwright', definition: { command: 'npx', env: { KEY: 'fake-secret-value' } } },
+        { name: 'docs', definition: { type: 'http', url: 'https://fake.example/mcp' } },
+      ],
+      env: { DOCS_TOKEN: 'fake-docs-token' },
+      skipped: [
+        { name: 'off', reason: 'disabled' },
+        { name: 'needs-token', reason: 'missing-variable' },
+      ],
+    };
+    await env.detect('101');
+    // 일부 서버가 뜨지 않아도 실행은 진행된다.
+    env.executor.script({ outcome: { type: 'completed', output: reproducingOutput(env.repo) }, report: { mcpFailedServers: ['docs'] } });
+
+    await env.queue.start();
+    await settle();
+
+    expect(env.mcpLoads).toEqual([{ agent: 'claude-code', sourceRoot: env.repo }]);
+    expect(env.executor.requests[0]!.reproduction?.mcp).toEqual(env.mcpState.mcp);
+    /** 저장된 보고서. */
+    const report = env.byIssue('101')!.report!;
+    expect(report.run.mcpServers).toEqual({
+      loaded: ['playwright'],
+      skipped: [
+        { name: 'off', reason: 'disabled' },
+        { name: 'needs-token', reason: 'missing-variable' },
+        { name: 'docs', reason: 'connection-failed' },
+      ],
+    });
+    // 정의의 값은 보고서와 로그에 남지 않는다.
+    expect(JSON.stringify(report)).not.toContain('fake-secret-value');
+    expect(JSON.stringify(report)).not.toContain('fake-docs-token');
+    expect(env.logged.join('')).not.toContain('fake-secret-value');
+  });
+
+  it('MCP 정의를 읽지 못하면 서버 없이 재현한다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    env.mcpState.fail = true;
+    await env.detect('101');
+    env.executor.script({ outcome: { type: 'completed', output: reproducingOutput(env.repo) } });
+
+    await env.queue.start();
+    await settle();
+
+    expect(env.executor.requests[0]!.reproduction?.mcp).toEqual({ servers: [], env: {}, skipped: [] });
+    expect(env.byIssue('101')!.report!.run.mcpServers).toEqual({ loaded: [], skipped: [] });
+  });
+
+  it('읽기 전용 진단과 사본을 만들지 못한 진단에는 MCP를 싣지 않고 실행 정보에도 적지 않는다', async () => {
+    const readOnly = await setup();
+    await readOnly.detect('101');
+    readOnly.executor.script({ outcome: { type: 'completed', output: reportOutput(readOnly.repo) } });
+    await readOnly.queue.start();
+    await settle();
+    expect(readOnly.mcpLoads).toEqual([]);
+    expect(readOnly.executor.requests[0]!.reproduction).toBeUndefined();
+    expect(readOnly.byIssue('101')!.report!.run.mcpServers).toBeNull();
+
+    const noCopy = await setup({ reproduction: { enabled: true, failClone: true } });
+    await noCopy.detect('101');
+    noCopy.executor.script({ outcome: { type: 'completed', output: reportOutput(noCopy.repo) } });
+    await noCopy.queue.start();
+    await settle();
+    expect(noCopy.mcpLoads).toEqual([]);
+    expect(noCopy.byIssue('101')!.report!.run.mcpServers).toBeNull();
   });
 });

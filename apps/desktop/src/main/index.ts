@@ -6,6 +6,7 @@ import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { AgentConnections } from '../core/agent/agent-connections';
 import { AgentPreferences } from '../core/agent/agent-preferences';
+import { readLoginShellVariables } from '../core/agent/login-shell-variables';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
 import { AccountRecords } from '../core/account/account-records';
 import { FlowAccount, type FlowAccountRecords } from '../core/account/flow-account';
@@ -15,6 +16,7 @@ import { SentryDetection } from '../core/sentry/sentry-detection';
 import { DiagnosisAttachmentFolders } from '../core/sentry/diagnosis-attachments';
 import { DiagnosisExports, DiagnosisReportFolder } from '../core/sentry/diagnosis-exports';
 import { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
+import { ReproductionMcpLoader } from '../core/reproduction/mcp-loading';
 import { ReproductionSettings } from '../core/reproduction/reproduction-settings';
 import { osascriptCloner, ReproductionCopies } from '../core/reproduction/reproduction-copies';
 import { localPortOpen, Simulators } from '../core/reproduction/simulators';
@@ -283,7 +285,19 @@ function start(): void {
     };
     const repoMappings = new RepoMappings({ settingsStore: appData.settingsStore, logger, connectFlow: connectCurrentFlow });
     await repoMappings.load();
-    /** 설정 "저장소" 칸 재현 항목과 "에이전트" 칸 `재현` 탭의 재현 허용, 재현용 환경 파일, 재현 도구 권한. 이 단계에서는 설정만 다루고 실행은 하지 않는다. */
+    /** Claude Code 설정 파일(`~/.claude.json`, 설정 폴더를 바꿨으면 그 폴더의 것). 재현 도구 목록과 재현에 싣는 MCP가 읽는다. */
+    const readClaudeConfig = () => readJsonFile(join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), '.claude.json'));
+    /** Codex CLI와 자식 환경. 아직 찾지 못했으면 `null`. */
+    const codexLaunch = () => {
+      /** Codex 연결 확인. */
+      const connection = agentConnections.get('codex');
+      /** Codex CLI 경로. */
+      const cliPath = connection?.state().details.cliPath ?? null;
+      /** 자식 환경. */
+      const env = connection?.processEnv() ?? null;
+      return cliPath !== null && env ? { cliPath, env } : null;
+    };
+    /** 설정 "저장소" 칸 재현 항목과 "에이전트" 칸 `재현` 탭의 재현 허용, 재현용 환경 파일, 재현 도구 권한. 설정만 다루고 실행은 하지 않는다. */
     const reproduction = new ReproductionSettings({
       settingsStore: appData.settingsStore,
       logger,
@@ -293,27 +307,9 @@ function start(): void {
         ...repoMappings.state().mappings.flatMap((mapping) => mapping.repos.map((repo) => repo.path)),
         ...sentryProjects.state().projects.flatMap((project) => (project.repo ? [project.repo.path] : [])),
       ],
-      readClaudeConfig: async () => {
-        /** Claude Code 설정 폴더. */
-        const configDir = process.env.CLAUDE_CONFIG_DIR ?? homedir();
-        try {
-          return JSON.parse(await readFile(join(configDir, '.claude.json'), 'utf8')) as unknown;
-        } catch (error) {
-          // 설정 파일이 없으면 등록한 서버가 없는 것이다.
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-          throw error;
-        }
-      },
+      readClaudeConfig,
       runner: new NodeProcessRunner(),
-      codexLaunch: () => {
-        /** Codex 연결 확인. */
-        const connection = agentConnections.get('codex');
-        /** Codex CLI 경로. */
-        const cliPath = connection?.state().details.cliPath ?? null;
-        /** 자식 환경. */
-        const env = connection?.processEnv() ?? null;
-        return cliPath !== null && env ? { cliPath, env } : null;
-      },
+      codexLaunch,
       cwd: dataFolderPath(),
       isFile: async (path) => (await stat(path).catch(() => null))?.isFile() ?? false,
     });
@@ -380,6 +376,29 @@ function start(): void {
       logger,
     });
     void reproductionCopies.sweep();
+    /** 설정 저장소. 나중에 부르는 함수에서도 쓴다. */
+    const settingsStore = appData.settingsStore;
+    /**
+     * 재현하는 진단에 싣는 MCP. 실행할 때마다 실행하는 CLI의 정의와 재현 도구 권한을 다시 읽고,
+     * 정의가 참조한 변수만 로그인 셸에서 읽는다. 정의와 값은 디스크와 로그에 남기지 않는다.
+     */
+    const reproductionMcp = new ReproductionMcpLoader({
+      tools: async () => (await settingsStore.load()).reproductionTools,
+      readClaudeConfig,
+      readProjectFile: (repoPath) => readJsonFile(join(repoPath, '.mcp.json')),
+      runner: new NodeProcessRunner(),
+      codexLaunch,
+      cwd: dataFolderPath(),
+      readVariables: (names) =>
+        readLoginShellVariables({
+          runner: new NodeProcessRunner(),
+          shell: loginShellPath(),
+          env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+          cwd: app.getPath('home'),
+          names,
+        }),
+      logger,
+    });
     /** 지금 쓸 수 있는 에이전트 CLI의 자식 환경. 시뮬레이터 정리가 adb를 찾는 데 쓴다. */
     const agentEnv = () => agentConnections.get('claude-code')?.processEnv() ?? agentConnections.get('codex')?.processEnv() ?? null;
     /** 재현하는 진단이 새로 켠 시뮬레이터·에뮬레이터 정리. */
@@ -433,6 +452,7 @@ function start(): void {
             copies: reproductionCopies,
             devices: simulators,
             attachments: attachmentFolders,
+            mcp: (agent, sourceRoot) => reproductionMcp.load(agent, sourceRoot),
           },
         }),
       ],
@@ -799,6 +819,16 @@ async function checkAppLocation(): Promise<BlockedLocationReason | null> {
   const bundlePath = macBundlePathOf(process.execPath);
   if (!bundlePath) throw new Error('실행 파일이 앱 번들 안에 있지 않습니다.');
   return checkInstallLocation(bundlePath);
+}
+
+/** JSON 파일을 읽는다. 파일이 없으면 `null`이다. 깨진 JSON은 던진다(오류 메시지에 파일 조각이 들 수 있어 부르는 쪽이 원문을 남기지 않는다). */
+async function readJsonFile(path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, 'utf8')) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 /** 사용자의 로그인 셸. Finder에서 켠 앱도 `$SHELL`을 받지만, 없으면 계정 정보의 셸을 쓴다. */

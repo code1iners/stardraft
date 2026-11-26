@@ -42,6 +42,7 @@ function report(reproduction: Partial<DiagnosisReport['reproduction']> = {}): Di
       reproductionAllowed: true,
       durationMs: 134_000,
       createdAt: DETECTED_AT + 60_000,
+      mcpServers: null,
     },
     priorDiagnosis: null,
     attachments: [],
@@ -247,6 +248,27 @@ describe('보고서 마크다운', () => {
 
   it('시도한 것이 없는 실패·불가는 빈 목록을 쓰지 않는다', () => {
     expect(reportMarkdown(diagnosis(), report({ result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] }), 'x', [])).not.toContain('시도한 것');
+  });
+
+  it('재현하는 진단의 실행 정보에는 실린 MCP 서버와 빠진 서버·까닭이 이름만 적히고, 읽기 전용 진단에는 MCP 줄이 없다', () => {
+    /** MCP 칸별 마크다운. */
+    const of = (mcpServers: DiagnosisReport['run']['mcpServers']) => reportMarkdown(diagnosis(), { ...report(), run: { ...report().run, mcpServers } }, 'x', []);
+
+    expect(of(null)).not.toContain('MCP');
+    expect(
+      of({
+        loaded: ['playwright', 'mobile-mcp'],
+        skipped: [
+          { name: 'docs', reason: 'missing-variable' },
+          { name: 'remote', reason: 'connection-failed' },
+          { name: 'off', reason: 'disabled' },
+        ],
+      }),
+    ).toContain('- 실린 MCP 서버: playwright, mobile-mcp\n- 빠진 MCP 서버: docs(변수 없음), remote(연결 실패), off(꺼 둠)');
+    /** 실을 서버가 없던 재현. */
+    const none = of({ loaded: [], skipped: [] });
+    expect(none).toContain('- 실린 MCP 서버: 없음');
+    expect(none).not.toContain('빠진 MCP 서버');
   });
 
   it('위치를 찾지 못한 근거에는 그 사실을 적는다', () => {

@@ -1,6 +1,12 @@
 import type { AgentId } from '../ports/executor';
 import { deniedServerFor } from './denied-tools';
 
+/**
+ * Codex MCP 목록·상세 명령에 붙이는 설정. 플러그인 MCP를 끄면 사용자 설정 파일(`config.toml`)의 서버만 나온다(0.172.0 실측).
+ * 플러그인 MCP는 재현에 싣지 않으므로 목록에도 넣지 않는다.
+ */
+export const CODEX_MCP_CONFIG_ARGS: readonly string[] = ['-c', 'features.plugins=false'];
+
 /** MCP 서버의 연결 종류. */
 export type McpServerKind = 'stdio' | 'http' | 'sse' | 'ws' | 'unknown';
 

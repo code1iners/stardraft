@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { codexNotLoggedInStream, codexStream as stream, codexSuccessStream, fakeCodexEvent } from '../fakes/fake-codex-events';
 import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
-import type { ExecutorRunRequest } from '../ports/executor';
+import type { ExecutorRunRequest, ReproductionMcp } from '../ports/executor';
 import type { AgentLaunch, AgentRunReport } from './agent-launch';
 import { CodexExecutor } from './codex-executor';
 import type { ProcessRequest } from './process-runner';
@@ -290,8 +290,9 @@ describe('Codex 실행기: 재현 경계', () => {
     // 임시 폴더 쓰기를 열면 같은 임시 폴더의 다른 사본도 열린다.
     expect(configs.some((config) => config.includes(':tmpdir'))).toBe(false);
     expect(configs).toEqual(expect.arrayContaining(['features.apps=false', 'features.hooks=false', 'web_search="disabled"']));
-    // 이 단계에서는 MCP를 싣지 않는다.
+    // 실을 서버가 없으면 MCP 설정을 넘기지 않는다.
     expect(configs.some((config) => config.startsWith('mcp_servers'))).toBe(false);
+    expect(configs.some((config) => config.startsWith('shell_environment_policy'))).toBe(false);
   });
 
   it('환경 변수는 최소 목록만 넘기고, 강제로 끝낼 때 자손 프로세스 그룹(MCP 서버, 셸 명령)까지 끝내게 한다', async () => {
@@ -308,6 +309,90 @@ describe('Codex 실행기: 재현 경계', () => {
     expect(runner.requests[0]?.env).toEqual({ PATH: CHILD_ENV.PATH, HOME: CHILD_ENV.HOME, LANG: CHILD_ENV.LANG, TMPDIR: '/var/folders/fake/T/', CODEX_HOME: '/Users/fake/.codex' });
     expect(runner.requests[0]?.killDescendants).toBe(true);
     expect(runner.requests[1]?.killDescendants).toBeFalsy();
+  });
+
+  /** 정의의 평문 값을 옮긴 가짜 비밀 값. 명령줄 인자에 나오면 안 된다. */
+  const MCP_SECRET = 'FAKE-MCP-SECRET-0b7d';
+
+  /** 싣기 모듈이 만든 가짜 MCP. 평문 값은 이미 변수로 옮겨져 있다. */
+  const FAKE_MCP: ReproductionMcp = {
+    servers: [
+      { name: 'playwright', definition: { command: 'npx', args: ['@playwright/mcp'], env_vars: ['API_KEY'], disabled_tools: ['browser_close', 'browser_file_upload'] } },
+      { name: 'my.remote', definition: { url: 'https://fake.example/mcp', env_http_headers: { 'X-Api-Key': 'STARDRAFT_MCP_HEADER_1' }, enabled_tools: ['search'] } },
+    ],
+    env: { API_KEY: MCP_SECRET, STARDRAFT_MCP_HEADER_1: MCP_SECRET },
+    skipped: [],
+  };
+
+  /** 고정 deny 표의 모든 도구. */
+  const FIXED_DENIED = [
+    'browser_run_code_unsafe',
+    'browser_file_upload',
+    'upload_file',
+    'install_extension',
+    'execute_3p_developer_tool',
+    'mobile_batch_commands',
+    'mobile_uninstall_app',
+    'mobile_clear_app_data',
+    'mobile_login_to_cloud_provider',
+    'mobile_allocate_remote_device',
+    'debug_lldb_command',
+    'xcode_ide_call_tool',
+    'erase_sims',
+    'run_on_cloud',
+  ];
+
+  it('실을 서버를 인라인 설정 하나로 넘기고, 서버마다 도구 승인을 자동 허용으로, 고정 deny 목록을 사용자가 꺼 둔 도구와 합친다. 평문 값은 인자에 없고 프로세스 환경으로 넘긴다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
+
+    await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    const [request] = runner.requests;
+    /** `-c`로 넘긴 설정 값. */
+    const configs = request!.args.filter((_, index) => request!.args[index - 1] === '-c');
+    expect(configs.find((config) => config.startsWith('mcp_servers'))).toBe(
+      'mcp_servers={playwright={command="npx", args=["@playwright/mcp"], env_vars=["API_KEY"], ' +
+        // 사용자가 꺼 둔 도구가 앞이고, 고정 목록과 겹치는 도구는 한 번만 넣는다.
+        `disabled_tools=[${[...new Set(['browser_close', 'browser_file_upload', ...FIXED_DENIED])].map((tool) => `"${tool}"`).join(', ')}], default_tools_approval_mode="approve"}, ` +
+        '"my.remote"={url="https://fake.example/mcp", env_http_headers={X-Api-Key="STARDRAFT_MCP_HEADER_1"}, enabled_tools=["search"], ' +
+        `default_tools_approval_mode="approve", disabled_tools=[${FIXED_DENIED.map((tool) => `"${tool}"`).join(', ')}]}}`,
+    );
+    // 넘긴 변수는 셸 명령의 환경에서 뺀다.
+    expect(configs).toContain('shell_environment_policy.exclude=["API_KEY", "STARDRAFT_MCP_HEADER_1"]');
+    expect(request?.args.join(' ')).not.toContain(MCP_SECRET);
+    expect(request?.env).toMatchObject({ API_KEY: MCP_SECRET, STARDRAFT_MCP_HEADER_1: MCP_SECRET, RUST_LOG: 'codex_mcp=warn' });
+    expect(request?.args).toEqual(expect.arrayContaining(['--ignore-user-config', '--ignore-rules']));
+  });
+
+  it('표준 오류의 MCP 시작 실패 로그로 연결하지 못한 서버를 알리고, 그 로그 줄은 오류 원문에 넣지 않는다', async () => {
+    const { runner, executor } = setup();
+    /** 실측 형식의 MCP 로그. 오류 문장에는 서버가 낸 글이 들 수 있다. */
+    const stderr = [
+      `2026-11-26T10:42:29.189681Z  WARN codex_mcp::rmcp_client: MCP server startup failed server_name="my.remote" error=401 ${MCP_SECRET}`,
+      '2026-11-26T10:42:29.190959Z  WARN codex_mcp::rmcp_client: MCP server startup failed server_name="my.remote" error=again',
+      'Error: 가짜 CLI 오류',
+    ].join('\n');
+    answerCli(runner, exited(1, '', stderr));
+
+    const report = await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    expect(report.mcpFailedServers).toEqual(['my.remote']);
+    expect(report.outcome).toEqual({ type: 'failed', reason: 'cli-error', detail: 'Error: 가짜 CLI 오류' });
+    expect((await executor.run(reproductionRequest())).mcpFailedServers).toBeUndefined();
+  });
+
+  it('읽기 전용 진단과 Flow 초안에는 MCP 설정을 넘기지 않는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
+
+    await executor.run(draftRequest());
+    await executor.run(draftRequest({ kind: 'diagnosis' }));
+
+    for (const request of runner.requests) {
+      expect(request.args.some((arg) => arg.startsWith('mcp_servers') || arg.startsWith('shell_environment_policy'))).toBe(false);
+      expect(request.env.RUST_LOG).toBeUndefined();
+    }
   });
 });
 

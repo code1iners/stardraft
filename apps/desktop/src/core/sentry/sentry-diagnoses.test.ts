@@ -72,7 +72,7 @@ function report(result: DiagnosisReport['reproduction']['result'] = 'impossible'
     openQuestions: [],
     evidence: [],
     event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
-    run: { repository: '/repo', headCommit: null, uncommittedChanges: null, reproductionAllowed: false, agent: 'claude-code', cliVersion: null, durationMs: 1000, createdAt: NOW },
+    run: { repository: '/repo', headCommit: null, uncommittedChanges: null, reproductionAllowed: false, agent: 'claude-code', cliVersion: null, durationMs: 1000, createdAt: NOW, mcpServers: null },
     priorDiagnosis: null,
     attachments: [],
     omittedAttachments: 0,

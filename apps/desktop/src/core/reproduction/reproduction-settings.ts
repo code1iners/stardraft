@@ -4,7 +4,7 @@ import type { Logger } from '../logging/logger';
 import type { AgentId } from '../ports/executor';
 import { DEFAULT_SETTINGS, type ReproductionRepoSetting, type ReproductionToolMode, type Settings, type SettingsStore } from '../ports/settings-store';
 import { SerialQueue } from '../serial-queue';
-import { parseClaudeMcpServers, parseCodexMcpServers, type McpServerEntry } from './mcp-servers';
+import { CODEX_MCP_CONFIG_ARGS, parseClaudeMcpServers, parseCodexMcpServers, type McpServerEntry } from './mcp-servers';
 
 /** `codex mcp list --json`을 기다리는 시간(밀리초). 이 명령은 stdio 서버를 띄우지 않는다. */
 const CODEX_LIST_TIMEOUT_MS = 15_000;
@@ -297,7 +297,7 @@ export class ReproductionSettings {
     /** 명령 결과. */
     const result = await this.options.runner.run({
       command: launch.cliPath,
-      args: ['mcp', 'list', '--json'],
+      args: ['mcp', 'list', '--json', ...CODEX_MCP_CONFIG_ARGS],
       env: launch.env,
       cwd: this.options.cwd,
       timeoutMs: CODEX_LIST_TIMEOUT_MS,

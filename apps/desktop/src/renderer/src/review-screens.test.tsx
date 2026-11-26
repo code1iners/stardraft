@@ -1825,6 +1825,7 @@ describe('펼친 창: 진단', () => {
       reproductionAllowed: false,
       durationMs: 134_000,
       createdAt: DETECTED_AT,
+      mcpServers: null,
     },
     priorDiagnosis: null,
     omittedAttachments: 0,
@@ -2129,6 +2130,20 @@ describe('펼친 창: 진단', () => {
     expect(text).toContain('플랫폼 javascript 신규·재발 신규 감지 시각 ');
     expect(text).toContain('release(이벤트 · 최초 · 최근) web@1.2.0 · web@1.0.0 · 없음 소스맵 적용됨 없는 데이터 없음');
     expect(text).toContain(`진단 정보 저장소 /fake/web HEAD ${'a'.repeat(40)} 커밋하지 않은 변경 없음 에이전트 Claude Code 2.1.300 재현 허용 허용 안 함 걸린 시간 2분 14초`);
+    // 읽기 전용 진단에는 MCP 줄이 없다.
+    expect(text).not.toContain('MCP');
+  });
+
+  it('재현하는 진단의 정보 탭은 실린 MCP 서버와 빠진 서버·까닭을 이름만 보인다', () => {
+    /** MCP를 실은 재현 보고서. */
+    const reproduced = {
+      ...REPORT,
+      run: { ...REPORT.run, reproductionAllowed: true, mcpServers: { loaded: ['playwright'], skipped: [{ name: 'docs', reason: 'connection-failed' as const }] } },
+    };
+
+    const text = textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={reproduced} tab="info" />);
+
+    expect(text).toContain('실린 MCP 서버 playwright 빠진 MCP 서버 docs(연결 실패)');
   });
 
   it('검토 대기의 바닥 줄은 왼쪽 [완료], 오른쪽 [다시 진단 ▾]와 주 버튼 [내보내기]이고 내보내기는 그 진단을 내보낸다', () => {

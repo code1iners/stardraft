@@ -435,7 +435,7 @@ describe('Claude Code 실행기: 재현에 MCP 싣기', () => {
     expect(runner.requests[0]?.env).toMatchObject({ DOCS_TOKEN: 'fake-docs-token' });
   });
 
-  it('init 이벤트에서 연결하지 못한 서버를 알린다. init을 받기 전에 끝나면 알 수 없어 비어 있다', async () => {
+  it('init 이벤트에서 연결하지 못한 서버를 알린다. init을 받기 전에 끝나면 연결됐는지 몰라 모두 연결하지 못한 것으로 본다', async () => {
     const { runner, executor } = setup();
     /** 서버 상태를 담은 init 이벤트. */
     const init = JSON.stringify({
@@ -452,7 +452,7 @@ describe('Claude Code 실행기: 재현에 MCP 싣기', () => {
     expect(report.mcpFailedServers).toEqual(['docs', 'my.server']);
 
     answerCli(runner, exited(1, '', 'crash'));
-    expect((await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }))).mcpFailedServers).toEqual([]);
+    expect((await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }))).mcpFailedServers).toEqual(['playwright', 'docs', 'my.server']);
     expect((await executor.run(reproductionRequest())).mcpFailedServers).toBeUndefined();
   });
 

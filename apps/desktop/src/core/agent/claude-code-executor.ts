@@ -12,7 +12,7 @@ import type {
   ExecutorUsage,
   ReproductionMcp,
 } from '../ports/executor';
-import { DENIED_TOOL_SERVERS } from '../reproduction/denied-tools';
+import { FIXED_DENIED_TOOLS } from '../reproduction/denied-tools';
 import type { AgentExecutorOptions } from './agent-launch';
 import { CLAUDE_MAX_TURNS } from './claude-cli';
 import { withoutAgentApiKeys } from './cli-discovery';
@@ -230,7 +230,7 @@ function claudeReproductionArgs(request: ExecutorRunRequest, input: Reproduction
 }
 
 /** 고정 deny 목록의 모든 도구를 서버 이름과 상관없이 막는 규칙. 이름 기반이라 완전하지 않다. */
-const FIXED_DENIED_TOOL_RULES: readonly string[] = [...new Set(DENIED_TOOL_SERVERS.flatMap((server) => server.tools))].map((tool) => `mcp__*__${tool}`);
+const FIXED_DENIED_TOOL_RULES: readonly string[] = FIXED_DENIED_TOOLS.map((tool) => `mcp__*__${tool}`);
 
 /** 권한 규칙에 쓰는 서버 이름. CLI는 영문자·숫자·`_`·`-`가 아닌 글자(`.`, 공백 등)를 `_`로 바꿔 도구 이름을 만든다. */
 function claudeServerRuleName(name: string): string {
@@ -272,12 +272,11 @@ class ClaudeStreamReader {
 
   /**
    * 실은 서버 가운데 연결하지 못한 서버. `system/init`에서 `connected`가 아닌 서버(`failed`, `needs-auth` 등)와 목록에 없는 서버다.
-   * `system/init`을 받기 전에 끝났으면 서버가 떴는지 알 수 없어 비어 있다.
+   * `system/init`을 받기 전에 끝났으면 연결됐는지 알 수 없으므로 실린 서버로 적지 않게 모두 연결하지 못한 것으로 본다.
    */
   failedMcpServers(mcp: ReproductionMcp): string[] {
-    if (this.mcpStatuses === null) return [];
     /** 연결된 서버 이름. */
-    const connected = new Set(this.mcpStatuses.filter((server) => server.status === 'connected').map((server) => server.name));
+    const connected = new Set((this.mcpStatuses ?? []).filter((server) => server.status === 'connected').map((server) => server.name));
     return mcp.servers.map((server) => server.name).filter((name) => !connected.has(name));
   }
 

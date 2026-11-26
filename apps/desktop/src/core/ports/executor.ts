@@ -64,7 +64,7 @@ export type McpSkipReason =
   | 'missing-variable'
   /** 정의의 평문 값이 실행 환경의 같은 이름 변수와 겹쳐 환경 변수로 넘길 수 없다(Codex). */
   | 'variable-conflict'
-  /** 서버 정의를 읽지 못했다(Codex 상세 명령 실패). 사용자가 꺼 둔 도구를 모른 채 싣지 않으려고 뺀다. */
+  /** 서버 정의를 읽거나 옮기지 못했다(Codex 상세 명령 실패, 헤더 값을 계산하는 명령이 있음). 꺼 둔 도구나 인증을 잃은 채 싣지 않으려고 뺀다. */
   | 'unreadable'
   /** CLI가 서버에 연결하지 못했다(뜨지 않음, 로그인 필요 등). */
   | 'connection-failed';

@@ -13,7 +13,7 @@ import type {
   ReproductionMcp,
   RunKind,
 } from '../ports/executor';
-import { DENIED_TOOL_SERVERS } from '../reproduction/denied-tools';
+import { FIXED_DENIED_TOOLS } from '../reproduction/denied-tools';
 import type { AgentExecutorOptions } from './agent-launch';
 import { withoutAgentApiKeys } from './cli-discovery';
 import { asRecord, failedOutcome, numberOrNull, parseJsonObject } from './executor-output';
@@ -262,9 +262,6 @@ const MCP_LOG_LINE = /^\S+\s+\w+\s+codex_mcp::/;
 
 /** MCP 시작에 실패한 서버의 이름을 담은 로그. */
 const MCP_STARTUP_FAILED = /MCP server startup failed server_name="((?:[^"\\]|\\.)*)"/;
-
-/** 고정 deny 목록의 모든 도구. 실은 모든 서버의 비활성 도구에 넣는다. */
-const FIXED_DENIED_TOOLS: readonly string[] = [...new Set(DENIED_TOOL_SERVERS.flatMap((server) => server.tools))];
 
 /** 표준 오류에서 MCP 로그 줄을 걷어 내고, 시작에 실패한 서버 이름을 모은다. 로그의 오류 문장에는 서버가 낸 글이 들 수 있다. */
 function withoutMcpLog(result: ProcessResult): { result: ProcessResult; failedServers: string[] } {

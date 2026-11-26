@@ -1,3 +1,4 @@
+import { asRecord } from '../agent/executor-output';
 import { isReservedEnvName } from '../agent/reproduction-boundary';
 import type { ProcessRunner } from '../agent/process-runner';
 import type { Logger } from '../logging/logger';
@@ -30,28 +31,23 @@ interface Candidates {
   skipped: McpServerSkip[];
 }
 
-/** 알 수 없는 값을 객체로 본다. 객체가 아니면 `null`. */
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
 /** 알 수 없는 값에서 문자열 목록만 꺼낸다. */
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-/** 방식과 켜 둔 서버로 이 서버를 실을지 본다. `직접 선택`이면 켠 서버만 싣는다. */
-function chosen(tools: ReproductionToolsSetting, agent: AgentId, name: string): boolean {
+/** 재현 도구 권한의 방식과 켜 둔 서버로 이 서버를 실을지 본다. `직접 선택`이면 켠 서버만 싣는다. */
+function selectedForReproduction(tools: ReproductionToolsSetting, agent: AgentId, name: string): boolean {
   return tools.mode === 'auto' || (tools.enabledServers[agent] ?? []).includes(name);
 }
 
 /** 정의 안의 모든 문자열 값을 모은다. 키는 보지 않는다. */
-function stringsIn(value: unknown): string[] {
+function stringValuesIn(value: unknown): string[] {
   if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.flatMap(stringsIn);
+  if (Array.isArray(value)) return value.flatMap(stringValuesIn);
   /** 객체. */
   const record = asRecord(value);
-  return record ? Object.values(record).flatMap(stringsIn) : [];
+  return record ? Object.values(record).flatMap(stringValuesIn) : [];
 }
 
 /** Claude Code 정의가 참조한 변수. 같은 변수를 기본값 있이도, 없이도 참조하면 값이 꼭 있어야 한다. */
@@ -60,7 +56,7 @@ export function claudeVariableReferences(definition: Record<string, unknown>): {
   const required = new Set<string>();
   /** 기본값이 있는 변수. */
   const optional = new Set<string>();
-  for (const text of stringsIn(definition)) {
+  for (const text of stringValuesIn(definition)) {
     for (const match of text.matchAll(CLAUDE_VARIABLE_REFERENCE)) {
       /** 변수 이름. */
       const name = match[1] as string;
@@ -101,7 +97,7 @@ export function claudeCandidates(config: unknown, projectFile: unknown, sourceRo
   /** 결과. */
   const result: Candidates = { candidates: [], skipped: [] };
   for (const [name, definition] of definitions) {
-    if (disabled.has(name) || !chosen(tools, 'claude-code', name)) result.skipped.push({ name, reason: 'disabled' });
+    if (disabled.has(name) || !selectedForReproduction(tools, 'claude-code', name)) result.skipped.push({ name, reason: 'disabled' });
     else result.candidates.push({ name, definition, ...claudeVariableReferences(definition) });
   }
   return result;
@@ -118,7 +114,7 @@ export function codexServerNames(listJson: unknown, tools: ReproductionToolsSett
     /** 서버 항목. */
     const server = asRecord(item);
     if (!server || typeof server.name !== 'string' || server.name === '') continue;
-    if (server.enabled === false || !chosen(tools, 'codex', server.name)) result.skipped.push({ name: server.name, reason: 'disabled' });
+    if (server.enabled === false || !selectedForReproduction(tools, 'codex', server.name)) result.skipped.push({ name: server.name, reason: 'disabled' });
     else result.names.push(server.name);
   }
   return result;
@@ -135,8 +131,8 @@ function envVarName(item: unknown): string | null {
 /**
  * `codex mcp get <이름> --json` 출력으로 인라인 정의를 만든다. 정의가 참조한 변수(`env_vars`, `bearer_token_env_var`, `env_http_headers`)는
  * 값이 꼭 있어야 한다. 평문 값(`env`, `http_headers`)은 명령줄에 싣지 않으려고 `values`에 옮기고 정의가 그 변수를 참조하게 바꾼다.
- * 헤더 값을 계산하는 명령(`http_headers_helper`)은 목록이 값을 가려 옮길 수 없어 넘기지 않는다. 사용자가 꺼 둔 도구와 고른 도구, 시간 상한은 그대로 둔다.
- * 연결 방식을 알 수 없으면 `null`.
+ * 사용자가 꺼 둔 도구와 고른 도구, 시간 상한은 그대로 둔다. 연결 방식을 알 수 없거나, 헤더 값을 계산하는 명령(`http_headers_helper`)이 있으면
+ * `null`이다. 그 명령은 목록이 값을 가려 옮길 수 없고, 빼고 넘기면 인증 없이 붙게 된다.
  * @param nextHeaderVariable 평문 헤더 값을 옮길 새 변수 이름을 하나씩 내준다.
  */
 export function codexCandidate(
@@ -168,7 +164,7 @@ export function codexCandidate(
       if (typeof value === 'string') values[key] = value;
     }
     definition.env_vars = [...new Set([...passed, ...Object.keys(values)])];
-  } else if (transport.type === 'streamable_http' && typeof transport.url === 'string') {
+  } else if (transport.type === 'streamable_http' && typeof transport.url === 'string' && (transport.http_headers_helper ?? null) === null) {
     definition.url = transport.url;
     if (typeof transport.bearer_token_env_var === 'string') {
       definition.bearer_token_env_var = transport.bearer_token_env_var;

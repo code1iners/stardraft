@@ -257,6 +257,19 @@ describe('재현 MCP 싣기: Codex', () => {
     expect(mcp.env).toEqual({});
   });
 
+  it('헤더 값을 계산하는 명령이 있는 원격 서버는 그 명령을 옮길 수 없어 인증 없이 싣지 않고 "설정을 옮기지 못함"으로 뺀다', async () => {
+    const { loader, runner } = setup({ variables: { PW_TOKEN: 'fake-pw', REMOTE_TOKEN: 'r', TEAM_ID: 't' } });
+    answerCodex(runner, {
+      ...CODEX_DETAILS,
+      remote: { name: 'remote', transport: { type: 'streamable_http', url: 'https://fake.example/mcp', http_headers_helper: '<redacted>' } },
+    });
+
+    const mcp = await loader.load('codex', SOURCE);
+
+    expect(mcp.servers.map((server) => server.name)).toEqual(['playwright']);
+    expect(mcp.skipped).toContainEqual({ name: 'remote', reason: 'unreadable' });
+  });
+
   it('평문 값이 앱이 정하는 변수나 다른 서버의 값과 겹치면 그 서버는 "변수 충돌"로 뺀다', async () => {
     const { loader, runner } = setup({ variables: { PW_TOKEN: 'fake-pw', REMOTE_TOKEN: 'fake-remote', TEAM_ID: 'fake-team' } });
     answerCodex(runner, {

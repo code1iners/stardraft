@@ -1044,7 +1044,7 @@ export interface DiagnosisReportSnapshot {
   omittedAttachments: number;
 }
 
-/** 재현에서 MCP 서버가 빠진 까닭. 꺼 둠, 변수 없음, 변수 충돌, 정의를 읽지 못함, 연결 실패다. */
+/** 재현에서 MCP 서버가 빠진 까닭. 꺼 둠, 변수 없음, 변수 충돌, 설정을 옮기지 못함, 연결 실패다. */
 export type McpSkipReasonSnapshot = 'disabled' | 'missing-variable' | 'variable-conflict' | 'unreadable' | 'connection-failed';
 
 /** 보고서 실행 정보의 MCP 서버. 이름과 까닭만 있다. */

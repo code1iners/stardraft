@@ -5,7 +5,7 @@ const MCP_SKIP_REASON_TEXT: Readonly<Record<McpSkipReasonSnapshot, string>> = {
   disabled: '꺼 둠',
   'missing-variable': '변수 없음',
   'variable-conflict': '변수 충돌',
-  unreadable: '정의를 읽지 못함',
+  unreadable: '설정을 옮기지 못함',
   'connection-failed': '연결 실패',
 };
 

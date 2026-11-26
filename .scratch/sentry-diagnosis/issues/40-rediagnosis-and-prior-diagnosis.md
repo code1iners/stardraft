@@ -22,7 +22,7 @@
 ## Comments
 
 ### 구현 결과 (2026-11-26)
-- 검증: `pnpm lint`, `pnpm typecheck` 통과. desktop `pnpm test`는 1803개 중 1802개 통과. 실패 1개는 이 티켓과 무관한 기존 환경 문제(`node-process-runner` "zsh rc 멈춤 5초", 오케스트레이터 결정 #6). site `index-page` 실패도 결정 #6의 기존 실패다.
+- 검증: `pnpm lint`, `pnpm typecheck` 통과. desktop `pnpm test`는 1803개 중 1802개 통과. 실패 1개는 이 티켓과 무관한 기존 환경 문제(`node-process-runner` "zsh rc 멈춤 5초"). site `index-page` 실패도 이 PC의 기존 실패다.
 - 상태 모델: 다시 진단은 새 상태가 아니라 "대기(`queued`)인데 앞선 보고서(`report`)를 보관한 진단"(`isRediagnosing`)이다. 그래서 대기열·재발 흡수(키만 기록)·재시작 복원은 기존 경로를 그대로 쓴다.
 - 새 칸: 진단에 `directives`(쌓인 지시), `rediagnosisFailure`(돌아온 사유), 보고서에 `priorDiagnosis`. 마이그레이션 28이 `directives`·`rediagnosis_failure` 열을 더한다.
 - 해석으로 정한 것(스펙이 말하지 않은 곳):

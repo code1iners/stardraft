@@ -46,5 +46,5 @@
 - 검증
   - `pnpm lint`, `pnpm typecheck`는 통과했다.
   - desktop `pnpm test`는 1366개가 모두 통과했다(5회).
-  - site `index-page`의 실패는 결정 #6의 환경성 실패다.
+  - site `index-page`의 실패는 이 PC의 환경성 실패다.
   - 가짜 어댑터로 대기열 동작을 테스트했고 변이 5개를 모두 잡았다. 실제 앱을 띄워 보는 확인은 하지 않았다.

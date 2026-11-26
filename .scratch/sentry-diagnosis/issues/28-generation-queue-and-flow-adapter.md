@@ -33,4 +33,4 @@
 - `draft-queue.test.ts`는 고치지 않았고 그대로 통과한다. `restart-recovery.test.ts`와 `state-database.test.ts`는 저장 메서드 이름과 줄 모양(`kind`, `targetId`)만 바꿨고, 기대하는 순서와 자리는 그대로다.
 - 실행 기록의 결과 값 `bundle-changed`는 저장된 기록과 맞추려고 이름을 그대로 둔다. 대기열 안에서는 `target-changed`로 다룬다.
 - 알아 둘 점: `resetForAccount`는 대기열 표를 통째로 지운다. Flow 계정을 바꿀 때 Flow 줄만 빼는 일은 33번 몫이다.
-- 검증: `pnpm lint`와 `pnpm typecheck`는 통과했다. `pnpm test`의 실패는 결정 #6의 환경성 실패 둘뿐이다(desktop `node-process-runner` zsh rc 5초, site `index-page`). 나머지 desktop 1350개는 통과했다.
+- 검증: `pnpm lint`와 `pnpm typecheck`는 통과했다. `pnpm test`의 실패는 이 PC의 환경성 실패 둘뿐이다(desktop `node-process-runner` zsh rc 5초, site `index-page`). 나머지 desktop 1350개는 통과했다.

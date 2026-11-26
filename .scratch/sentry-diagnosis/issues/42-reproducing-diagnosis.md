@@ -58,7 +58,7 @@
   - Codex는 홈 밖에 있는 다른 저장소의 `.env`를 막지 못한다(결정 ③). 원본 저장소가 홈 밖이면 원본 `.env`도 Codex에서 읽힐 수 있다.
 - 검증
   - `pnpm lint`, `pnpm typecheck` 통과. desktop 1903개 모두 통과.
-  - 루트 `pnpm test`의 site `index-page.test.ts` 1건은 결정 #6의 워크트리 환경성 실패다. 앞선 전체 실행에서 난 "zsh rc 멈춤 5초" 1건은 이 티켓이 고치기 전의 `node-process-runner.ts`에서도 똑같이 실패해 무관하고, 마지막 전체 실행에서는 통과했다.
+  - 루트 `pnpm test`의 site `index-page.test.ts` 1건은 이 PC의 환경성 실패다. 앞선 전체 실행에서 난 "zsh rc 멈춤 5초" 1건은 이 티켓이 고치기 전의 `node-process-runner.ts`에서도 똑같이 실패해 무관하고, 마지막 전체 실행에서는 통과했다.
   - 시험 범위: 두 실행기 인수 묶음, 실제 프로세스로 자손 그룹 종료, 실제 APFS 복제(osascript), 사본·환경 파일·삭제·비우기, 시뮬레이터 정리(가짜 실행기), 첨부 종류·한도·사본 밖·링크·비밀 패턴, 앞선 첨부 삭제 뒤 새 첨부 넣기, 대기열 정리 훅과 자원, 어댑터 재현 갈래 전체(가짜 Sentry·가짜 실행기·실제 SQLite), 재현도 다시 하기, 스냅숏·IPC·렌더러·내보내기. 핵심 분기는 일부러 깨서 시험이 잡는 것을 확인했다.
   - 실기(이 PC, Claude Code 2.1.332, 모델 haiku)
     - 24번 저장소로 실제 Sentry 어댑터 → 실제 APFS 사본 → 실제 Claude Code 재현 경계 실행을 한 번 돌렸다. 시험용 가짜 오류 이슈이고, Sentry API만 가짜다.

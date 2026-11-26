@@ -390,7 +390,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       await repoPicker.linkBundle(command.bundleId);
       return;
     case 'open-repo-picker':
-      await repoPicker.open(command.bundleId);
+      repoPicker.open(command.bundleId);
       return;
     case 'set-repo-picker-checked':
       repoPicker.setChecked(command.path, command.checked);

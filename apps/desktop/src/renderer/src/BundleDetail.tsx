@@ -18,7 +18,7 @@ import {
   ANSWERED_NOTICE,
   assignmentSourceText,
   BUNDLE_PLACE_LABELS,
-  BUNDLE_STATUS_TAGS,
+  statusTagOf,
   circledNumber,
   countdownToastText,
   evidenceLocation,
@@ -52,19 +52,21 @@ import { useSecondsLeft, type FailedToastState, type IgnoreToastState, type Stop
 /** 문체 검사에 걸린 문장과 근거 설명 옆에 작게 붙이는 말. */
 const DEVELOPER_TERMS_NOTE = '개발자 용어가 있을 수 있음';
 
-/** 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 된 묶음의 저장소 영역 안내. */
+/** 자동 선택 때 사유 없이 저장소 대기가 된 옛 묶음의 저장소 영역 안내. */
 const NO_REPOSITORY_NOTE = '아직 이 묶음에 쓸 저장소를 정하지 않았습니다.';
 
 /** 상태 태그에 넘기는 값. */
 interface StatusTagProps {
   /** 묶음 상태. */
   status: BundleStatusSnapshot;
+  /** 저장소 대기의 사유. 저장소 매핑 필요와 저장소 확인 필요를 가른다. */
+  repoCheck?: RepoCheckSnapshot | null;
 }
 
 /** 묶음 상태 태그. */
-export function StatusTag({ status }: StatusTagProps) {
+export function StatusTag({ status, repoCheck = null }: StatusTagProps) {
   /** 태그 이름과 색. */
-  const tag = BUNDLE_STATUS_TAGS[status];
+  const tag = statusTagOf(status, repoCheck);
   return <span className={`tag ${tag.className}`}>{tag.label}</span>;
 }
 
@@ -695,6 +697,8 @@ function RepoCheckReason({ repoCheck }: Pick<RepoCheckBodyProps, 'repoCheck'>) {
  */
 function RepoCheckDetail({ repoCheck }: RepoCheckReasonProps) {
   switch (repoCheck.kind) {
+    case 'unmapped':
+      return <p className="small muted">이 Flow 프로젝트에 저장소를 매핑하면 저절로 초안을 만듭니다.</p>;
     case 'missing-folders':
       return (
         <ul className="repository-list">
@@ -970,7 +974,9 @@ export function BundleFooter({ bundle, onIgnore, onRestore, onCancel, onRetry, o
       )}
       {bundle.status === 'ready' && (
         <>
-          {bundle.draft?.canRegenerate !== false && <RegenerateMenu onPick={handlePick} />}
+          {(bundle.draft?.canRegenerate !== false || bundle.draft.repoUndetermined) && (
+            <RegenerateMenu onPick={handlePick} disabledChoices={bundle.draft?.repoUndetermined ? UNDETERMINED_DISABLED_CHOICES : []} />
+          )}
           <button type="button" className="btn primary" disabled={!bundle.draft?.canPost} onClick={onPost}>
             게시
           </button>
@@ -1023,6 +1029,9 @@ const REGENERATE_CHOICES: readonly { choice: RegenerateChoice; label: string }[]
   { choice: 'other-repos', label: '다른 저장소로 다시 만들기' },
 ];
 
+/** 저장소가 정해지지 않은 초안에서 꺼 두는 재생성 항목. 다시 만들 저장소가 없으므로 다시 만들기와 지시를 덧붙여 다시 만들기가 꺼진다. */
+const UNDETERMINED_DISABLED_CHOICES: readonly RegenerateChoice[] = ['again', 'directive'];
+
 /** 묻지 않고 바로 하는 재생성을 main에 보낸다. 다시 만들기는 바로 다시 만들고, 다른 저장소로 다시 만들기는 저장소 선택 창을 연다. */
 function sendRegeneration(bundleId: number, choice: Exclude<RegenerateChoice, 'directive'>) {
   void window.stardraft.send(choice === 'again' ? { type: 'regenerate-bundle', bundleId } : { type: 'open-repo-picker', bundleId });
@@ -1032,10 +1041,12 @@ function sendRegeneration(bundleId: number, choice: Exclude<RegenerateChoice, 'd
 interface RegenerateMenuProps {
   /** 메뉴 항목을 골랐다. */
   onPick: (choice: RegenerateChoice) => void;
+  /** 꺼 둘 항목. 저장소가 정해지지 않은 초안은 "다른 저장소로 다시 만들기"만 켠다. */
+  disabledChoices: readonly RegenerateChoice[];
 }
 
 /** 준비됨 묶음의 재생성 메뉴. 바닥 줄 위로 펼치고, 항목을 고르면 닫는다. */
-function RegenerateMenu({ onPick }: RegenerateMenuProps) {
+function RegenerateMenu({ onPick, disabledChoices }: RegenerateMenuProps) {
   return (
     <details className="menu">
       <summary className="btn">다시 만들기 ▾</summary>
@@ -1046,6 +1057,7 @@ function RegenerateMenu({ onPick }: RegenerateMenuProps) {
             type="button"
             role="menuitem"
             className="menu-item"
+            disabled={disabledChoices.includes(choice)}
             onClick={(event) => {
               event.currentTarget.closest('details')?.removeAttribute('open');
               onPick(choice);

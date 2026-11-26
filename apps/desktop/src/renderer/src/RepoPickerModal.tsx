@@ -3,7 +3,7 @@ import type { BundleSnapshot, RepoChoiceGroupSnapshot, RepoChoiceSnapshot, RepoP
 import { LINKED_NOTE, linkButtonText, REPO_CHOICE_GROUP_LABELS } from './review-text';
 
 /** 후보 무리를 보이는 순서. */
-const GROUP_ORDER: readonly RepoChoiceGroupSnapshot[] = ['current', 'work-folder', 'mapping', 'added'];
+const GROUP_ORDER: readonly RepoChoiceGroupSnapshot[] = ['current', 'mapping', 'added'];
 
 /** 저장소 선택 창에 넘기는 값. */
 interface RepoPickerModalProps {
@@ -21,7 +21,7 @@ export function RepoPickerModal({ picker, bundles }: RepoPickerModalProps) {
   /** 창을 연 묶음. */
   const bundle = bundles.find((item) => item.id === picker.bundleId);
   /** 고른 후보. */
-  const checked = picker.status === 'ready' ? picker.choices.filter((choice) => choice.checked) : [];
+  const checked = picker.choices.filter((choice) => choice.checked);
   /** 만들기 버튼 문구. 초안이 있던 묶음이면 다시 만드는 것이다. */
   const generateLabel = bundle?.status === 'ready' ? '이 저장소로 다시 만들기' : '이 저장소로 만들기';
 
@@ -55,20 +55,16 @@ export function RepoPickerModal({ picker, bundles }: RepoPickerModalProps) {
       <div className="modal repo-picker" role="dialog" aria-modal="true" aria-labelledby="repo-picker-title" onKeyDown={handleKeyDown}>
         <h3 id="repo-picker-title">저장소 고르기</h3>
         <p className="muted small">고른 저장소를 읽어 초안을 만듭니다. 여러 개를 고를 수 있고, 위에 있는 저장소부터 읽습니다.</p>
-        {picker.status === 'loading' ? (
-          <p className="muted">작업 폴더에서 저장소를 찾는 중입니다.</p>
-        ) : (
-          <div className="repo-choices">
-            {GROUP_ORDER.map((group) => (
-              <RepoChoiceGroup key={group} group={group} choices={picker.choices.filter((choice) => choice.group === group)} />
-            ))}
-            {picker.choices.length === 0 && <p className="muted small">후보가 없습니다. 폴더를 직접 고르세요.</p>}
-          </div>
-        )}
-        <button type="button" className="btn sm" disabled={picker.status !== 'ready'} onClick={handlePickFolders}>
+        <div className="repo-choices">
+          {GROUP_ORDER.map((group) => (
+            <RepoChoiceGroup key={group} group={group} choices={picker.choices.filter((choice) => choice.group === group)} />
+          ))}
+          {picker.choices.length === 0 && <p className="muted small">후보가 없습니다. 폴더를 직접 고르세요.</p>}
+        </div>
+        <button type="button" className="btn sm" onClick={handlePickFolders}>
           폴더 직접 고르기
         </button>
-        {picker.status === 'ready' && picker.mapping === 'same' && <p className="muted small">{LINKED_NOTE}</p>}
+        {picker.mapping === 'same' && <p className="muted small">{LINKED_NOTE}</p>}
         <div className="modal-actions">
           <span className="small muted repo-picker-count">{checked.length}개 고름</span>
           <button type="button" className="btn" onClick={handleClose}>
@@ -77,10 +73,10 @@ export function RepoPickerModal({ picker, bundles }: RepoPickerModalProps) {
           <button
             type="button"
             className="btn"
-            disabled={picker.status !== 'ready' || checked.length === 0 || picker.mapping === 'same'}
+            disabled={checked.length === 0 || picker.mapping === 'same'}
             onClick={handleLink}
           >
-            {linkButtonText(picker.status === 'ready' ? picker.mapping : 'unmapped')}
+            {linkButtonText(picker.mapping)}
           </button>
           <button type="button" className="btn primary" disabled={checked.length === 0} onClick={handleGenerate}>
             {generateLabel}

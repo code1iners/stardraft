@@ -4,7 +4,7 @@
 - 티켓: [01 Sentry 오류 이슈 감지와 인증 조사](../issues/01-sentry-detection-auth-research.md)
 - 출처 범위: docs.sentry.io(API 문서 `https://docs.sentry.io/api/` 하위와, 같은 사이트의 검색 문법·토큰·웹훅 문서), getsentry/sentry 저장소 코드. 블로그·서드파티 글은 쓰지 않았다.
 - 코드 인용은 조사 시점의 `master` 커밋 `303713e42286b191f567931ef9999c4c3a9373ef`에 고정했다. 아래에서 `src/...`는 `https://github.com/getsentry/sentry/blob/303713e42286b191f567931ef9999c4c3a9373ef/src/...`를 줄인 것이다.
-- **검증 수준: 모든 항목이 "문서 근거"다.** 실제 Sentry 계정으로 호출해 보지 않았다. 코드에서 읽은 것은 "코드 근거"로 따로 표시했다. sentry.io에 배포된 버전이 이 커밋과 같다는 보장은 없다.
+- **검증 수준: 아래 "실측 (2026-11-26)" 절에 적은 것을 뺀 모든 항목이 "문서 근거"다.** 실측 절은 실제 sentry.io 계정으로 읽기 호출을 한 결과이고, 본문과 다르면 실측 절이 우선한다. 코드에서 읽은 것은 "코드 근거"로 따로 표시했다. sentry.io에 배포된 버전이 이 커밋과 같다는 보장은 없다.
 - 용어: GLOSSARY.md를 따른다. **오류 이슈**는 Sentry의 issue(내부 이름 Group), **이벤트**는 그 오류 이슈에 묶인 개별 발생 하나다.
 
 ## 요약 (이후 결정 티켓용)
@@ -258,3 +258,44 @@ API 경로(`/api/0/...`)는 같은 getsentry/sentry 코드에서 나오므로 �
 - 상태 코드는 `429`, 본문은 `{"detail": ...}`이다. 미들웨어는 `Retry-After`를 붙이지 않고 `X-Sentry-Rate-Limit-Limit`·`-Remaining`·`-Reset`(UTC epoch 초)과 동시성 헤더만 붙인다(코드에서 직접 확인: `src/sentry/middleware/ratelimit.py` L203, L222-233).
 - `429` 응답에도 이 헤더가 붙는다는 것은 추론이다. sentry.io 앞단 프록시가 다른 헤더를 붙이는지는 확인 못 함.
 
+## 실측 (2026-11-26)
+
+[Sentry API 실측](../issues/25-sentry-api-live-check.md) 티켓에서 실제 sentry.io 계정(미국 지역 조직 둘, 개인 토큰 scope `org:read`·`event:read`)으로 **읽기 호출만** 해 본 결과다. 응답에서 조직·프로젝트 이름, 오류 원문, 이슈 ID는 뺐다. 실측 프로젝트는 JavaScript(Next.js) 프로젝트이고 오류 이슈 20개(미해결 18, 해결 2)가 있었다. 시험 이벤트는 보내지 못했다(아래 "막힌 것").
+
+### 확인한 것
+
+| 항목 | 결과 |
+| :- | :- |
+| 신규 조회 | `query=is:unresolved firstSeen:>{ISO-8601}` + `sort=new`가 200이고 기대한 오류 이슈만 돌려준다. `>`와 `>=` 모두 된다. 초 단위로 자른 기준 시각과 마이크로초가 붙은 실제 처음 보인 시각을 비교해도 어긋나지 않았다. 기준 시각 형식은 `Z`, `+00:00`, 밀리초 `.000Z`, 시간대 없음 모두 받았다 |
+| URL 인코딩 | 쿼리에 날 `>`를 넣으면 **Sentry 앞단이 JSON이 아닌 HTML 400을 돌려준다.** `%3E`로 인코딩해야 한다. `[`·`]`는 HTTP 클라이언트가 해석하지 않게 해야 한다 |
+| `is:new` | 200이고 응답의 `substatus`가 `new`인 것만 나온다 |
+| `is:regressed` | 문법은 200으로 받는다. 이 프로젝트에 재발 이슈가 없어 빈 목록이었다. **재발을 돌려주는지는 확인 못 함** |
+| 레벨 목록 | `level:[error,fatal]`이 된다. 거르는지도 확인했다(`[fatal,warning]`은 0건, `[error,warning]`은 error만). `OR`·`AND`는 400이고 "목록을 쓰라"는 안내가 온다. 위 "확인 못 함 목록"의 레벨 목록 항목은 해소됐다 |
+| 환경 | `environment=<이름>` 파라미터로 거른다. 환경 이름은 프로젝트 목록의 `environments`와 같았다. 이슈가 없는 환경은 0건 |
+| 응답 필드 | 목록 응답에 `status`, `substatus`, `level`, `issueCategory`, `firstSeen`, `lastSeen`, `count`, `lifetime`이 있다. 최상위 `firstSeen`은 초 단위, `lifetime.firstSeen`은 마이크로초 단위다 |
+| **`collapse=stats`** | **`firstSeen`, `lastSeen`, `count`, `lifetime`, `filtered`, `stats`가 응답에서 모두 사라진다.** 감지 조회에 쓰면 안 된다. `base`, `unhandled`는 필드를 줄이지 않았고 `lifetime`·`filtered`는 각자 이름의 필드만 뺀다 |
+| `activity` 노출 | 오류 이슈 상세에 `activity`가 있고 항목은 `id`, `type`, `dateCreated`, `data`, `user`, `source`, `commentId`, `sentry_app`을 가진다. 이 프로젝트에서 본 종류는 `first_seen`, `auto_set_ongoing`, `set_resolved`, `note`다. `type`은 소문자 문자열이다 |
+| 최신 이벤트의 위치 | 문서 근거 표와 같다. `entries[]`에 `exception`·`breadcrumbs`·`request`·`debugmeta`, 최상위에 `release`(객체), `tags`, `platform`, `user`, `contexts`, `dateCreated`가 있다. 스택트레이스는 `exception.data.values[].stacktrace.frames[]`(프레임에 `filename`, `absPath`, `lineNo`, `colNo`, `function`, `inApp`, `context`), breadcrumbs는 `breadcrumbs.data.values[]`다 |
+| 환경·레벨 | 최상위 `environment`·`level` 필드는 **없다.** `tags` 배열에서 `key`가 `environment`, `level`인 항목의 `value`다. `release` 태그도 따로 있다 |
+| 소스맵 흔적 | 프레임에 `data` 필드는 **없다.** 소스맵을 거친 프레임은 `map`, `origFilename`, `origAbsPath`가 채워지고, 예외 값에 `rawStacktrace`가 붙는다. 위 "소스맵 적용 여부 구분"에서 짚은 `data.symbolicated`는 이 응답에 나오지 않았다. 판별은 프레임의 `map`·`origFilename`과 `rawStacktrace` 유무로 한다 |
+| 조직 목록 | `sentry.io`와 `us.sentry.io` 모두 두 조직을 돌려준다. 각 조직에 `links.regionUrl`(여기서는 둘 다 `https://us.sentry.io`)과 `links.organizationUrl`이 있다. `de.sentry.io`는 0건(200)이다. 지역 주소로 부르면 그 지역 조직만 나온다 |
+| 한도 헤더 | 정상(200) 응답마다 `X-Sentry-Rate-Limit-Limit`, `-Remaining`, `-Reset`, `-ConcurrentLimit`, `-ConcurrentRemaining`이 붙는다. `Reset`은 UTC epoch 초이고 그 창의 끝 시각이다(실측 때 현재 시각 근처의 값). **`Retry-After`는 어떤 응답에도 없었다** |
+| 엔드포인트별 한도 | 같은 토큰으로 본 `Limit`(초당): 조직·프로젝트 목록 40, 오류 이슈 목록 10, 최신 이벤트 15, **오류 이슈 상세 5.** 동시 요청 한도는 모두 25. 위 "한도와 비용"의 목록 10과 일치한다 |
+| 권한 부족 응답 | scope가 모자라면 403이고 `WWW-Authenticate: Bearer error="insufficient_scope", scope="..."` 헤더가 **필요한 scope 이름을 알려 준다.** 연결 확인에서 "빠진 scope를 짚어 알린다"에 쓸 수 있다. 실측에서 `project:read` 없이 프로젝트 키 조회를 불렀을 때 `project:admin project:read project:write`가 왔다 |
+
+### 확인 못 함
+
+- **재발 활동**: 이 프로젝트에 재발한 이슈가 없어 `set_regression` 활동, 그 `data.event_id`, `is:regressed`가 재발을 돌려주는지 모두 확인 못 했다. 확인하려면 오류 이슈를 해결 처리하고 같은 이슈를 다시 일으켜야 한다(아래 "막힌 것").
+- **환경 기준 처음 보인 시각**: 이 프로젝트의 오류 이슈는 모두 환경 하나(`production`)에서만 나서 `environment`를 줘도 결과가 같았다. 환경 기준인지 전체 기준인지 구분하지 못했다. 같은 이슈가 서로 다른 환경에서 나는 시험 이벤트가 필요하다.
+- **지역이 다른 조직**: 계정에 독일 지역 조직이 없다. 한 주소로 모든 지역 조직이 나오는지는 확인 못 했다. 관찰한 것은 `sentry.io`가 미국 조직을 모두 돌려주고 `de.sentry.io`가 0건이라는 것까지다.
+- **`429` 응답**: 일부러 한도를 넘기지 않았다. `429`의 헤더 구성은 "추가 확인(2026-11-24)"의 코드 근거 그대로이고 실측하지 않았다. 정상 응답에 한도 헤더가 붙는다는 것만 확인했다.
+- `activity` 두 읽기 경로 중 sentry.io에서 어느 쪽이 켜져 있는지, 두 경로의 `dateCreated`가 같은지.
+
+### 막힌 것: 시험 이벤트를 보낼 수 없다
+
+재발 활동과 환경 기준 처음 보인 시각은 시험 이벤트가 있어야 확인된다. 지금 가진 토큰과 허락 범위로는 두 가지가 모자란다.
+
+1. **이벤트를 보낼 주소(DSN)**: 토큰에 `project:read`가 없어 프로젝트 키 조회가 403이다. DSN은 재현 저장소의 `.env`에만 있는데, 이 티켓은 그 파일을 쓰도록 허락받지 않았다.
+2. **해결 처리**: 오류 이슈를 해결로 바꾸는 호출은 `event:write`가 필요하다. 토큰에 없고, 이 세션에서 쓸 수 있는 다른 Sentry 도구도 없다. 재발을 만들려면 해결 처리가 꼭 필요하고, 시험 이벤트를 끝낸 뒤 정리(해결 처리)에도 필요하다. 정리할 수 없는 시험 이벤트를 회사 프로젝트에 보내지 않았다.
+
+따라서 스펙 5절의 재발 키 결정(이벤트 ID)과 낮춘 규칙 가운데 어느 쪽을 쓸지는 아직 정해지지 않았다.

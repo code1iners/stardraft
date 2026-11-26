@@ -65,6 +65,7 @@ function report(createdAt = NOW): DiagnosisReport {
     evidence: [],
     event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
     run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, reproductionAllowed: false, agent: 'claude-code', cliVersion: null, durationMs: 1000, createdAt },
+    priorDiagnosis: null,
   };
 }
 

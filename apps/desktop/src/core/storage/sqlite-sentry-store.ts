@@ -63,6 +63,10 @@ interface DiagnosisRow {
   completed_at: number | null;
   /** 마지막으로 내보낸 기록(JSON). 내보낸 적 없으면 `NULL`. */
   last_export: string | null;
+  /** 쌓인 지시(JSON 배열). */
+  directives: string;
+  /** 마지막 다시 진단이 실패해 앞선 보고서로 돌아왔다는 기록(JSON). 없으면 `NULL`. */
+  rediagnosis_failure: string | null;
 }
 
 /**
@@ -111,7 +115,17 @@ export class SqliteSentryStore implements SentryStore {
           repoCheck: diagnosis.repoCheck === null ? null : JSON.stringify(diagnosis.repoCheck),
           issue: JSON.stringify(diagnosis.issue),
         });
-        return structuredClone({ ...diagnosis, id: Number(result.lastInsertRowid), report: null, failure: null, runs: [], completedAt: null, lastExport: null });
+        return structuredClone({
+          ...diagnosis,
+          id: Number(result.lastInsertRowid),
+          report: null,
+          failure: null,
+          runs: [],
+          completedAt: null,
+          lastExport: null,
+          directives: [],
+          rediagnosisFailure: null,
+        });
       });
     })();
   }
@@ -122,7 +136,9 @@ export class SqliteSentryStore implements SentryStore {
 
   async updateDiagnosis(diagnosis: SentryDiagnosis): Promise<void> {
     this.db
-      .prepare('UPDATE sentry_diagnosis SET status = ?, repo_check = ?, report = ?, failure = ?, runs = ?, completed_at = ?, last_export = ? WHERE id = ?')
+      .prepare(
+        'UPDATE sentry_diagnosis SET status = ?, repo_check = ?, report = ?, failure = ?, runs = ?, completed_at = ?, last_export = ?, directives = ?, rediagnosis_failure = ? WHERE id = ?',
+      )
       .run(
         diagnosis.status,
         jsonOrNull(diagnosis.repoCheck),
@@ -131,6 +147,8 @@ export class SqliteSentryStore implements SentryStore {
         JSON.stringify(diagnosis.runs),
         diagnosis.completedAt,
         jsonOrNull(diagnosis.lastExport),
+        JSON.stringify(diagnosis.directives),
+        jsonOrNull(diagnosis.rediagnosisFailure),
         diagnosis.id,
       );
   }
@@ -144,7 +162,7 @@ export class SqliteSentryStore implements SentryStore {
     const blankIssue = JSON.stringify(BLANK_ISSUE);
     /** 줄 하나를 비우는 문장. 완료가 아닌 줄은 건드리지 않는다. */
     const scrub = this.db.prepare(
-      "UPDATE sentry_diagnosis SET issue = ?, report = NULL, failure = NULL, runs = '[]', repo_check = NULL WHERE id = ? AND status = 'completed'",
+      "UPDATE sentry_diagnosis SET issue = ?, report = NULL, failure = NULL, runs = '[]', repo_check = NULL, directives = '[]', rediagnosis_failure = NULL WHERE id = ? AND status = 'completed'",
     );
     this.db.transaction(() => {
       for (const id of ids) scrub.run(blankIssue, id);
@@ -181,12 +199,21 @@ function diagnosisOf(row: DiagnosisRow): SentryDiagnosis {
     status: row.status,
     repoCheck: row.repo_check === null ? null : (JSON.parse(row.repo_check) as DiagnosisRepoCheck),
     issue: JSON.parse(row.issue) as DiagnosisIssue,
-    report: row.report === null ? null : (JSON.parse(row.report) as DiagnosisReport),
+    report: row.report === null ? null : reportOf(row.report),
     failure: row.failure === null ? null : (JSON.parse(row.failure) as DiagnosisFailure),
     runs: JSON.parse(row.runs) as RunRecord[],
     completedAt: row.completed_at,
     lastExport: row.last_export === null ? null : (JSON.parse(row.last_export) as DiagnosisExport),
+    directives: JSON.parse(row.directives) as string[],
+    rediagnosisFailure: row.rediagnosis_failure === null ? null : (JSON.parse(row.rediagnosis_failure) as DiagnosisFailure),
   };
+}
+
+/** 저장된 보고서를 읽는다. 앞선 진단 칸이 생기기 전에 저장한 보고서는 앞선 진단이 없는 것으로 본다. */
+function reportOf(json: string): DiagnosisReport {
+  /** 읽은 보고서. */
+  const report = JSON.parse(json) as Omit<DiagnosisReport, 'priorDiagnosis'> & { priorDiagnosis?: DiagnosisReport['priorDiagnosis'] };
+  return { ...report, priorDiagnosis: report.priorDiagnosis ?? null };
 }
 
 /** 값을 JSON으로 쓴다. `null`이면 `NULL`이다. */

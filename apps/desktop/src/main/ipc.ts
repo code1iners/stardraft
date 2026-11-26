@@ -466,6 +466,16 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
         services.sentryDiagnoses.retry(command.diagnosisId),
       );
       return;
+    case 'rediagnose':
+      await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), async () => {
+        await services.sentryDiagnoses.rediagnose(command.diagnosisId, null);
+      });
+      return;
+    case 'rediagnose-with-directive':
+      await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), async () => {
+        await services.sentryDiagnoses.rediagnose(command.diagnosisId, command.directive);
+      });
+      return;
     case 'complete-diagnosis':
       await services.sentryDiagnoses.complete(command.diagnosisId);
       return;

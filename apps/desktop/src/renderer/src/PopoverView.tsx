@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { globalProblemText } from '../../shared/global-problem-text';
 import type { AppSnapshot, GlobalProblemSnapshot } from '../../shared/ipc';
 import { BundleFooter, BundleMeta, BundleSections, ManualTag, StatusTag, ToastStack } from './BundleDetail';
-import { DiagnosisBody, DiagnosisFooter, DiagnosisStatusTag } from './DiagnosisDetail';
+import { DiagnosisBody, DiagnosisFooter, DiagnosisStatusTag, useDirectivePane } from './DiagnosisDetail';
 import { SetupChecklist } from './Onboarding';
 import { EditorPickerModal } from './EditorPickerModal';
 import { RepoPickerModal } from './RepoPickerModal';
@@ -113,6 +113,8 @@ function CompactReview({ snapshot, initialBundleId, initialDiagnosisId }: Compac
   const { queue, movedWhileViewing } = selection;
   /** 고른 진단 ID. 묶음을 고르면 `null`이다. */
   const [diagnosisId, setDiagnosisId] = useState<number | null>(initialDiagnosisId);
+  /** 진단의 지시 입력. 보고서 위 알림 줄과 바닥 줄이 함께 쓴다. */
+  const directivePane = useDirectivePane();
 
   // 창이 떠 있는 동안 OS 알림을 눌러 main이 진단이나 묶음을 보내면 그 대상으로 바꾼다.
   useEffect(function followRequestedTarget() {
@@ -165,8 +167,8 @@ function CompactReview({ snapshot, initialBundleId, initialDiagnosisId }: Compac
             onSelect={selectItem}
             onExpand={handleExpand}
           />
-          <DiagnosisBody diagnosis={shownDiagnosis} windowKind="compact" />
-          <DiagnosisFooter diagnosis={shownDiagnosis} windowKind="compact" />
+          <DiagnosisBody diagnosis={shownDiagnosis} windowKind="compact" directivePane={directivePane} />
+          <DiagnosisFooter diagnosis={shownDiagnosis} windowKind="compact" directivePane={directivePane} />
         </>
       ) : selected ? (
         <>

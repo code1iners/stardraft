@@ -14,9 +14,10 @@ import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
 import type { ManualCheckState } from '../core/manual-check/manual-check-session';
 import type { ManualAssignmentCandidate, ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
-import { hasExportedCurrentReport, isRepoWaiting, openableSentryUrl, type DiagnosisReport, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
+import { hasExportedCurrentReport, isRediagnosing, isRepoWaiting, openableSentryUrl, type DiagnosisFailure, type DiagnosisReport, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
 import type {
   BundleMentionSnapshot,
+  DiagnosisFailureSnapshot,
   DiagnosisProgressSnapshot,
   DiagnosisReportSnapshot,
   DiagnosisSnapshot,
@@ -113,7 +114,10 @@ export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[], progre
       status: progress?.status === 'running' ? 'running' : diagnosis.status,
       progress,
       report: diagnosis.report && reportSnapshot(diagnosis.report),
-      failure: diagnosis.failure && { reason: diagnosis.failure.reason, detail: diagnosis.failure.detail, lastStep: diagnosis.failure.lastStep },
+      failure: diagnosis.failure && failureSnapshot(diagnosis.failure),
+      rediagnosing: isRediagnosing(diagnosis),
+      directives: [...diagnosis.directives],
+      rediagnosisFailure: diagnosis.rediagnosisFailure && failureSnapshot(diagnosis.rediagnosisFailure),
       completedAt: diagnosis.completedAt,
       exported: hasExportedCurrentReport(diagnosis),
       lastExportedPath: diagnosis.lastExport?.path ?? null,
@@ -143,6 +147,11 @@ export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[], progre
   });
 }
 
+/** 진단 실패의 까닭을 렌더러에 넘길 모양으로 바꾼다. */
+function failureSnapshot(failure: DiagnosisFailure): DiagnosisFailureSnapshot {
+  return { reason: failure.reason, detail: failure.detail, lastStep: failure.lastStep };
+}
+
 /** 진단 보고서를 렌더러에 넘길 모양으로 바꾼다. */
 function reportSnapshot(report: DiagnosisReport): DiagnosisReportSnapshot {
   return {
@@ -161,6 +170,7 @@ function reportSnapshot(report: DiagnosisReport): DiagnosisReportSnapshot {
       stackHead: [...report.event.stackHead],
     },
     run: { ...report.run },
+    priorDiagnosis: report.priorDiagnosis && { ...report.priorDiagnosis },
   };
 }
 

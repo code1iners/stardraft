@@ -9,10 +9,12 @@ export const DIAGNOSIS_KIND_LABEL = '진단';
 type DiagnosisTagTone = 'generating' | 'ready' | 'failed' | 'warn' | 'done';
 
 /**
- * 진단 상태 태그의 이름과 색. `대기`·`진단 중`은 회색, `준비됨`은 파랑, `진단 실패`는 빨강, `완료함`은 옅은 회색,
+ * 진단 상태 태그의 이름과 색. `대기`·`진단 중`·`다시 진단 중`은 회색, `준비됨`은 파랑, `진단 실패`는 빨강, `완료함`은 옅은 회색,
  * 저장소 대기는 노랑이다.
  */
-export function diagnosisStatusTag(diagnosis: Pick<DiagnosisSnapshot, 'status' | 'repoWait'>): { label: string; tone: DiagnosisTagTone } {
+export function diagnosisStatusTag(diagnosis: Pick<DiagnosisSnapshot, 'status' | 'repoWait'> & Partial<Pick<DiagnosisSnapshot, 'rediagnosing'>>): { label: string; tone: DiagnosisTagTone } {
+  // 다시 진단하는 동안은 기다리든 돌든 `다시 진단 중`이다. 앞선 보고서는 보관되어 있다.
+  if (diagnosis.rediagnosing && (diagnosis.status === 'queued' || diagnosis.status === 'running')) return { label: '다시 진단 중', tone: 'generating' };
   switch (diagnosis.status) {
     case 'queued':
       return { label: '대기', tone: 'generating' };
@@ -55,9 +57,13 @@ const DIAGNOSIS_FAILURE_TEXT: Partial<Record<DiagnosisFailureSnapshot['reason'],
 /** Sentry에서 오류 데이터를 가져오지 못한 진단 실패의 문장. 초안에는 없는 사유다. */
 const SENTRY_UNAVAILABLE_TEXT = 'Sentry에서 오류 데이터를 가져오지 못했습니다. 볼 권한이 없거나 이벤트가 남아 있지 않을 수 있습니다.';
 
+/** 다시 진단하려는데 저장소 매핑이나 폴더가 사라진 실패의 문장. */
+const REPOSITORY_UNAVAILABLE_TEXT = '연결한 저장소를 찾을 수 없습니다.';
+
 /** 진단 실패의 오류 문장. Flow 초안의 실패 사유 문장을 쓰고, 초안을 가리키는 문장만 진단에 맞게 바꾼다. */
 export function diagnosisFailureText(failure: DiagnosisFailureSnapshot): string {
   if (failure.reason === 'sentry-unavailable') return SENTRY_UNAVAILABLE_TEXT;
+  if (failure.reason === 'repository-unavailable') return REPOSITORY_UNAVAILABLE_TEXT;
   return DIAGNOSIS_FAILURE_TEXT[failure.reason] ?? failureText({ ...failure, reason: failure.reason, runKind: 'diagnosis' });
 }
 
@@ -155,7 +161,27 @@ const SOURCE_MAP_TEXT: Record<DiagnosisReportSnapshot['event']['sourceMaps'], st
   unknown: '모름',
 };
 
-/** 보고서의 오류 이슈 정보 가운데 앱이 진단을 시작할 때 Sentry에서 받은 줄. 감지할 때 받은 `오류 정보` 표 뒤에 붙는다. */
+/** 날짜(`YYYY-MM-DD`). PC의 시간대로 센다. */
+function formatDate(at: number): string {
+  /** 날짜. */
+  const date = new Date(at);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * 보고서의 앞선 진단 줄. 검토 대기 중인 앞선 보고서가 있었으면 그 사실을, 완료한 뒤의 재발이면 "앞서 진단함(완료한 날짜)"과
+ * 마지막으로 내보낸 파일 경로를 적는다. 파일이 없었거나 내보낸 적 없으면 날짜만 있다. 앞선 진단이 없으면 줄이 없다.
+ */
+export function priorDiagnosisFacts(prior: DiagnosisReportSnapshot['priorDiagnosis']): IssueFact[] {
+  if (prior === null) return [];
+  if (prior.kind === 'in-review') return [{ label: '앞선 진단', value: '검토 대기 중인 앞선 보고서가 있음' }];
+  return [
+    { label: '앞선 진단', value: `앞서 진단함(${formatDate(prior.completedAt)})` },
+    ...(prior.exportPath === null ? [] : [{ label: '앞서 내보낸 파일', value: prior.exportPath }]),
+  ];
+}
+
+/** 보고서의 오류 이슈 정보 가운데 앱이 진단을 시작할 때 Sentry에서 받은 줄과 앞선 진단. 감지할 때 받은 `오류 정보` 표 뒤에 붙는다. */
 export function reportEventFacts(report: DiagnosisReportSnapshot): IssueFact[] {
   /** release 세 가지. */
   const releases = [report.event.release, report.event.firstRelease, report.event.lastRelease];
@@ -163,6 +189,7 @@ export function reportEventFacts(report: DiagnosisReportSnapshot): IssueFact[] {
     { label: 'release(이벤트 · 최초 · 최근)', value: releases.map((value) => value ?? '없음').join(' · ') },
     { label: '소스맵', value: SOURCE_MAP_TEXT[report.event.sourceMaps] },
     { label: '없는 데이터', value: report.event.missingData.length === 0 ? '없음' : report.event.missingData.join(', ') },
+    ...priorDiagnosisFacts(report.priorDiagnosis),
   ];
 }
 
@@ -247,3 +274,31 @@ export function exportToastText(fileName: string | null): string {
 
 /** 내보내지 않고 [완료]를 눌렀을 때 바닥 줄에 보이는 확인 글. */
 export const EXPORT_CONFIRM_TEXT = '내보내지 않았습니다. 완료하면 이 보고서가 사라집니다.';
+
+/** 다시 진단하는 중의 바닥 줄 글. */
+export const REDIAGNOSING_FOOTER_TEXT = '다시 진단하는 중입니다. 끝나면 이 보고서를 바꿉니다.';
+
+/**
+ * 다시 진단하지 못하고 앞선 보고서로 돌아왔을 때 보고서 위 알림 줄의 글.
+ * "다시 진단하지 못했습니다: `<사유>` 앞선 보고서를 그대로 둡니다."이고 사유는 진단 실패의 오류 문장이다.
+ */
+export function rediagnosisFailureNotice(failure: DiagnosisFailureSnapshot): string {
+  return `다시 진단하지 못했습니다: ${diagnosisFailureText(failure)} 앞선 보고서를 그대로 둡니다.`;
+}
+
+/** [다시 진단 ▾]의 항목. 지시 없이 다시 진단, 지시를 덧붙여 다시 진단이다. */
+export type RediagnoseChoice = 'again' | 'directive';
+
+/** [다시 진단 ▾] 항목의 이름. 메뉴에 이 순서로 보인다. */
+export const REDIAGNOSE_CHOICES: readonly { choice: RediagnoseChoice; label: string }[] = [
+  { choice: 'again', label: '다시 진단' },
+  { choice: 'directive', label: '지시를 덧붙여 다시 진단' },
+];
+
+/** 지시 입력의 글. 위에서 아래로 이름, 앞서 덧붙인 지시 안내, 새 보고서 안내다. */
+export const DIRECTIVE_FORM_TEXT = {
+  label: '지시',
+  previous: '앞서 덧붙인 지시도 함께 넘깁니다.',
+  replaceNote: '새 보고서가 나오면 지금 보고서를 바꿉니다. 남기려면 먼저 내보내세요.',
+  placeholder: '예: 캐시 쪽 원인도 확인해 주세요.',
+} as const;

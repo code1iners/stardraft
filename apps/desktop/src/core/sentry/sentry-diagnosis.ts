@@ -98,16 +98,24 @@ export interface SentryDiagnosis {
   completedAt: number | null;
   /** 마지막으로 내보낸 기록. 내보낸 적 없으면 `null`. 완료해도 남는다. */
   lastExport: DiagnosisExport | null;
+  /** 다시 진단에서 쌓인 지시. 덧붙인 순서다. 지시 없이 다시 진단하거나 완료하면 비운다. */
+  directives: string[];
+  /**
+   * 마지막 다시 진단이 실패하거나 취소해 앞선 보고서로 돌아왔다는 기록. 보고서 위 알림 줄이 사유와 [다시 걸기]를 보인다.
+   * 새 다시 진단을 시작하거나 성공하거나 완료하면 `null`로 되돌린다.
+   */
+  rediagnosisFailure: DiagnosisFailure | null;
 }
 
-/** 아직 저장하지 않은 진단. 감지가 만든 진단은 대기나 저장소 대기라 보고서·실패·실행 기록·완료 시각·내보내기 기록이 없다. */
-export type UnsavedDiagnosis = Omit<SentryDiagnosis, 'id' | 'report' | 'failure' | 'runs' | 'completedAt' | 'lastExport'>;
+/** 아직 저장하지 않은 진단. 감지가 만든 진단은 대기나 저장소 대기라 보고서·실패·실행 기록·완료 시각·내보내기 기록·지시가 없다. */
+export type UnsavedDiagnosis = Omit<SentryDiagnosis, 'id' | 'report' | 'failure' | 'runs' | 'completedAt' | 'lastExport' | 'directives' | 'rediagnosisFailure'>;
 
 /**
  * 진단을 실행하기 전에 생기는 실패 사유. Flow 초안의 맥락 조회 실패(`flow-unavailable`)에 해당한다.
  * `sentry-unavailable`: 기다려도 풀리지 않을 까닭(접근 거부, 최신 이벤트 없음, 앱이 모르는 응답 등)으로 Sentry에서 오류 데이터를 가져오지 못했다.
+ * `repository-unavailable`: 다시 진단하려는데 그사이 저장소 매핑이나 폴더가 사라졌다. 다시 진단은 저장소 대기로 가지 않고 앞선 보고서로 돌아오므로 이 사유로 알린다.
  */
-export type SentryFailureReason = 'sentry-unavailable';
+export type SentryFailureReason = 'sentry-unavailable' | 'repository-unavailable';
 
 /** 진단 실패의 까닭. 사유는 Flow 초안의 실패 사유를 그대로 쓰고(결과 형식 오류, 시간 초과, 취소함, 비밀 파일 근거 등), Sentry 조회 실패를 더한다. */
 export interface DiagnosisFailure {
@@ -192,6 +200,14 @@ export interface DiagnosisRunInfo {
   createdAt: number;
 }
 
+/**
+ * 같은 오류 이슈의 앞선 진단. 새 보고서의 오류 이슈 정보에 적힌다.
+ * - `in-review`: 앞선 보고서가 검토 대기 중이다. 그 요약·원인·개선 방향은 입력에 "참고일 뿐"으로 넘어간다.
+ * - `completed`: 완료한 뒤의 재발이다. 입력에는 아무것도 넘어가지 않고, 완료한 날짜와 마지막으로 내보낸 파일 경로만 적는다.
+ *   파일이 그 자리에 없거나 내보낸 적이 없으면 `exportPath`는 `null`이다.
+ */
+export type PriorDiagnosis = { kind: 'in-review' } | { kind: 'completed'; completedAt: number; exportPath: string | null };
+
 /** 진단 보고서. 에이전트가 쓴 칸(요약, 원인, 개선 방향, 근거, 남은 의문)과 앱이 채우는 칸(재현 불가 사유, 오류 이슈 정보, 실행 정보)이다. */
 export interface DiagnosisReport {
   /** 요약. */
@@ -210,6 +226,8 @@ export interface DiagnosisReport {
   event: DiagnosisEventFacts;
   /** 실행 정보. */
   run: DiagnosisRunInfo;
+  /** 같은 오류 이슈의 앞선 진단. 없으면 `null`. 이 칸이 생기기 전에 저장한 보고서는 읽을 때 `null`로 본다. */
+  priorDiagnosis: PriorDiagnosis | null;
 }
 
 /**
@@ -229,6 +247,14 @@ export interface DetectionKey {
  */
 export function hasExportedCurrentReport(diagnosis: Pick<SentryDiagnosis, 'report' | 'lastExport'>): boolean {
   return diagnosis.report !== null && diagnosis.lastExport !== null && diagnosis.lastExport.reportCreatedAt === diagnosis.report.run.createdAt;
+}
+
+/**
+ * 다시 진단하는 중인지 본다. 대기(진행 중 포함)인데 앞선 보고서를 보관하고 있다. 처음 진단하는 대기에는 보고서가 없다.
+ * 이 동안 내보내기와 완료는 할 수 없고, 새 재발은 새 진단을 만들지 않고 키만 기록한다.
+ */
+export function isRediagnosing(diagnosis: Pick<SentryDiagnosis, 'status' | 'report'>): boolean {
+  return diagnosis.status === 'queued' && diagnosis.report !== null;
 }
 
 /** 저장소 대기인지 본다. */

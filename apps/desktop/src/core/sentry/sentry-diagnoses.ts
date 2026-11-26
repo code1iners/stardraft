@@ -8,6 +8,7 @@ import type { SentryStore } from '../ports/sentry-store';
 import { SerialQueue } from '../serial-queue';
 import {
   absorbsRegression,
+  isRediagnosing,
   isRepoWaiting,
   replacedByRegression,
   STATUSES_REMOVED_ON_UNREGISTER,
@@ -18,6 +19,7 @@ import {
   type DiagnosisReport,
   type DiagnosisRepoCheck,
   type DiagnosisStatus,
+  type PriorDiagnosis,
   type SentryDiagnosis,
   type UnsavedDiagnosis,
 } from './sentry-diagnosis';
@@ -155,35 +157,46 @@ export class SentryDiagnoses {
     this.emit();
   }
 
-  /** 보고서를 저장해 검토 대기로 둔다. 그사이 대기가 아니게 되었으면(취소, 등록 해제) 저장하지 않고 거짓이다. */
+  /**
+   * 보고서를 저장해 검토 대기로 둔다. 그사이 대기가 아니게 되었으면(취소, 등록 해제) 저장하지 않고 거짓이다.
+   * 다시 진단이었다면 앞선 보고서와 첨부를 새 것으로 바꾼다. 쌓인 지시는 남기고, 내보낸 기록은 그대로 두되 보고서의 생성 시각이 달라져
+   * 내보내지 않은 것으로 본다.
+   */
   async saveReport(id: number, report: DiagnosisReport, runs: readonly RunRecord[]): Promise<boolean> {
     /** 알릴 진단. 저장하지 못했으면 `null`. */
     let announce: SentryDiagnosis | null = null;
+    /** 앞선 보고서를 바꿨는지 여부. */
+    let replaced = false;
     /** 저장했는지 여부. */
     const saved = await this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'queued') return false;
-      Object.assign(diagnosis, { status: 'ready', report, failure: null, runs: [...diagnosis.runs, ...runs] });
+      replaced = isRediagnosing(diagnosis);
+      Object.assign(diagnosis, { status: 'ready', report, failure: null, rediagnosisFailure: null, runs: [...diagnosis.runs, ...runs] });
       announce = structuredClone(diagnosis);
       return true;
     });
+    if (saved && replaced) await this.removeAttachmentsOf(id);
     if (saved && announce) this.options.notifier.notify(reportReadyNotification(announce));
     return saved;
   }
 
   /**
    * 진단 실패로 둔다. 재시도 뒤에도 실패했거나 취소한 진단이고 자동으로 더 재시도하지 않는다.
+   * 다시 진단이었다면 진단 실패로 가지 않고 앞선 보고서의 검토 대기로 돌아온다. 사유는 `rediagnosisFailure`에 남기고 쌓인 지시도 남긴다.
    * 그사이 대기가 아니게 되었으면 기록하지 않고 거짓이다.
    */
   async markFailed(id: number, failure: DiagnosisFailure, runs: readonly RunRecord[]): Promise<boolean> {
     return this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'queued') return false;
-      Object.assign(diagnosis, { status: 'failed', failure, runs: [...diagnosis.runs, ...runs] });
+      if (isRediagnosing(diagnosis)) returnToReport(diagnosis, failure, runs);
+      else Object.assign(diagnosis, { status: 'failed', failure, runs: [...diagnosis.runs, ...runs] });
       return true;
     });
   }
 
   /**
    * 기다리는 사이 매핑이나 폴더가 사라져 실행하지 못한 진단을 저장소 대기로 둔다. 그 Sentry 프로젝트에 기다리던 진단이 없었으면 Sentry 프로젝트 단위로 알린다.
+   * 다시 진단이었다면 앞선 보고서를 보관해야 하므로 저장소 대기로 가지 않고 앞선 보고서로 돌아와 사유(저장소를 쓸 수 없음)를 알리며, 저장소 대기 알림도 없다.
    * 그사이 대기가 아니게 되었으면 거짓이다.
    */
   async markRepoWaiting(id: number, repoCheck: DiagnosisRepoCheck, runs: readonly RunRecord[]): Promise<boolean> {
@@ -192,6 +205,10 @@ export class SentryDiagnoses {
     /** 기록했는지 여부. */
     const recorded = await this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'queued') return false;
+      if (isRediagnosing(diagnosis)) {
+        returnToReport(diagnosis, { reason: 'repository-unavailable', detail: null, lastStep: null, runKind: null }, runs);
+        return true;
+      }
       /** 이 프로젝트가 이미 저장소 대기였는지 여부. */
       const alreadyWaiting = this.diagnoses.some((item) => item.projectId === diagnosis.projectId && isRepoWaiting(item));
       Object.assign(diagnosis, { status: 'repo-check-needed', repoCheck, runs: [...diagnosis.runs, ...runs] });
@@ -225,6 +242,56 @@ export class SentryDiagnoses {
   }
 
   /**
+   * 검토 대기 보고서를 다시 진단한다. 앞선 보고서와 첨부를 보관한 채 대기가 되고, 사용자 요청이라 생성 대기열의 `user` 칸에 선다.
+   * `directive`가 `null`이면 지시 없이 다시 진단한다. 앞선 보고서를 넘기지 않고 쌓인 지시를 비운다.
+   * 지시를 주면 앞뒤 공백을 떼어 쌓인 지시 끝에 더하고, 앞선 보고서와 쌓인 지시 전부를 넘긴다. 비어 있는 지시는 다시 진단하지 않는다.
+   * 검토 대기 보고서가 아니면 아무것도 하지 않고 거짓이다. 지난 다시 진단의 실패 기록은 지운다.
+   */
+  async rediagnose(id: number, directive: string | null): Promise<boolean> {
+    /** 덧붙일 지시. 지시 없이 다시 진단하면 `null`. */
+    const added = directive === null ? null : directive.trim();
+    if (added === '') return false;
+    return this.change(
+      id,
+      (diagnosis) => {
+        if (diagnosis.status !== 'ready' || diagnosis.report === null) return false;
+        Object.assign(diagnosis, {
+          status: 'queued',
+          directives: added === null ? [] : [...diagnosis.directives, added],
+          rediagnosisFailure: null,
+        });
+        return true;
+      },
+      { requestedByUser: true },
+    );
+  }
+
+  /**
+   * 같은 오류 이슈의 앞선 진단. 진단 `id`보다 먼저 만든 같은 오류 이슈의 진단 가운데 검토 대기 보고서가 있으면 그 보고서(참고로 넘긴다)이고,
+   * 없으면 가장 최근에 완료한 진단의 완료 시각과 마지막으로 내보낸 파일 경로다. 둘 다 없으면 `null`이다.
+   * 완료한 진단의 보고서는 지웠고, 내보낸 파일은 사용자가 고쳤을 수 있어 입력으로 읽지 않으므로 보고서는 `null`이다.
+   * 경로의 파일이 지금도 있는지는 부르는 쪽이 본다.
+   * 완료 최소 기록은 기한 없이 두므로, 완료함에서 사라진 지 오래된 완료 진단도 저장소에서 읽어 찾는다.
+   */
+  async priorOf(id: number): Promise<{ info: PriorDiagnosis; report: DiagnosisReport | null } | null> {
+    /** 이 진단. */
+    const self = this.find(id);
+    if (!self) return null;
+    /** 검토 대기 중인 앞선 보고서. 먼저 만든 같은 오류 이슈의 진단 가운데 가장 최근 것이다. */
+    const inReview = this.diagnoses.filter((item) => item.issueId === self.issueId && item.id < self.id && item.status === 'ready' && item.report !== null).at(-1);
+    if (inReview?.report) return { info: { kind: 'in-review' }, report: structuredClone(inReview.report) };
+    // 목록에서 사라진 완료 진단은 메모리에 없으므로 저장소의 최소 기록까지 본다.
+    /** 먼저 만든 같은 오류 이슈의 완료 진단. */
+    const completedBefore = (await this.options.store.listDiagnoses()).filter(
+      (item) => item.issueId === self.issueId && item.id < self.id && item.status === 'completed' && item.completedAt !== null,
+    );
+    /** 가장 최근에 완료한 진단. */
+    const completed = completedBefore.reduce<SentryDiagnosis | null>((latest, item) => (latest === null || item.completedAt! >= latest.completedAt! ? item : latest), null);
+    if (!completed) return null;
+    return { info: { kind: 'completed', completedAt: completed.completedAt!, exportPath: completed.lastExport?.path ?? null }, report: null };
+  }
+
+  /**
    * 보고서를 내보낸 기록을 남긴다. 검토 대기 보고서가 대상이고, 몇 번이든 부를 수 있으며 상태는 바꾸지 않는다.
    * 그사이 완료하거나 보고서가 없어졌으면 기록하지 않고 거짓이다. 이미 내보낸 파일은 그대로 남는다.
    */
@@ -248,7 +315,7 @@ export class SentryDiagnoses {
     /** 완료했는지 여부. */
     const completed = await this.change(id, (diagnosis) => {
       if (diagnosis.status !== 'failed' && diagnosis.status !== 'ready') return false;
-      Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now });
+      Object.assign(diagnosis, { status: 'completed', report: null, failure: null, runs: [], completedAt: now, directives: [], rediagnosisFailure: null });
       return true;
     });
     if (completed) await this.removeAttachmentsOf(id);
@@ -394,10 +461,22 @@ export class SentryDiagnoses {
     return this.diagnoses.some((item) => isRepoWaiting(item) && item.repoCheck?.kind === 'missing-folder');
   }
 
-  /** 등록을 푼 프로젝트의 체크포인트와 중복 억제 기록을 지우고, 기다리던 진단을 목록에서 조용히 뺀다. */
+  /**
+   * 등록을 푼 프로젝트의 체크포인트와 중복 억제 기록을 지우고, 기다리던 진단을 목록에서 조용히 뺀다.
+   * 다시 진단하는 중인 진단은 앞선 보고서가 검토 대기 보고서이므로 지우지 않고, 다시 진단만 취소해 앞선 보고서로 돌려놓는다.
+   */
   async removeProject(projectId: string): Promise<void> {
     /** 뺀 진단 ID. */
     const removed = await this.updates.run(async () => {
+      for (const diagnosis of this.diagnoses) {
+        if (diagnosis.projectId !== projectId || !isRediagnosing(diagnosis)) continue;
+        /** 취소로 돌려놓은 사본. 저장에 성공한 뒤에만 원본을 바꾼다. */
+        const next = structuredClone(diagnosis);
+        returnToReport(next, { reason: 'cancelled', detail: null, lastStep: null, runKind: null }, []);
+        await this.options.store.updateDiagnosis(next);
+        Object.assign(diagnosis, next);
+        this.userRequested.delete(diagnosis.id);
+      }
       /** 지운 진단 ID. */
       const ids = await this.options.store.removeProject(projectId, STATUSES_REMOVED_ON_UNREGISTER);
       this.diagnoses = this.diagnoses.filter((item) => !ids.includes(item.id));
@@ -480,6 +559,14 @@ export class SentryDiagnoses {
   private emit(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+/**
+ * 다시 진단을 끝내고 앞선 보고서의 검토 대기로 돌려놓는다. 보고서와 쌓인 지시는 그대로 두고 사유만 남긴다.
+ * 이 실행에서 돌린 실행 기록은 진단의 실행 기록에 더한다.
+ */
+function returnToReport(diagnosis: SentryDiagnosis, failure: DiagnosisFailure, runs: readonly RunRecord[]): void {
+  Object.assign(diagnosis, { status: 'ready', rediagnosisFailure: failure, runs: [...diagnosis.runs, ...runs] });
 }
 
 /** 저장소 상태에 맞는 진단 상태. */

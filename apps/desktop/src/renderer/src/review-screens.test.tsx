@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, BundleSnapshot, DiagnosisSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
-import { DiagnosisFooter, DiagnosisHead, DiagnosisTabPanel, EvidenceItems, ReadyFooterView } from './DiagnosisDetail';
+import { DiagnosisFooter, DiagnosisHead, DiagnosisTabPanel, EvidenceItems, ReadyFooterView, RediagnosisForm, RediagnosisNotice } from './DiagnosisDetail';
 import { DraftsSection } from './DraftsSection';
 import { ManualCheckModal } from './ManualCheck';
 import { PopoverContent } from './PopoverView';
@@ -1731,6 +1731,9 @@ describe('펼친 창: 진단', () => {
       progress: null,
       report: null,
       failure: null,
+      rediagnosing: false,
+      directives: [],
+      rediagnosisFailure: null,
       completedAt: null,
       exported: false,
       lastExportedPath: null,
@@ -1820,6 +1823,7 @@ describe('펼친 창: 진단', () => {
       durationMs: 134_000,
       createdAt: DETECTED_AT,
     },
+    priorDiagnosis: null,
   };
 
   it('대기 진단의 상세는 `진행`에 "앞에 n개가 있습니다."를 보이고 바닥 줄에 [취소]가 있다', () => {
@@ -2110,13 +2114,13 @@ describe('펼친 창: 진단', () => {
     expect(text).toContain(`진단 정보 저장소 /fake/web HEAD ${'a'.repeat(40)} 커밋하지 않은 변경 없음 에이전트 Claude Code 2.1.300 재현 허용 허용 안 함 걸린 시간 2분 14초`);
   });
 
-  it('검토 대기의 바닥 줄은 왼쪽 [완료], 오른쪽 주 버튼 [내보내기]이고 내보내기는 그 진단을 내보낸다', () => {
+  it('검토 대기의 바닥 줄은 왼쪽 [완료], 오른쪽 [다시 진단 ▾]와 주 버튼 [내보내기]이고 내보내기는 그 진단을 내보낸다', () => {
     /** main으로 보낸 명령. */
     const send = vi.fn();
     vi.stubGlobal('window', { stardraft: { send } });
     try {
       expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={readyDiagnosis(9)} />)).toMatch(
-        /<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><button[^>]*class="btn primary"[^>]*>내보내기<\/button><\/footer>/,
+        /<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><details class="menu"><summary class="btn">다시 진단 ▾<\/summary>.*<\/details><button[^>]*class="btn primary"[^>]*>내보내기<\/button><\/footer>/,
       );
       /** 평소 바닥 줄의 버튼. */
       const buttons = pressables(ReadyFooterView({ confirming: false, onComplete: () => send({ type: 'ask' }), onConfirmComplete: () => {}, onCancelConfirm: () => {}, onExport: () => send({ type: 'export' }) }));
@@ -2163,6 +2167,155 @@ describe('펼친 창: 진단', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  describe('다시 진단', () => {
+    /** 앞서 덧붙인 지시가 쌓인 준비됨 진단. */
+    const withDirectives = (overrides: Partial<DiagnosisSnapshot> = {}) => readyDiagnosis(9, { directives: ['더 짧게', '캐시를 먼저 의심해 줘'], ...overrides });
+
+    it('[다시 진단 ▾]에는 다시 진단, 지시를 덧붙여 다시 진단이 이 순서로 있다', () => {
+      /** 그린 HTML. */
+      const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([readyDiagnosis()])} initialDiagnosisId={1} />);
+      /** 메뉴 항목. */
+      const items = [...markup.matchAll(/<button[^>]*role="menuitem"[^>]*>([^<]*)<\/button>/g)].map((match) => match[1]);
+
+      expect(items).toEqual(['다시 진단', '지시를 덧붙여 다시 진단']);
+    });
+
+    it('"다시 진단"은 지시 없이 바로 다시 진단하고, "지시를 덧붙여 다시 진단"은 바닥 줄을 지시 입력으로 연다', () => {
+      /** 고른 경로. */
+      const picked: string[] = [];
+      /** 평소 바닥 줄. */
+      const footer = ReadyFooterView({
+        confirming: false,
+        onComplete: () => {},
+        onConfirmComplete: () => {},
+        onCancelConfirm: () => {},
+        onExport: () => {},
+        onRediagnose: (choice) => picked.push(choice),
+      });
+      /** 메뉴 항목의 누르기. 메뉴를 닫는 일은 DOM이 없어 건너뛴다. */
+      const items = pressables(footer).filter((props) => props.role === 'menuitem');
+      for (const item of items) (item.onClick as (event: unknown) => void)({ currentTarget: { closest: () => null } });
+
+      expect(picked).toEqual(['again', 'directive']);
+    });
+
+    it('내보내지 않고 [완료]를 눌러 확인 줄이 뜬 동안에는 [다시 진단 ▾]가 없다', () => {
+      /** 확인 줄. */
+      const footer = ReadyFooterView({ confirming: true, onComplete: () => {}, onConfirmComplete: () => {}, onCancelConfirm: () => {}, onExport: () => {}, onRediagnose: () => {} });
+
+      expect(renderToStaticMarkup(footer)).not.toContain('다시 진단');
+    });
+
+    it('지시 입력은 위에서 아래로 이름, 앞서 덧붙인 지시 안내와 목록, 입력 칸, 새 보고서 안내, [취소] · [다시 진단]이고 재현 체크는 없다', () => {
+      /** 그린 HTML. */
+      const markup = renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={['더 짧게', '캐시를 먼저 의심해 줘']} onClose={() => {}} />);
+      /** 글자만. */
+      const text = textIn(markup);
+
+      expect(text).toMatch(
+        /^ 지시 앞서 덧붙인 지시도 함께 넘깁니다\. 더 짧게 캐시를 먼저 의심해 줘 새 보고서가 나오면 지금 보고서를 바꿉니다\. 남기려면 먼저 내보내세요\. 취소 다시 진단 $/,
+      );
+      expect(markup).toContain('<textarea');
+      expect(markup.indexOf('<textarea')).toBeGreaterThan(markup.indexOf('캐시를 먼저 의심해 줘'));
+      expect(markup).not.toContain('type="checkbox"');
+      expect(text).not.toContain('재현도 다시 하기');
+      // 빈 지시로는 보낼 수 없다.
+      expect(markup).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>다시 진단<\/button>/);
+    });
+
+    it('앞서 덧붙인 지시가 없으면 그 안내와 목록을 보이지 않는다', () => {
+      expect(textIn(renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={[]} onClose={() => {}} />))).not.toContain('앞서 덧붙인 지시');
+    });
+
+    it('바닥 줄은 지시 입력을 연 진단에서만 지시 입력으로 펼쳐진다', () => {
+      /** 지시 입력을 연 진단 ID가 `openId`인 상태. */
+      const pane = (openId: number | null) => ({ openId, open: () => {}, close: () => {} });
+      /** 연 진단의 바닥 줄. */
+      const open = renderToStaticMarkup(<DiagnosisFooter diagnosis={withDirectives()} directivePane={pane(9)} />);
+      /** 다른 진단을 연 상태의 바닥 줄. */
+      const other = renderToStaticMarkup(<DiagnosisFooter diagnosis={withDirectives()} directivePane={pane(2)} />);
+
+      expect(open).toContain('<footer class="review-foot stacked">');
+      expect(textIn(open)).toContain('앞서 덧붙인 지시도 함께 넘깁니다. 더 짧게 캐시를 먼저 의심해 줘');
+      expect(other).not.toContain('stacked');
+      expect(other).toContain('다시 진단 ▾');
+    });
+
+    it('다시 진단하는 동안은 `다시 진단 중` 태그와 앞선 보고서를 보이고, 바닥 줄은 안내와 [취소]뿐이라 내보내기와 완료를 할 수 없다', () => {
+      /** 기다리는 다시 진단. */
+      const waiting = readyDiagnosis(1, { status: 'queued', rediagnosing: true, progress: { status: 'waiting', ahead: 1 } });
+      /** 도는 다시 진단. */
+      const running = readyDiagnosis(2, { status: 'running', rediagnosing: true, progress: { status: 'running', step: '파일 읽는 중', filesRead: 2, startedAt: Date.now() } });
+      for (const item of [waiting, running]) {
+        /** 그린 HTML. */
+        const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([item])} initialDiagnosisId={item.id} />);
+        /** 바닥 줄. */
+        const footer = /<footer class="review-foot">[\s\S]*<\/footer>/.exec(markup)?.[0] ?? '';
+
+        expect(markup).toContain('<span class="tag generating">다시 진단 중</span>');
+        expect(textIn(markup)).toContain('빈 주문 목록에서 첫 항목을 읽어 오류가 납니다.');
+        expect(footer).toContain('다시 진단하는 중입니다. 끝나면 이 보고서를 바꿉니다.');
+        expect(footer.match(/<button/g)).toHaveLength(1);
+        expect(footer).toMatch(/<button[^>]*>취소<\/button>/);
+        expect(footer).not.toMatch(/완료|내보내기|다시 진단 ▾/);
+      }
+    });
+
+    it('다시 진단하지 못하고 돌아오면 보고서 위 알림 줄에 사유와 [다시 걸기]가 보이고 태그는 준비됨이다', () => {
+      /** 취소해 앞선 보고서로 돌아온 진단. */
+      const returned = withDirectives({ rediagnosisFailure: { reason: 'cancelled', detail: null, lastStep: null } });
+      /** 그린 HTML. */
+      const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([returned])} initialDiagnosisId={9} />);
+
+      expect(markup).toContain('<span class="tag ready">준비됨</span>');
+      expect(markup).toMatch(
+        /<div class="notice-line"><span>다시 진단하지 못했습니다: 취소함: 진단을 취소했습니다\. 앞선 보고서를 그대로 둡니다\.<\/span><button[^>]*>다시 걸기<\/button><\/div>/,
+      );
+      // 알림 줄은 탭 위에 있다.
+      expect(markup.indexOf('notice-line')).toBeLessThan(markup.indexOf('role="tablist"'));
+      // 쌓인 지시는 남는다.
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={returned} />)).toContain('다시 진단 ▾');
+    });
+
+    it('돌아오지 않은 진단에는 알림 줄이 없고, [다시 걸기]는 쌓인 지시와 함께 지시 입력을 연다', () => {
+      /** 지시 입력을 열라는 요청. */
+      const opened: number[] = [];
+      /** 돌아온 진단. */
+      const returned = withDirectives({ rediagnosisFailure: { reason: 'timed-out', detail: null, lastStep: null } });
+      /** 알림 줄. */
+      const notice = RediagnosisNotice({ diagnosis: returned, directivePane: { openId: null, open: (id) => opened.push(id), close: () => {} } });
+      for (const button of pressables(notice)) (button.onClick as () => void)();
+
+      expect(opened).toEqual([9]);
+      expect(renderToStaticMarkup(<RediagnosisNotice diagnosis={withDirectives()} />)).toBe('');
+    });
+
+    it('작은 창에서도 알림 줄이 보이고 바닥 줄은 [다시 진단 ▾]를 둔다', () => {
+      /** 돌아온 진단. */
+      const returned = withDirectives({ rediagnosisFailure: { reason: 'repository-unavailable', detail: null, lastStep: null } });
+      /** 작은 창의 글. */
+      const text = textIn(renderToStaticMarkup(<PopoverContent snapshot={withDiagnoses([returned])} initialDiagnosisId={9} />));
+
+      expect(text).toContain('다시 진단하지 못했습니다: 연결한 저장소를 찾을 수 없습니다. 앞선 보고서를 그대로 둡니다. 다시 걸기');
+      expect(text).toContain('다시 진단 ▾');
+    });
+
+    it('정보 탭에 앞선 진단이 적힌다', () => {
+      /** 완료한 뒤의 재발로 만든 보고서. */
+      const report = { ...REPORT, priorDiagnosis: { kind: 'completed' as const, completedAt: new Date(2026, 10, 20, 15, 30).getTime(), exportPath: '/내보냄/old.md' } };
+      /** 정보 탭의 글. */
+      const text = textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis(1, { report })} report={report} tab="info" />);
+
+      expect(text).toContain('없는 데이터 없음 앞선 진단 앞서 진단함(2026-11-20) 앞서 내보낸 파일 /내보냄/old.md');
+      expect(textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={REPORT} tab="info" />)).not.toContain('앞선 진단');
+    });
+  });
+
+  /** 그린 HTML에서 태그를 지운 글자. 공백은 하나로 줄인다. */
+  function textIn(markup: string): string {
+    return markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  }
 
   it('완료함의 기록에 마지막으로 내보낸 파일 경로가 보인다', () => {
     /** 완료한 진단의 상세 몸통. */

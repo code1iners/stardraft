@@ -235,6 +235,8 @@ async function setup({ mapped = true } = {}) {
   });
   await diagnoses.load();
   const executor = new FakeExecutor('claude-code');
+  /** 지금 그 자리에 있는 것으로 보는 내보낸 파일 경로. */
+  const existingExports = new Set<string>();
   const adapter = new SentryTargetAdapter({
     diagnoses,
     projects,
@@ -242,6 +244,7 @@ async function setup({ mapped = true } = {}) {
     connectSentry: api.connect,
     settingsStore,
     repoState: async () => ({ headCommit: HEAD, uncommittedChanges: true }),
+    exportFileExists: async (path) => existingExports.has(path),
     clock,
     logger,
   });
@@ -267,7 +270,7 @@ async function setup({ mapped = true } = {}) {
   };
   /** 진단 하나를 오류 이슈 ID로 찾는다. */
   const byIssue = (issueId: string) => diagnoses.list().find((item) => item.issueId === issueId);
-  return { clock, api, logged, connection, projects, diagnoses, store, executor, queue, flow, repo, detect, byIssue, settingsStore };
+  return { clock, api, logged, connection, projects, diagnoses, store, executor, queue, flow, repo, detect, byIssue, settingsStore, existingExports };
 }
 
 describe('Sentry 어댑터: 읽기 전용 진단', () => {
@@ -628,5 +631,234 @@ describe('Sentry 어댑터: 저장소 대기', () => {
 
     expect(env.diagnoses.list()).toEqual([]);
     expect(env.queue.isRunning()).toBe(false);
+  });
+});
+
+/** 진단을 감지한 뒤 읽기 전용 진단으로 끝내 검토 대기로 둔다. */
+async function diagnoseToReady(env: Awaited<ReturnType<typeof setup>>, issueId: string): Promise<number> {
+  await env.detect(issueId);
+  env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+  await env.queue.start();
+  await settle();
+  /** 검토 대기가 된 진단. */
+  const diagnosis = env.byIssue(issueId)!;
+  expect(diagnosis.status).toBe('ready');
+  return diagnosis.id;
+}
+
+/** 진단을 다시 진단으로 건다. 사용자 요청이라 대기열의 `user` 칸에 선다. */
+async function rediagnose(env: Awaited<ReturnType<typeof setup>>, id: number, directive: string | null): Promise<void> {
+  await env.queue.changeByUser({ kind: SENTRY_TARGET_KIND, targetId: id }, async () => {
+    await env.diagnoses.rediagnose(id, directive);
+  });
+  await settle();
+}
+
+describe('Sentry 어댑터: 다시 진단', () => {
+  it('지시 없이 다시 진단하면 앞선 보고서도 쌓인 지시도 넘기지 않고, 이벤트 데이터는 새로 받는다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    env.api.issues.get('101')!.latestEvent!.message = '새로 받은 이벤트 메시지';
+    env.executor.script({ outcome: { type: 'completed', output: { ...reportOutput(env.repo), summary: '새 요약입니다.' } } });
+
+    await rediagnose(env, id, null);
+
+    /** 다시 진단의 요청. */
+    const request = env.executor.requests[1]!;
+    expect(request.input).not.toContain('# 직전 결과');
+    expect(request.input).not.toContain('# 덧붙인 지시');
+    expect(request.input).not.toContain('주문 목록이 비었을 때');
+    expect(request.input).toContain('새로 받은 이벤트 메시지');
+    expect(request.instructions).not.toContain('## 직전 결과와 덧붙인 지시');
+    expect(env.byIssue('101')).toMatchObject({ status: 'ready', report: { summary: '새 요약입니다.' } });
+  });
+
+  it('지시를 덧붙이면 앞선 보고서와 쌓인 지시 전부를 넘기고 첨부는 넘기지 않는다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+    await rediagnose(env, id, '캐시를 먼저 의심해 줘');
+    await rediagnose(env, id, '근거를 더 찾아 줘\n둘째 줄');
+
+    /** 둘째 다시 진단의 요청. */
+    const request = env.executor.requests[2]!;
+    expect(request.input).toContain('# 직전 결과');
+    expect(request.input).toContain('주문 목록이 비었을 때 첫 항목을 읽어 오류가 납니다.');
+    expect(request.input).toContain('빈 배열의 첫 항목을 확인 없이 읽습니다. [근거 1]');
+    expect(request.input).toContain('빈 목록을 먼저 확인합니다.');
+    expect(request.input).toContain('빈 목록이 언제 오는지 확인하지 못했습니다.');
+    expect(request.input).toContain('# 덧붙인 지시\n1. 캐시를 먼저 의심해 줘\n2. 근거를 더 찾아 줘\n   둘째 줄');
+    expect(request.input).not.toMatch(/attachment|첨부/);
+    expect(request.instructions).toContain('## 직전 결과와 덧붙인 지시');
+    // 앱이 채운 "불가(허용 안 됨)" 재현 칸은 에이전트의 답이 아니라 넘기지 않는다.
+    expect(request.input).not.toContain('## 재현');
+    // 첫 다시 진단에는 지시가 하나뿐이었다.
+    expect(env.executor.requests[1]!.input).toContain('# 덧붙인 지시\n1. 캐시를 먼저 의심해 줘');
+    expect(env.executor.requests[1]!.input).not.toContain('2. ');
+  });
+
+  it('지시 없이 다시 진단하면 그 전에 쌓인 지시를 비워 다음 지시는 처음부터 쌓인다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    for (let count = 0; count < 3; count += 1) env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+    await rediagnose(env, id, '첫 지시');
+    await rediagnose(env, id, null);
+    await rediagnose(env, id, '새 지시');
+
+    expect(env.executor.requests[3]!.input).toContain('# 덧붙인 지시\n1. 새 지시');
+    expect(env.executor.requests[3]!.input).not.toContain('첫 지시');
+  });
+
+  it('다시 진단하는 동안 앞선 보고서를 보관하고, 새 보고서가 나오면 바꾼다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    env.executor.script({ outcome: 'wait-for-abort' });
+
+    await rediagnose(env, id, '더 짧게');
+
+    expect(env.byIssue('101')).toMatchObject({ status: 'queued', report: { summary: '주문 목록이 비었을 때 첫 항목을 읽어 오류가 납니다.' } });
+    expect(env.queue.progress({ kind: SENTRY_TARGET_KIND, targetId: id })).not.toBeNull();
+  });
+
+  it('다시 진단이 실패하면 진단 실패가 아니라 앞선 보고서로 돌아오고 지시는 남는다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    env.executor.script({ outcome: { type: 'timed-out' } });
+    env.executor.script({ outcome: { type: 'timed-out' } });
+
+    await rediagnose(env, id, '더 짧게');
+
+    expect(env.byIssue('101')).toMatchObject({
+      status: 'ready',
+      failure: null,
+      directives: ['더 짧게'],
+      rediagnosisFailure: { reason: 'timed-out', runKind: 'diagnosis' },
+      report: { summary: '주문 목록이 비었을 때 첫 항목을 읽어 오류가 납니다.' },
+    });
+  });
+
+  it('다시 진단을 취소하면 앞선 보고서로 돌아온다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    env.executor.script({ outcome: 'wait-for-abort' });
+    await rediagnose(env, id, null);
+
+    await env.queue.cancel({ kind: SENTRY_TARGET_KIND, targetId: id });
+    await settle();
+
+    expect(env.byIssue('101')).toMatchObject({ status: 'ready', rediagnosisFailure: { reason: 'cancelled' } });
+    expect(env.byIssue('101')!.report).not.toBeNull();
+  });
+
+  it('다시 진단 사이 오류 이슈가 해결·보관돼도 사용자가 요청했으니 조용히 빼지 않고 진단한다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    env.api.issues.get('101')!.status = 'resolved';
+    env.executor.script({ outcome: { type: 'completed', output: { ...reportOutput(env.repo), summary: '해결된 뒤의 요약입니다.' } } });
+
+    await rediagnose(env, id, null);
+
+    expect(env.byIssue('101')).toMatchObject({ status: 'ready', report: { summary: '해결된 뒤의 요약입니다.' } });
+  });
+
+  it('다시 진단 사이 오류 이슈가 삭제됐으면 앞선 보고서를 지우지 않고 돌아와 사유를 알린다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    env.api.issues.delete('101');
+
+    await rediagnose(env, id, null);
+
+    expect(env.byIssue('101')).toMatchObject({ status: 'ready', rediagnosisFailure: { reason: 'sentry-unavailable' } });
+    expect(env.byIssue('101')!.report).not.toBeNull();
+  });
+
+  it('다시 진단 사이 저장소 폴더가 사라지면 저장소 대기가 아니라 앞선 보고서로 돌아온다', async () => {
+    const env = await setup();
+    const id = await diagnoseToReady(env, '101');
+    rmSync(env.repo, { recursive: true, force: true });
+
+    await rediagnose(env, id, null);
+
+    expect(env.byIssue('101')).toMatchObject({ status: 'ready', rediagnosisFailure: { reason: 'repository-unavailable' } });
+  });
+});
+
+describe('Sentry 어댑터: 앞선 진단 참고', () => {
+  /** 같은 오류 이슈에 새 재발을 감지한다. */
+  const regress = async (env: Awaited<ReturnType<typeof setup>>, issueId: string, eventId: string) => {
+    await env.diagnoses.record({
+      registration: registration(),
+      checkpoint: NOW,
+      detectedAt: NOW + MINUTE,
+      detected: [{ origin: 'regression', issue: listed(issueId), eventId }],
+    });
+    return env.diagnoses.list().filter((item) => item.issueId === issueId).at(-1)!;
+  };
+
+  it('검토 대기 중 재발로 만든 새 진단의 입력에 앞선 보고서의 요약·원인·개선 방향이 참고일 뿐이라는 문구와 함께 들어가고, 보고서에 앞선 진단이 적힌다', async () => {
+    const env = await setup();
+    await diagnoseToReady(env, '101');
+    env.executor.script({ outcome: { type: 'completed', output: { ...reportOutput(env.repo), summary: '새 보고서 요약입니다.' } } });
+
+    const second = await regress(env, '101', 'event-r1');
+    await settle();
+
+    /** 새 진단의 요청. */
+    const request = env.executor.requests[1]!;
+    expect(request.input).toContain('# 앞선 진단');
+    expect(request.input).toContain('참고일 뿐이고 이 원인이 틀렸을 수 있습니다');
+    expect(request.input).toContain('주문 목록이 비었을 때 첫 항목을 읽어 오류가 납니다.');
+    expect(request.input).toContain('빈 배열의 첫 항목을 확인 없이 읽습니다.');
+    expect(request.input).toContain('빈 목록을 먼저 확인합니다.');
+    // 앞선 진단의 근거와 남은 의문은 넘기지 않는다.
+    expect(request.input).not.toContain('빈 목록이 언제 오는지');
+    expect(request.input).not.toContain('# 직전 결과');
+    expect(request.instructions).toContain('## 앞선 진단');
+    expect(env.diagnoses.get(second.id)?.report).toMatchObject({ summary: '새 보고서 요약입니다.', priorDiagnosis: { kind: 'in-review' } });
+    // 앞선 보고서는 그대로다.
+    expect(env.byIssue('101')!.report!.priorDiagnosis).toBeNull();
+  });
+
+  it('완료한 뒤 재발한 진단의 입력에는 아무것도 넘기지 않고, 보고서에 완료한 날짜와 마지막으로 내보낸 파일 경로가 적힌다', async () => {
+    const env = await setup();
+    const first = await diagnoseToReady(env, '101');
+    await env.diagnoses.recordExport(first, { path: '/내보냄/old.md', at: NOW, reportCreatedAt: NOW });
+    env.existingExports.add('/내보냄/old.md');
+    await env.diagnoses.complete(first);
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+    const second = await regress(env, '101', 'event-r1');
+    await settle();
+
+    /** 새 진단의 요청. */
+    const request = env.executor.requests[1]!;
+    expect(request.input).not.toContain('# 앞선 진단');
+    expect(request.input).not.toContain('주문 목록이 비었을 때');
+    expect(request.input).not.toContain('/내보냄/old.md');
+    expect(request.instructions).not.toContain('## 앞선 진단');
+    expect(env.diagnoses.get(second.id)?.report?.priorDiagnosis).toEqual({ kind: 'completed', completedAt: NOW, exportPath: '/내보냄/old.md' });
+  });
+
+  it('내보낸 파일이 그 자리에 없거나 내보낸 적이 없으면 날짜만 적는다', async () => {
+    const env = await setup();
+    const first = await diagnoseToReady(env, '101');
+    await env.diagnoses.recordExport(first, { path: '/내보냄/gone.md', at: NOW, reportCreatedAt: NOW });
+    await env.diagnoses.complete(first);
+    env.executor.script({ outcome: { type: 'completed', output: reportOutput(env.repo) } });
+
+    const second = await regress(env, '101', 'event-r1');
+    await settle();
+
+    expect(env.diagnoses.get(second.id)?.report?.priorDiagnosis).toEqual({ kind: 'completed', completedAt: NOW, exportPath: null });
+  });
+
+  it('앞선 진단이 없으면 보고서의 앞선 진단 칸은 비어 있다', async () => {
+    const env = await setup();
+    await diagnoseToReady(env, '101');
+
+    expect(env.byIssue('101')!.report!.priorDiagnosis).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type MouseEvent } from 'react';
 import type { DiagnosisAttachmentSnapshot, DiagnosisReportSnapshot, DiagnosisSnapshot } from '../../shared/ipc';
 import { StateTag } from './ReviewList';
 import { tabId, tabPanelId, UnderlineTabs } from './UnderlineTabs';
@@ -16,9 +16,13 @@ import {
   diagnosisRunningText,
   diagnosisStatusTag,
   diagnosisTabs,
+  DIRECTIVE_FORM_TEXT,
   issueFacts,
   NO_ATTACHMENTS_TEXT,
   NO_EVIDENCE_TEXT,
+  REDIAGNOSE_CHOICES,
+  REDIAGNOSING_FOOTER_TEXT,
+  rediagnosisFailureNotice,
   REPRODUCTION_NOT_ALLOWED_NOTE,
   reportEventFacts,
   reportRunFacts,
@@ -26,6 +30,7 @@ import {
   reproductionText,
   type DiagnosisTabId,
   type IssueFact,
+  type RediagnoseChoice,
 } from './diagnosis-text';
 import { circledNumber, formatTime } from './review-text';
 
@@ -33,6 +38,26 @@ import { circledNumber, formatTime } from './review-text';
 interface DiagnosisProps {
   /** 그릴 진단. */
   diagnosis: DiagnosisSnapshot;
+}
+
+/**
+ * 바닥 줄의 지시 입력을 어느 진단에 열었는지. 보고서 위 알림 줄의 [다시 걸기]와 바닥 줄의 [다시 진단 ▾]가 같은 입력을 열기 때문에
+ * 몸통과 바닥 줄을 함께 그리는 화면이 이 상태를 들고 둘에 넘긴다. 진단 하나에만 열고, 다른 진단으로 넘어가면 닫힌 것으로 본다.
+ */
+export interface DirectivePane {
+  /** 지시 입력을 연 진단 ID. 열지 않았으면 `null`. */
+  openId: number | null;
+  /** 진단의 지시 입력을 연다. */
+  open: (diagnosisId: number) => void;
+  /** 지시 입력을 닫는다. */
+  close: () => void;
+}
+
+/** 지시 입력을 어느 진단에 열었는지 기억한다. 몸통과 바닥 줄을 함께 그리는 화면이 한 번 부르고 둘에 넘긴다. */
+export function useDirectivePane(): DirectivePane {
+  /** 지시 입력을 연 진단 ID. */
+  const [openId, setOpenId] = useState<number | null>(null);
+  return { openId, open: setOpenId, close: () => setOpenId(null) };
 }
 
 /** 진단의 상태 태그. 대기는 회색, 저장소 대기는 노랑이다. */
@@ -131,25 +156,60 @@ export type DiagnosisWindowKind = 'compact' | 'expanded';
 interface DiagnosisBodyProps extends DiagnosisProps {
   /** 몸통이 놓이는 창. 없으면 펼친 창이다. */
   windowKind?: DiagnosisWindowKind;
+  /** 알림 줄의 [다시 걸기]가 열 지시 입력. 바닥 줄과 같은 것을 넘긴다. 없으면 [다시 걸기]를 보이지 않는다. */
+  directivePane?: DirectivePane;
 }
 
 /**
  * 진단 상세의 머리 아래 부분. 보고서가 있으면 펼친 창은 `보고서` · `근거 n` · `첨부 n` · `정보` 탭을 두고 작은 창은 접는 구역으로 보인다.
  * 보고서가 없으면 탭이 없고, 대기·진행 중은 `진행`, 진단 실패는 `오류` 상자, 완료함은 `기록`을 두고 그 아래에 `오류 정보`를 둔다.
  * 저장소 대기는 이유 상자를 두지 않고 노란 바닥 줄이 이유를 알린다.
+ * 다시 진단하지 못하고 앞선 보고서로 돌아왔으면 보고서 위에 노란 알림 줄이 사유와 [다시 걸기]를 보인다.
  * 진단이 바뀌면 탭과 접힘 상태를 처음으로 되돌리려고 `key`를 진단 ID로 둔다.
  */
-export function DiagnosisBody({ diagnosis, windowKind = 'expanded' }: DiagnosisBodyProps) {
+export function DiagnosisBody({ diagnosis, windowKind = 'expanded', directivePane }: DiagnosisBodyProps) {
   /** 작은 창이면 `true`. 작은 창은 머리 정보를 몸통 맨 위에 둔다. */
   const compact = windowKind === 'compact';
   /** 몸통을 감싸는 요소의 클래스. */
   const className = compact ? 'popover-body review-body' : 'detail-body';
-  if (diagnosis.report && !compact) return <DiagnosisTabs key={diagnosis.id} diagnosis={diagnosis} report={diagnosis.report} />;
+  if (diagnosis.report && !compact) {
+    return (
+      <>
+        <RediagnosisNotice diagnosis={diagnosis} directivePane={directivePane} />
+        <DiagnosisTabs key={diagnosis.id} diagnosis={diagnosis} report={diagnosis.report} />
+      </>
+    );
+  }
   return (
     <main className={className}>
       {compact && <DiagnosisMeta diagnosis={diagnosis} />}
+      <RediagnosisNotice diagnosis={diagnosis} directivePane={directivePane} />
       <DiagnosisSections key={diagnosis.id} diagnosis={diagnosis} />
     </main>
+  );
+}
+
+/** 알림 줄에 넘기는 값. */
+interface RediagnosisNoticeProps extends DiagnosisProps {
+  /** [다시 걸기]가 열 지시 입력. 없으면 [다시 걸기]를 보이지 않는다. */
+  directivePane?: DirectivePane | undefined;
+}
+
+/**
+ * 보고서 위 알림 줄. 다시 진단하지 못하고 앞선 보고서로 돌아온 검토 대기 진단에만 있다.
+ * "다시 진단하지 못했습니다: 사유 앞선 보고서를 그대로 둡니다."와 [다시 걸기]다. [다시 걸기]는 쌓인 지시와 함께 지시 입력을 연다.
+ */
+export function RediagnosisNotice({ diagnosis, directivePane }: RediagnosisNoticeProps) {
+  if (diagnosis.status !== 'ready' || !diagnosis.rediagnosisFailure) return null;
+  return (
+    <div className="notice-line">
+      <span>{rediagnosisFailureNotice(diagnosis.rediagnosisFailure)}</span>
+      {directivePane && (
+        <button type="button" className="btn sm" onClick={() => directivePane.open(diagnosis.id)}>
+          다시 걸기
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -653,15 +713,18 @@ function TextList({ items, ordered = false }: TextListProps) {
 interface DiagnosisFooterProps extends DiagnosisProps {
   /** 바닥 줄이 놓이는 창. 없으면 펼친 창이다. 노란 바닥 줄만 작은 창에서 글을 윗줄에, 버튼을 아랫줄에 둔다. */
   windowKind?: DiagnosisWindowKind;
+  /** 지시 입력을 열고 닫는 상태. 알림 줄의 [다시 걸기]와 같은 것을 넘긴다. 없으면 이 바닥 줄이 스스로 기억한다. */
+  directivePane?: DirectivePane;
 }
 
 /**
  * 진단의 바닥 줄. 끝내는 버튼은 왼쪽, 나아가는 버튼은 오른쪽이다.
  * 저장소 대기는 노란 바닥 줄에 진단용 글과 주 버튼 하나를 두고 치우는 버튼은 두지 않는다. 주 버튼은 그 프로젝트 매핑 편집으로 보낸다.
- * 검토 대기는 왼쪽 [완료](오른쪽의 [다시 진단 ▾]와 [내보내기]는 다시 진단과 내보내기 단계가 더한다),
+ * 검토 대기는 왼쪽 [완료], 오른쪽 [다시 진단 ▾]와 주 버튼 [내보내기]이고, 지시를 덧붙여 다시 진단을 고르면 바닥 줄이 지시 입력으로 펼쳐진다.
+ * 다시 진단하는 중은 안내와 [취소]다(내보내기와 완료는 먼저 취소해야 한다).
  * 대기와 진행 중은 안내와 [취소], 진단 실패는 [완료]와 [다시 시도], 완료함은 안내만 둔다.
  */
-export function DiagnosisFooter({ diagnosis, windowKind = 'expanded' }: DiagnosisFooterProps) {
+export function DiagnosisFooter({ diagnosis, windowKind = 'expanded', directivePane }: DiagnosisFooterProps) {
   /** 이 진단에 취소·다시 시도·완료 명령을 보낸다. */
   const send = (type: 'cancel-diagnosis' | 'retry-diagnosis' | 'complete-diagnosis') => {
     void window.stardraft.send({ type, diagnosisId: diagnosis.id });
@@ -690,12 +753,14 @@ export function DiagnosisFooter({ diagnosis, windowKind = 'expanded' }: Diagnosi
   }
   switch (diagnosis.status) {
     case 'ready':
-      return <ReadyFooter diagnosis={diagnosis} send={send} />;
+      return <ReadyFooter diagnosis={diagnosis} send={send} directivePane={directivePane} />;
     case 'queued':
     case 'running':
       return (
         <footer className="review-foot">
-          {diagnosis.progress?.status === 'running' ? (
+          {diagnosis.rediagnosing ? (
+            <span className="small muted">{REDIAGNOSING_FOOTER_TEXT}</span>
+          ) : diagnosis.progress?.status === 'running' ? (
             <RunningText startedAt={diagnosis.progress.startedAt} />
           ) : (
             <span className="small muted">차례를 기다리는 중입니다.</span>
@@ -733,13 +798,20 @@ export function DiagnosisFooter({ diagnosis, windowKind = 'expanded' }: Diagnosi
 interface ReadyFooterProps extends DiagnosisProps {
   /** 이 진단에 완료 명령을 보낸다. */
   send: (type: 'complete-diagnosis') => void;
+  /** 지시 입력을 열고 닫는 상태. 없으면 이 바닥 줄이 스스로 기억한다. */
+  directivePane: DirectivePane | undefined;
 }
 
 /**
  * 검토 대기의 바닥 줄. 지금 보이는 보고서를 내보낸 적이 없을 때 [완료]를 누르면 "내보내지 않았습니다" 확인을 띄우고,
  * 내보낸 적이 있으면 바로 완료한다. 확인을 띄운 진단 ID만 기억해, 다른 진단으로 넘어가면 확인이 저절로 닫힌다.
+ * [다시 진단 ▾]에서 "다시 진단"은 바로 다시 진단하고, "지시를 덧붙여 다시 진단"은 바닥 줄을 지시 입력으로 펼친다.
  */
-function ReadyFooter({ diagnosis, send }: ReadyFooterProps) {
+function ReadyFooter({ diagnosis, send, directivePane: given }: ReadyFooterProps) {
+  /** 지시 입력을 스스로 기억하는 상태. 부르는 쪽이 넘기지 않았을 때 쓴다. */
+  const ownPane = useDirectivePane();
+  /** 쓸 지시 입력 상태. */
+  const directivePane = given ?? ownPane;
   /** 확인을 띄운 진단 ID. */
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   /** 이 진단의 보고서를 내보낸다. 확인 중이었다면 확인을 닫는다. */
@@ -747,6 +819,20 @@ function ReadyFooter({ diagnosis, send }: ReadyFooterProps) {
     setConfirmingId(null);
     void window.stardraft.send({ type: 'export-diagnosis', diagnosisId: diagnosis.id });
   };
+  /** [다시 진단 ▾]에서 고른 경로를 한다. 확인 중이었다면 확인을 닫는다. */
+  const handleRediagnose = (choice: RediagnoseChoice) => {
+    setConfirmingId(null);
+    if (choice === 'directive') directivePane.open(diagnosis.id);
+    else void window.stardraft.send({ type: 'rediagnose', diagnosisId: diagnosis.id });
+  };
+
+  if (directivePane.openId === diagnosis.id) {
+    return (
+      <footer className="review-foot stacked">
+        <RediagnosisForm diagnosisId={diagnosis.id} directives={diagnosis.directives} onClose={directivePane.close} />
+      </footer>
+    );
+  }
   return (
     <ReadyFooterView
       confirming={confirmingId === diagnosis.id && !diagnosis.exported}
@@ -754,7 +840,107 @@ function ReadyFooter({ diagnosis, send }: ReadyFooterProps) {
       onConfirmComplete={() => send('complete-diagnosis')}
       onCancelConfirm={() => setConfirmingId(null)}
       onExport={handleExport}
+      onRediagnose={handleRediagnose}
     />
+  );
+}
+
+/** 지시 입력에 넘기는 값. */
+interface RediagnosisFormProps {
+  /** 다시 진단할 진단 ID. */
+  diagnosisId: number;
+  /** 앞서 덧붙인 지시. 덧붙인 순서다. */
+  directives: readonly string[];
+  /** 입력을 닫는다. 보내거나 [취소]를 누르면 부른다. */
+  onClose: () => void;
+}
+
+/**
+ * 지시를 덧붙여 다시 진단하는 입력. 바닥 줄 자리에 펼쳐진다. 위에서 아래로 이름 "지시", 앞서 덧붙인 지시(있을 때), 입력 칸,
+ * "새 보고서가 나오면 지금 보고서를 바꿉니다" 안내, [취소] · [다시 진단]이다. 빈 지시로는 보낼 수 없다.
+ * "재현도 다시 하기" 체크는 재현을 허용한 저장소에서만 나오는데 재현은 아직 없어 두지 않는다.
+ */
+export function RediagnosisForm({ diagnosisId, directives, onClose }: RediagnosisFormProps) {
+  /** 쓰고 있는 지시. */
+  const [text, setText] = useState('');
+  /** 지시를 덧붙여 다시 진단한다. */
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (text.trim() === '') return;
+    void window.stardraft.send({ type: 'rediagnose-with-directive', diagnosisId, directive: text });
+    onClose();
+  };
+  /** 지시 글이 바뀌었다. */
+  const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value);
+
+  return (
+    <form className="regen-form" onSubmit={handleSubmit}>
+      <label className="field-label" htmlFor={`rediagnosis-directive-${diagnosisId}`}>
+        {DIRECTIVE_FORM_TEXT.label}
+      </label>
+      {directives.length > 0 && (
+        <>
+          <p className="small muted">{DIRECTIVE_FORM_TEXT.previous}</p>
+          <ol className="directive-list small">
+            {directives.map((directive, index) => (
+              <li key={index}>{directive}</li>
+            ))}
+          </ol>
+        </>
+      )}
+      <textarea
+        id={`rediagnosis-directive-${diagnosisId}`}
+        className="text-input regen-input"
+        value={text}
+        placeholder={DIRECTIVE_FORM_TEXT.placeholder}
+        autoFocus
+        onChange={handleChange}
+      />
+      <p className="small muted">{DIRECTIVE_FORM_TEXT.replaceNote}</p>
+      <div className="regen-actions">
+        <button type="button" className="btn" onClick={onClose}>
+          취소
+        </button>
+        <span className="spacer" />
+        <button type="submit" className="btn primary" disabled={text.trim() === ''}>
+          다시 진단
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** [다시 진단 ▾]에 넘기는 값. */
+interface RediagnoseMenuProps {
+  /** 메뉴 항목을 골랐다. */
+  onPick: (choice: RediagnoseChoice) => void;
+}
+
+/** 검토 대기 보고서의 [다시 진단 ▾] 메뉴. 바닥 줄 위로 펼치고, 항목을 고르면 닫는다. */
+function RediagnoseMenu({ onPick }: RediagnoseMenuProps) {
+  /** 항목을 눌렀다. 메뉴를 닫고 고른 경로를 알린다. */
+  const handlePick = (event: MouseEvent<HTMLButtonElement>, choice: RediagnoseChoice) => {
+    event.currentTarget.closest('details')?.removeAttribute('open');
+    onPick(choice);
+  };
+
+  return (
+    <details className="menu">
+      <summary className="btn">다시 진단 ▾</summary>
+      <div className="menu-list" role="menu">
+        {REDIAGNOSE_CHOICES.map(({ choice, label }) => (
+          <button
+            key={choice}
+            type="button"
+            role="menuitem"
+            className="menu-item"
+            onClick={(event) => handlePick(event, choice)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -770,13 +956,15 @@ export interface ReadyFooterViewProps {
   onCancelConfirm: () => void;
   /** [내보내기]를 눌렀다. 평소 줄과 확인 줄 모두에 있다. */
   onExport: () => void;
+  /** [다시 진단 ▾]에서 항목을 골랐다. 평소 줄에만 있다. 없으면 [다시 진단 ▾]를 보이지 않는다. */
+  onRediagnose?: (choice: RediagnoseChoice) => void;
 }
 
 /**
- * 검토 대기 바닥 줄의 모양. 평소에는 왼쪽 [완료], 오른쪽 주 버튼 [내보내기]다([다시 진단 ▾]는 다시 진단 단계가 더한다).
+ * 검토 대기 바닥 줄의 모양. 평소에는 왼쪽 [완료], 오른쪽 [다시 진단 ▾]와 주 버튼 [내보내기]다.
  * 확인 줄은 왼쪽에 안내 글, 오른쪽에 [취소] · [내보내기] · 주 버튼 [완료]다.
  */
-export function ReadyFooterView({ confirming, onComplete, onConfirmComplete, onCancelConfirm, onExport }: ReadyFooterViewProps) {
+export function ReadyFooterView({ confirming, onComplete, onConfirmComplete, onCancelConfirm, onExport, onRediagnose }: ReadyFooterViewProps) {
   if (confirming) {
     return (
       <footer className="review-foot">
@@ -800,6 +988,7 @@ export function ReadyFooterView({ confirming, onComplete, onConfirmComplete, onC
         완료
       </button>
       <span className="spacer" />
+      {onRediagnose && <RediagnoseMenu onPick={onRediagnose} />}
       <button type="button" className="btn primary" onClick={onExport}>
         내보내기
       </button>

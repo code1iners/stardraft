@@ -990,6 +990,14 @@ export type DiagnosisRepoWaitSnapshot =
   /** 저장소 확인 필요. `path`는 찾을 수 없는 폴더다. */
   | { kind: 'missing-folder'; path: string; waitingCount: number };
 
+/** 진단에 딸린 첨부 파일 하나. 파일 이름과 크기만 넘긴다. */
+export interface DiagnosisAttachmentSnapshot {
+  /** 파일 이름. */
+  name: string;
+  /** 파일 크기(바이트). */
+  sizeBytes: number;
+}
+
 /** 검토 화면이 그릴 Sentry 진단 하나. */
 export interface DiagnosisSnapshot {
   /** 진단 ID. */
@@ -1014,6 +1022,10 @@ export interface DiagnosisSnapshot {
   failure: DiagnosisFailureSnapshot | null;
   /** 완료한 시각. 완료가 아니면 `null`. */
   completedAt: number | null;
+  /** [Sentry에서 열기]로 열 주소가 있는지 여부. 주소는 main이 가지고 있다. */
+  canOpenInSentry: boolean;
+  /** 보고서의 첨부 파일. 보고서가 없으면 비어 있다. 첨부는 재현하는 진단이 만들므로 읽기 전용 진단의 보고서에는 없다. */
+  attachments: DiagnosisAttachmentSnapshot[];
   /** 오류 정보. 감지할 때 오류 이슈 목록에서 받은 값이다. */
   issue: {
     /** 짧은 ID. 없으면 빈 문자열. */
@@ -1245,8 +1257,12 @@ export type AppCommand =
   | { type: 'cancel-diagnosis'; diagnosisId: number }
   /** 진단 실패를 [다시 시도]한다. 생성 대기열의 `user` 칸에 선다. */
   | { type: 'retry-diagnosis'; diagnosisId: number }
-  /** 진단 실패를 [완료]한다. 확인 없이 최소 기록만 남긴다. */
+  /** 진단을 [완료]한다. 진단 실패와 검토 대기 보고서가 대상이고, 최소 기록만 남기고 본문과 첨부를 지운다. Sentry에는 요청하지 않는다. */
   | { type: 'complete-diagnosis'; diagnosisId: number }
+  /** 진단의 오류 이슈를 Sentry에서 연다. 주소는 main이 정한다. */
+  | { type: 'open-diagnosis-in-sentry'; diagnosisId: number }
+  /** 진단 보고서의 근거 하나를 에디터에서 연다. `evidenceIndex`는 보고서 근거 목록의 위치다. */
+  | { type: 'open-diagnosis-evidence-in-editor'; diagnosisId: number; evidenceIndex: number }
   /** 데이터 폴더나 로그 폴더를 OS 파일 관리자로 연다. */
   | { type: 'open-folder'; folder: AppFolder }
   /** 붙여 넣은 Flow 개인 API 키를 확인한다. 성공하면 main이 키를 저장한다. */
@@ -1343,9 +1359,9 @@ export type AppCommand =
   /** 저장소 선택 창을 닫는다. */
   | { type: 'close-repo-picker' }
   /** 작은 창을 닫고 펼친 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
-  | { type: 'expand-review'; bundleId: number | null }
+  | { type: 'expand-review'; bundleId: number | null; diagnosisId?: number | null }
   /** 펼친 창을 닫고 작은 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
-  | { type: 'collapse-review'; bundleId: number | null }
+  | { type: 'collapse-review'; bundleId: number | null; diagnosisId?: number | null }
   /** 창의 영역을 접거나 편다. */
   | { type: 'set-review-section'; window: ReviewWindow; section: ReviewSection; open: boolean }
   /** [게시]. 준비됨 묶음의 5초 카운트다운을 시작한다. 게시할 수 없는 묶음이면 main이 무시한다. 게시 본문은 main이 묶음에서 만든다. */
@@ -1650,10 +1666,19 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'cancel-diagnosis':
     case 'retry-diagnosis':
     case 'complete-diagnosis':
+    case 'open-diagnosis-in-sentry':
       return isDiagnosisIdInput(candidate.diagnosisId) ? { type: candidate.type, diagnosisId: candidate.diagnosisId } : null;
+    case 'open-diagnosis-evidence-in-editor':
+      return isDiagnosisIdInput(candidate.diagnosisId) && Number.isSafeInteger(candidate.evidenceIndex) && (candidate.evidenceIndex as number) >= 0
+        ? { type: 'open-diagnosis-evidence-in-editor', diagnosisId: candidate.diagnosisId, evidenceIndex: candidate.evidenceIndex as number }
+        : null;
     case 'expand-review':
-    case 'collapse-review':
-      return candidate.bundleId === null || isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
+    case 'collapse-review': {
+      if (candidate.bundleId !== null && !isBundleIdInput(candidate.bundleId)) return null;
+      // 진단 ID는 없을 수 있다. 있으면 진단 ID여야 하고, 없으면 싣지 않는다.
+      if (candidate.diagnosisId === undefined || candidate.diagnosisId === null) return { type: candidate.type, bundleId: candidate.bundleId };
+      return isDiagnosisIdInput(candidate.diagnosisId) ? { type: candidate.type, bundleId: candidate.bundleId, diagnosisId: candidate.diagnosisId } : null;
+    }
     case 'set-review-section':
       return isReviewWindow(candidate.window) && isReviewSection(candidate.section) && typeof candidate.open === 'boolean'
         ? { type: 'set-review-section', window: candidate.window, section: candidate.section, open: candidate.open }

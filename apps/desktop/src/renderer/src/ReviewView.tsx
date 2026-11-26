@@ -4,7 +4,7 @@ import { BundleFooter, BundleSections, ManualTag, OpenInFlowButton, PostStatusLi
 import { GlobalProblemBanner } from './PopoverView';
 import { EditorPickerModal } from './EditorPickerModal';
 import { RepoPickerModal } from './RepoPickerModal';
-import { DiagnosisBody, DiagnosisFooter, DiagnosisHead, DiagnosisStatusTag } from './DiagnosisDetail';
+import { DiagnosisBody, DiagnosisFooter, DiagnosisHead, DiagnosisStatusTag, ReproductionTag } from './DiagnosisDetail';
 import { DIAGNOSIS_KIND_LABEL, diagnosisPlaceLine } from './diagnosis-text';
 import { ListKindGroup, ListRetentionNote, ListRow } from './ReviewList';
 import { assignmentSourceText, BUNDLE_PLACE_LABELS, DRAFT_KIND_LABEL, formatTime, postLine, postTitleOf, senderLine } from './review-text';
@@ -79,7 +79,7 @@ export function ReviewContent({ snapshot, initialBundleId = null, initialDiagnos
 
   /** 펼친 창을 닫고 작은 창으로 돌아간다. */
   const handleCollapse = () => {
-    void window.stardraft.send({ type: 'collapse-review', bundleId: selected?.id ?? null });
+    void window.stardraft.send({ type: 'collapse-review', bundleId: selected?.id ?? null, diagnosisId: shownDiagnosis?.id ?? null });
   };
 
   return (
@@ -89,16 +89,14 @@ export function ReviewContent({ snapshot, initialBundleId = null, initialDiagnos
         <aside className="review-list">
           <DiagnosisList diagnoses={diagnoses} selectedId={shownDiagnosis?.id ?? null} onSelect={setDiagnosisId} />
           <BundleList bundles={bundles} selectedId={selected?.id ?? null} onSelect={select} />
-          {bundles.some((bundle) => bundle.group === 'processed') && <ListRetentionNote />}
+          {(bundles.some((bundle) => bundle.group === 'processed') || diagnoses.some((diagnosis) => diagnosis.status === 'completed')) && <ListRetentionNote />}
           {bundles.length === 0 && diagnoses.length === 0 && <p className="list-empty muted">아직 멘션이 없습니다.</p>}
         </aside>
         <section className="review-detail">
           {shownDiagnosis ? (
             <>
               <DiagnosisHead diagnosis={shownDiagnosis} onCollapse={handleCollapse} />
-              <main className="detail-body">
-                <DiagnosisBody diagnosis={shownDiagnosis} />
-              </main>
+              <DiagnosisBody diagnosis={shownDiagnosis} />
               <DiagnosisFooter diagnosis={shownDiagnosis} />
             </>
           ) : selected ? (
@@ -187,7 +185,7 @@ interface DiagnosisListProps {
 }
 
 /**
- * 펼친 창 목록의 `진단 n` 묶음. 초안 묶음보다 위에 둔다. 줄에는 오류 제목, 감지 시각, `프로젝트 · 자리`, 상태 태그를 보인다.
+ * 펼친 창 목록의 `진단 n` 묶음. 초안 묶음보다 위에 둔다. 줄에는 오류 제목, 감지 시각, 보고서 요약(보고서가 없으면 `프로젝트 · 자리`), 재현 태그(보고서가 있을 때)와 상태 태그를 보인다.
  * 같은 오류 이슈의 진단이 둘이면 각각 한 줄이고 감지 시각으로 구분된다.
  */
 function DiagnosisList({ diagnoses, selectedId, onSelect }: DiagnosisListProps) {
@@ -202,7 +200,12 @@ function DiagnosisList({ diagnoses, selectedId, onSelect }: DiagnosisListProps) 
           title={diagnosis.title || diagnosis.issue.shortId}
           time={formatTime(diagnosis.detectedAt)}
           summary={diagnosisPlaceLine(diagnosis)}
-          tags={<DiagnosisStatusTag diagnosis={diagnosis} />}
+          tags={
+            <>
+              <ReproductionTag diagnosis={diagnosis} />
+              <DiagnosisStatusTag diagnosis={diagnosis} />
+            </>
+          }
         />
       ))}
     </ListKindGroup>

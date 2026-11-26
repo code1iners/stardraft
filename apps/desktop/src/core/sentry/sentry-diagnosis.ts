@@ -231,3 +231,18 @@ export function replacedByRegression(status: DiagnosisStatus): boolean {
 
 /** 등록을 풀 때 목록에서 조용히 빼는 상태. 대기(진행 중 포함), 저장소 대기, 진단 실패다. 검토 대기 보고서와 완료는 남는다. */
 export const STATUSES_REMOVED_ON_UNREGISTER: readonly DiagnosisStatus[] = ['queued', 'repo-check-needed', 'failed'];
+
+/**
+ * [Sentry에서 열기]로 열 수 있는 주소만 돌려준다. 공식 sentry.io(하위 주소 포함)의 https 주소이고 아니면 `null`이다.
+ * 주소는 Sentry 응답에서 온 값이라 브라우저에 넘기기 전에 한 번 더 거른다.
+ */
+export function openableSentryUrl(permalink: string | null): string | null {
+  if (permalink === null) return null;
+  try {
+    /** 읽은 주소. */
+    const url = new URL(permalink);
+    return url.protocol === 'https:' && (url.hostname === 'sentry.io' || url.hostname.endsWith('.sentry.io')) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}

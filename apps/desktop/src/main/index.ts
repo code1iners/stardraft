@@ -11,6 +11,7 @@ import { FlowAccount, type FlowAccountRecords } from '../core/account/flow-accou
 import { HttpSentryApi } from '../core/sentry/http-sentry-api';
 import { SentryConnection, type SentryConnectionState } from '../core/sentry/sentry-connection';
 import { SentryDetection } from '../core/sentry/sentry-detection';
+import { DiagnosisAttachmentFolders } from '../core/sentry/diagnosis-attachments';
 import { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
 import { SentryProjects } from '../core/sentry/sentry-projects';
 import { SentryTargetAdapter } from '../core/sentry/sentry-target-adapter';
@@ -135,11 +136,10 @@ function start(): void {
     if (!appData) return;
 
     /**
-     * OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 Flow 초안이 있으면 그 묶음을 연다.
-     * 진단을 가리키면 펼친 창에 그 진단을 연다. 작은 창은 아직 진단을 그리지 않는다.
+     * OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 Flow 초안이나 Sentry 진단이 있으면 그 대상을 연다.
      */
     const notifier = new OsNotifier((target) => {
-      if (target?.kind === 'diagnosis') windows?.openReview(null, target.id);
+      if (target?.kind === 'diagnosis') windows?.openDiagnosis(target.id);
       else windows?.openPopover(target?.kind === 'draft' ? target.id : null);
     }, logger);
     /** 감지를 멈추게 하는 전역 문제. 알림을 누르면 띠가 보이는 작은 창을 띄운다. */
@@ -183,6 +183,8 @@ function start(): void {
       problems: globalProblems,
     });
     await sentryConnection.load();
+    /** 진단 첨부 파일 폴더. 완료할 때 그 진단의 폴더를 지우고, 앱을 켤 때 표에 없는 진단의 폴더를 치운다. */
+    const attachmentFolders = new DiagnosisAttachmentFolders(dataFolderPath());
     /**
      * 감지한 Sentry 진단. 저장소 대기 진단은 프로젝트 단위로 알리고 매핑이나 폴더가 생기면 대기로 돌린다. 진단 실행은 생성 대기열의 Sentry 어댑터가 한다.
      * 저장소 해석과 등록 확인은 아래 프로젝트 등록에 묻는다. 둘 다 등록을 만든 뒤에만 불린다.
@@ -192,6 +194,7 @@ function start(): void {
       notifier,
       logger,
       clock: systemClock,
+      removeAttachments: (diagnosisId) => attachmentFolders.remove(diagnosisId),
       resolveRepo: (projectId) => sentryProjects.resolveRepo(projectId),
       isRegistered: (registration) => sentryProjects.isRegistered(registration),
     });
@@ -206,6 +209,10 @@ function start(): void {
     });
     await sentryProjects.load();
     await sentryDiagnoses.load();
+    // 완료했거나 목록에서 사라진 진단의 첨부 폴더가 지우다 만 채 남았을 수 있어 표에 없는 폴더를 치운다. 실패해도 앱을 막지 않는다.
+    void attachmentFolders
+      .removeUnknown(sentryDiagnoses.ids())
+      .catch((error: unknown) => logger.warn('sentry-diagnoses.attachments-sweep-failed', errorFields(error)));
 
     /** 작은 창과 설정 창. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로도 잡는다. */
     const appWindows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
@@ -301,8 +308,8 @@ function start(): void {
     sentryRepoWait = sentryRepoWaitMonitor;
     sentryRepoWaitMonitor.start();
     sentryProjects.onChange(() => sentryRepoWaitMonitor.checkNow());
-    // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
-    retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
+    // 처리한 지 7일이 된 묶음과 완료한 지 7일이 된 진단을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
+    retention = new BundleRetention({ bundles: mentionBundles, diagnoses: sentryDiagnoses, clock: systemClock, logger });
     retention.start();
     /** 진단 보고서의 실행 정보에 적을 커밋하지 않은 변경 유무를 읽는다. */
     const readGitStatus = gitStatusReader(process.platform);
@@ -604,7 +611,7 @@ function start(): void {
         trayView(globalProblems.current(), {
           setupNeeded: !onboarding.state().detectionStarted,
           reviewCount: mentionBundles.reviewCount() + sentryDiagnoses.reviewCount(),
-          hasFailure: mentionBundles.hasFailure(),
+          hasFailure: mentionBundles.hasFailure() || sentryDiagnoses.hasFailure(),
           generating: mentionBundles.idsWithStatus('generating').length > 0,
         }),
       );

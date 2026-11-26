@@ -49,6 +49,8 @@ function processedAtOf(bundle: Pick<MentionBundle, 'processedAt' | 'createdAt'>)
 export interface BundleRetentionOptions {
   /** 정리할 멘션 묶음. 보관 중인 계정의 처리한 묶음과 30일이 지난 계정도 함께 정리한다. */
   bundles: Pick<MentionBundles, 'archiveExpired' | 'deleteUnusedAccounts'>;
+  /** 완료함에서 7일이 지난 Sentry 진단도 함께 정리한다. 없으면 정리하지 않는다. */
+  diagnoses?: { archiveExpired(): Promise<unknown> };
   /** 하루마다 정리를 예약하는 시계. */
   clock: Clock;
   /** 진단 로그. */
@@ -57,6 +59,7 @@ export interface BundleRetentionOptions {
 
 /**
  * 처리됨 목록 정리. 앱을 켤 때와 그 뒤 하루에 한 번, 처리한 지 7일이 된 묶음을 최소 기록만 남기고 지운다(보관 중인 계정 포함).
+ * 완료한 지 7일이 된 Sentry 진단도 같은 때에 완료함에서 빼고 최소 기록만 남긴다.
  * 마지막으로 쓴 지 30일이 지난 보관 계정은 기록 전체를 지운다.
  * 잠자기 동안 멈추는 타이머 때문에 정리가 밀리지 않게, 잠자기에서 깨어날 때도 정리한다.
  */
@@ -86,6 +89,9 @@ export class BundleRetention {
     void this.options.bundles
       .deleteUnusedAccounts()
       .catch((error: unknown) => this.options.logger.error('retention.account-cleanup-failed', errorFields(error)));
+    void this.options.diagnoses
+      ?.archiveExpired()
+      .catch((error: unknown) => this.options.logger.error('retention.diagnosis-cleanup-failed', errorFields(error)));
   }
 
   /** 지금 정리하고 다음 정리를 예약한다. */

@@ -14,7 +14,7 @@ import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
 import type { ManualCheckState } from '../core/manual-check/manual-check-session';
 import type { ManualAssignmentCandidate, ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
-import { isRepoWaiting, type DiagnosisReport, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
+import { isRepoWaiting, openableSentryUrl, type DiagnosisReport, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
 import type {
   BundleMentionSnapshot,
   DiagnosisProgressSnapshot,
@@ -115,6 +115,9 @@ export function diagnosisSnapshots(diagnoses: readonly SentryDiagnosis[], progre
       report: diagnosis.report && reportSnapshot(diagnosis.report),
       failure: diagnosis.failure && { reason: diagnosis.failure.reason, detail: diagnosis.failure.detail, lastStep: diagnosis.failure.lastStep },
       completedAt: diagnosis.completedAt,
+      canOpenInSentry: openableSentryUrl(issue.permalink) !== null,
+      // 첨부는 재현하는 진단이 만들 때부터 생긴다. 지금 보고서에는 첨부가 없다.
+      attachments: [],
       repoWait:
         !isRepoWaiting(diagnosis) || repoCheck === null
           ? null

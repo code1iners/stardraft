@@ -214,6 +214,28 @@ describe('렌더러가 보낸 명령 검사', () => {
     }
   });
 
+  it('진단의 [Sentry에서 열기] 명령은 진단 ID만 받고, 주소는 렌더러가 싣지 못한다', () => {
+    expect(parseAppCommand({ type: 'open-diagnosis-in-sentry', diagnosisId: 7, url: 'https://evil.example' })).toEqual({ type: 'open-diagnosis-in-sentry', diagnosisId: 7 });
+    for (const diagnosisId of [0, -1, 2.5, '7', undefined]) expect(parseAppCommand({ type: 'open-diagnosis-in-sentry', diagnosisId })).toBeNull();
+  });
+
+  it('진단 근거의 [에디터에서 열기] 명령은 진단 ID와 근거 위치(0 이상의 정수)만 받고, 렌더러가 실은 경로는 버린다', () => {
+    expect(parseAppCommand({ type: 'open-diagnosis-evidence-in-editor', diagnosisId: 7, evidenceIndex: 0, path: '/etc/passwd' })).toEqual({
+      type: 'open-diagnosis-evidence-in-editor',
+      diagnosisId: 7,
+      evidenceIndex: 0,
+    });
+    expect(parseAppCommand({ type: 'open-diagnosis-evidence-in-editor', diagnosisId: 0, evidenceIndex: 0 })).toBeNull();
+    for (const evidenceIndex of [-1, 1.5, '0', undefined]) expect(parseAppCommand({ type: 'open-diagnosis-evidence-in-editor', diagnosisId: 7, evidenceIndex })).toBeNull();
+  });
+
+  it('펼치기와 접기 명령은 진단 ID를 함께 실을 수 있고, 잘못된 진단 ID는 받지 않는다', () => {
+    expect(parseAppCommand({ type: 'expand-review', bundleId: null, diagnosisId: 4 })).toEqual({ type: 'expand-review', bundleId: null, diagnosisId: 4 });
+    expect(parseAppCommand({ type: 'collapse-review', bundleId: 3, diagnosisId: 4 })).toEqual({ type: 'collapse-review', bundleId: 3, diagnosisId: 4 });
+    expect(parseAppCommand({ type: 'collapse-review', bundleId: null, diagnosisId: null })).toEqual({ type: 'collapse-review', bundleId: null });
+    for (const diagnosisId of [0, -2, 1.5, '4']) expect(parseAppCommand({ type: 'expand-review', bundleId: null, diagnosisId })).toBeNull();
+  });
+
   it('[게시]와 게시 취소 명령은 묶음 ID만 받고, 렌더러가 실은 게시 본문은 버린다', () => {
     for (const type of ['post-bundle', 'cancel-posting'] as const) {
       expect(parseAppCommand({ type, bundleId: 3, body: '렌더러가 만든 본문' })).toEqual({ type, bundleId: 3 });

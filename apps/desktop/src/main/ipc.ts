@@ -12,6 +12,7 @@ import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agen
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
 import type { SentryConnection, SentryConnectionState, SentryTokenCheckOutcome } from '../core/sentry/sentry-connection';
 import type { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
+import { openableSentryUrl } from '../core/sentry/sentry-diagnosis';
 import { SENTRY_TARGET_KIND } from '../core/sentry/sentry-target-adapter';
 import type { SentryProjects, SentryProjectsState, SentryRegisterOutcome, SentryUpdateOutcome } from '../core/sentry/sentry-projects';
 import { errorFields, type Logger } from '../core/logging/logger';
@@ -455,6 +456,12 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'complete-diagnosis':
       await services.sentryDiagnoses.complete(command.diagnosisId);
       return;
+    case 'open-diagnosis-in-sentry':
+      await openDiagnosisInSentry(services, command.diagnosisId);
+      return;
+    case 'open-diagnosis-evidence-in-editor':
+      await openDiagnosisEvidenceInEditor(services, command.diagnosisId, command.evidenceIndex);
+      return;
     case 'open-sentry-repo-mapping': {
       /** 저장소 대기인 진단. 없어졌으면 프로젝트를 모르므로 "저장소" 칸만 연다. */
       const waiting = services.sentryDiagnoses.list().find((item) => item.id === command.diagnosisId);
@@ -514,10 +521,10 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       repoPicker.close();
       return;
     case 'expand-review':
-      windows.openReview(command.bundleId);
+      windows.openReview(command.bundleId, command.diagnosisId ?? null);
       return;
     case 'collapse-review':
-      await windows.collapseReview(command.bundleId);
+      await windows.collapseReview(command.bundleId, command.diagnosisId ?? null);
       return;
     case 'set-review-section':
       reviewSections.set(command.window, command.section, command.open);
@@ -636,6 +643,38 @@ async function openEvidenceInEditor({ bundles, editorOpener, logger }: IpcServic
     return;
   }
   await editorOpener.open(target);
+}
+
+/** 진단 보고서의 근거 하나를 에디터에서 연다. 보고서가 없거나 열 수 없는 근거면 로그만 남긴다. 위치 검증을 거친 근거만 연다. */
+async function openDiagnosisEvidenceInEditor(
+  { sentryDiagnoses, editorOpener, logger }: IpcServices,
+  diagnosisId: number,
+  evidenceIndex: number,
+): Promise<void> {
+  /** 근거가 든 보고서. */
+  const report = sentryDiagnoses.get(diagnosisId)?.report;
+  /** 열 파일과 줄. */
+  const target = report && evidenceFileOf(report, evidenceIndex);
+  if (!target) {
+    logger.warn('editor.open-skipped', { diagnosisId, evidenceIndex });
+    return;
+  }
+  await editorOpener.open(target);
+}
+
+/** 진단의 오류 이슈를 기본 브라우저로 Sentry에서 연다. 열 주소가 없거나 열지 못하면 로그만 남긴다. 주소는 로그에 남기지 않는다. */
+async function openDiagnosisInSentry({ sentryDiagnoses, logger }: IpcServices, diagnosisId: number): Promise<void> {
+  /** 열 주소. 공식 sentry.io 주소만 연다. */
+  const url = openableSentryUrl(sentryDiagnoses.get(diagnosisId)?.issue.permalink ?? null);
+  if (!url) {
+    logger.warn('sentry.open-skipped', { diagnosisId });
+    return;
+  }
+  try {
+    await shell.openExternal(url);
+  } catch (error) {
+    logger.warn('sentry.open-failed', { diagnosisId, ...errorFields(error) });
+  }
 }
 
 /** core의 에디터 열기 상태를 렌더러에 넘길 모양으로 바꾼다. */

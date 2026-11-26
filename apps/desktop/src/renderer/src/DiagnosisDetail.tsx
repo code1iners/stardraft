@@ -1,20 +1,29 @@
-import { useEffect, useState } from 'react';
-import type { DiagnosisReportSnapshot, DiagnosisSnapshot } from '../../shared/ipc';
+import { useEffect, useRef, useState } from 'react';
+import type { DiagnosisAttachmentSnapshot, DiagnosisReportSnapshot, DiagnosisSnapshot } from '../../shared/ipc';
 import { StateTag } from './ReviewList';
+import { tabId, tabPanelId, UnderlineTabs } from './UnderlineTabs';
 import {
+  attachmentSizeText,
   CONFIDENCE_TEXT,
+  causeParts,
   diagnosisEvidenceLocation,
   diagnosisFailureText,
   diagnosisMetaLine,
   diagnosisProgressText,
   diagnosisRepoWaitText,
+  diagnosisRunLine,
   diagnosisRunningText,
   diagnosisStatusTag,
+  diagnosisTabs,
   issueFacts,
+  NO_ATTACHMENTS_TEXT,
+  NO_EVIDENCE_TEXT,
   REPRODUCTION_NOT_ALLOWED_NOTE,
   reportEventFacts,
   reportRunFacts,
+  reproductionTag,
   reproductionText,
+  type DiagnosisTabId,
   type IssueFact,
 } from './diagnosis-text';
 import { circledNumber, formatTime } from './review-text';
@@ -32,23 +41,58 @@ export function DiagnosisStatusTag({ diagnosis }: DiagnosisProps) {
   return <StateTag label={tag.label} tone={tag.tone} />;
 }
 
+/** 목록 줄의 재현 태그. 보고서가 있을 때만 붙고, 없으면 그리지 않는다. */
+export function ReproductionTag({ diagnosis }: DiagnosisProps) {
+  if (!diagnosis.report) return null;
+  /** 태그 이름과 색. */
+  const tag = reproductionTag(diagnosis.report.reproduction);
+  return <StateTag label={tag.label} tone={tag.tone} />;
+}
+
+/** 오류 제목. 제목이 없으면 짧은 ID다. */
+function titleOf(diagnosis: DiagnosisSnapshot): string {
+  return diagnosis.title || diagnosis.issue.shortId;
+}
+
+/** [Sentry에서 열기]. 열 주소가 없으면 그리지 않는다. */
+export function OpenInSentryButton({ diagnosis }: DiagnosisProps) {
+  /** 오류 이슈를 Sentry에서 연다. 주소는 main이 정한다. */
+  const handleOpen = () => {
+    void window.stardraft.send({ type: 'open-diagnosis-in-sentry', diagnosisId: diagnosis.id });
+  };
+
+  if (!diagnosis.canOpenInSentry) return null;
+  return (
+    <button type="button" className="btn link" onClick={handleOpen}>
+      Sentry에서 열기
+    </button>
+  );
+}
+
 /** 상세 머리에 넘기는 값. */
 interface DiagnosisHeadProps extends DiagnosisProps {
   /** [접어 보기]를 눌렀다. */
   onCollapse: () => void;
 }
 
-/** 진단 상세 머리. 오류 제목, `프로젝트 · 신규/재발 · 감지 시각`, 상태 태그, [접어 보기]다. */
+/**
+ * 펼친 창 진단 상세 머리. 오류 제목, `프로젝트 · 신규/재발 · 감지 시각`과 [Sentry에서 열기], 에이전트와 걸린 시간(보고서가 있을 때),
+ * 상태 태그, [접어 보기]다.
+ */
 export function DiagnosisHead({ diagnosis, onCollapse }: DiagnosisHeadProps) {
+  /** 에이전트와 걸린 시간. 보고서가 없으면 `null`. */
+  const runLine = diagnosisRunLine(diagnosis.report);
   return (
     <header className="detail-head">
       <div className="detail-title">
-        <h2>{diagnosis.title || diagnosis.issue.shortId}</h2>
+        <h2>{titleOf(diagnosis)}</h2>
         <div className="detail-meta">
           <p className="review-meta">
             <span>{diagnosisMetaLine(diagnosis)}</span>
           </p>
+          <OpenInSentryButton diagnosis={diagnosis} />
         </div>
+        {runLine && <p className="run-line">{runLine}</p>}
       </div>
       <DiagnosisStatusTag diagnosis={diagnosis} />
       <button type="button" className="btn sm" onClick={onCollapse}>
@@ -59,13 +103,58 @@ export function DiagnosisHead({ diagnosis, onCollapse }: DiagnosisHeadProps) {
 }
 
 /**
- * 진단의 몸통. 보고서가 있으면 보고서를 순서대로(요약 → 재현 → 원인과 확신도 → 개선 방향 → 근거 → 남은 의문 → 오류 이슈 정보 → 실행 정보) 한 화면에 보인다.
- * 실행 정보는 화면에 "실행"을 쓰지 않는 규칙에 따라 검토 화면 `정보` 탭의 이름과 같은 "진단 정보"로 보인다.
- * 보고서가 없으면 대기·진행 중은 `진행`, 진단 실패는 `오류` 상자, 완료함은 `기록`을 두고, 그 아래에 `오류 정보`를 둔다.
- * 저장소 대기는 이유 상자를 두지 않고 노란 바닥 줄이 이유를 알린다.
+ * 작은 창 진단 상세 머리. 첫 줄은 오류 제목, 둘째 줄은 `프로젝트 · 신규/재발 · 감지 시각`과 [Sentry에서 열기], 셋째 줄은 실행 줄이다.
+ * 상태 태그는 작은 창 머리의 대기열 줄에 있다.
  */
-export function DiagnosisBody({ diagnosis }: DiagnosisProps) {
-  if (diagnosis.report) return <DiagnosisReport diagnosis={diagnosis} report={diagnosis.report} />;
+export function DiagnosisMeta({ diagnosis }: DiagnosisProps) {
+  /** 에이전트와 걸린 시간. 보고서가 없으면 `null`. */
+  const runLine = diagnosisRunLine(diagnosis.report);
+  return (
+    <div className="bundle-meta">
+      <p className="review-meta">
+        <strong>{titleOf(diagnosis)}</strong>
+      </p>
+      <p className="post-line">
+        <span>{diagnosisMetaLine(diagnosis)}</span>
+        <OpenInSentryButton diagnosis={diagnosis} />
+      </p>
+      {runLine && <p className="run-line">{runLine}</p>}
+    </div>
+  );
+}
+
+/** 진단 상세 몸통이 놓이는 창. 펼친 창은 탭, 작은 창은 접는 구역으로 보고서를 보인다. */
+export type DiagnosisWindowKind = 'compact' | 'expanded';
+
+/** 상세 몸통에 넘기는 값. */
+interface DiagnosisBodyProps extends DiagnosisProps {
+  /** 몸통이 놓이는 창. 없으면 펼친 창이다. */
+  windowKind?: DiagnosisWindowKind;
+}
+
+/**
+ * 진단 상세의 머리 아래 부분. 보고서가 있으면 펼친 창은 `보고서` · `근거 n` · `첨부 n` · `정보` 탭을 두고 작은 창은 접는 구역으로 보인다.
+ * 보고서가 없으면 탭이 없고, 대기·진행 중은 `진행`, 진단 실패는 `오류` 상자, 완료함은 `기록`을 두고 그 아래에 `오류 정보`를 둔다.
+ * 저장소 대기는 이유 상자를 두지 않고 노란 바닥 줄이 이유를 알린다.
+ * 진단이 바뀌면 탭과 접힘 상태를 처음으로 되돌리려고 `key`를 진단 ID로 둔다.
+ */
+export function DiagnosisBody({ diagnosis, windowKind = 'expanded' }: DiagnosisBodyProps) {
+  /** 작은 창이면 `true`. 작은 창은 머리 정보를 몸통 맨 위에 둔다. */
+  const compact = windowKind === 'compact';
+  /** 몸통을 감싸는 요소의 클래스. */
+  const className = compact ? 'popover-body review-body' : 'detail-body';
+  if (diagnosis.report && !compact) return <DiagnosisTabs key={diagnosis.id} diagnosis={diagnosis} report={diagnosis.report} />;
+  return (
+    <main className={className}>
+      {compact && <DiagnosisMeta diagnosis={diagnosis} />}
+      <DiagnosisSections key={diagnosis.id} diagnosis={diagnosis} />
+    </main>
+  );
+}
+
+/** 보고서가 없을 때(또는 작은 창에서) 몸통에 쌓는 구역들. */
+function DiagnosisSections({ diagnosis }: DiagnosisProps) {
+  if (diagnosis.report) return <DiagnosisFolds diagnosis={diagnosis} report={diagnosis.report} />;
   if (diagnosis.status === 'completed') {
     return (
       <Section title="기록">
@@ -99,63 +188,393 @@ export function DiagnosisBody({ diagnosis }: DiagnosisProps) {
   );
 }
 
-/** 보고서를 그리는 화면에 넘기는 값. */
+/** 보고서가 있는 상세에 넘기는 값. */
 interface DiagnosisReportProps extends DiagnosisProps {
   /** 그릴 보고서. */
   report: DiagnosisReportSnapshot;
 }
 
-/** 진단 보고서. 이 단계의 최소 모양이라 탭 없이 스펙의 순서대로 구역을 잇는다. */
-function DiagnosisReport({ diagnosis, report }: DiagnosisReportProps) {
+/** 근거 번호를 눌렀을 때 근거를 강조하라고 알리는 값. 같은 번호를 거듭 눌러도 다시 강조하려고 누른 횟수를 함께 둔다. */
+interface EvidenceHighlight {
+  /** 강조할 근거 번호. */
+  evidenceId: number;
+  /** 누른 횟수. */
+  count: number;
+}
+
+/** 탭 묶음의 id 앞부분. */
+const TAB_ID_PREFIX = 'diagnosis';
+
+/**
+ * 펼친 창의 진단 상세. 머리 아래의 밑줄 탭과 고른 탭의 내용이다. 원인 글의 근거 번호를 누르면 `근거` 탭으로 가서 그 근거를 강조한다.
+ */
+function DiagnosisTabs({ diagnosis, report }: DiagnosisReportProps) {
+  /** 고른 탭. */
+  const [tab, setTab] = useState<DiagnosisTabId>('report');
+  /** 강조할 근거. */
+  const [highlight, setHighlight] = useState<EvidenceHighlight | null>(null);
+
+  /** 원인 글의 근거 번호를 눌렀다. 근거 탭을 열고 그 근거를 강조한다. */
+  const handleCite = (evidenceId: number) => {
+    setTab('evidence');
+    setHighlight((current) => ({ evidenceId, count: (current?.count ?? 0) + 1 }));
+  };
+
   return (
     <>
-      <Section title="요약">
-        <p>{report.summary}</p>
-      </Section>
-      <Section title="재현" aside={reproductionText(report.reproduction)}>
-        {report.reproduction.impossibleReason === 'not-allowed' ? (
-          <p className="small muted">{REPRODUCTION_NOT_ALLOWED_NOTE}</p>
-        ) : (
-          <>
-            {report.reproduction.method && <p>{report.reproduction.method}</p>}
-            <TextList items={report.reproduction.steps} ordered />
-          </>
-        )}
-      </Section>
-      <Section title="원인" aside={CONFIDENCE_TEXT[report.cause.confidence]}>
-        <p>{report.cause.text}</p>
-      </Section>
-      <Section title="개선 방향">
-        <TextList items={report.improvements} />
-      </Section>
-      <Section title={`근거 ${report.evidence.length}개`}>
-        {report.evidence.length === 0 ? (
-          <p className="small muted">근거가 없습니다.</p>
-        ) : (
-          <ol className="evidence-list">
-            {report.evidence.map((evidence) => (
-              <li key={evidence.id} className="evidence-item">
-                <p>
-                  <span className="evidence-number">{circledNumber(evidence.id)}</span> {evidence.explanation}
-                </p>
-                <p className={evidence.located ? 'evidence-location' : 'evidence-location not-found'} title={evidence.path}>
-                  {evidence.located ? diagnosisEvidenceLocation(evidence) : '위치를 찾을 수 없음'}
-                </p>
-              </li>
-            ))}
-          </ol>
-        )}
-      </Section>
-      <Section title="남은 의문">
-        <TextList items={report.openQuestions} />
-      </Section>
-      <Section title="오류 이슈 정보">
-        <FactList facts={[...issueFacts(diagnosis), ...reportEventFacts(report)]} />
-      </Section>
-      <Section title="진단 정보">
-        <FactList facts={reportRunFacts(report)} />
-      </Section>
+      <UnderlineTabs
+        label="진단 보고서"
+        idPrefix={TAB_ID_PREFIX}
+        tabs={diagnosisTabs(report, diagnosis.attachments.length)}
+        selected={tab}
+        onSelect={setTab}
+        className="detail-tabs"
+      />
+      <main className="detail-body" role="tabpanel" id={tabPanelId(TAB_ID_PREFIX, tab)} aria-labelledby={tabId(TAB_ID_PREFIX, tab)}>
+        <DiagnosisTabPanel diagnosis={diagnosis} report={report} tab={tab} highlight={highlight} onCite={handleCite} />
+      </main>
     </>
+  );
+}
+
+/** 탭 내용에 넘기는 값. */
+interface DiagnosisTabPanelProps extends DiagnosisReportProps {
+  /** 보일 탭. */
+  tab: DiagnosisTabId;
+  /** 강조할 근거. 없으면 `null`. */
+  highlight?: EvidenceHighlight | null;
+  /** 원인 글의 근거 번호를 눌렀다. */
+  onCite?: ((evidenceId: number) => void) | undefined;
+}
+
+/**
+ * 탭 하나의 내용.
+ * `보고서`는 요약 → 재현(결과를 제목 옆에) → 원인(확신도를 제목 옆에) → 개선 방향 → 남은 의문,
+ * `근거`는 번호·설명·`저장소 · 파일 · 줄`·[에디터에서 열기],
+ * `첨부`는 첨부 목록(없으면 빈 상태), `정보`는 오류 정보와 진단 정보다.
+ */
+export function DiagnosisTabPanel({ diagnosis, report, tab, highlight = null, onCite }: DiagnosisTabPanelProps) {
+  switch (tab) {
+    case 'report':
+      return (
+        <>
+          <SummarySection report={report} />
+          <ReproductionSection report={report} />
+          <CauseSection report={report} onCite={onCite} />
+          <ImprovementsSection report={report} />
+          <OpenQuestionsSection report={report} />
+        </>
+      );
+    case 'evidence':
+      return <EvidenceList diagnosis={diagnosis} report={report} highlight={highlight} />;
+    case 'attachments':
+      return <AttachmentList attachments={diagnosis.attachments} />;
+    case 'info':
+      return (
+        <>
+          <Section title="오류 정보">
+            <FactList facts={[...issueFacts(diagnosis), ...reportEventFacts(report)]} />
+          </Section>
+          <Section title="진단 정보">
+            <FactList facts={reportRunFacts(report)} />
+          </Section>
+        </>
+      );
+  }
+}
+
+/** 작은 창의 진단 상세. 탭 대신 접는 구역이고, 요약·재현·원인·개선 방향은 펴고 근거·남은 의문·오류 정보·진단 정보는 접어 둔다. */
+function DiagnosisFolds({ diagnosis, report }: DiagnosisReportProps) {
+  /** 강조할 근거. 접는 구역에서는 근거 구역을 펴며 강조한다. */
+  const [highlight, setHighlight] = useState<EvidenceHighlight | null>(null);
+  /** 근거 구역을 강제로 펴라는 요청. 누른 횟수가 늘 때마다 펴 준다. */
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+
+  /** 원인 글의 근거 번호를 눌렀다. 근거 구역을 펴고 그 근거를 강조한다. */
+  const handleCite = (evidenceId: number) => {
+    setEvidenceOpen(true);
+    setHighlight((current) => ({ evidenceId, count: (current?.count ?? 0) + 1 }));
+  };
+
+  return (
+    <>
+      <FoldSection title="요약" initiallyOpen>
+        <p>{report.summary}</p>
+      </FoldSection>
+      <FoldSection title="재현" detail={reproductionText(report.reproduction)} initiallyOpen>
+        <ReproductionBody report={report} />
+      </FoldSection>
+      <FoldSection title="원인" detail={CONFIDENCE_TEXT[report.cause.confidence]} initiallyOpen>
+        <CauseText report={report} onCite={handleCite} />
+      </FoldSection>
+      <FoldSection title="개선 방향" initiallyOpen>
+        <TextList items={report.improvements} />
+      </FoldSection>
+      <FoldSection title={`근거 ${report.evidence.length}개`} open={evidenceOpen} onToggle={setEvidenceOpen}>
+        <EvidenceList diagnosis={diagnosis} report={report} highlight={highlight} />
+      </FoldSection>
+      <FoldSection title="남은 의문">
+        <TextList items={report.openQuestions} />
+      </FoldSection>
+      {diagnosis.attachments.length > 0 && (
+        <FoldSection title={`첨부 ${diagnosis.attachments.length}`}>
+          <AttachmentList attachments={diagnosis.attachments} />
+        </FoldSection>
+      )}
+      <FoldSection title="오류 정보">
+        <FactList facts={[...issueFacts(diagnosis), ...reportEventFacts(report)]} />
+      </FoldSection>
+      <FoldSection title="진단 정보">
+        <FactList facts={reportRunFacts(report)} />
+      </FoldSection>
+    </>
+  );
+}
+
+/** 접는 구역에 넘기는 값. */
+interface FoldSectionProps {
+  /** 구역 이름. */
+  title: string;
+  /** 이름 옆에 작게 붙이는 말(재현 결과, 확신도). */
+  detail?: string;
+  /** 처음에 펴져 있는지 여부. 펼침을 부르는 쪽이 정하지 않을 때만 쓴다. */
+  initiallyOpen?: boolean;
+  /** 펼침을 부르는 쪽이 정한다. 주면 이 값이 펼침 상태이고 `onToggle`로 바뀐다. */
+  open?: boolean;
+  /** 펼침이 바뀌었다. `open`을 줄 때 함께 준다. */
+  onToggle?: (open: boolean) => void;
+  /** 펼쳤을 때 보일 내용. */
+  children: React.ReactNode;
+}
+
+/** 작은 창 진단 상세의 접는 구역. 펼침은 이 창 안에서만 기억하고 앱 설정에는 남기지 않는다. */
+function FoldSection({ title, detail, initiallyOpen = false, open, onToggle, children }: FoldSectionProps) {
+  /** 스스로 기억하는 펼침. */
+  const [ownOpen, setOwnOpen] = useState(initiallyOpen);
+  /** 지금 펼쳐져 있는지 여부. */
+  const isOpen = open ?? ownOpen;
+  /** 구역을 접거나 편다. */
+  const handleToggle = () => {
+    if (onToggle) onToggle(!isOpen);
+    else setOwnOpen(!isOpen);
+  };
+
+  return (
+    <section className="review-section">
+      <div className="section-head">
+        <button type="button" className="section-toggle" aria-expanded={isOpen} onClick={handleToggle}>
+          <span className="section-chevron" aria-hidden="true">
+            {isOpen ? '▾' : '▸'}
+          </span>
+          <span>{title}</span>
+          {detail && <span className="section-detail">{detail}</span>}
+        </button>
+      </div>
+      {isOpen && <div className="section-body">{children}</div>}
+    </section>
+  );
+}
+
+/** 보고서 구역에 넘기는 값. */
+interface ReportSectionProps {
+  /** 그릴 보고서. */
+  report: DiagnosisReportSnapshot;
+}
+
+/** `요약` 구역. */
+function SummarySection({ report }: ReportSectionProps) {
+  return (
+    <Section title="요약">
+      <p>{report.summary}</p>
+    </Section>
+  );
+}
+
+/** `재현` 구역. 결과를 제목 옆에 보인다. */
+function ReproductionSection({ report }: ReportSectionProps) {
+  return (
+    <Section title="재현" aside={reproductionText(report.reproduction)}>
+      <ReproductionBody report={report} />
+    </Section>
+  );
+}
+
+/**
+ * 재현 칸의 내용. 재현 불가(허용 안 됨)면 안내와 [저장소 설정 열기]를 보이고, 아니면 방법과 순서를 보인다.
+ * 재현이 성공이 아니면 순서는 시도한 것이라 그렇게 이름 붙인다.
+ */
+function ReproductionBody({ report }: ReportSectionProps) {
+  /** 설정 "저장소" 칸을 연다. 재현 허용은 거기 있다. */
+  const handleOpenRepositories = () => {
+    void window.stardraft.send({ type: 'open-settings', section: 'repositories' });
+  };
+
+  if (report.reproduction.impossibleReason === 'not-allowed') {
+    return (
+      <>
+        <p className="small muted">{REPRODUCTION_NOT_ALLOWED_NOTE}</p>
+        <p>
+          <button type="button" className="btn sm" onClick={handleOpenRepositories}>
+            저장소 설정 열기
+          </button>
+        </p>
+      </>
+    );
+  }
+  return (
+    <>
+      {report.reproduction.method && <p>{report.reproduction.method}</p>}
+      {report.reproduction.result !== 'success' && report.reproduction.steps.length > 0 && <p className="small muted">시도한 것</p>}
+      <TextList items={report.reproduction.steps} ordered />
+    </>
+  );
+}
+
+/** 원인 글에 넘기는 값. */
+interface CauseTextProps extends ReportSectionProps {
+  /** 근거 번호를 눌렀다. 없으면 번호는 누를 수 없는 글자다. */
+  onCite?: ((evidenceId: number) => void) | undefined;
+}
+
+/**
+ * 원인 글. 글 안의 `[근거 n]`은 Flow 초안처럼 원문자(①②)로 보이고, 그 번호의 근거가 있으면 눌러서 근거를 볼 수 있다.
+ * 보고서에 없는 번호는 누를 수 없는 글자로 둔다.
+ */
+function CauseText({ report, onCite }: CauseTextProps) {
+  return (
+    <p className="cause-text">
+      {causeParts(report.cause.text).map((part, index) => {
+        if ('text' in part) return <span key={index}>{part.text}</span>;
+        /** 이 번호의 근거가 있는지 여부. */
+        const exists = report.evidence.some((evidence) => evidence.id === part.cite);
+        return exists && onCite ? (
+          <button key={index} type="button" className="cite" aria-label={`근거 ${circledNumber(part.cite)} 보기`} onClick={() => onCite(part.cite)}>
+            {circledNumber(part.cite)}
+          </button>
+        ) : (
+          <span key={index} className="cite none" title="이 번호의 근거가 없습니다">
+            {circledNumber(part.cite)}
+          </span>
+        );
+      })}
+    </p>
+  );
+}
+
+/** `원인` 구역. 확신도를 제목 옆에 보인다. */
+function CauseSection({ report, onCite }: CauseTextProps) {
+  return (
+    <Section title="원인" aside={CONFIDENCE_TEXT[report.cause.confidence]}>
+      <CauseText report={report} onCite={onCite} />
+    </Section>
+  );
+}
+
+/** `개선 방향` 구역. */
+function ImprovementsSection({ report }: ReportSectionProps) {
+  return (
+    <Section title="개선 방향">
+      <TextList items={report.improvements} />
+    </Section>
+  );
+}
+
+/** `남은 의문` 구역. */
+function OpenQuestionsSection({ report }: ReportSectionProps) {
+  return (
+    <Section title="남은 의문">
+      <TextList items={report.openQuestions} />
+    </Section>
+  );
+}
+
+/** 근거 목록에 넘기는 값. */
+interface EvidenceListProps extends DiagnosisReportProps {
+  /** 강조할 근거. 없으면 `null`. */
+  highlight: EvidenceHighlight | null;
+}
+
+/**
+ * 근거 목록. 원인 글의 근거 번호를 누를 때마다 강조한 근거가 보이는 자리로 스크롤한다.
+ * 근거를 그리는 일은 `EvidenceItems`가 한다.
+ */
+function EvidenceList({ diagnosis, report, highlight }: EvidenceListProps) {
+  /** 강조할 근거의 위치. */
+  const highlightedIndex = highlight ? report.evidence.findIndex((evidence) => evidence.id === highlight.evidenceId) : -1;
+  /** 강조한 근거 요소. 눌렀을 때 보이는 곳으로 가져온다. */
+  const highlightedRef = useRef<HTMLLIElement | null>(null);
+  // 근거 번호를 누를 때마다 그 근거가 보이는 자리로 스크롤한다.
+  useEffect(
+    function scrollToHighlighted() {
+      highlightedRef.current?.scrollIntoView?.({ block: 'nearest' });
+    },
+    [highlight?.count],
+  );
+
+  return <EvidenceItems diagnosis={diagnosis} report={report} highlightedIndex={highlightedIndex} highlightedRef={highlightedRef} />;
+}
+
+/** 근거를 그리는 부분에 넘기는 값. */
+interface EvidenceItemsProps extends DiagnosisReportProps {
+  /** 강조할 근거의 위치. 없으면 -1. */
+  highlightedIndex: number;
+  /** 강조한 근거 요소를 담을 참조. */
+  highlightedRef: React.Ref<HTMLLIElement>;
+}
+
+/**
+ * 근거 목록의 내용. Flow 초안의 근거 목록과 같은 모양이다. 번호와 설명, `저장소 · 파일 · 줄`, [에디터에서 열기]를 보인다.
+ * 위치를 확인하지 못한 근거는 "위치를 찾을 수 없음"을 보이고 열 수 없다.
+ * 에이전트가 같은 번호를 거듭 낼 수 있으므로 번호와 근거는 위치로 구분한다.
+ */
+export function EvidenceItems({ diagnosis, report, highlightedIndex, highlightedRef }: EvidenceItemsProps) {
+  if (report.evidence.length === 0) return <p className="small muted">{NO_EVIDENCE_TEXT}</p>;
+  return (
+    <ol className="evidence-list">
+      {report.evidence.map((evidence, evidenceIndex) => {
+        /** 이 근거가 강조됐는지 여부. */
+        const highlighted = evidenceIndex === highlightedIndex;
+        /** 근거의 파일과 줄을 에디터에서 연다. */
+        const handleOpen = () => {
+          void window.stardraft.send({ type: 'open-diagnosis-evidence-in-editor', diagnosisId: diagnosis.id, evidenceIndex });
+        };
+        return (
+          <li key={evidenceIndex} ref={highlighted ? highlightedRef : undefined} className={highlighted ? 'evidence-item highlighted' : 'evidence-item'}>
+            <p>
+              <span className="evidence-number">{circledNumber(evidence.id)}</span> {evidence.explanation}
+            </p>
+            <div className="evidence-foot">
+              <p className={evidence.located ? 'evidence-location' : 'evidence-location not-found'} title={evidence.path}>
+                {evidence.located ? diagnosisEvidenceLocation(evidence) : '위치를 찾을 수 없음'}
+              </p>
+              <button type="button" className="btn link sm" disabled={!evidence.located} onClick={handleOpen}>
+                에디터에서 열기
+              </button>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** 첨부 목록에 넘기는 값. */
+interface AttachmentListProps {
+  /** 보고서의 첨부. */
+  attachments: readonly DiagnosisAttachmentSnapshot[];
+}
+
+/** 첨부 목록. 첨부가 없으면 빈 상태 글을 보인다. */
+function AttachmentList({ attachments }: AttachmentListProps) {
+  if (attachments.length === 0) return <p className="small muted">{NO_ATTACHMENTS_TEXT}</p>;
+  return (
+    <ul className="diagnosis-list attachment-list">
+      {attachments.map((attachment) => (
+        <li key={attachment.name}>
+          {attachment.name} <span className="small muted">{attachmentSizeText(attachment.sizeBytes)}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -224,13 +643,20 @@ function TextList({ items, ordered = false }: TextListProps) {
   );
 }
 
+/** 바닥 줄에 넘기는 값. */
+interface DiagnosisFooterProps extends DiagnosisProps {
+  /** 바닥 줄이 놓이는 창. 없으면 펼친 창이다. 노란 바닥 줄만 작은 창에서 글을 윗줄에, 버튼을 아랫줄에 둔다. */
+  windowKind?: DiagnosisWindowKind;
+}
+
 /**
  * 진단의 바닥 줄. 끝내는 버튼은 왼쪽, 나아가는 버튼은 오른쪽이다.
  * 저장소 대기는 노란 바닥 줄에 진단용 글과 주 버튼 하나를 두고 치우는 버튼은 두지 않는다. 주 버튼은 그 프로젝트 매핑 편집으로 보낸다.
- * 대기와 진행 중은 [취소], 진단 실패는 [완료]와 [다시 시도], 완료함은 안내만 둔다. 검토 대기의 버튼은 검토 화면 단계가 더한다.
+ * 검토 대기는 왼쪽 [완료](오른쪽의 [다시 진단 ▾]와 [내보내기]는 다시 진단과 내보내기 단계가 더한다),
+ * 대기와 진행 중은 안내와 [취소], 진단 실패는 [완료]와 [다시 시도], 완료함은 안내만 둔다.
  */
-export function DiagnosisFooter({ diagnosis }: DiagnosisProps) {
-  /** 이 진단에 명령을 보낸다. */
+export function DiagnosisFooter({ diagnosis, windowKind = 'expanded' }: DiagnosisFooterProps) {
+  /** 이 진단에 취소·다시 시도·완료 명령을 보낸다. */
   const send = (type: 'cancel-diagnosis' | 'retry-diagnosis' | 'complete-diagnosis') => {
     void window.stardraft.send({ type, diagnosisId: diagnosis.id });
   };
@@ -243,7 +669,7 @@ export function DiagnosisFooter({ diagnosis }: DiagnosisProps) {
       void window.stardraft.send({ type: 'open-sentry-repo-mapping', diagnosisId: diagnosis.id });
     };
     return (
-      <footer className="review-foot warn expanded">
+      <footer className={windowKind === 'compact' ? 'review-foot warn compact' : 'review-foot warn expanded'}>
         <p className="repo-wait-text">
           <strong>{text.lead}</strong> {text.before}
           {text.path !== null && <code>{text.path}</code>} {text.after}
@@ -257,6 +683,15 @@ export function DiagnosisFooter({ diagnosis }: DiagnosisProps) {
     );
   }
   switch (diagnosis.status) {
+    case 'ready':
+      return (
+        <footer className="review-foot">
+          <button type="button" className="btn" onClick={() => send('complete-diagnosis')}>
+            완료
+          </button>
+          <span className="spacer" />
+        </footer>
+      );
     case 'queued':
     case 'running':
       return (
@@ -290,7 +725,6 @@ export function DiagnosisFooter({ diagnosis }: DiagnosisProps) {
           <span className="small muted">완료한 진단입니다. 보고서는 지웠습니다.</span>
         </footer>
       );
-    case 'ready':
     case 'repo-check-needed':
       return null;
   }

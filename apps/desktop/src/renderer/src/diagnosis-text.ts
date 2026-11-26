@@ -61,6 +61,67 @@ export function diagnosisFailureText(failure: DiagnosisFailureSnapshot): string 
   return DIAGNOSIS_FAILURE_TEXT[failure.reason] ?? failureText({ ...failure, reason: failure.reason, runKind: 'diagnosis' });
 }
 
+/** 목록 줄의 재현 태그 이름과 색. 보고서가 있을 때만 붙인다. 성공은 초록, 실패는 노랑, 불가는 테두리만 있는 `재현 안 함`이다. */
+export function reproductionTag(reproduction: DiagnosisReportSnapshot['reproduction']): { label: string; tone: 'success' | 'warn' | 'outline' } {
+  if (reproduction.result === 'success') return { label: '재현 성공', tone: 'success' };
+  if (reproduction.result === 'failure') return { label: '재현 실패', tone: 'warn' };
+  return { label: '재현 안 함', tone: 'outline' };
+}
+
+/** 상세 머리의 실행 줄. "Claude Code · 2분 14초"다. 보고서가 없으면 에이전트도 걸린 시간도 모르므로 `null`이다. */
+export function diagnosisRunLine(report: DiagnosisReportSnapshot | null): string | null {
+  return report && [AGENT_INFO[report.run.agent].name, formatDuration(report.run.durationMs)].join(' · ');
+}
+
+/** 상세의 탭. 보고서가 있는 진단에만 있다. */
+export type DiagnosisTabId = 'report' | 'evidence' | 'attachments' | 'info';
+
+/** 탭 이름. 근거와 첨부는 수를 붙인다. */
+export function diagnosisTabs(report: DiagnosisReportSnapshot, attachmentCount: number): { id: DiagnosisTabId; label: string }[] {
+  return [
+    { id: 'report', label: '보고서' },
+    { id: 'evidence', label: `근거 ${report.evidence.length}` },
+    { id: 'attachments', label: `첨부 ${attachmentCount}` },
+    { id: 'info', label: '정보' },
+  ];
+}
+
+/** 첨부 탭의 빈 상태 글. 읽기 전용 진단의 보고서에는 첨부가 없다. */
+export const NO_ATTACHMENTS_TEXT = '첨부가 없습니다. 재현하면서 찍은 화면과 로그가 있으면 여기에 보입니다.';
+
+/** 근거 목록이 빈 상태일 때의 글. */
+export const NO_EVIDENCE_TEXT = '근거가 없습니다.';
+
+/** 첨부 파일 크기를 사람이 읽는 글로 바꾼다. 1KB 아래는 바이트, 1MB 아래는 KB, 그 위는 MB다. */
+export function attachmentSizeText(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes}B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)}KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+/** 원인 글의 한 조각. 글이거나, 근거를 가리키는 번호(`[근거 n]`)다. */
+export type CausePart = { text: string } | { cite: number };
+
+/**
+ * 원인 글을 글과 근거 번호 조각으로 나눈다. 에이전트가 문장 끝에 적은 `[근거 n]`은 Flow 초안처럼 원문자(①②)로 보이도록 번호 조각이 되고,
+ * 번호 앞의 공백은 글에서 뺀다. 같은 줄의 `[근거 1] [근거 2]`는 번호 둘이 이어진다.
+ */
+export function causeParts(text: string): CausePart[] {
+  /** 나눈 조각. */
+  const parts: CausePart[] = [];
+  /** 마지막으로 자른 위치. */
+  let last = 0;
+  for (const match of text.matchAll(/[ \t]*\[근거\s*(\d+)\]/g)) {
+    /** 번호 앞의 글. */
+    const before = text.slice(last, match.index);
+    if (before !== '') parts.push({ text: before });
+    parts.push({ cite: Number(match[1]) });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
 /** 재현 결과의 이름. 불가면 까닭을 괄호로 붙인다. */
 export function reproductionText(reproduction: DiagnosisReportSnapshot['reproduction']): string {
   if (reproduction.result === 'success') return '성공';
@@ -156,8 +217,8 @@ export interface IssueFact {
   value: string;
 }
 
-/** `오류 정보` 표. 감지할 때 받은 값만 보이고, 모르는 값은 줄째 뺀다. 스택 앞부분은 이벤트를 받는 진단 시작 때 생긴다. */
-export function issueFacts({ issue }: Pick<DiagnosisSnapshot, 'issue'>, now = Date.now()): IssueFact[] {
+/** `오류 정보` 표. 감지할 때 받은 값(신규·재발 구분과 감지 시각 포함)만 보이고, 모르는 값은 줄째 뺀다. 스택 앞부분은 이벤트를 받는 진단 시작 때 생긴다. */
+export function issueFacts({ issue, origin, detectedAt }: Pick<DiagnosisSnapshot, 'issue' | 'origin' | 'detectedAt'>, now = Date.now()): IssueFact[] {
   /** 발생 수와 사용자 수. */
   const counts = [issue.count === null ? null : `${issue.count}회`, issue.userCount === null ? null : `사용자 ${issue.userCount}명`].filter(
     (part): part is string => part !== null,
@@ -173,6 +234,8 @@ export function issueFacts({ issue }: Pick<DiagnosisSnapshot, 'issue'>, now = Da
     ['첫 발생', formatTime(issue.firstSeen, now)],
     ['최근 발생', issue.lastSeen === null ? null : formatTime(issue.lastSeen, now)],
     ['플랫폼', issue.platform],
+    ['신규·재발', origin === 'new' ? '신규' : '재발'],
+    ['감지 시각', formatTime(detectedAt, now)],
   ];
   return facts.flatMap(([label, value]) => (value === null ? [] : [{ label, value }]));
 }

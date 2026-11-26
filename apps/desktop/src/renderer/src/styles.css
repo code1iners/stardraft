@@ -2266,6 +2266,14 @@ textarea.instructions-input {
   background: var(--warn-dot);
 }
 
+/* 진단 상세 머리 아래의 탭. 설정 칸 안 탭과 달리 상세 몸통 너비를 다 쓰고 몸통과 같은 좌우 여백을 둔다. */
+.underline-tabs.detail-tabs {
+  flex: none;
+  max-width: none;
+  margin: 0;
+  padding: 0 20px;
+}
+
 /* 병렬 작업 수: 눈금 숫자 없는 네이티브 range와 오른쪽 현재 값. */
 .slider-row {
   display: flex;

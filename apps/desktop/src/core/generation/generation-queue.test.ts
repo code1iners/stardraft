@@ -12,9 +12,13 @@ const NOW = Date.UTC(2026, 10, 26, 0, 0, 0);
 
 /** 가짜 어댑터의 타입 묶음. 결과는 에이전트가 낸 출력 그대로이고, 저장소 대기 기록은 까닭 한 줄이다. */
 interface FakeTypes {
+  /** 생성을 시작할 때 대상의 판. */
   job: number;
+  /** 저장할 출력. */
   result: unknown;
+  /** 저장소 대기의 까닭. */
   repoWait: string;
+  /** 실행 전에 남기는 실패 사유. */
   failureReason: 'source-unavailable';
 }
 
@@ -39,6 +43,7 @@ interface FakeTarget {
  * 대본이 없으면 실행 한 번을 돌려 출력 그대로 저장한다.
  */
 class FakeAdapter implements TargetAdapter<FakeTypes> {
+  /** 준비하는 동안 보일 진행 단계. */
   readonly preparingStep = '준비 중';
   /** 대상. 넣은 순서가 화면 순서다. */
   readonly targets = new Map<number, FakeTarget>();

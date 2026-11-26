@@ -3,11 +3,12 @@ import { CHOOSING_REPO_STEP, FETCHING_CONTEXT_STEP, WRITING_DRAFT_STEP } from '.
 import { activeMentions, mentionSetKey, type MentionBundle, type RepoCheck } from '../bundles/mention-bundle';
 import type { MentionBundles, RunPreparation } from '../bundles/mention-bundles';
 import { contextDocument, omittedItemCount } from '../flow/bundle-context';
-import type { Preparation, RunReading, TargetAdapter, TargetFailure, TargetRun } from '../generation/target-adapter';
+import type { RunRecord } from '../generation/generation-run';
+import type { Preparation, PrepareContext, RunReading, TargetAdapter, TargetFailure, TargetRun } from '../generation/target-adapter';
 import type { Clock } from '../ports/clock';
 import type { SettingsStore } from '../ports/settings-store';
 import { findSelectionScope, type RepoCandidate } from '../repos/repo-candidates';
-import { draftOutputSchema, readDraftOutput, sentenceCount, type AutoSelection, type ContextFailureReason, type Draft, type DraftOutput, type RunRecord } from './draft';
+import { draftOutputSchema, readDraftOutput, sentenceCount, type AutoSelection, type ContextFailureReason, type Draft, type DraftOutput } from './draft';
 import { checkDraftOutput } from './draft-check';
 import { draftInputDocument, draftInstructions, type RegenerationInput, type RunDataSource } from './draft-input';
 import { readSelectionOutput, SELECTION_INSTRUCTIONS, selectionInputDocument, selectionOutputSchema, type SelectionOutput } from './repo-selection';
@@ -29,9 +30,13 @@ const MIN_FLOW_RETRY_DELAY_MS = 1_000;
  * 결과는 초안, 저장소 대기는 저장소 확인 필요의 까닭, 실행 전 실패는 맥락 조회 실패다.
  */
 export interface FlowTargetTypes {
+  /** 생성을 시작할 때 묶음에 든 멘션 위치. */
   job: string;
+  /** 저장할 초안. */
   result: Draft;
+  /** 저장소 확인 필요의 까닭. */
   repoWait: RepoCheck;
+  /** 맥락 조회 실패. */
   failureReason: ContextFailureReason;
 }
 
@@ -70,7 +75,9 @@ interface FlowGenerationInput {
  * 묶음을 실패로 두지 않고 Flow 어댑터만 멈춘다. 결과는 멘션 묶음에 맡겨 준비됨, 실패, 저장소 확인 필요로 옮긴다.
  */
 export class FlowTargetAdapter implements TargetAdapter<FlowTargetTypes> {
+  /** Flow 멘션 묶음의 대상 종류. */
   readonly kind = FLOW_TARGET_KIND;
+  /** 준비하는 동안 보일 진행 단계. 맥락을 새로 조회하는 단계다. */
   readonly preparingStep = FETCHING_CONTEXT_STEP;
 
   constructor(private readonly options: FlowTargetAdapterOptions) {}
@@ -109,7 +116,7 @@ export class FlowTargetAdapter implements TargetAdapter<FlowTargetTypes> {
     return mentionSet === null || mentionSetKey(bundle) === mentionSet;
   }
 
-  async prepare(bundleId: number, _mentionSet: string, context: { stopped(): boolean }): Promise<Preparation<FlowTargetTypes>> {
+  async prepare(bundleId: number, _mentionSet: string, context: PrepareContext): Promise<Preparation<FlowTargetTypes>> {
     // 기다리는 사이에 매핑된 폴더가 사라졌으면 멘션 묶음이 저장소 확인 필요로 올린다.
     /** 읽을 저장소(고른 구성이나 저장소 매핑)를 확인한 결과. 저장소 확인 필요가 되었으면 `null`. */
     const runRepos = await this.options.bundles.reposForRun(bundleId);

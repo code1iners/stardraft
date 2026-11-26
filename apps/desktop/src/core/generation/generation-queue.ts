@@ -103,8 +103,8 @@ type GlobalPause = 'agent' | 'restart';
  */
 type AdapterPause = 'connection' | 'retry';
 
-/** 어댑터 하나와 그 멈춤 상태. */
-interface AdapterSlot {
+/** 어댑터 하나와 그 멈춤 상태. 실행 자리(병렬 작업 수)와는 상관없다. */
+interface AdapterState {
   /** 어댑터. */
   adapter: TargetAdapter;
   /** 이 어댑터를 멈추게 한 까닭. */
@@ -118,7 +118,7 @@ interface AdapterSlot {
 /** 실행하고 있는 대상. */
 interface RunningTarget extends TargetRef {
   /** 대상의 어댑터. */
-  slot: AdapterSlot;
+  slot: AdapterState;
   /** 실행을 끊는 장치. 끊으면 실행기가 프로세스 트리를 끝낸다. */
   abort: AbortController;
   /** 앱이 실행을 멈춘 까닭. 멈추지 않았으면 `null`. */
@@ -149,6 +149,9 @@ type FailedVerdict = { kind: 'failed'; reason: RunFailureReason; detail: string 
 /** 에이전트 실행 한 번의 결과를 읽은 것. */
 type RunVerdict = { kind: 'output'; output: unknown } | FailedVerdict;
 
+/** 출력 검증까지 마친 실행의 결과. 쓸 수 있으면 다음 일, 아니면 실패다. `fixes`는 실행 기록에 남길 고친 내용이다. */
+type CheckedRun = { kind: 'passed'; fixes: string[]; next: NextStep<TargetTypes> } | { kind: 'failed'; fixes: string[]; verdict: FailedVerdict };
+
 /** 실행 단계의 끝. */
 type PhaseResult =
   /** 마지막 실행의 결과와 실행 기록, 그 실행의 요청. 기록은 아직 실행 기록에 넣지 않았다. */
@@ -178,7 +181,7 @@ export class GenerationQueue {
   /** 에이전트 연결이 바뀌었다는 알림을 받은 횟수. 확인하는 사이에 알림이 왔는지 보려고 센다. */
   private agentChanges = 0;
   /** 종류마다 어댑터와 그 멈춤 상태. */
-  private readonly slots: ReadonlyMap<TargetKind, AdapterSlot>;
+  private readonly slots: ReadonlyMap<TargetKind, AdapterState>;
   /** 대기열 상태. `starting`은 앱이 꺼지기 전에 남긴 대기열을 읽는 중이고, `stopped`면 새 실행을 시작하지 않는다. */
   private status: 'idle' | 'starting' | 'started' | 'stopped' = 'idle';
   /** 실행 직전 확인부터 생성이 끝날 때까지의 일. 앱을 끌 때 끊은 실행의 기록을 기다린다. 없으면 `null`. */
@@ -501,7 +504,7 @@ export class GenerationQueue {
    * 어댑터 하나의 대상만 멈춘다. `connection`은 연결이 바뀌었다는 알림이 올 때까지,
    * `retry`는 `afterMs`가 지날 때까지다. 이미 기다리고 있으면 새로 받은 시간으로 다시 잰다.
    */
-  private pauseAdapter(slot: AdapterSlot, cause: AdapterPause, afterMs?: number): void {
+  private pauseAdapter(slot: AdapterState, cause: AdapterPause, afterMs?: number): void {
     if (!slot.paused.has(cause)) this.options.logger.warn('generation.adapter-paused', { kind: slot.adapter.kind, cause });
     slot.paused.add(cause);
     if (cause !== 'retry') return;
@@ -513,13 +516,13 @@ export class GenerationQueue {
   }
 
   /** 어댑터를 그 까닭으로 멈췄으면 풀고, 다음 대상을 실행할 수 있는지 다시 본다. */
-  private resumeAdapter(slot: AdapterSlot, cause: AdapterPause): void {
+  private resumeAdapter(slot: AdapterState, cause: AdapterPause): void {
     if (slot.paused.delete(cause)) this.options.logger.info('generation.adapter-resumed', { kind: slot.adapter.kind, cause });
     this.pump();
   }
 
   /** 어댑터의 연결이 바뀌었다는 알림을 받는다. 연결 문제로 멈췄으면 풀고 다시 본다. */
-  private connectionChanged(slot: AdapterSlot): void {
+  private connectionChanged(slot: AdapterState): void {
     slot.connectionChanges += 1;
     this.resumeAdapter(slot, 'connection');
   }
@@ -600,8 +603,8 @@ export class GenerationQueue {
     /** 실행 단계의 마지막 실행. */
     const ran = await this.runPhase(generation, confirmed, run);
     if (ran.kind === 'stopped') return null;
-    /** 출력 검증까지 마친 결과. 쓸 수 있으면 다음 일, 아니면 실패다. */
-    const checked: { kind: 'passed'; fixes: string[]; next: NextStep<TargetTypes> } | { kind: 'failed'; fixes: string[]; verdict: FailedVerdict } =
+    /** 출력 검증까지 마친 결과. */
+    const checked: CheckedRun =
       ran.verdict.kind === 'failed'
         ? { kind: 'failed', fixes: ran.record.fixes, verdict: ran.verdict }
         : await run.check(ran.verdict.output, ran.request).then((check) =>

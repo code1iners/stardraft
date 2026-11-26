@@ -11,8 +11,8 @@ import {
   type RepoCheck,
   type UnsavedBundle,
 } from '../bundles/mention-bundle';
-import type { Draft, DraftFailure, Regeneration, RunRecord } from '../drafts/draft';
-import { isQueuePriority, type QueuedTarget } from '../generation/generation-run';
+import type { Draft, DraftFailure, Regeneration } from '../drafts/draft';
+import { isQueuePriority, type QueuedTarget, type RunRecord } from '../generation/generation-run';
 import type { BundleContext } from '../flow/bundle-context';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';

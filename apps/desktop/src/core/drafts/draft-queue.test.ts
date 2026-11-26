@@ -972,6 +972,15 @@ describe('저장소 매핑 필요', () => {
     expect(bundle?.context?.post.title).toBe('가짜 게시물');
   });
 
+  it('매핑이 없어 기다리는 묶음은 Flow 프로젝트별 건수를 알려 설정 "저장소" 칸 맨 위에 보이게 한다', async () => {
+    const { bundles, poll } = await setup();
+    expect(bundles.waitingForMapping()).toEqual([]);
+
+    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
+
+    expect(bundles.waitingForMapping()).toEqual([{ projectId: UNMAPPED_PROJECT_ID, count: 1 }]);
+  });
+
   it('담당 업무 초안도 매핑이 없으면 같은 상태로 기다린다', async () => {
     const { flow, clock, stateStore, bundles, executor } = await setup();
     /** 담당 업무 감지. */
@@ -1254,6 +1263,9 @@ describe('업데이트 뒤 첫 시작: 자동 선택 때문에 멈췄던 묶음'
     expect(executor.requests).toEqual([]);
   });
 
+  /** 자동 선택 때 저장한 옛 사유. 지금 타입에는 없다. */
+  const LEGACY_NO_CANDIDATES = { kind: 'no-candidates' } as unknown as MentionBundle['repoCheck'];
+
   it.each([
     [{ kind: 'no-candidates' }],
     [{ kind: 'unsure', reason: '모르겠습니다.', candidates: [], picked: [] }],
@@ -1272,7 +1284,7 @@ describe('업데이트 뒤 첫 시작: 자동 선택 때문에 멈췄던 묶음'
     await env.poll(alarm('101'));
     /** 만든 묶음. */
     const [created] = env.bundles.state();
-    await env.stateStore.saveBundle({ ...created!, status: 'repo-check-needed', repoCheck: { kind: 'no-candidates' }, draft: null, runs: [] });
+    await env.stateStore.saveBundle({ ...created!, status: 'repo-check-needed', repoCheck: LEGACY_NO_CANDIDATES, draft: null, runs: [] });
     await env.bundles.load();
     env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repos.a) } });
 

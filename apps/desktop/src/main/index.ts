@@ -25,7 +25,6 @@ import { Posting } from '../core/posting/posting';
 import type { FlowConnection } from '../core/ports/flow-api';
 import { RepoMappings } from '../core/repos/repo-mappings';
 import { RepoPicker } from '../core/repos/repo-picker';
-import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { ManualCheckSession } from '../core/manual-check/manual-check-session';
 import { ManualMentionCheck } from '../core/manual-check/manual-mention-check';
@@ -178,9 +177,6 @@ function start(): void {
       listedModels: (agent) => agentConnections.models(agent),
     });
     await agentPreferences.load();
-    /** 설정 "저장소" 칸의 작업 폴더와 "이 PC에서 찾은 폴더". */
-    const workFolders = new WorkFolders({ settingsStore: appData.settingsStore, logger, homeDir: app.getPath('home') });
-    await workFolders.load();
     /** 설정 "저장소" 칸의 저장소 매핑. 참여 Flow 프로젝트 목록은 지금 쓰는 키로 받는다. */
     /** 지금 쓰는 키로 Flow 연결을 만든다. 쓸 키가 없으면 `null`. */
     const connectCurrentFlow = (): FlowConnection | null => {
@@ -227,7 +223,7 @@ function start(): void {
     bundles = mentionBundles;
     // 앱이 꺼지며 끊긴 묶음을 정리한다. 카운트다운 중이던 게시는 준비됨으로 돌린다.
     await mentionBundles.recoverAfterRestart().catch((error: unknown) => logger.error('bundle.restart-recovery-failed', errorFields(error)));
-    // 자동 선택 때문에 멈췄던 묶음을 저장소 매핑 기준으로 한 번 다시 판정한다. 대기열을 시작하기 전에 해야 옛 묶음이 선택 실행을 타지 않는다.
+    // 자동 선택 때문에 멈췄던 묶음을 저장소 매핑 기준으로 한 번 다시 판정한다. 대기열을 시작하기 전에 해야 옛 묶음이 멈춘 채 남지 않는다.
     await mentionBundles.reconcileRepoStates().catch((error: unknown) => logger.error('bundle.repo-state-reconcile-failed', errorFields(error)));
     // 저장소 매핑 필요·저장소 확인 필요 묶음이 읽을 저장소를 얻었는지 앱을 켤 때, 매핑이 바뀔 때, 절전에서 깰 때, 폴더 없음이 있는 동안 60초마다 확인해 재개한다.
     /** 저장소 대기 묶음을 재개하는 감시. 앱을 켤 때 시작하고, 매핑이 바뀔 때와 절전에서 깰 때 지금 확인한다. */
@@ -298,7 +294,7 @@ function start(): void {
     /** 근거의 "에디터에서 열기". 기억한 에디터를 읽고 이 PC의 에디터를 찾아 둔다. */
     const editorOpener = new EditorOpener({ settingsStore: appData.settingsStore, logger, system: editorSystem() });
     void editorOpener.refresh().catch((error: unknown) => logger.warn('editor.refresh-failed', errorFields(error)));
-    /** 필수 세 가지와 [감지 시작]. 각 칸의 모듈이 저장한 상태에서 필수 항목을 읽는다. */
+    /** 필수 설정과 [감지 시작]. 각 칸의 모듈이 저장한 상태에서 필수 항목을 읽는다. */
     const onboarding = new Onboarding({
       settingsStore: appData.settingsStore,
       stateStore: appData.stateStore,
@@ -312,20 +308,19 @@ function start(): void {
         appWindows.openPopover();
       },
       setupInputs: () => ({
+        // Flow 계정은 감지할 대상(선택)이다. 필수 설정은 에이전트 연결 하나다.
         keyVerified: flowAccount.state().account !== null && !globalProblems.has('flow-key'),
         // 하나라도 연결되면 연결됨이다. 시작할 때 연결 확인이 돌기 전도 확인 중으로 본다.
         agent: agentConnections.setupStatus(),
-        workFolderCount: workFolders.state().folders.length,
       }),
     });
     await onboarding.load();
-    // 필수 세 가지의 입력이 바뀔 때마다 온보딩 상태를 다시 본다.
+    // 필수 설정과 감지할 대상의 입력이 바뀔 때마다 온보딩 상태를 다시 본다.
     /** 온보딩 상태를 다시 본다. */
     const refreshOnboarding = () => onboarding.refresh();
     flowAccount.onChange(refreshOnboarding);
     globalProblems.onChange(refreshOnboarding);
     agentConnections.onChange(refreshOnboarding);
-    workFolders.onChange(refreshOnboarding);
     /** 담당 업무 감지 상태를 읽을 저장소. 함수 안에서는 `appData`가 null이 아님을 알 수 없어 따로 잡아 둔다. */
     const assignmentStateStore = appData.stateStore;
     /** 최근 멘션 확인. 감지에서 빠진 멘션까지 지금 키로 최근 멘션을 불러오고, 고른 멘션으로 게시할 수 있는 수동 요청 묶음을 만든다. */
@@ -404,7 +399,6 @@ function start(): void {
       globalProblems,
       agentConnections,
       agentPreferences,
-      workFolders,
       repoMappings,
       onboarding,
       launchAtLogin,
@@ -465,10 +459,6 @@ function start(): void {
       repoWait?.checkNow();
       void inAppUpdate?.checkIfDue();
     });
-
-    // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
-    // 참여 Flow 프로젝트 목록은 "저장소" 칸을 열 때 받는다.
-    void workFolders.refresh();
 
     /** 만든 트레이. 전역 문제를 따라 표시를 바꿀 때 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appTray = new AppTray({

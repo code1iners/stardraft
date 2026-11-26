@@ -15,7 +15,7 @@ import type { FlowEmployee } from '../core/ports/flow-api';
 import type { Notifier } from '../core/ports/notifier';
 import type { RepoMappings, RepoMappingsState } from '../core/repos/repo-mappings';
 import type { RepoPicker } from '../core/repos/repo-picker';
-import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
+import type { RejectedFolder, RejectedFolderReason } from '../core/repos/folder-rules';
 import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
@@ -42,7 +42,6 @@ import {
   type RepoMappingsSnapshot,
   type SiteSection,
   type UpdateStateSnapshot,
-  type WorkFoldersSnapshot,
 } from '../shared/ipc';
 import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
 import type { AppWindows } from './app-windows';
@@ -65,11 +64,9 @@ export interface IpcServices {
   agentConnections: AgentConnections;
   /** "에이전트" 칸의 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferences;
-  /** "저장소" 칸의 작업 폴더. */
-  workFolders: WorkFolders;
   /** "저장소" 칸의 저장소 매핑. */
   repoMappings: RepoMappings;
-  /** 필수 세 가지와 [감지 시작]. */
+  /** 필수 설정과 [감지 시작]. */
   onboarding: Onboarding;
   /** "일반" 칸의 로그인 시 자동 시작. */
   launchAtLogin: LaunchAtLogin;
@@ -131,12 +128,20 @@ export function registerIpc(services: IpcServices): void {
     broadcastPreferences();
   });
   services.agentPreferences.onChange(broadcastPreferences);
-  services.workFolders.onChange(() =>
-    services.windows.broadcast({ type: 'work-folders-changed', workFolders: workFoldersSnapshot(services.workFolders.state()) }),
-  );
-  services.repoMappings.onChange(() =>
-    services.windows.broadcast({ type: 'repo-mappings-changed', repoMappings: repoMappingsSnapshot(services.repoMappings.state()) }),
-  );
+  /** 저장소 매핑과 매핑을 기다리는 프로젝트를 열린 창에 알린다. */
+  const broadcastRepoMappings = () =>
+    services.windows.broadcast({ type: 'repo-mappings-changed', repoMappings: repoMappingsSnapshot(services.repoMappings.state(), services.bundles, services.repoMappings) });
+  services.repoMappings.onChange(broadcastRepoMappings);
+  // 매핑을 기다리는 묶음 수가 바뀔 때도 "저장소 매핑 없음 · n건 대기"를 다시 보낸다. 같은 값이면 보내지 않는다.
+  /** 마지막으로 보낸 매핑 대기 목록. */
+  let lastWaiting = JSON.stringify(services.bundles.waitingForMapping());
+  services.bundles.onChange(() => {
+    /** 지금 매핑 대기 목록. */
+    const waiting = JSON.stringify(services.bundles.waitingForMapping());
+    if (waiting === lastWaiting) return;
+    lastWaiting = waiting;
+    broadcastRepoMappings();
+  });
   services.onboarding.onChange((state) => services.windows.broadcast({ type: 'onboarding-changed', onboarding: onboardingSnapshot(state) }));
   services.launchAtLogin.onChange((enabled) => services.windows.broadcast({ type: 'launch-at-login-changed', launchAtLogin: enabled }));
   services.editorOpener.onChange(() => services.windows.broadcast({ type: 'editor-changed', editor: editorSnapshot(services.editorOpener.state()) }));
@@ -222,7 +227,7 @@ function projectLookup(repoMappings: RepoMappings): ProjectLookup {
 /** 지금 앱 상태의 스냅숏. */
 function currentSnapshot(services: IpcServices): AppSnapshot {
   /** 상태를 읽을 main의 일. */
-  const { flowAccount, globalProblems, agentConnections, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin } = services;
+  const { flowAccount, globalProblems, agentConnections, agentPreferences, repoMappings, onboarding, launchAtLogin } = services;
   return {
     appName: app.name,
     version: app.getVersion(),
@@ -231,8 +236,7 @@ function currentSnapshot(services: IpcServices): AppSnapshot {
     globalProblem: activeProblemSnapshot(globalProblems.current()),
     agentConnections: agentConnectionsSnapshot(agentConnections),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
-    workFolders: workFoldersSnapshot(workFolders.state()),
-    repoMappings: repoMappingsSnapshot(repoMappings.state()),
+    repoMappings: repoMappingsSnapshot(repoMappings.state(), services.bundles, repoMappings),
     onboarding: onboardingSnapshot(onboarding.state()),
     launchAtLogin: launchAtLogin.enabled(),
     editor: editorSnapshot(services.editorOpener.state()),
@@ -253,7 +257,6 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     flowAccount,
     agentConnections,
     agentPreferences,
-    workFolders,
     repoMappings,
     onboarding,
     launchAtLogin,
@@ -312,23 +315,11 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'set-agent-model':
       await agentPreferences.setModel(command.agent, command.model);
       return;
-    case 'pick-work-folders':
-      await pickWorkFolders(windows, workFolders);
-      return;
-    case 'add-suggested-work-folder':
-      await workFolders.addSuggestion(command.path);
-      return;
-    case 'remove-work-folder':
-      await workFolders.remove(command.path);
-      return;
-    case 'refresh-work-folders':
-      await workFolders.refresh();
-      return;
     case 'refresh-repo-mappings':
       await repoMappings.refresh();
       return;
     case 'pick-mapping-repos':
-      await pickMappingRepos(windows, repoMappings, command.projectId);
+      await pickMappingRepos(windows, repoMappings, bundles, command.projectId);
       return;
     case 'remove-mapping-repo':
       await repoMappings.removeRepo(command.projectId, command.path);
@@ -569,7 +560,20 @@ async function pickRepoPickerFolders(windows: AppWindows, repoPicker: RepoPicker
   };
   /** 고른 폴더. */
   const paths = await windows.pickFoldersOverReview(options);
-  if (paths.length > 0) repoPicker.addFolders(paths);
+  if (paths.length > 0) await showRejectedFolders(repoPicker.addFolders(paths));
+}
+
+/** 저장소 폴더로 받지 않은 이유(네트워크·WSL)마다 알릴 문장. */
+const REJECTED_FOLDER_TEXT: Record<RejectedFolderReason, string> = {
+  network: '네트워크 폴더는 저장소로 쓸 수 없습니다. 이 PC에 있는 폴더를 골라 주세요.',
+  wsl: 'WSL 폴더는 저장소로 쓸 수 없습니다. Windows 쪽에 있는 폴더를 골라 주세요.',
+};
+
+/** 받지 않은 폴더가 있으면 이유마다 한 번씩 알린다. 없으면 아무것도 하지 않는다. */
+async function showRejectedFolders(rejected: readonly RejectedFolder[]): Promise<void> {
+  for (const reason of new Set(rejected.map((folder) => folder.reason))) {
+    await dialog.showMessageBox({ type: 'warning', message: REJECTED_FOLDER_TEXT[reason], buttons: ['확인'], noLink: true });
+  }
 }
 
 /** core의 온보딩 상태를 렌더러에 넘길 모양으로 바꾼다. */
@@ -578,7 +582,7 @@ function onboardingSnapshot(state: OnboardingState): OnboardingSnapshot {
 }
 
 /** 폴더 선택 창으로 저장소 폴더를 여러 개 받아 Flow 프로젝트에 연결한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
-async function pickMappingRepos(windows: AppWindows, repoMappings: RepoMappings, projectId: string): Promise<void> {
+async function pickMappingRepos(windows: AppWindows, repoMappings: RepoMappings, bundles: MentionBundles, projectId: string): Promise<void> {
   /** 폴더 선택 창 설정. git 저장소가 아닌 코드 폴더도 고를 수 있다. */
   const options: OpenDialogOptions = {
     title: '연결할 저장소 폴더 고르기',
@@ -590,45 +594,23 @@ async function pickMappingRepos(windows: AppWindows, repoMappings: RepoMappings,
   /** 고른 결과. */
   const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
   if (result.canceled || result.filePaths.length === 0) return;
-  await repoMappings.addRepos(projectId, result.filePaths);
+  /** 이 프로젝트의 묶음이 저장소 매핑을 기다리는 중인지 여부. 참여 목록에 없어도 기다리는 프로젝트에는 매핑을 만들 수 있다. */
+  const waiting = bundles.waitingForMapping().some((item) => item.projectId === projectId);
+  await showRejectedFolders(await repoMappings.addRepos(projectId, result.filePaths, waiting));
 }
 
-/** core의 저장소 매핑 상태를 렌더러에 넘길 모양으로 바꾼다. 프로젝트 주소는 화면에 쓰지 않으므로 넘기지 않는다. */
-function repoMappingsSnapshot(state: RepoMappingsState): RepoMappingsSnapshot {
+/**
+ * core의 저장소 매핑 상태를 렌더러에 넘길 모양으로 바꾼다. 프로젝트 주소는 화면에 쓰지 않으므로 넘기지 않는다.
+ * 저장소 매핑 필요로 기다리는 프로젝트(`waiting`)는 이름을 참여 목록에서 찾아 붙인다.
+ */
+function repoMappingsSnapshot(state: RepoMappingsState, bundles: MentionBundles, repoMappings: RepoMappings): RepoMappingsSnapshot {
   return {
     mappings: state.mappings.map((mapping) => ({ ...mapping, repos: mapping.repos.map((repo) => ({ ...repo })) })),
+    waiting: bundles.waitingForMapping().map(({ projectId, count }) => ({ projectId, title: repoMappings.loadedProjectTitle(projectId), waitingCount: count })),
     projects:
       state.projects.status === 'loaded'
         ? { status: 'loaded', projects: state.projects.projects.map(({ projectId, title }) => ({ projectId, title })) }
         : state.projects,
-  };
-}
-
-/** 폴더 선택 창으로 작업 폴더를 여러 개 받아 더한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
-async function pickWorkFolders(windows: AppWindows, workFolders: WorkFolders): Promise<void> {
-  /** 폴더 선택 창 설정. */
-  const options: OpenDialogOptions = {
-    title: '작업 폴더 추가',
-    buttonLabel: '추가',
-    properties: ['openDirectory', 'multiSelections'],
-  };
-  /** 설정 창. 있으면 그 위에 시트로 띄운다. */
-  const parent = windows.settingsWindow();
-  /** 고른 결과. */
-  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-  if (result.canceled || result.filePaths.length === 0) return;
-  await workFolders.add(result.filePaths);
-}
-
-/** core의 작업 폴더 상태를 렌더러에 넘길 모양으로 바꾼다. */
-function workFoldersSnapshot(state: WorkFoldersState): WorkFoldersSnapshot {
-  return {
-    folders: state.folders.map(({ path, scan }) => ({
-      path,
-      scan: scan.status === 'found' ? { status: 'found', repos: scan.repos.map((repo) => ({ ...repo })) } : { status: scan.status },
-    })),
-    suggestions: state.suggestions.map((suggestion) => ({ ...suggestion })),
-    rejected: state.rejected.map((folder) => ({ ...folder })),
   };
 }
 

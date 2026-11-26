@@ -280,7 +280,6 @@ describe('계정 비교', () => {
     /** 이 PC의 설정. */
     const settings: Settings = {
       ...DEFAULT_SETTINGS,
-      workFolders: ['/fake/code'],
       repoMappings: { 'fake-project-1': ['/fake/code/repo'] },
       extraInstructions: '가짜 지침',
     };

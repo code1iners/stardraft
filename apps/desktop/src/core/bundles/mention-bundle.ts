@@ -5,11 +5,10 @@ import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
 import { isPostBody } from '../flow/mention-place';
 import type { MyAnswer } from '../flow/mention-judgement';
-import type { RepoCandidate } from '../repos/repo-candidates';
 
 /** 멘션 묶음의 상태. */
 export type BundleStatus =
-  /** 생성 중. 선택 실행이나 초안 실행이 대기열에 있거나 돌고 있다. */
+  /** 생성 중. 초안 실행이 대기열에 있거나 돌고 있다. */
   | 'generating'
   /** 준비됨. 초안이 있고 사용자 행동을 기다린다. */
   | 'ready'
@@ -128,7 +127,7 @@ export function countsForReview(status: BundleStatus): boolean {
 
 /**
  * 저장소 대기(`repo-check-needed`)의 사유. 저장소 매핑 필요(`unmapped`)와 저장소 확인 필요(`missing-folders`)가 지금의 두 상태다.
- * 나머지(`no-candidates`, `unsure`, `unrelated`, 사유 없음 `null`)는 자동 선택 때 멈춘 옛 묶음에만 있고, 앱을 켤 때 한 번 다시 판정해 두 상태로 옮긴다.
+ * 자동 선택 때 쓰던 옛 사유(후보 없음, 확신 없음, 코드와 무관함)는 없다. 저장된 옛 사유는 읽을 때 저장소 매핑 필요로 보고, 앱을 켤 때 한 번 다시 판정해 맞는 상태로 옮긴다.
  */
 export type RepoCheck =
   /** 저장소 매핑 필요. 매핑도 사용자가 고른 저장소도 없어 기다린다. 그 Flow 프로젝트에 매핑이 저장되면 저절로 생성 중이 된다. */
@@ -138,18 +137,6 @@ export type RepoCheck =
       kind: 'missing-folders';
       /** 찾을 수 없는 폴더의 절대 경로. */
       paths: string[];
-    }
-  /** 자동 선택을 하려 했지만 작업 폴더에서 저장소 후보를 찾지 못했다(작업 폴더가 없거나 비어 있음). */
-  | { kind: 'no-candidates' }
-  /** 선택 실행이 저장소를 확신하지 못했거나(`unsure`) 코드와 무관한 멘션이라고(`unrelated`) 판정했다. */
-  | {
-      kind: 'unsure' | 'unrelated';
-      /** 선택 실행이 적은 사유. 에이전트가 비워 두었으면 빈 문자열이고 화면에는 "이유 없음"으로 보인다. */
-      reason: string;
-      /** 선택 실행에 넘긴 후보. 작업 폴더에서 찾은 저장소 전부이고 찾은 순서다. */
-      candidates: RepoCandidate[];
-      /** 선택 실행이 짚은 후보의 절대 경로. 판정이 고름이 아니어도 가능성이 있는 저장소를 넣을 수 있다. 에이전트가 낸 순서이고, 짚지 않았으면 비어 있다. */
-      picked: string[];
     };
 
 /** 묶음에 든 멘션. */
@@ -342,11 +329,11 @@ export interface MentionBundle extends BundlePlace {
    * 원문 영역은 이것을 지금 내용으로 보인다. 아직 감시하지 않았거나 비교 기준이 바뀌었으면 `null`.
    */
   watchedContext: BundleContext | null;
-  /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
+  /** 저장소 대기의 사유. 저장소 대기가 아니거나 사유가 남지 않은 옛 묶음이면 `null`. */
   repoCheck: RepoCheck | null;
   /**
    * 사용자가 저장소 선택 창에서 고른 구성(절대 경로). 첫 저장소가 초안 실행의 cwd가 된다.
-   * 있으면 저장소 매핑과 자동 선택 대신 이 구성으로 초안 실행만 돌린다. 저장소 매핑은 아니고, 고른 적이 없으면 `null`.
+   * 있으면 저장소 매핑 대신 이 구성으로 초안 실행만 돌린다. 저장소 매핑은 아니고, 고른 적이 없으면 `null`.
    */
   userRepos: string[] | null;
   /** 초안 실행이 만든 초안(원래 초안). 아직 없으면 `null`. */

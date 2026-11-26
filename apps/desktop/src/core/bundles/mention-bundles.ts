@@ -256,7 +256,7 @@ export class MentionBundles {
    */
   async addAssignment(post: import('../ports/flow-api').FlowPost, projectId: string, accountId: string,
     { taskId, assignedAt }: Required<Pick<TaskAssignment, 'taskId' | 'assignedAt'>>, answers: readonly MyAnswer[]): Promise<void> {
-    /** 기존 저장소 매핑과 자동 선택 정책. */
+    /** 기존 저장소 매핑 정책. */
     const resolutions = await this.resolveProjects([projectId]);
     /** 저장소 확인을 기다리는 새 묶음은 원문도 바로 조회한다. */
     const created = await this.lane.run(async () => {
@@ -310,7 +310,7 @@ export class MentionBundles {
   /**
    * 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 둘은 함께 저장한다.
    * 같은 자리에 처리되지 않은 묶음이 있으면 합치고, 없거나 처리됨뿐이면 새 묶음을 만든다.
-   * 새 묶음은 저장소 매핑의 폴더가 모두 있거나 매핑이 없으면(자동 선택) 생성 중, 매핑된 폴더가 없으면 저장소 확인 필요로 올린다.
+   * 새 묶음은 저장소 매핑의 폴더가 모두 있으면 생성 중, 매핑이 없으면 저장소 매핑 필요, 매핑된 폴더가 없으면 저장소 확인 필요로 올린다.
    * 자리마다 `lookups`의 내 답으로 "이미 답함"을 판정하고, 모든 멘션이 빠진 묶음은 초안 없이 이미 답함으로 둔다.
    * 새로 저장소 확인 필요가 된 묶음이 있으면 OS 알림을 하나 띄운다.
    */
@@ -692,6 +692,19 @@ export class MentionBundles {
       });
     }
     return resumed;
+  }
+
+  /**
+   * 저장소 매핑이 없어 기다리는 묶음(저장소 매핑 필요)을 Flow 프로젝트별로 센다. 대기 건수가 많은 순이고, 같으면 프로젝트 ID 순이다.
+   * 설정 "저장소" 칸 맨 위에 "저장소 매핑 없음 · n건 대기"로 보인다.
+   */
+  waitingForMapping(): { projectId: string; count: number }[] {
+    /** 프로젝트별 대기 건수. */
+    const counts = new Map<string, number>();
+    for (const bundle of this.bundles) {
+      if (isRepoWaiting(bundle) && bundle.repoCheck?.kind === 'unmapped') counts.set(bundle.projectId, (counts.get(bundle.projectId) ?? 0) + 1);
+    }
+    return [...counts].map(([projectId, count]) => ({ projectId, count })).sort((a, b) => b.count - a.count || a.projectId.localeCompare(b.projectId));
   }
 
   /** 정해 둔 저장소의 폴더가 없어 기다리는 묶음(저장소 확인 필요)이 있는지 본다. 폴더가 돌아오는지 60초마다 다시 확인할 대상이다. */

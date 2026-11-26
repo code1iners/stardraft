@@ -179,10 +179,10 @@ describe('모델 선택', () => {
 
   it('모델을 저장할 때 다른 칸에서 바꾼 설정을 덮지 않는다', async () => {
     const { preferences, settingsStore } = await setup(['claude-code']);
-    settingsStore.settings.workFolders = ['/fake/work'];
+    settingsStore.settings.extraInstructions = '가짜 지침';
 
     await preferences.setModel('claude-code', 'opus');
 
-    expect(settingsStore.settings.workFolders).toEqual(['/fake/work']);
+    expect(settingsStore.settings.extraInstructions).toBe('가짜 지침');
   });
 });

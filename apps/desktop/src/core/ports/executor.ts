@@ -1,8 +1,8 @@
 /** 앱이 실행할 수 있는 에이전트. Codex는 macOS에서만 허용한다. */
 export type AgentId = 'claude-code' | 'codex';
 
-/** 에이전트 실행의 종류. 선택 실행은 저장소를 고르고, 초안 실행은 초안을 쓴다. 점검 실행(화면 이름 "작동 확인")은 로그인과 실행 계약이 실제로 도는지 최소 스키마로 확인한다. */
-export type RunKind = 'selection' | 'draft' | 'check';
+/** 에이전트 실행의 종류. 초안 실행은 초안을 쓴다. 점검 실행(화면 이름 "작동 확인")은 로그인과 실행 계약이 실제로 도는지 최소 스키마로 확인한다. */
+export type RunKind = 'draft' | 'check';
 
 /** 실행 중에 에이전트가 하고 있는 일. 상세 화면의 진행 단계 한 줄이 된다. */
 export interface ExecutorProgress {

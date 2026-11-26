@@ -1,5 +1,6 @@
 import { basename, resolve } from 'node:path';
 import { canPickRepos, type MentionBundle } from '../bundles/mention-bundle';
+import { splitRejectedFolders, type RejectedFolder } from './folder-rules';
 import type { MappingMatch, RepoMappings } from './repo-mappings';
 
 /**
@@ -98,17 +99,20 @@ export class RepoPicker {
     );
   }
 
-  /** "폴더 직접 고르기"로 고른 폴더를 체크한 채 더한다. 이미 후보인 폴더는 체크만 한다. */
-  addFolders(paths: readonly string[]): void {
+  /** "폴더 직접 고르기"로 고른 폴더를 체크한 채 더한다. 이미 후보인 폴더는 체크만 한다. 네트워크·WSL 폴더는 더하지 않고 받지 않은 폴더로 돌려준다. */
+  addFolders(paths: readonly string[]): RejectedFolder[] {
+    /** 받을 폴더와 받지 않을 폴더. */
+    const { accepted, rejected } = splitRejectedFolders(paths);
     this.updateChoices((choices) => {
       /** 고른 폴더. OS 고유 형식의 절대 경로로 맞춘다. */
-      const picked = new Set(paths.map((path) => resolve(path)));
+      const picked = new Set(accepted.map((path) => resolve(path)));
       /** 이미 후보인 폴더는 체크한 후보. */
       const marked = choices.map((choice) => (picked.has(choice.path) ? { ...choice, checked: true } : choice));
       /** 새로 더할 폴더. */
       const added = [...picked].filter((path) => !choices.some((choice) => choice.path === path));
       return [...marked, ...added.map((path): RepoChoice => ({ name: basename(path), path, group: 'added', checked: true }))];
     });
+    return rejected;
   }
 
   /** 고른 구성으로 묶음을 다시 만들고 창을 닫는다. 고른 것이 없으면 아무것도 하지 않는다. */

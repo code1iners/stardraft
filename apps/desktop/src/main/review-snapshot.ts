@@ -9,7 +9,6 @@ import { namedMentionText, splitMentionMarkup } from '../core/flow/mention-marku
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
 import { mentionWritingOf, type BundleContext, type ContextWriting } from '../core/flow/bundle-context';
 import { commentKey, mentionWritingKey, POST_WRITING_KEY, replyKey } from '../core/flow/context-changes';
-import type { RepoCandidate } from '../core/repos/repo-candidates';
 import type { MappingMatch } from '../core/repos/repo-mappings';
 import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
@@ -24,7 +23,6 @@ import type {
   PostingSnapshot,
   RepoCheckSnapshot,
   RepoPickerSnapshot,
-  RepositorySnapshot,
   ReviewSnapshot,
   RunLineSnapshot,
   ThreadEntrySnapshot,
@@ -239,7 +237,7 @@ function postingSnapshot(bundle: MentionBundle, countdownOf: CountdownLookup): P
 }
 
 /**
- * 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘기고, 자동 선택으로 정했으면 그 내력도 넘긴다.
+ * 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘긴다.
  * `mapping`은 그 구성을 저장소 매핑과 견준 것이다. 편집기 텍스트와 받는 사람도 함께 넘기되, 받는 사람의 사용자 ID는 넘기지 않는다.
  */
 function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatch): DraftSnapshot {
@@ -265,7 +263,6 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
       developerTerms: developerTerms(explanation, source),
     })),
     repositories: draft.repositories.map((path) => ({ name: basename(path), path })),
-    autoSelection: draft.autoSelection && { ...draft.autoSelection },
     mapping,
     editorText: bundle.editedText ?? draftEditorText(draft),
     edited: bundle.editedText !== null,
@@ -280,8 +277,7 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
 }
 
 /**
- * 저장소 확인 필요의 사유를 렌더러에 넘길 모양으로 바꾼다.
- * 선택 실행의 후보는 에이전트가 짚은 것(짚은 순서)과 나머지(작업 폴더에서 찾은 순서)로 나눈다.
+ * 저장소 대기의 사유를 렌더러에 넘길 모양으로 바꾼다.
  * `chosenByUser`는 묶음에 고른 구성이 있는지다. 있으면 실행 직전에 매핑 대신 그 구성을 확인했으므로 사라진 폴더도 그 구성의 것이다.
  */
 function repoCheckSnapshot(repoCheck: RepoCheck, chosenByUser: boolean): RepoCheckSnapshot {
@@ -290,37 +286,24 @@ function repoCheckSnapshot(repoCheck: RepoCheck, chosenByUser: boolean): RepoChe
       return { kind: repoCheck.kind };
     case 'missing-folders':
       return { kind: repoCheck.kind, paths: [...repoCheck.paths], chosenByUser };
-    case 'no-candidates':
-      return { kind: repoCheck.kind };
-    case 'unsure':
-    case 'unrelated': {
-      /** 후보를 렌더러의 저장소 모양으로 바꾼다. */
-      const repositoryOf = ({ name, path }: RepoCandidate): RepositorySnapshot => ({ name, path });
-      return {
-        kind: repoCheck.kind,
-        reason: repoCheck.reason,
-        picked: repoCheck.picked.flatMap((path) => repoCheck.candidates.filter((candidate) => candidate.path === path)).map(repositoryOf),
-        others: repoCheck.candidates.filter((candidate) => !repoCheck.picked.includes(candidate.path)).map(repositoryOf),
-      };
-    }
   }
 }
 
 /**
- * 상세 머리의 실행 줄. 초안이 있으면 그 초안을 만든 실행(마지막 성공), 실패 묶음이면 마지막 실행,
- * 선택 실행이 고르지 않아 저장소 확인 필요가 된 묶음이면 그 선택 실행이다. 생성 중이거나 그런 실행이 없으면 `null`.
+ * 상세 머리의 실행 줄. 초안이 있으면 그 초안을 만든 실행(마지막 성공), 실패 묶음이면 마지막 실행이다.
+ * 생성 중이거나 그런 실행이 없으면 `null`. 과거 기록의 저장소 선택 실행은 종류를 `selection`으로 넘긴다.
  */
 function runLine(bundle: MentionBundle): RunLineSnapshot | null {
   if (bundle.status === 'generating') return null;
   /** 실행 줄에 보일 실행. */
-  const run = bundle.draft ? bundle.runs.findLast((record) => record.result === 'succeeded') : bundle.status === 'failed' || decidedBySelection(bundle) ? bundle.runs.at(-1) : undefined;
+  const run = bundle.draft ? bundle.runs.findLast((record) => record.result === 'succeeded') : bundle.status === 'failed' ? bundle.runs.at(-1) : undefined;
   if (!run) return null;
-  return { agent: run.agent, durationMs: Math.max(0, run.finishedAt - run.startedAt), contextOmitted: run.omittedContextItems > 0 };
-}
-
-/** 선택 실행의 판정으로 저장소 확인 필요가 된 묶음인지 본다. 마지막 실행 기록이 그 선택 실행이다. */
-function decidedBySelection(bundle: MentionBundle): boolean {
-  return bundle.status === 'repo-check-needed' && (bundle.repoCheck?.kind === 'unsure' || bundle.repoCheck?.kind === 'unrelated');
+  return {
+    kind: run.kind === 'selection' ? 'selection' : 'draft',
+    agent: run.agent,
+    durationMs: Math.max(0, run.finishedAt - run.startedAt),
+    contextOmitted: run.omittedContextItems > 0,
+  };
 }
 
 /**

@@ -115,6 +115,7 @@ function CompactReview({ snapshot, initialBundleId }: CompactReviewProps) {
             onRetry={() => retry(selected.id)}
             onPost={() => post(selected)}
             onCancelPost={() => cancelPost(selected.id)}
+            windowKind="compact"
           />
         </>
       ) : (

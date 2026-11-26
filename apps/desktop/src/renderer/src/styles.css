@@ -1044,6 +1044,11 @@ p.setup-tray-hint {
   border-top: 1px solid var(--border);
 }
 
+/* 검토 화면에서 [저장소 매핑하기]나 [매핑 고치기]로 짚은 프로젝트의 줄. */
+.folder-item[aria-current='true'] {
+  background: var(--sel);
+}
+
 .folder-row {
   display: flex;
   align-items: center;
@@ -1114,8 +1119,15 @@ p.setup-tray-hint {
   color: var(--danger);
 }
 
-/* 수동 요청 묶음의 "수동 요청" 표시. 경고색이 아니라 옅은 테두리다. */
-.tag.manual {
+/* 재현 성공 같은 성공 표시. */
+.tag.success {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+/* 수동 요청 묶음의 "수동 요청" 표시와 불가를 뜻하는 표시. 경고색이 아니라 옅은 테두리다. */
+.tag.manual,
+.tag.outline {
   border: 1px solid var(--border);
   color: var(--muted);
 }
@@ -1798,6 +1810,56 @@ button.cite:hover {
   padding: 10px 14px;
   border-top: 1px solid var(--border);
   background: var(--side);
+}
+
+/* 저장소 대기의 노란 바닥 줄. 펼친 창은 [무시], 글, 나머지 버튼이 한 줄에 놓인다. */
+.review-foot.warn {
+  background: var(--warn-bg);
+  border-top-color: var(--warn-dot);
+}
+
+.review-foot.warn .repo-wait-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.review-foot.warn .repo-wait-text code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.review-foot.warn .repo-wait-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 작은 창은 글이 윗줄, 버튼이 아랫줄이다. [무시]는 왼쪽, 나머지 버튼은 오른쪽이다. */
+.review-foot.warn.compact {
+  display: grid;
+  grid-template-areas:
+    'text text'
+    'ignore actions';
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+}
+
+.review-foot.warn.compact .repo-wait-text {
+  grid-area: text;
+}
+
+.review-foot.warn.compact .repo-wait-ignore {
+  grid-area: ignore;
+}
+
+.review-foot.warn.compact .repo-wait-actions {
+  grid-area: actions;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 /* 지시를 쓰는 칸이 열린 바닥 줄. 칸이 바닥 줄 너비를 다 쓴다. */

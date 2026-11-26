@@ -437,10 +437,10 @@ export type PostingSnapshot =
   /** 게시 요청을 보냈고 결과를 기다린다. 취소할 수 없다. */
   | { phase: 'sending' };
 
-/** 펼친 창 목록의 묶음. 목록에 이 순서로 보인다. 검토 대기·생성 중·실패·처리됨이다. */
+/** 묶음이 상태로 든 그룹. 검토 대기·생성 중·실패·처리됨이다. 바닥 줄과 처리됨 구분에 쓰고, 펼친 창 목록은 종류별로 묶는다. */
 export const BUNDLE_GROUPS = ['awaiting-review', 'generating', 'failed', 'processed'] as const;
 
-/** 펼친 창 목록의 묶음 하나. */
+/** 묶음의 상태 그룹 하나. */
 export type BundleGroup = (typeof BUNDLE_GROUPS)[number];
 
 /** 멘션이 일어난 글의 종류. 게시물 본문, 댓글, 대댓글이다. */
@@ -681,6 +681,12 @@ export type RepoCheckSnapshot =
    */
   | { kind: 'missing-folders'; paths: string[]; chosenByUser: boolean };
 
+/**
+ * 저장소 대기 묶음이 바닥 줄에 쓰는 값. 사유와 같은 프로젝트에서 같은 사유로 기다리는 묶음 수(`waitingCount`, 이 묶음 포함)다.
+ * 상세에 이유 상자를 두지 않고 노란 바닥 줄 글이 이 값으로 쓰인다.
+ */
+export type RepoWaitSnapshot = RepoCheckSnapshot & { waitingCount: number };
+
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
   /** 담당 업무 초안의 원문. 직접 멘션과 별도 표시한다. */
@@ -735,8 +741,8 @@ export interface BundleSnapshot {
   generation: GenerationSnapshot | null;
   /** 생성이 실패한 까닭. 실패가 아니면 `null`. */
   failure: FailureSnapshot | null;
-  /** 저장소 대기의 사유. 저장소 대기가 아니면 `null`. */
-  repoCheck: RepoCheckSnapshot | null;
+  /** 저장소 대기의 사유와 같은 프로젝트에서 같은 사유로 기다리는 묶음 수. 저장소 대기가 아니면 `null`. */
+  repoCheck: RepoWaitSnapshot | null;
   /** 게시 중 묶음의 단계. 게시 중이 아니면 `null`. */
   posting: PostingSnapshot | null;
   /** 게시 실패의 사유. 상세 머리에 한 줄로 보인다. 게시 실패가 아니면 `null`. */
@@ -895,8 +901,8 @@ export interface AppSnapshot {
 
 /** main → 렌더러 변경 이벤트. */
 export type AppEvent =
-  /** 이미 열린 설정 창에 이 칸을 보이라고 알린다. */
-  | { type: 'settings-section-requested'; section: SettingsSection }
+  /** 이미 열린 설정 창에 이 칸을 보이라고 알린다. `projectId`가 있으면 그 Flow 프로젝트의 저장소 매핑을 짚어 보인다. */
+  | { type: 'settings-section-requested'; section: SettingsSection; projectId?: string }
   /** "Flow 계정" 칸의 상태가 바뀌었다. */
   | { type: 'flow-account-changed'; flowAccount: FlowAccountSnapshot }
   /** 키 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인과 확인을 기다리는 경우는 알리지 않는다. */
@@ -936,6 +942,8 @@ export type AppEvent =
 export type AppCommand =
   /** 설정 창을 연다. 칸을 주면 그 칸을 보인다. */
   | { type: 'open-settings'; section?: SettingsSection }
+  /** 묶음의 Flow 프로젝트 저장소 매핑 편집으로 간다. 설정 "저장소" 칸을 열고 그 프로젝트의 줄을 짚어 보인다. */
+  | { type: 'open-repo-mapping'; bundleId: number }
   /** 데이터 폴더나 로그 폴더를 OS 파일 관리자로 연다. */
   | { type: 'open-folder'; folder: AppFolder }
   /** 붙여 넣은 Flow 개인 API 키를 확인한다. 성공하면 main이 키를 저장한다. */
@@ -1255,6 +1263,7 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'cancel-generation':
     case 'retry-bundle':
     case 'open-bundle-in-flow':
+    case 'open-repo-mapping':
     case 'link-bundle-repos':
     case 'open-repo-picker':
     case 'post-bundle':

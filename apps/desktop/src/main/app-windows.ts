@@ -184,12 +184,12 @@ export class AppWindows {
     this.openPopover(bundleId);
   }
 
-  /** 설정 창을 연다. 칸을 주면 그 칸을 보인다. 작은 창은 닫는다. */
-  openSettings(section?: SettingsSection): void {
+  /** 설정 창을 연다. 칸을 주면 그 칸을 보이고, 프로젝트를 주면 저장소 매핑에서 그 Flow 프로젝트의 줄을 짚는다. 작은 창은 닫는다. */
+  openSettings(section?: SettingsSection, projectId?: string): void {
     this.popover?.close();
 
     if (this.settings) {
-      if (section) this.send(this.settings, { type: 'settings-section-requested', section });
+      if (section) this.send(this.settings, { type: 'settings-section-requested', section, ...(projectId ? { projectId } : {}) });
       void this.showWithDock(this.settings);
       return;
     }
@@ -213,7 +213,7 @@ export class AppWindows {
     });
 
     this.settings = window;
-    this.load(window, 'settings', section ? { section } : {});
+    this.load(window, 'settings', { ...(section ? { section } : {}), ...(projectId ? { project: projectId } : {}) });
   }
 
   /** 설정 창이 열려 있으면 닫고, 다 닫혀 Dock 아이콘을 숨긴 뒤에 끝난다. */

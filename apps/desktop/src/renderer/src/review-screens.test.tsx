@@ -148,24 +148,14 @@ describe('작은 창: 멘션 묶음', () => {
   });
 
   it('저장소 영역은 처음에 접혀 있고, 펼침 상태를 따른다', () => {
-    /** 저장소 영역의 안내 문장. */
-    const note = '아직 이 묶음에 쓸 저장소를 정하지 않았습니다.';
+    /** 저장소 영역에만 보이는 저장소 경로. */
+    const path = '/fake/work/billing-api';
+    /** 원문을 접고 저장소를 편 영역 펼침 상태. */
+    const open = { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } };
 
-    expect(textOf(<PopoverContent snapshot={snapshot([bundle(1)])} />)).not.toContain(note);
-    expect(
-      textOf(
-        <PopoverContent
-          snapshot={snapshot([bundle(1)], { review: { bundles: [bundle(1)], sections: { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } }, repoPicker: null } })}
-        />,
-      ),
-    ).toEqual(expect.stringContaining(note));
-    expect(
-      textOf(
-        <PopoverContent
-          snapshot={snapshot([bundle(1)], { review: { bundles: [bundle(1)], sections: { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } }, repoPicker: null } })}
-        />,
-      ),
-    ).not.toContain('첫 질문입니다');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain(path);
+    expect(textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections: open, repoPicker: null } })} />)).toContain(path);
+    expect(textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections: open, repoPicker: null } })} />)).not.toContain('첫 질문입니다');
   });
 
   it('맥락을 조회한 묶음은 원문 영역에 "스레드 보기"를 두고, 맥락이 없으면 두지 않는다', () => {
@@ -364,24 +354,41 @@ describe('작은 창: 앱 내 업데이트', () => {
 });
 
 describe('펼친 창', () => {
-  it('목록을 검토 대기와 처리됨으로 묶어 개수를 보이고, 행에 송신자·상태를 보이며, 처리됨 아래에 보관 안내를 둔다', () => {
+  it('목록을 종류(초안)로 묶어 개수를 보이고, 행에 송신자·상태 태그를 보이며, 끝낸 항목이 있으면 맨 아래에 보관 안내를 한 줄 둔다', () => {
     const text = textOf(<ReviewContent snapshot={snapshot([bundle(1), bundle(2), ANSWERED])} />);
 
-    expect(text).toContain('검토 대기 2');
-    expect(text).toContain('처리됨 1');
-    expect(text).not.toContain('생성 중');
+    expect(text).toContain('초안 3');
+    // 상태별 묶음 머리는 없고 상태는 줄의 태그로만 보인다.
+    expect(text).not.toContain('검토 대기');
+    expect(text).not.toContain('처리됨 1');
     expect(text).toContain('보낸 사람, 다른 사람');
     expect(text).toContain('세번째 사람');
-    expect(text).toContain('처리한 지 7일이 지나면 목록에서 사라지고 되돌릴 수 없습니다');
+    expect(text).toContain('이미 답함');
+    expect(text).toContain('끝낸 항목은 7일이 지나면 목록에서 사라집니다.');
+    expect(text).not.toContain('처리한 지 7일이 지나면');
     expect(text).toContain('접어 보기');
   });
 
-  it('상세는 고른 묶음의 원문과 저장소를 처음부터 펼쳐 보인다', () => {
+  it('끝낸 항목이 없으면 보관 안내를 보이지 않는다', () => {
+    expect(textOf(<ReviewContent snapshot={snapshot([bundle(1), bundle(2)])} />)).not.toContain('끝낸 항목은');
+  });
+
+  it('보관 안내는 목록의 마지막 요소다', () => {
+    /** 목록 마크업. */
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={snapshot([ANSWERED, bundle(1)])} />);
+    /** 목록(`aside`)의 마지막 자식. */
+    const list = markup.slice(markup.indexOf('<aside'), markup.indexOf('</aside>'));
+
+    expect(list.lastIndexOf('list-note')).toBeGreaterThan(list.lastIndexOf('list-row'));
+  });
+
+  it('상세는 고른 묶음의 원문을 처음부터 펼쳐 보이고, 저장소 대기 묶음에는 이유 상자 대신 노란 바닥 줄이 있다', () => {
     const text = textOf(<ReviewContent snapshot={snapshot([bundle(1), bundle(2)])} initialBundleId={2} />);
 
     expect(text).toContain('가짜 게시물 2');
     expect(text).toContain('멘션 2건');
-    expect(text).toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+    expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+    expect(text).toContain('이 프로젝트에 연결한 저장소가 없습니다.');
     expect(text).toContain('Flow에서 열기');
   });
 
@@ -559,27 +566,16 @@ describe('작은 창: 초안 실행', () => {
     expect(text).toContain('다시 시도');
   });
 
-  it('매핑된 폴더가 없어 저장소 확인 필요가 된 묶음은 저장소 영역에 사유와 찾을 수 없는 폴더를 보인다', () => {
+  it('폴더가 없어 저장소 확인 필요가 된 묶음은 저장소 영역 없이 노란 바닥 줄에 찾을 수 없는 폴더를 보인다', () => {
     /** 폴더가 사라진 묶음. */
-    const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false } });
+    const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 } });
     /** 저장소를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
     const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
 
-    expect(text).toContain('연결된 저장소 폴더를 찾을 수 없음');
-    expect(text).toContain('/fake/work/gone');
-    expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
-  });
-
-  it('저장소 선택 창에서 고른 폴더가 사라진 묶음은 "고른 저장소 폴더를 찾을 수 없음"을 보인다', () => {
-    /** 고른 폴더가 사라진 묶음. */
-    const missing = bundle(10, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true } });
-    /** 저장소를 편 작은 창. */
-    const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
-
-    expect(text).toContain('고른 저장소 폴더를 찾을 수 없음');
+    expect(text).toContain('연결한 저장소 폴더를 찾을 수 없습니다. /fake/work/gone 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.');
     expect(text).not.toContain('연결된 저장소 폴더를 찾을 수 없음');
+    expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
   });
 });
 
@@ -597,18 +593,40 @@ describe('저장소 확인 필요와 자동 선택', () => {
     return popoverMarkup(item).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').replaceAll('&quot;', '"');
   }
 
-  it('매핑도 고른 저장소도 없어 기다리는 묶음은 "저장소 매핑 필요" 태그와 사유를 보이고, 폴더가 없어 멈춘 묶음은 "저장소 확인 필요" 태그를 보인다', () => {
-    /** 저장소 매핑 필요 묶음. */
-    const unmapped = bundle(30, { repoCheck: { kind: 'unmapped' } });
+  it('매핑도 고른 저장소도 없어 기다리는 묶음은 "저장소 매핑 필요" 태그와 바닥 줄 글을, 폴더가 없어 멈춘 묶음은 "저장소 확인 필요" 태그와 그 글을 보인다', () => {
+    /** 저장소 매핑 필요 묶음. 같은 프로젝트에서 3건이 기다린다. */
+    const unmapped = bundle(30, { repoCheck: { kind: 'unmapped', waitingCount: 3 } });
     /** 폴더가 없어 멈춘 묶음. */
-    const missing = bundle(31, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false } });
+    const missing = bundle(31, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 } });
 
     expect(popoverText(unmapped)).toContain('저장소 매핑 필요');
     expect(popoverText(unmapped)).not.toContain('저장소 확인 필요');
-    expect(popoverText(unmapped)).toContain('이 Flow 프로젝트에 연결한 저장소가 없음');
+    expect(popoverText(unmapped)).toContain('이 프로젝트에 연결한 저장소가 없습니다. 매핑하면 기다리는 멘션 3건의 초안을 만듭니다.');
     expect(popoverText(unmapped)).toContain('저장소를 골라 만들기');
     expect(popoverText(missing)).toContain('저장소 확인 필요');
-    expect(popoverText(missing)).toContain('연결된 저장소 폴더를 찾을 수 없음');
+    expect(popoverText(missing)).toContain('연결한 저장소 폴더를 찾을 수 없습니다.');
+  });
+
+  it('노란 바닥 줄은 왼쪽 [무시], 오른쪽 [저장소를 골라 만들기]와 주 버튼이다. 주 버튼은 매핑이 없으면 [저장소 매핑하기], 폴더가 없으면 [매핑 고치기]다', () => {
+    /** 저장소 매핑 필요 묶음. */
+    const unmapped = bundle(30, { repoCheck: { kind: 'unmapped', waitingCount: 1 } });
+    /** 폴더가 없어 멈춘 묶음. */
+    const missing = bundle(31, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 } });
+
+    for (const [item, main] of [
+      [unmapped, '저장소 매핑하기'],
+      [missing, '매핑 고치기'],
+    ] as const) {
+      /** 바닥 줄 마크업. */
+      const foot = popoverMarkup(item).slice(popoverMarkup(item).indexOf('<footer'));
+      expect(foot).toContain('review-foot warn compact');
+      expect(foot).toMatch(/<button[^>]*class="btn repo-wait-ignore"[^>]*>무시<\/button>/);
+      expect(foot).toMatch(/<button[^>]*>저장소를 골라 만들기<\/button>/);
+      expect(foot).toMatch(new RegExp(`<button[^>]*class="btn primary"[^>]*>${main}</button>`));
+      expect(foot.indexOf('무시')).toBeLessThan(foot.indexOf('repo-wait-text'));
+    }
+    // 펼친 창은 한 줄 배치 클래스를 쓴다.
+    expect(renderToStaticMarkup(<ReviewContent snapshot={snapshot([unmapped])} />)).toContain('review-foot warn expanded');
   });
 
   it('저장소가 정해지지 않은 초안은 알림 줄에 까닭을 알리고, 다시 만들기와 지시를 덧붙여 다시 만들기를 끄며 다른 저장소로 다시 만들기는 둔다. 게시와 무시는 된다', () => {
@@ -626,8 +644,15 @@ describe('저장소 확인 필요와 자동 선택', () => {
     expect(markup).toMatch(/<button[^>]*>다른 저장소로 다시 만들기<\/button>/);
     expect(markup).toMatch(/<button[^>]*>무시<\/button>/);
     expect(markup).not.toMatch(/<button[^>]*disabled[^>]*>게시<\/button>/);
+    // 알림 줄에 [저장소 매핑하기]가 있고, 저장소 구역에는 "정해진 저장소가 없습니다."만 있다.
+    expect(markup).toMatch(/<button[^>]*>저장소 매핑하기<\/button>/);
+    expect(text).toContain('정해진 저장소가 없습니다.');
+    expect(text).not.toContain('/fake/work/billing-api');
+    expect(markup).not.toMatch(/<button[^>]*>이 Flow 프로젝트에 연결<\/button>/);
     // 매핑이 있는 초안에는 이 안내가 없다.
     expect(popoverText(bundle(33, { ...READY, id: 33 }))).not.toContain('저장소가 정해지지 않아');
+    expect(popoverText(bundle(33, { ...READY, id: 33 }))).not.toContain('정해진 저장소가 없습니다.');
+    expect(popoverMarkup(bundle(33, { ...READY, id: 33 }))).not.toMatch(/<button[^>]*>저장소 매핑하기<\/button>/);
   });
 
   it('자동 선택으로 만든 옛 초안은 저장소 영역에 쓴 저장소만 보이고 자동으로 고른 이유와 작업 폴더 안내는 없다', () => {
@@ -659,12 +684,12 @@ describe('저장소 확인 필요와 자동 선택', () => {
 });
 
 describe('펼친 창: 초안 실행', () => {
-  it('목록 행에 요구 요약을 보이고, 생성 중·실패 묶음을 각 목록 묶음에 넣는다. 상세는 원문 → 요구 → 저장소 → 초안 → 근거 순이고 머리에 실행 줄이 있다', () => {
+  it('목록 행에 요구 요약을 보이고, 생성 중·실패 묶음도 같은 초안 묶음에 태그로 보인다. 상세는 원문 → 요구 → 저장소 → 초안 → 근거 순이고 머리에 실행 줄이 있다', () => {
     const text = textOf(<ReviewContent snapshot={snapshot([READY, GENERATING, FAILED])} initialBundleId={4} />);
 
-    expect(text).toContain('검토 대기 1');
-    expect(text).toContain('생성 중 1');
-    expect(text).toContain('실패 1');
+    expect(text).toContain('초안 3');
+    expect(text).toContain('생성 중');
+    expect(text).toContain('실패');
     expect(text).toContain('재시도 횟수');
     expect(text).toContain('Claude Code · 2분 14초 · 맥락 일부 생략');
     /** 상세 영역의 머리 순서. */
@@ -742,7 +767,7 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
 
   it('저장소 매핑 필요 묶음의 선택 창은 "이 저장소로 만들기"이고, 고른 것이 없으면 만들기와 연결을 끈다', () => {
     /** 저장소 매핑 필요 묶음. */
-    const check = bundle(21, { repoCheck: { kind: 'unmapped' } });
+    const check = bundle(21, { repoCheck: { kind: 'unmapped', waitingCount: 1 } });
     /** 아무것도 고르지 않은 창. */
     const markup = popoverMarkup(check, {
       bundleId: 21,
@@ -1076,13 +1101,13 @@ describe('게시', () => {
     }
   });
 
-  it('펼친 창에서 게시 중 묶음은 검토 대기에 남고, 게시됨 묶음은 처리됨에 들며 되돌릴 수 없다', () => {
+  it('펼친 창에서 게시 중 묶음과 게시됨 묶음은 같은 초안 묶음에 태그로 보이고, 게시됨 묶음은 되돌릴 수 없다', () => {
     /** 게시됨 묶음. */
     const posted: BundleSnapshot = { ...READY, id: 10, status: 'posted', group: 'processed', processedAt: Date.UTC(2026, 9, 20, 0, 5), draft: { ...READY.draft!, canEdit: false, canRegenerate: false, canPost: false } };
     const list = textOf(<ReviewContent snapshot={snapshot([countingDown(), posted])} initialBundleId={10} />);
 
-    expect(list).toContain('검토 대기 1');
-    expect(list).toContain('처리됨 1');
+    expect(list).toContain('초안 2');
+    expect(list).toContain('게시 중');
     expect(list).toContain('게시됨');
     expect(list).toContain('게시한 묶음입니다. 되돌릴 수 없습니다.');
     expect(list).not.toContain('되돌리기');
@@ -1134,11 +1159,11 @@ describe('게시 실패', () => {
     expect(repostButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([blocked])} />))).toContain('disabled');
   });
 
-  it('펼친 창에서는 실패 목록에 든다', () => {
+  it('펼친 창에서는 같은 초안 묶음에 "게시 실패" 태그로 보인다', () => {
     const text = textOf(<ReviewContent snapshot={snapshot([POST_FAILED, READY])} initialBundleId={4} />);
 
-    expect(text).toContain('실패 1');
-    expect(text).toContain('검토 대기 1');
+    expect(text).toContain('초안 2');
+    expect(text).toContain('게시 실패');
   });
 
   it('게시 실패 토스트는 "게시하지 못했습니다: 송신자님 멘션"이다', () => {

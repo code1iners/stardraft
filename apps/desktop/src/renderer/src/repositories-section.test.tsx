@@ -51,4 +51,25 @@ describe('설정 "저장소" 칸', () => {
     expect(markup.match(/<option[^>]*value="900002"/g)).toBeNull();
     expect(markup).toContain('value="900003"');
   });
+
+  it('검토 화면에서 짚은 프로젝트의 줄에만 표시를 단다. 기다리는 줄도 매핑된 줄도 같다', () => {
+    /** 마크업. */
+    const markup = (focusProjectId: string | null) =>
+      renderToStaticMarkup(
+        <RepositoriesSection
+          repoMappings={{
+            mappings: [{ projectId: '101', title: '매핑된 프로젝트', repos: [{ path: '/fake/work/api', status: 'missing' }], missing: true }],
+            waiting: [{ projectId: '900002', title: '기다리는 프로젝트', waitingCount: 3 }],
+            projects: { status: 'idle' },
+          }}
+          focusProjectId={focusProjectId}
+        />,
+      );
+
+    expect(markup(null)).not.toContain('aria-current');
+    expect(markup('900002').match(/aria-current="true"/g)).toHaveLength(1);
+    expect(markup('900002')).toMatch(/aria-current="true"[^>]*>.{0,200}기다리는 프로젝트/s);
+    expect(markup('101')).toMatch(/aria-current="true"[^>]*>.{0,200}매핑된 프로젝트/s);
+    expect(markup('999')).not.toContain('aria-current');
+  });
 });

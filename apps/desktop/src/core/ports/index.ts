@@ -27,7 +27,7 @@ export type {
   FlowReplyPage,
   FlowTextComponent,
 } from './flow-api';
-export type { AppNotification, Notifier } from './notifier';
+export type { AppNotification, NotificationTarget, Notifier } from './notifier';
 export type { SecretReadResult, SecretStore } from './secret-store';
 export { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from './settings-store';
 export type { EditorChoice, Settings, SettingsStore } from './settings-store';

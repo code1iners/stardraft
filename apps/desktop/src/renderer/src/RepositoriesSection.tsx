@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MappedRepoStatus, ParticipantProjectsFailure, ParticipantProjectsSnapshot, RepoMappingsSnapshot } from '../../shared/ipc';
 
 /** 참여 Flow 프로젝트 목록을 받지 못한 이유 문구. */
@@ -14,26 +14,41 @@ const PROJECTS_FAILURE_TEXT: Record<ParticipantProjectsFailure, string> = {
 interface RepositoriesSectionProps {
   /** 저장소 매핑과 고를 참여 Flow 프로젝트 목록. */
   repoMappings: RepoMappingsSnapshot;
+  /** 검토 화면의 [저장소 매핑하기]·[매핑 고치기]로 짚은 Flow 프로젝트 ID. 그 줄을 눈에 띄게 하고 보이는 곳으로 가져온다. 없으면 `null`. */
+  focusProjectId?: string | null;
 }
 
 /** 설정 "저장소" 칸. Flow 프로젝트마다 저장소를 연결하고, 매핑이 없어 기다리는 프로젝트를 맨 위에 보인다. */
-export function RepositoriesSection({ repoMappings }: RepositoriesSectionProps) {
+export function RepositoriesSection({ repoMappings, focusProjectId = null }: RepositoriesSectionProps) {
   useEffect(function refreshOnOpen() {
     // 칸을 열 때마다 연결된 폴더와 참여 Flow 프로젝트 목록을 다시 확인한다.
     void window.stardraft.send({ type: 'refresh-repo-mappings' });
   }, []);
 
-  return <RepoMappingsField repoMappings={repoMappings} />;
+  return <RepoMappingsField repoMappings={repoMappings} focusProjectId={focusProjectId} />;
 }
 
 /** 저장소 매핑 목록에 넘기는 값. */
 interface RepoMappingsFieldProps {
   /** 저장소 매핑과 고를 참여 Flow 프로젝트 목록. */
   repoMappings: RepoMappingsSnapshot;
+  /** 짚은 Flow 프로젝트 ID. 없으면 `null`. */
+  focusProjectId: string | null;
 }
 
 /** 저장소 매핑 목록. Flow 프로젝트마다 연결한 저장소를 보이고, 참여 Flow 프로젝트를 골라 새 매핑을 만든다. */
-function RepoMappingsField({ repoMappings }: RepoMappingsFieldProps) {
+function RepoMappingsField({ repoMappings, focusProjectId }: RepoMappingsFieldProps) {
+  /** 짚은 프로젝트의 줄. */
+  const focusedRow = useRef<HTMLLIElement | null>(null);
+  /** 짚은 프로젝트의 줄이 목록에 있는지 여부. 목록을 받은 뒤에야 줄이 생긴다. */
+  const hasFocusedRow = [...repoMappings.mappings, ...repoMappings.waiting].some((item) => item.projectId === focusProjectId);
+  useEffect(
+    function scrollToFocusedRow() {
+      if (hasFocusedRow) focusedRow.current?.scrollIntoView?.({ block: 'center' });
+    },
+    [focusProjectId, hasFocusedRow],
+  );
+
   /** 새 매핑으로 고른 Flow 프로젝트 ID. 고르지 않았으면 빈 문자열. */
   const [selected, setSelected] = useState('');
   /** 참여 Flow 프로젝트 목록의 상태. */
@@ -54,7 +69,12 @@ function RepoMappingsField({ repoMappings }: RepoMappingsFieldProps) {
       {(repoMappings.waiting.length > 0 || repoMappings.mappings.length > 0) && (
         <ul className="folder-list">
           {repoMappings.waiting.map((waiting) => (
-            <li key={`waiting-${waiting.projectId}`} className="folder-item">
+            <li
+              key={`waiting-${waiting.projectId}`}
+              className="folder-item"
+              ref={waiting.projectId === focusProjectId ? focusedRow : undefined}
+              aria-current={waiting.projectId === focusProjectId ? 'true' : undefined}
+            >
               <div className="folder-row">
                 <span className="mapping-title">{projectLabel(waiting.projectId, waiting.title)}</span>
                 <span className="warning-text">저장소 매핑 없음 · {waiting.waitingCount}건 대기</span>
@@ -69,7 +89,12 @@ function RepoMappingsField({ repoMappings }: RepoMappingsFieldProps) {
             </li>
           ))}
           {repoMappings.mappings.map((mapping) => (
-            <li key={mapping.projectId} className="folder-item">
+            <li
+              key={mapping.projectId}
+              className="folder-item"
+              ref={mapping.projectId === focusProjectId ? focusedRow : undefined}
+              aria-current={mapping.projectId === focusProjectId ? 'true' : undefined}
+            >
               <div className="folder-row">
                 <span className="mapping-title">{projectLabel(mapping.projectId, mapping.title)}</span>
                 {mapping.missing && <span className="danger-text">폴더를 찾을 수 없음</span>}

@@ -16,7 +16,7 @@ const root = document.getElementById('root');
 
 /** 주소의 화면 이름에 맞는 화면. */
 function viewFor(name: string | null) {
-  if (name === 'settings') return <SettingsView initialSection={params.get('section')} />;
+  if (name === 'settings') return <SettingsView initialSection={params.get('section')} initialProjectId={params.get('project')} />;
   if (name === 'review') return <ReviewView initialBundleId={initialBundleId} />;
   return <PopoverView initialBundleId={initialBundleId} />;
 }

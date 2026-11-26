@@ -120,11 +120,6 @@ export function isDraftTouched(bundle: Pick<MentionBundle, 'editedText' | 'fixed
   return bundle.editedText !== null || bundle.fixedRequirement !== null || bundle.directives.length > 0;
 }
 
-/** 트레이 검토 수에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. 게시 중은 검토 대기에 남지만 세지 않는다. */
-export function countsForReview(status: BundleStatus): boolean {
-  return status === 'ready' || status === 'repo-check-needed';
-}
-
 /**
  * 저장소 대기(`repo-check-needed`)의 사유. 저장소 매핑 필요(`unmapped`)와 저장소 확인 필요(`missing-folders`)가 지금의 두 상태다.
  * 자동 선택 때 쓰던 옛 사유(후보 없음, 확신 없음, 코드와 무관함)는 없다. 저장된 옛 사유는 읽을 때 저장소 매핑 필요로 보고, 앱을 켤 때 한 번 다시 판정해 맞는 상태로 옮긴다.
@@ -138,6 +133,11 @@ export type RepoCheck =
       /** 찾을 수 없는 폴더의 절대 경로. */
       paths: string[];
     };
+
+/** 저장소 대기 묶음을 프로젝트와 사유(저장소 매핑 필요, 저장소 확인 필요)별로 묶는 키. 바닥 줄 글의 건수를 센다. */
+export function repoWaitKey(bundle: Pick<MentionBundle, 'projectId' | 'repoCheck'>): string {
+  return `${bundle.projectId}\u0000${bundle.repoCheck?.kind === 'missing-folders' ? 'missing-folders' : 'unmapped'}`;
+}
 
 /** 묶음에 든 멘션. */
 export interface BundledMention extends Mention {

@@ -352,6 +352,12 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);
       return;
+    case 'open-repo-mapping': {
+      /** 저장소 대기인 묶음. 없어졌으면 프로젝트를 모르므로 "저장소" 칸만 연다. */
+      const waiting = bundles.get(command.bundleId);
+      windows.openSettings('repositories', waiting?.projectId);
+      return;
+    }
     case 'edit-draft':
       await bundles.editDraft(command.bundleId, command.text);
       return;

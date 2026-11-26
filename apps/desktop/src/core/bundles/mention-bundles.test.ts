@@ -87,6 +87,8 @@ async function setup() {
   const logger = createLogger([{ write: () => {} }], clock);
   /** 내 답 조회를 실패시킬지 여부. */
   const answersLookup = { fails: false };
+  /** 읽을 저장소 확인 결과. 테스트가 바꿔 저장소 대기가 풀린 상황을 만든다. */
+  const repoState: { resolution: RepoResolution } = { resolution: GONE_REPO };
   const bundles = new MentionBundles({
     stateStore,
     notifier,
@@ -95,7 +97,8 @@ async function setup() {
     findMyAnswers: async (place) => (answersLookup.fails ? null : new MentionJudge(flow, ME).myAnswers(place, [ME])),
     collectContext: (bundle) => collectBundleContext(flow, bundle, clock.now(), [ME]),
     // 매핑된 저장소 폴더가 사라진 Flow 프로젝트라 묶음이 저장소 확인 필요로 기다린다. 생성 중 묶음(매핑, 자동 선택)은 초안 대기열 테스트가 다룬다.
-    resolveRepos: async () => GONE_REPO,
+    resolveRepos: async () => repoState.resolution,
+    projectTitleOf: (projectId) => (projectId === '900001' ? '결제 앱' : null),
   });
   await bundles.load();
   const detection = new MentionDetection({
@@ -126,7 +129,7 @@ async function setup() {
     clock.advance(POLL_MS);
     await settle();
   };
-  return { clock, flow, stateStore, notifier, answersLookup, bundles, detection, poll };
+  return { clock, flow, stateStore, notifier, answersLookup, repoState, bundles, detection, poll };
 }
 
 describe('멘션 묶음: 묶음 키', () => {
@@ -198,7 +201,8 @@ describe('멘션 묶음: 합치기', () => {
       [first.id, { place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['101'], answered: [] }],
       [first.id + 1, { place: [POST_ID, '700'], status: 'repo-check-needed', mentions: ['102', '103'], answered: [] }],
     ]);
-    expect(bundles.reviewCount()).toBe(2);
+    // 두 묶음이 같은 프로젝트에서 저장소 대기라 트레이는 1로 센다.
+    expect(bundles.reviewCount()).toBe(1);
   });
 });
 
@@ -514,10 +518,11 @@ describe('멘션 묶음: 대기열과 트레이 숫자', () => {
       ['702', 'ignored'],
       ['703', 'ignored'],
     ]);
-    expect(bundles.reviewCount()).toBe(2);
+    // 저장소 대기 묶음 둘이 같은 프로젝트라 1로 센다.
+    expect(bundles.reviewCount()).toBe(1);
   });
 
-  it('한 번의 조회에서 새 묶음이 여럿이면 OS 알림을 하나만 띄우고, 누르면 대기열 첫 묶음을 연다. 묶음이 바뀌면 듣는 쪽에 알린다', async () => {
+  it('한 번의 조회에서 새 묶음이 여럿이면 프로젝트에 OS 알림을 하나만 띄우고, 누르면 대기열 첫 묶음을 연다. 묶음이 바뀌면 듣는 쪽에 알린다', async () => {
     const { flow, notifier, bundles, poll } = await setup();
     flow.addComment(POST_ID, { commentId: '701', contents: `${MY_MARKUP} 질문`, registerId: OTHER_SENDER });
     /** 바뀐 횟수. */
@@ -532,7 +537,9 @@ describe('멘션 묶음: 대기열과 트레이 숫자', () => {
     /** 대기열 첫 묶음. */
     const first = bundles.state()[0]!;
     expect(first.remarkId).toBe('700');
-    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요 2건', body: '보낸 사람님 외 1건의 멘션이 왔습니다.', bundleId: first.id }]);
+    expect(notifier.sent).toEqual([
+      { title: '저장소 확인 필요', body: '결제 앱에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.', target: { kind: 'draft', id: first.id } },
+    ]);
     // 멘션을 넣을 때 한 번, 두 묶음의 맥락을 저장할 때 한 번 알린다.
     expect(changes).toBe(2);
   });
@@ -635,5 +642,52 @@ describe('멘션 묶음: 초안 편집과 받는 사람', () => {
 
     await bundles.regenerateWithRepos(bundleId, ['/fake/work/other']);
     expect(bundles.get(bundleId)?.editedText).toBeNull();
+  });
+});
+
+describe('멘션 묶음: 저장소 대기 알림과 트레이 수', () => {
+  /** 다른 Flow 프로젝트의 게시물 ID. */
+  const PROJECT_B_POST_ID = '90000021';
+
+  it('같은 프로젝트에 또 와도 알리지 않고, 풀린 뒤 다시 그 상태가 되면 다시 알린다', async () => {
+    const { flow, notifier, repoState, bundles, poll } = await setup();
+    flow.addPost({ postId: OTHER_POST_ID, textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+    flow.addPost({ postId: '90000013', textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+    flow.addPost({ postId: '90000014', textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+
+    await poll(alarm('101', { remarkId: '700' }));
+    await poll(alarm('102', { postId: OTHER_POST_ID }));
+    expect(notifier.sent.map((sent) => sent.title)).toEqual(['저장소 확인 필요']);
+    // 사유가 달라져도 풀리기 전의 같은 프로젝트라 알리지 않는다.
+    repoState.resolution = { kind: 'unmapped' } as RepoResolution;
+    await poll(alarm('104', { postId: '90000014' }));
+    expect(notifier.sent).toHaveLength(1);
+    repoState.resolution = GONE_REPO;
+
+    // 폴더가 돌아와 두 묶음이 모두 풀린다.
+    repoState.resolution = { kind: 'mapped', repos: ['/fake/work/repo'] } as RepoResolution;
+    await bundles.resumeRepoWaiting();
+    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['generating', 'generating', 'generating']);
+    expect(bundles.reviewCount()).toBe(0);
+
+    // 풀린 뒤 다시 폴더가 사라지면 다시 알린다.
+    repoState.resolution = GONE_REPO;
+    await poll(alarm('105', { postId: '90000013' }));
+    expect(notifier.sent.map((sent) => sent.title)).toEqual(['저장소 확인 필요', '저장소 확인 필요']);
+  });
+
+  it('프로젝트가 다르면 각각 알리고 트레이 수는 프로젝트마다 1로 센다. 준비됨 묶음은 건마다 센다', async () => {
+    const { flow, notifier, bundles, poll } = await setup();
+    flow.addPost({ postId: PROJECT_B_POST_ID, textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+    flow.addPost({ postId: OTHER_POST_ID, textComponents: [{ contents: `${MY_MARKUP} 본문 질문`, mentions: [] }] });
+
+    await poll(alarm('101', { remarkId: '700' }), alarm('102', { postId: OTHER_POST_ID }), alarm('103', { projectId: '900002', postId: PROJECT_B_POST_ID }));
+
+    expect(notifier.sent.map((sent) => sent.body)).toEqual([
+      '결제 앱에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.',
+      '이 프로젝트에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.',
+    ]);
+    expect(bundles.state()).toHaveLength(3);
+    expect(bundles.reviewCount()).toBe(2);
   });
 });

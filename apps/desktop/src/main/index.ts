@@ -121,8 +121,8 @@ function start(): void {
     appData = await openDataOrQuit();
     if (!appData) return;
 
-    /** OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 멘션 묶음이 있으면 그 묶음을 연다. */
-    const notifier = new OsNotifier((bundleId) => windows?.openPopover(bundleId), logger);
+    /** OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 Flow 초안이 있으면 그 묶음을 연다. 진단 대상은 진단 화면이 생길 때 잇는다. */
+    const notifier = new OsNotifier((target) => windows?.openPopover(target?.kind === 'draft' ? target.id : null), logger);
     /** 감지를 멈추게 하는 전역 문제. 알림을 누르면 띠가 보이는 작은 창을 띄운다. */
     const globalProblems = new GlobalProblems({
       notifier,
@@ -218,6 +218,7 @@ function start(): void {
         return result;
       },
       resolveRepos: (projectId) => repoMappings.resolve(projectId),
+      projectTitleOf: (projectId) => repoMappings.loadedProjectTitle(projectId),
     });
     await mentionBundles.load();
     bundles = mentionBundles;

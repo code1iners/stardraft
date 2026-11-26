@@ -433,7 +433,8 @@ export class SentryTargetAdapter implements TargetAdapter<SentryTargetTypes> {
       request: async (model, agent) => {
         session.devicesBefore ??= await reproduction.devices.snapshot().catch((error: unknown) => {
           this.options.logger.warn('sentry-adapter.devices-snapshot-failed', { diagnosisId: diagnosis.id, ...errorKind(error) });
-          return { ios: [], android: [] };
+          // 시작 때 알 수 없었다. 빈 목록으로 두면 사용자가 켜 둔 기기를 끝날 때 새것으로 오인한다.
+          return { ios: null, android: null };
         });
         // 다시 실행은 앞 실행이 고친 사본을 쓰지 않고 새 사본에서 돈다.
         dropCopy();

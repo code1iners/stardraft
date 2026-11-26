@@ -42,8 +42,23 @@ export function isReservedEnvName(name: string): boolean {
 /** 사본에서 풀어 주는 `.env` 계열 패턴. 앱 기본 목록의 두 패턴만이고, 사용자가 더한 `.env.production` 같은 패턴은 계속 막는다. */
 export const ENV_FILE_PATTERNS: readonly string[] = DEFAULT_SECRET_PATTERNS.filter((pattern) => pattern === '.env' || pattern === '.env.*');
 
-/** 저장소 밖에서 계속 막는 개인 비밀 경로. 홈 기준이다. */
-export const PERSONAL_SECRET_PATHS: readonly string[] = ['~/.ssh', '~/.aws', '~/.npmrc', '~/.netrc', '~/.pypirc'];
+/**
+ * 저장소 밖에서 계속 막는 개인 비밀 경로. 홈 기준이다. 정해진 목록만 막고 그 밖의 홈 경로는 막지 않는다.
+ * `~/.claude.json`은 앱이 MCP 정의를 읽는 경로라 이 목록에 넣지 않는다.
+ */
+export const PERSONAL_SECRET_PATHS: readonly string[] = [
+  '~/.ssh',
+  '~/.aws',
+  '~/.npmrc',
+  '~/.netrc',
+  '~/.pypirc',
+  '~/.config/gh',
+  '~/.kube',
+  '~/.docker',
+  '~/.gnupg',
+  '~/.config/gcloud',
+  '~/.codex',
+];
 
 /**
  * 사본 안에서 계속 막을 비밀 파일 패턴. 기본 목록과 추가 패턴에서 `.env` 계열만 뺀다. 앞에 붙은 `/`·`**\/`는 뗀다("어느 깊이에서든"과 같다).

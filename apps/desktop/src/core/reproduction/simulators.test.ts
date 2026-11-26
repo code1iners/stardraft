@@ -13,12 +13,16 @@ function bootedJson(udids: readonly string[]): string {
 const ADB = '/Users/fake/Library/Android/sdk/platform-tools/adb';
 
 /** 가짜 실행기와 정리기를 만든다. `ios`는 실행 전후에 켜진 시뮬레이터, `ports`는 실행 전후에 열린 에뮬레이터 콘솔 포트다. */
-function setup({ xcode = true, ios = [[], []], ports = [[], []] }: { xcode?: boolean; ios?: [string[], string[]]; ports?: [number[], number[]] } = {}) {
+function setup({ xcode = true, ios = [[], []], ports = [[], []] }: { xcode?: boolean; ios?: [string[] | null, string[] | null]; ports?: [number[], number[]] } = {}) {
   const runner = new FakeProcessRunner();
   runner.respond('/usr/bin/xcode-select', ['-p'], exited(xcode ? 0 : 2, xcode ? '/Applications/Xcode.app/Contents/Developer\n' : ''));
   /** 지금이 실행 뒤인지 여부. */
   let after = false;
-  runner.respond('/usr/bin/xcrun', ['simctl', 'list', 'devices', 'booted', '-j'], () => exited(0, bootedJson(ios[after ? 1 : 0])));
+  runner.respond('/usr/bin/xcrun', ['simctl', 'list', 'devices', 'booted', '-j'], () => {
+    /** 이 시점의 켜진 목록. `null`이면 목록 명령이 실패한다. */
+    const booted = ios[after ? 1 : 0];
+    return booted === null ? exited(1) : exited(0, bootedJson(booted));
+  });
   runner.respondWhen((request) => request.command === '/usr/bin/xcrun' && request.args[1] === 'shutdown', exited(0));
   runner.respondWhen((request) => request.command === ADB, exited(0, 'OK: killing emulator, bye bye\n'));
   const simulators = new Simulators({
@@ -86,5 +90,21 @@ describe('시뮬레이터와 에뮬레이터 정리', () => {
     await simulators.shutDownNew(before);
 
     expect(commands(runner).some((line) => line.startsWith('/usr/bin/xcrun'))).toBe(false);
+  });
+
+  it('시작 때 iOS 목록을 읽지 못했으면(알 수 없음) 끝날 때 새로 켜진 것으로 보이는 시뮬레이터도 끄지 않는다', async () => {
+    const { runner, simulators, markAfter } = setup({ ios: [null, ['USER-SIM']] });
+
+    const before = await simulators.snapshot();
+    markAfter();
+    await simulators.shutDownNew(before);
+
+    expect(commands(runner).filter((line) => line.includes('shutdown'))).toEqual([]);
+  });
+
+  it('Xcode가 없어 비어 있음이 확실한 시작 스냅숏은 알 수 없음과 달리 비어 있다', async () => {
+    const { simulators } = setup({ xcode: false });
+
+    expect(await simulators.snapshot()).toEqual({ ios: [], android: [] });
   });
 });

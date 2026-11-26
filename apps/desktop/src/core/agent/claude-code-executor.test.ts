@@ -323,7 +323,7 @@ describe('Claude Code 실행기: 재현 경계', () => {
         allowUnsandboxedCommands: false,
         network: { allowedDomains: ['*'], allowLocalBinding: true },
         filesystem: {
-          denyRead: ['/**/.env', '/**/.env.*', '~/.ssh', '~/.aws', '~/.npmrc', '~/.netrc', '~/.pypirc', runDir],
+          denyRead: ['/**/.env', '/**/.env.*', '~/.ssh', '~/.aws', '~/.npmrc', '~/.netrc', '~/.pypirc', '~/.config/gh', '~/.kube', '~/.docker', '~/.gnupg', '~/.config/gcloud', '~/.codex', runDir],
           allowRead: [`${COPY}/**/.env`, `${COPY}/**/.env.*`],
         },
       },

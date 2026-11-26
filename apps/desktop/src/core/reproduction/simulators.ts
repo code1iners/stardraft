@@ -13,10 +13,10 @@ const EMULATOR_CONSOLE_PORTS: readonly number[] = Array.from({ length: 16 }, (_,
 
 /** 켜져 있는 시뮬레이터와 에뮬레이터. */
 export interface DeviceSnapshot {
-  /** 켜진 iOS 시뮬레이터 UDID. */
-  ios: string[];
-  /** 켜진 Android 에뮬레이터 시리얼(`emulator-<포트>`). 실기기는 들지 않는다. */
-  android: string[];
+  /** 켜진 iOS 시뮬레이터 UDID. 목록을 읽지 못해 알 수 없으면 `null`(비어 있음 `[]`과 다르다). */
+  ios: string[] | null;
+  /** 켜진 Android 에뮬레이터 시리얼(`emulator-<포트>`). 실기기는 들지 않는다. 알 수 없으면 `null`. */
+  android: string[] | null;
 }
 
 /** 시뮬레이터 정리에 필요한 것. */
@@ -41,21 +41,27 @@ export interface SimulatorsOptions {
 export class Simulators {
   constructor(private readonly options: SimulatorsOptions) {}
 
-  /** 지금 켜져 있는 시뮬레이터와 에뮬레이터. 알 수 없는 쪽은 비어 있다. */
+  /** 지금 켜져 있는 시뮬레이터와 에뮬레이터. 읽지 못해 알 수 없는 쪽은 `null`이다. */
   async snapshot(): Promise<DeviceSnapshot> {
     /** iOS와 Android. 서로 기다리지 않는다. */
     const [ios, android] = await Promise.all([this.bootedSimulators(), this.runningEmulators()]);
     return { ios, android };
   }
 
-  /** `before` 뒤에 새로 켜진 시뮬레이터와 에뮬레이터를 끄고 끝나기를 기다린다. 끄지 못해도 던지지 않는다. */
+  /**
+   * `before` 뒤에 새로 켜진 시뮬레이터와 에뮬레이터를 끄고 끝나기를 기다린다. 끄지 못해도 던지지 않는다.
+   * 시작 때 알 수 없었던 쪽은 사용자가 켜 둔 것과 가릴 수 없어 끄지 않고 로그만 남긴다.
+   */
   async shutDownNew(before: DeviceSnapshot): Promise<void> {
     /** 지금 켜진 것. */
     const now = await this.snapshot();
     /** 새로 켜진 iOS 시뮬레이터. */
-    const ios = now.ios.filter((udid) => !before.ios.includes(udid));
+    const ios = newlyStarted(before.ios, now.ios);
     /** 새로 켜진 Android 에뮬레이터. */
-    const android = now.android.filter((serial) => !before.android.includes(serial));
+    const android = newlyStarted(before.android, now.android);
+    if (before.ios === null || before.android === null) {
+      this.options.logger.warn('reproduction.devices-before-unknown', { ios: before.ios === null, android: before.android === null });
+    }
     if (ios.length === 0 && android.length === 0) return;
     /** adb 경로. 에뮬레이터를 끌 때만 찾는다. */
     const adb = android.length > 0 ? await this.adbPath() : null;
@@ -67,14 +73,15 @@ export class Simulators {
     this.options.logger.info('reproduction.devices-shut-down', { ios: ios.length, android: adb === null ? 0 : android.length });
   }
 
-  /** 켜진 iOS 시뮬레이터 UDID. Xcode가 없으면 `xcrun`이 설치 창을 띄울 수 있어 부르지 않는다. */
-  private async bootedSimulators(): Promise<string[]> {
-    /** Xcode 개발자 폴더 확인. */
-    const xcode = await this.run('/usr/bin/xcode-select', ['-p']);
-    if (xcode === null) return [];
+  /** 켜진 iOS 시뮬레이터 UDID. Xcode가 없으면 `xcrun`이 설치 창을 띄울 수 있어 부르지 않고 비어 있다. 목록을 읽지 못하면 `null`. */
+  private async bootedSimulators(): Promise<string[] | null> {
+    /** Xcode 개발자 폴더 확인. 종료 코드가 0이 아니면 Xcode가 없는 것이라 켜진 시뮬레이터도 없다. */
+    const xcode = await this.options.runner.run({ command: '/usr/bin/xcode-select', args: ['-p'], env: { ...(this.options.env() ?? { PATH: '/usr/bin:/bin' }) }, cwd: '/', timeoutMs: COMMAND_TIMEOUT_MS });
+    if (xcode.kind === 'exited' && xcode.exitCode !== 0) return [];
+    if (xcode.kind !== 'exited') return null;
     /** 켜진 목록(JSON). */
     const listed = await this.run('/usr/bin/xcrun', ['simctl', 'list', 'devices', 'booted', '-j']);
-    if (listed === null) return [];
+    if (listed === null) return null;
     try {
       /** 런타임별 기기 목록. */
       const devices = asRecord(asRecord(JSON.parse(listed))?.devices) ?? {};
@@ -82,7 +89,7 @@ export class Simulators {
         Array.isArray(list) ? list.map(asRecord).flatMap((device) => (device?.state === 'Booted' && typeof device.udid === 'string' ? [device.udid] : [])) : [],
       );
     } catch {
-      return [];
+      return null;
     }
   }
 
@@ -115,6 +122,12 @@ export class Simulators {
     const result = await this.options.runner.run({ command, args, env: { ...(this.options.env() ?? { PATH: '/usr/bin:/bin' }) }, cwd: '/', timeoutMs: COMMAND_TIMEOUT_MS });
     return result.kind === 'exited' && result.exitCode === 0 ? result.stdout : null;
   }
+}
+
+/** 시작 때 목록(`before`)이 알려진 경우에만 그 뒤에 새로 켜진 것을 돌려준다. 시작 때 알 수 없었거나 지금 알 수 없으면 비어 있다. */
+function newlyStarted(before: string[] | null, now: string[] | null): string[] {
+  if (before === null || now === null) return [];
+  return now.filter((item) => !before.includes(item));
 }
 
 /** localhost 포트에 접속해 보는 시간(밀리초). 열린 포트는 바로 받는다. */

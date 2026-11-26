@@ -269,7 +269,7 @@ async function setup({ mapped = true, reproduction = null, steering = false }: {
   /** MCP를 읽은 에이전트와 원본 저장소. */
   const mcpLoads: { agent: AgentId; sourceRoot: string }[] = [];
   /** 가짜 시뮬레이터. 켜진 기기 목록과 끈 기기를 기록한다. */
-  const devices = { booted: ['USER-SIM'], shutDown: [] as string[] };
+  const devices = { booted: ['USER-SIM'], shutDown: [] as string[], snapshotFails: false };
   const copies = new ReproductionCopies({
     root: copiesRoot,
     clone: async (from, to, names) => {
@@ -293,10 +293,16 @@ async function setup({ mapped = true, reproduction = null, steering = false }: {
       setting: () => ({ enabled: reproductionState.enabled, envFile }),
       copies,
       devices: {
-        snapshot: async () => ({ ios: [...devices.booted], android: [] }),
+        snapshot: async () => {
+          if (devices.snapshotFails) throw new Error('시뮬레이터 목록 실패');
+          return { ios: [...devices.booted], android: [] };
+        },
         shutDownNew: async (before) => {
-          for (const udid of devices.booted.filter((item) => !before.ios.includes(item))) devices.shutDown.push(udid);
-          devices.booted = devices.booted.filter((item) => before.ios.includes(item));
+          // 실제 정리기처럼 시작 때 알 수 없었으면 끄지 않는다.
+          if (before.ios === null) return;
+          const known = before.ios;
+          for (const udid of devices.booted.filter((item) => !known.includes(item))) devices.shutDown.push(udid);
+          devices.booted = devices.booted.filter((item) => known.includes(item));
         },
       },
       attachments: folders,
@@ -1089,6 +1095,23 @@ describe('Sentry 어댑터: 재현하는 진단', () => {
     expect(env.devices.shutDown).toEqual(['NEW-SIM-1', 'NEW-SIM-2']);
     expect(env.devices.booted).toEqual(['USER-SIM']);
     expect(await copiesLeft(env.copiesRoot)).toEqual([]);
+  });
+
+  it('시작 때 시뮬레이터 목록을 읽지 못하면 끝날 때 새로 켜진 것으로 보여도 끄지 않는다', async () => {
+    const env = await setup({ reproduction: { enabled: true } });
+    await env.detect('101');
+    env.devices.snapshotFails = true;
+    env.executor.script({
+      outcome: { type: 'failed', reason: 'agent-error', detail: '가짜 실패' },
+      during: () => void env.devices.booted.push('NEW-SIM-1'),
+    });
+
+    await env.queue.start();
+    await settle();
+
+    expect(env.byIssue('101')!.status).toBe('failed');
+    expect(env.devices.shutDown).toEqual([]);
+    expect(env.devices.booted).toEqual(['USER-SIM', 'NEW-SIM-1']);
   });
 
   it('재현하는 진단은 한 번에 하나만 돌고, 그사이 읽기 전용 진단과 초안은 진행된다', async () => {

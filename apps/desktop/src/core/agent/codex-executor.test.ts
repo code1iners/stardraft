@@ -281,7 +281,7 @@ describe('Codex 실행기: 재현 경계', () => {
     /** `-c`로 넘긴 설정 값. */
     const configs = request!.args.filter((_, index) => request!.args[index - 1] === '-c');
     expect(configs).toContain(
-      `permissions.stardraft.filesystem={":root"="read", "~/**/.env"="deny", "~/**/.env.*"="deny", "~/.ssh"="deny", "~/.aws"="deny", "~/.npmrc"="deny", "~/.netrc"="deny", "~/.pypirc"="deny", ` +
+      `permissions.stardraft.filesystem={":root"="read", "~/**/.env"="deny", "~/**/.env.*"="deny", "~/.ssh"="deny", "~/.aws"="deny", "~/.npmrc"="deny", "~/.netrc"="deny", "~/.pypirc"="deny", "~/.config/gh"="deny", "~/.kube"="deny", "~/.docker"="deny", "~/.gnupg"="deny", "~/.config/gcloud"="deny", "~/.codex"="deny", ` +
         `"${SOURCE}/**/*.pem"="deny", "${SOURCE}/**/*.key"="deny", "${SOURCE}/**/*.p12"="deny", "${SOURCE}/**/*.pfx"="deny", "${SOURCE}/**/*.jks"="deny", "${SOURCE}/**/*.keystore"="deny", "${SOURCE}/**/id_rsa*"="deny", "${SOURCE}/**/id_ed25519*"="deny", "${SOURCE}/**/.npmrc"="deny", "${SOURCE}/**/.pypirc"="deny", "${SOURCE}/**/.netrc"="deny", "${SOURCE}/**/secrets/**"="deny", "${SOURCE}/**/.git/**"="deny", "${SOURCE}/**/company/*.secret"="deny", "${SOURCE}/**/private-config"="deny", "${SOURCE}/**/.git"="deny", ` +
         `":workspace_roots"={"."="write", "**/*.pem"="deny", "**/*.key"="deny", "**/*.p12"="deny", "**/*.pfx"="deny", "**/*.jks"="deny", "**/*.keystore"="deny", "**/id_rsa*"="deny", "**/id_ed25519*"="deny", "**/.npmrc"="deny", "**/.pypirc"="deny", "**/.netrc"="deny", "**/secrets/**"="deny", "**/.git/**"="deny", "**/company/*.secret"="deny", "**/private-config"="deny", "**/.git"="deny"}}`,
     );

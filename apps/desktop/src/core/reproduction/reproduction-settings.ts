@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import type { ProcessRunner } from '../agent/process-runner';
-import { errorFields, type Logger } from '../logging/logger';
+import type { Logger } from '../logging/logger';
 import type { AgentId } from '../ports/executor';
 import { DEFAULT_SETTINGS, type ReproductionToolMode, type Settings, type SettingsStore } from '../ports/settings-store';
 import { SerialQueue } from '../serial-queue';
@@ -272,8 +272,9 @@ export class ReproductionSettings {
   private async readClaudeServers(): Promise<McpServerEntry[]> {
     try {
       return parseClaudeMcpServers(await this.options.readClaudeConfig(), [...new Set(this.options.mappedRepoPaths())]);
-    } catch (error) {
-      this.options.logger.warn('reproduction.claude-config-unreadable', errorFields(error));
+    } catch {
+      // 깨진 JSON의 오류 메시지에는 파일 내용 조각(환경 변수, 헤더)이 들어갈 수 있어 오류 원문은 남기지 않는다.
+      this.options.logger.warn('reproduction.claude-config-unreadable');
       return [];
     }
   }

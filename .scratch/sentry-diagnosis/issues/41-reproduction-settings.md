@@ -17,3 +17,12 @@
 - [x] `자동`에서는 외부로 보내는 MCP도 실린다는 경고가, MCP가 없으면 "셸로만 재현, 조작이 필요하면 불가(도구 없음)"가, 플러그인 MCP와 커넥터는 실리지 않는다는 안내가 보인다.
 - [x] Windows에서는 재현 항목과 `재현` 탭이 보이지 않는다.
 - [x] `pnpm lint`, `pnpm typecheck`, `pnpm test`가 통과한다.
+
+## Comments
+
+- 구현: `core/reproduction/`(MCP 서버 목록 파서, 고정 deny 표, `ReproductionSettings`), 설정 키 `reproductionRepos`(저장소 절대 경로 → `{enabled, envFile}`)·`reproductionTools`(`{mode, enabledServers}`), IPC `reproduction` 스냅숏과 명령, 저장소 칸 "재현" 항목·확인 모달, 에이전트 칸 `재현` 탭. 스키마 버전은 올리지 않았다.
+- 해석으로 정한 것: (1) 재현 허용 후보는 Flow 매핑과 Sentry 매핑의 저장소 합집합(중복 합침). (2) 목록은 Claude Code 사용자 범위 + 매핑된 저장소의 로컬 범위(꺼 둔 서버 제외), Codex는 `codex mcp list --json`(Codex를 못 찾으면 Codex 줄 없음). (3) "외부로 보냄"은 원격 주소 서버이거나 알려진 외부 전송 서버(chrome-devtools, mobile-mcp, MobileBuildMCP, Maestro)다. 이름 기반이라 완전하지 않다. (4) 끄면 환경 파일 지정은 남겨 다시 켤 때 이어 쓴다. (5) 환경 파일은 절대 경로이고 파일일 때만 받는다.
+- 값 비노출: 서버 정의는 읽자마자 이름·종류·출처·deny 도구만 남기고 버린다. 파서·설정·로그 테스트가 가짜 비밀 값이 어디에도 없음을 검사한다. 리뷰에서 깨진 `~/.claude.json`의 파싱 오류 원문이 로그에 샐 수 있다는 지적이 나와 고정 문구만 남기게 고쳤다.
+- 리뷰 표준 축 지적(타입 중복, `ReproductionSettings`의 책임 범위 등)은 기존 코드의 core/shared 분리 방식을 따른 것이라 이번에는 두었다.
+- 검증: lint·typecheck 통과, desktop 테스트 통과(전체 실행에서 아이콘 프레임 테스트 1개가 부하로 5초 제한 실패했고 단독 재실행은 통과, 결정 #7~#16과 같음). site `index-page` 테스트 실패는 워크트리 환경성 실패(결정 #6)다.
+- 확인 못 함: 설정 화면·파일 선택 창·확인 모달은 실기로 보지 못했고(정적 마크업 테스트만), 실제 `codex mcp list --json` 호출은 미구독이라 가짜 실행기로만 검증했다.

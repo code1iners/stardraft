@@ -23,7 +23,7 @@ const CODEX_LIST = JSON.stringify([
 ]);
 
 /** 재현 설정을 만들고 저장된 설정을 읽어 둔다. */
-async function setup(options: { settings?: Partial<Settings>; platform?: NodeJS.Platform; codex?: boolean; files?: string[]; mapped?: string[] } = {}) {
+async function setup(options: { settings?: Partial<Settings>; platform?: NodeJS.Platform; codex?: boolean; files?: string[]; mapped?: string[]; claudeError?: boolean } = {}) {
   const settingsStore = new MemorySettingsStore(options.settings);
   const runner = new FakeProcessRunner();
   runner.respond('/fake/bin/codex', ['mcp', 'list', '--json'], exited(0, CODEX_LIST));
@@ -37,7 +37,10 @@ async function setup(options: { settings?: Partial<Settings>; platform?: NodeJS.
     logger: createLogger([sink], new FakeClock()),
     platform: options.platform ?? 'darwin',
     mappedRepoPaths: () => options.mapped ?? ['/fake/work/web-app', '/fake/work/api', '/fake/work/web-app'],
-    readClaudeConfig: async () => CLAUDE_CONFIG,
+    readClaudeConfig: async () => {
+      if (options.claudeError) throw new SyntaxError(`Unexpected token in JSON: "${SECRET}" is not valid JSON`);
+      return CLAUDE_CONFIG;
+    },
     runner,
     codexLaunch: () => (options.codex === false ? null : { cliPath: '/fake/bin/codex', env: { PATH: '/fake/bin' } }),
     cwd: '/fake/app-data',
@@ -195,6 +198,16 @@ describe('재현 도구 권한', () => {
 
     expect(settings.state().tools.codexListFailed).toBe(true);
     expect(settings.state().tools.servers).toHaveLength(2);
+    expect(logLines.join('')).not.toContain(SECRET);
+  });
+
+  it('Claude Code 설정 파일이 깨져 읽지 못해도 오류 원문(파일 내용 조각)은 로그에 남지 않는다', async () => {
+    const { settings, logLines } = await setup({ claudeError: true });
+
+    await settings.refreshServers();
+
+    expect(settings.state().tools.servers.map((server) => server.agent)).toEqual(['codex']);
+    expect(logLines.join('')).toContain('reproduction.claude-config-unreadable');
     expect(logLines.join('')).not.toContain(SECRET);
   });
 

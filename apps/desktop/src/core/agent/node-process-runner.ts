@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import type { ProcessRequest, ProcessResult, ProcessRunner } from './process-runner';
 
 /** 출력 하나(stdout, stderr)에 담는 최대 글자 수. 넘는 출력은 버린다. */
@@ -72,7 +72,26 @@ export class NodeProcessRunner implements ProcessRunner {
       // 넘길 내용이 없으면 표준 입력을 바로 닫아 자식이 입력을 기다리지 않게 한다.
       // 자식이 표준 입력을 다 읽기 전에 끝나면 EPIPE가 난다. 결과는 종료 코드로 알 수 있으므로 무시한다.
       child.stdin.on('error', () => {});
-      child.stdin.end(request.stdin ?? '');
+      if (request.onStdin) {
+        // 입력을 열어 둔 채 호출한 쪽에 넘긴다. 프로세스가 끝나면 아래 `settle`이 닫는다.
+        /** 입력을 이미 닫았는지 여부. */
+        let stdinClosed = false;
+        child.stdin.write(request.stdin ?? '');
+        request.onStdin({
+          write: (text) => {
+            if (stdinClosed || settled || child.stdin.destroyed || !child.stdin.writable) return false;
+            child.stdin.write(text);
+            return true;
+          },
+          end: () => {
+            if (stdinClosed) return;
+            stdinClosed = true;
+            child.stdin.end();
+          },
+        });
+      } else {
+        child.stdin.end(request.stdin ?? '');
+      }
 
       /** 결과를 한 번만 돌려주고 타이머, 중단 신호 구독, 출력을 정리한다. */
       const settle = (result: ProcessResult) => {
@@ -87,6 +106,7 @@ export class NodeProcessRunner implements ProcessRunner {
         partialLine = '';
         child.stdout.destroy();
         child.stderr.destroy();
+        child.stdin.destroy();
         resolve(result);
       };
 
@@ -97,6 +117,8 @@ export class NodeProcessRunner implements ProcessRunner {
       const terminate = (kind: 'timed-out' | 'aborted') => {
         if (settled || terminating) return;
         terminating = kind;
+        // 자식의 그룹을 끝내면 자손의 부모가 사라져 찾을 수 없으므로, 그 전에 자손의 그룹을 먼저 끝낸다.
+        if (request.killDescendants && !isWindows) killDescendantGroups(child.pid);
         killTree(child.pid);
         killWaitTimer = setTimeout(() => settle({ kind, stdout, stderr }), KILL_WAIT_MS);
       };
@@ -146,6 +168,49 @@ function killTree(pid: number | undefined): void {
     }
   } catch {
     // 이미 끝난 프로세스다.
+  }
+}
+
+/**
+ * `pid`의 자손이 만든 다른 프로세스 그룹을 모두 끝낸다(POSIX). 셸 명령이나 MCP 서버처럼 자기 그룹을 따로 만드는 자손은
+ * `pid`의 그룹을 끝내도 남는다. 스스로 부모를 떼어 낸 프로세스(이중 fork)는 자손 트리에서 빠지므로 찾지 못한다.
+ */
+function killDescendantGroups(pid: number | undefined): void {
+  if (pid === undefined) return;
+  // 1. 모든 프로세스의 부모와 그룹을 한 번에 읽는다. 읽지 못하면 자식의 그룹만 끝낸다.
+  /** `pid ppid pgid` 줄. */
+  let table: string;
+  try {
+    table = execFileSync('/bin/ps', ['-A', '-o', 'pid=,ppid=,pgid='], { encoding: 'utf8', timeout: 2_000 });
+  } catch {
+    return;
+  }
+  /** 부모 PID → 자식들의 `[pid, pgid]`. */
+  const children = new Map<number, [number, number][]>();
+  for (const line of table.split('\n')) {
+    /** 한 줄의 세 숫자. */
+    const [childPid, parentPid, group] = line.trim().split(/\s+/).map(Number);
+    if (childPid === undefined || parentPid === undefined || group === undefined || Number.isNaN(group)) continue;
+    children.set(parentPid, [...(children.get(parentPid) ?? []), [childPid, group]]);
+  }
+  // 2. 자식에서 시작해 자손을 따라 내려가며 자손이 속한 그룹을 모은다.
+  /** 자손이 속한 그룹. 자식 자신의 그룹은 뒤에서 끝낸다. */
+  const groups = new Set<number>();
+  /** 아직 자식을 보지 않은 프로세스. */
+  const pending = [pid];
+  for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
+    for (const [descendant, group] of children.get(current) ?? []) {
+      if (group !== pid) groups.add(group);
+      pending.push(descendant);
+    }
+  }
+  // 3. 모은 그룹을 통째로 끝낸다.
+  for (const group of groups) {
+    try {
+      process.kill(-group, 'SIGKILL');
+    } catch {
+      // 이미 끝난 그룹이다.
+    }
   }
 }
 

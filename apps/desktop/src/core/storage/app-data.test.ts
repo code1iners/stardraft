@@ -137,6 +137,23 @@ describe('데이터 폴더 열기', () => {
     expect(readFileSync(join(dataDir, 'flow-api-key.bin')).includes(Buffer.from('fake-key-1'))).toBe(false);
   });
 
+  it('Sentry 토큰은 Flow 키와 다른 파일에 암호문으로 남고, 서로 지워도 다른 쪽에 영향이 없다', async () => {
+    const first = await openReady();
+    await first.secretStore.writeFlowApiKey('fake-key-1');
+    await first.sentryTokenStore.write('fake-sentry-token-1');
+    closeOpened();
+
+    const second = await openReady();
+
+    await expect(second.sentryTokenStore.read()).resolves.toEqual({ kind: 'found', value: 'fake-sentry-token-1' });
+    expect(readdirSync(dataDir)).toEqual(expect.arrayContaining(['flow-api-key.bin', 'sentry-token.bin']));
+    expect(readFileSync(join(dataDir, 'sentry-token.bin')).includes(Buffer.from('fake-sentry-token-1'))).toBe(false);
+
+    await second.sentryTokenStore.delete();
+    await expect(second.secretStore.readFlowApiKey()).resolves.toEqual({ kind: 'found', value: 'fake-key-1' });
+    await expect(second.sentryTokenStore.read()).resolves.toEqual({ kind: 'missing' });
+  });
+
   it('state.db는 WAL로 쓴다', async () => {
     const data = await openReady();
     await data.stateStore.setBaselineAlarmId('1');
@@ -235,7 +252,7 @@ describe('마이그레이션', () => {
   it('state.db를 올리기 직전에 state.db와 settings.json의 사본을 앱 버전 이름으로 남긴다', async () => {
     const first = await openReady({ appVersion: '0.1.0' });
     await first.stateStore.setAccount(FAKE_ACCOUNT);
-    await first.settingsStore.save({ ...DEFAULT_SETTINGS, workFolders: ['/fake/code'] });
+    await first.settingsStore.save({ ...DEFAULT_SETTINGS, extraInstructions: '가짜 지침' });
     closeOpened();
     /** 마이그레이션 전 settings.json 내용. */
     const settingsBefore = readFileSync(settingsPath(), 'utf8');

@@ -8,7 +8,11 @@ import {
 } from '../../shared/ipc';
 import {
   DETECTION_START_FAILURE_MESSAGES,
+  DETECTION_TARGET_LABELS,
   detectionStartHints,
+  NO_DETECTION_TARGET_NOTICE,
+  SETUP_BAND_TEXT,
+  SETUP_GROUP_LABELS,
   SETUP_REQUIREMENT_LABELS,
   SETUP_REQUIREMENT_SECTIONS,
   windowsTrayHint,
@@ -39,15 +43,21 @@ function sendOpenSettings(section?: SettingsSection): void {
 }
 
 /**
- * 작은 창의 필수 설정 세 줄과 상태를 보인다. 셋이 다 되면 [감지 시작]을 보인다.
+ * 작은 창의 체크리스트. "필수" 묶음(에이전트 연결)과 "감지할 대상 · 선택" 묶음(Flow 계정, Sentry)으로 나눈다.
+ * 필수를 마치면 [감지 시작]을 보이고, 연결한 서비스가 없으면 그 위에 안내를 보인다. 막지는 않는다.
  */
 export function SetupChecklist({ snapshot }: OnboardingProps) {
   /** 온보딩 상태. */
-  const { requirements, ready, start } = snapshot.onboarding;
+  const { requirements, ready, start, hasDetectionTarget, flowConnected, sentryConnected } = snapshot.onboarding;
+  /** Flow 계정 줄의 설명. 연결했으면 계정 이름과 소속이다. */
+  const account = snapshot.flowAccount.account;
+  /** Sentry 줄의 설명. 연결했으면 조직 수다. */
+  const organizationCount = snapshot.sentry.organizations.length;
 
   return (
     <main className="popover-body">
-      {!ready && <p className="setup-lead">멘션 감지를 시작하려면 세 가지를 설정해야 합니다.</p>}
+      {!ready && <p className="setup-lead">감지를 시작하려면 에이전트를 연결해야 합니다.</p>}
+      <h3 className="setup-group-title">{SETUP_GROUP_LABELS.required}</h3>
       {SETUP_REQUIREMENTS.map((requirement) => {
         /** 이 줄의 상태 글자. */
         const status = STATUS_TEXT[requirements[requirement]];
@@ -69,6 +79,28 @@ export function SetupChecklist({ snapshot }: OnboardingProps) {
           </button>
         );
       })}
+      <h3 className="setup-group-title">{SETUP_GROUP_LABELS.targets}</h3>
+      <button type="button" className="setup-row" onClick={() => sendOpenSettings('flow-account')}>
+        <span className="setup-row-text">
+          <span className="setup-row-title">{DETECTION_TARGET_LABELS.flow}</span>
+          {flowConnected && account && <span className="setup-row-detail">{account.division ? `${account.name} · ${account.division}` : account.name}</span>}
+        </span>
+        <span className={`setup-row-status ${flowConnected ? 'ok-text' : 'muted'}`}>{flowConnected ? '✓' : '연결 안 함'}</span>
+        <span className="setup-row-go muted" aria-hidden="true">
+          ›
+        </span>
+      </button>
+      <button type="button" className="setup-row" onClick={() => sendOpenSettings('sentry')}>
+        <span className="setup-row-text">
+          <span className="setup-row-title">{DETECTION_TARGET_LABELS.sentry}</span>
+          {sentryConnected && organizationCount > 0 && <span className="setup-row-detail">조직 {organizationCount}개</span>}
+        </span>
+        <span className={`setup-row-status ${sentryConnected ? 'ok-text' : 'muted'}`}>{sentryConnected ? '✓' : '연결 안 함'}</span>
+        <span className="setup-row-go muted" aria-hidden="true">
+          ›
+        </span>
+      </button>
+      {ready && !hasDetectionTarget && <p className="setup-notice small muted">{NO_DETECTION_TARGET_NOTICE}</p>}
       {ready && (
         <div className="setup-actions">
           <StartDetectionButton start={start} />
@@ -98,8 +130,8 @@ interface SetupBandProps extends OnboardingProps {
 }
 
 /**
- * 설정 창 맨 위 첫 설정 띠. "필수 설정 n/3", 남은 항목, 다음 항목으로 가는 버튼을 보인다.
- * 셋이 다 되면 [감지 시작]과 안내 두 줄을 보인다. 감지를 시작한 뒤에는 그리지 않는다.
+ * 설정 창 맨 위 첫 설정 띠. 진행 막대 없이 "필수 설정: 에이전트 연결"과 [에이전트 설정]을 보인다.
+ * 필수를 마치면 [감지 시작]과 안내를 보이고, 연결한 서비스가 없으면 [감지 시작] 위에 안내를 더한다. 감지를 시작한 뒤에는 그리지 않는다.
  */
 export function SetupBand({ snapshot, section, onSelectSection }: SetupBandProps) {
   /** 온보딩 상태. */
@@ -108,15 +140,6 @@ export function SetupBand({ snapshot, section, onSelectSection }: SetupBandProps
 
   /** 끝나지 않은 필수 항목. */
   const remaining = SETUP_REQUIREMENTS.filter((requirement) => requirements[requirement] !== 'done');
-  /** 진행 막대. 끝난 항목만큼 채운다. */
-  const meter = (
-    <span className="setup-meter" aria-hidden="true">
-      {SETUP_REQUIREMENTS.map((requirement) => (
-        <i key={requirement} className={requirements[requirement] === 'done' ? 'on' : undefined} />
-      ))}
-    </span>
-  );
-
   /** 다음 항목. 지금 보는 칸이 아닌 첫 남은 항목이다. */
   const next = remaining.find((requirement) => SETUP_REQUIREMENT_SECTIONS[requirement] !== section);
 
@@ -124,11 +147,7 @@ export function SetupBand({ snapshot, section, onSelectSection }: SetupBandProps
     <div className="setup-band-stack">
       {!ready && (
         <div className="setup-band">
-          {meter}
-          <strong>
-            필수 설정 {SETUP_REQUIREMENTS.length - remaining.length}/{SETUP_REQUIREMENTS.length}
-          </strong>
-          <span className="small muted">남은 항목: {remaining.map((requirement) => SETUP_REQUIREMENT_LABELS[requirement]).join(', ')}</span>
+          <strong>{SETUP_BAND_TEXT}</strong>
           <span className="setup-band-space" />
           {next && (
             <button type="button" className="btn sm" onClick={() => onSelectSection(SETUP_REQUIREMENT_SECTIONS[next])}>
@@ -139,9 +158,9 @@ export function SetupBand({ snapshot, section, onSelectSection }: SetupBandProps
       )}
       {/* 완료 안내의 줄바꿈 높이를 미리 확보하되, 완료 전에는 읽거나 조작할 수 없게 한다. */}
       <div className={`setup-band ready${ready ? '' : ' setup-band-reserve'}`} aria-hidden={!ready || undefined} inert={!ready}>
-        {meter}
         <div className="setup-band-space">
           <strong>필수 설정을 마쳤습니다.</strong>
+          {!snapshot.onboarding.hasDetectionTarget && <p className="setup-notice small">{NO_DETECTION_TARGET_NOTICE}</p>}
           <DetectionStartNotes snapshot={snapshot} />
         </div>
         <StartDetectionButton start={start} />
@@ -198,24 +217,9 @@ function requirementDetail(requirement: SetupRequirement, snapshot: AppSnapshot)
   /** 이 항목의 상태. */
   const status = snapshot.onboarding.requirements[requirement];
   switch (requirement) {
-    case 'flow-key': {
-      /** 연결된 계정. */
-      const account = snapshot.flowAccount.account;
-      if (status === 'done' && account) return account.division ? `${account.name} · ${account.division}` : account.name;
-      if (account) return '키를 다시 입력해야 합니다';
-      return '내 키를 붙여 넣으면 계정을 확인합니다';
-    }
     case 'agent':
       if (status === 'done') return `${snapshot.agentPreferences.connectedAgents.map((agent) => AGENT_INFO[agent].name).join(' · ')} 연결됨`;
       if (status === 'checking') return '연결을 확인하는 중입니다';
       return '연결하지 못했습니다. 눌러서 원인을 확인합니다';
-    case 'work-folders': {
-      /** 작업 폴더. */
-      const folders = snapshot.workFolders.folders;
-      if (folders.length === 0) return '저장소가 모여 있는 폴더를 고릅니다';
-      /** 훑기를 마친 폴더에서 찾은 저장소 수. */
-      const repoCount = folders.reduce((count, folder) => count + (folder.scan.status === 'found' ? folder.scan.repos.length : 0), 0);
-      return `${folders.length}개 · 저장소 ${repoCount}개`;
-    }
   }
 }

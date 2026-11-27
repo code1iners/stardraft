@@ -1,5 +1,5 @@
 import { AGENT_INFO } from './agent-info';
-import type { AgentProblemReason, AppSnapshot, GlobalProblemSnapshot, SettingsSection } from './ipc';
+import type { AgentProblemReason, AppSnapshot, GlobalProblemSnapshot, SentryTokenProblemReason, SettingsSection } from './ipc';
 
 /** 전역 문제를 띠, 트레이 메뉴, OS 알림에 보일 문구. 세 곳이 같은 문구를 쓴다. */
 export interface GlobalProblemText {
@@ -21,6 +21,14 @@ export function globalProblemText(problem: GlobalProblemSnapshot, platform: AppS
       message: agentProblemMessage(problem.reason, AGENT_INFO[problem.agent].name),
       actionLabel: '에이전트 확인',
       actionSection: 'agent',
+    };
+  }
+  if (problem.cause === 'sentry-token') {
+    return {
+      title: '토큰 확인 필요',
+      message: sentryTokenProblemMessage(problem.reason, platform),
+      actionLabel: '토큰 다시 입력',
+      actionSection: 'sentry',
     };
   }
   return {
@@ -45,6 +53,20 @@ function agentProblemMessage(reason: AgentProblemReason, name: string): string {
       return `${name}를 업데이트해야 합니다. 지금 버전은 Stardraft에 필요한 기능을 지원하지 않습니다.`;
     case 'check-failed':
       return `${name} 작동 확인에 실패했습니다. 초안을 만들 수 없어 멈췄습니다.`;
+  }
+}
+
+/** 토큰 문제의 이유별 문구. 저장된 토큰을 읽을 수 없는 이유는 키를 지키는 곳이 OS마다 달라 다르게 적는다. */
+function sentryTokenProblemMessage(reason: SentryTokenProblemReason, platform: AppSnapshot['platform']): string {
+  switch (reason) {
+    case 'rejected':
+      return 'Sentry가 토큰을 거부했습니다. 토큰이 회수됐거나 바뀌었을 수 있습니다.';
+    case 'scope-missing':
+      return '토큰에 필요한 권한(scope)이 없습니다. org:read와 event:read 권한이 있는 토큰이 필요합니다.';
+    case 'unreadable':
+      return platform === 'win32'
+        ? '저장된 토큰을 읽을 수 없습니다. Windows 사용자 계정이 바뀌었거나 다른 PC에서 옮겨 온 데이터일 수 있습니다.'
+        : '저장된 토큰을 읽을 수 없습니다. 키체인 접근을 거부했거나 항목이 지워졌을 수 있습니다.';
   }
 }
 

@@ -118,7 +118,7 @@ describe('멘션 감지: 폴링', () => {
       },
     ]);
     expect(bundles.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: 1 }]);
+    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '이 프로젝트에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.', target: { kind: 'draft', id: 1 } }]);
     expect(stateStore.baselineAlarmId).toBe('101');
     // 알림 목록은 readYn 없이 조회만 하고, 읽음 처리 API는 부르지 않는다. 게시물은 묶음의 제목과 "Flow에서 열기" 주소를 읽으려고 조회한다.
     expect(flow.requests).toEqual(['GET /user/alarms', `GET /user/comments/${POST_ID}`, `GET /user/posts/${POST_ID}`]);
@@ -272,7 +272,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
       ['p2', '102'],
       ['p3', '103'],
     ]);
-    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요 3건', body: '보낸 사람님 외 2건의 멘션이 왔습니다.', bundleId: 1 }]);
+    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '이 프로젝트에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.', target: { kind: 'draft', id: 1 } }]);
     // 한 번의 조회에서 같은 게시물은 한 번만 받는다.
     expect(flow.requests.filter((request) => request === 'GET /user/posts/p2')).toHaveLength(1);
   });
@@ -293,7 +293,7 @@ describe('멘션 감지: 기준점과 72시간', () => {
     expect(stateStore.baselineAlarmId).toBe('105');
   });
 
-  it('기준점이 없으면(다른 계정의 키로 바꿔 기록을 비움) 가장 최근 alarmId를 기준점으로 잡고 과거 멘션은 가져오지 않는다', async () => {
+  it('기준점이 없으면(처음 넣는 계정) 가장 최근 alarmId를 기준점으로 잡고 과거 멘션은 가져오지 않는다', async () => {
     const { flow, stateStore, notifier, detection } = await setup({ baseline: null });
     addPostMentioningMe(flow, 'p1');
     flow.respondToListMentionAlarms([alarm('205', { postId: 'p1' }), alarm('204', { postId: 'p1' })]);
@@ -658,7 +658,7 @@ describe('멘션 감지: 오류', () => {
     await settle();
     expect((await storedMentions(stateStore)).map((mention) => mention.postId)).toEqual(['p1', 'p2', 'p3']);
     expect(stateStore.baselineAlarmId).toBe('103');
-    expect(notifier.sent.map((sent) => sent.title)).toEqual(['저장소 확인 필요', '저장소 확인 필요 2건']);
+    expect(notifier.sent.map((sent) => sent.title)).toEqual(['저장소 확인 필요']);
   });
 
   it('판정 중 서버 오류(5xx)는 다음 주기에 다시 판정한다', async () => {

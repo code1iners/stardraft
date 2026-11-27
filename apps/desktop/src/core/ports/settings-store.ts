@@ -7,16 +7,80 @@ export type EditorChoice =
   /** `{file}`, `{line}` 자리를 넣은 명령 한 줄. */
   | { kind: 'command'; command: string };
 
+/** 토큰 확인 때 읽어 둔 Sentry 조직. 이후 이 조직에 거는 호출의 기준 주소를 함께 둔다. */
+export interface SentryOrganizationRecord {
+  /** 조직 ID. */
+  id: string;
+  /** 조직 slug. */
+  slug: string;
+  /** 화면에 보일 조직 이름. */
+  name: string;
+  /** 조직 목록 응답의 지역 주소. 서버 주소 설정은 없고 이 값이 기준 주소다. */
+  regionUrl: string;
+}
+
+/** 진단 대상으로 거를 수 있는 Sentry 오류 이슈 레벨. */
+export type SentryLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug';
+
+/** 사용자가 진단하려고 등록한 Sentry 프로젝트. 프로젝트 `id`가 키라서 프로젝트 이름이 바뀌어도 끊기지 않는다. */
+export interface SentryProjectRegistration {
+  /** 프로젝트 ID. 설정에서 이 등록의 키다. */
+  projectId: string;
+  /** 프로젝트가 속한 조직 ID. */
+  organizationId: string;
+  /** 조직 slug. 호출 경로에 쓴다. */
+  organizationSlug: string;
+  /** 화면에 보일 조직 이름. */
+  organizationName: string;
+  /** 프로젝트 slug. */
+  projectSlug: string;
+  /** 화면에 보일 프로젝트 이름. */
+  projectName: string;
+  /** 환경 필터. `null`이면 모든 환경이다. */
+  environment: string | null;
+  /** 레벨 필터. 비어 있지 않다. */
+  levels: SentryLevel[];
+  /** 등록한 시각(ISO 8601). 이 프로젝트의 기준 시각이다. 필터를 바꿔도 그대로이고 등록을 풀었다 다시 하면 새로 잡는다. */
+  registeredAt: string;
+}
+
+/** 저장소 하나의 재현 설정. 설정의 키는 저장소 절대 경로다. */
+export interface ReproductionRepoSetting {
+  /** 재현 허용. 켠 저장소의 진단만 사본에서 셸로 재현한다. */
+  enabled: boolean;
+  /** 재현용 환경 파일 절대 경로. `null`이면 지정하지 않은 것이라 원본 `.env`를 쓴다. */
+  envFile: string | null;
+}
+
+/** 재현 도구 권한의 방식. `auto`는 범위의 MCP 서버를 모두 싣고, `manual`은 사용자가 켠 서버만 싣는다. */
+export type ReproductionToolMode = 'auto' | 'manual';
+
+/** 재현 도구 권한(앱 전체 설정). */
+export interface ReproductionToolsSetting {
+  /** 방식. 기본은 `auto`다. */
+  mode: ReproductionToolMode;
+  /** `manual`에서 에이전트별로 켠 MCP 서버 **이름**. 서버 정의의 값(환경 변수, 헤더)은 저장하지 않는다. 나중에 새로 등록된 서버는 여기 없으므로 꺼진 채로 나타난다. */
+  enabledServers: Partial<Record<AgentId, string[]>>;
+}
+
 /** 사용자 설정(`settings.json`). PC마다 따로 두고 동기화하지 않는다. */
 export interface Settings {
   /** 파일 형식 버전. 앱이 아는 것보다 크면 실행하지 않는다. */
   schemaVersion: number;
-  /** 작업 폴더의 절대 경로 목록. */
-  workFolders: string[];
   /** 저장소 매핑. Flow 프로젝트 ID → 저장소 절대 경로 목록. */
   repoMappings: Record<string, string[]>;
+  /** 등록한 Sentry 프로젝트. 프로젝트 ID → 등록. 이 값이 없던 옛 파일은 빈 객체로 읽는다. */
+  sentryProjects: Record<string, SentryProjectRegistration>;
+  /** Sentry 저장소 매핑. Sentry 프로젝트 ID → 저장소 절대 경로 목록(지금은 하나). Flow 매핑과 다른 필드라 키가 겹치지 않는다. */
+  sentryRepoMappings: Record<string, string[]>;
+  /** 저장소별 재현 허용과 재현용 환경 파일. 저장소 절대 경로 → 설정. 이 값이 없던 옛 파일은 빈 객체로 읽는다. */
+  reproductionRepos: Record<string, ReproductionRepoSetting>;
+  /** 재현 도구 권한. 이 값이 없던 옛 파일은 `자동`으로 읽는다. */
+  reproductionTools: ReproductionToolsSetting;
   /** 기본 에이전트. */
   defaultAgent: AgentId;
+  /** 연결한 Sentry 토큰으로 보이는 조직. 토큰을 연결하지 않았으면 비어 있다. 이 값이 없던 옛 파일은 빈 목록으로 읽는다. */
+  sentryOrganizations: SentryOrganizationRecord[];
   /** 에이전트별 CLI 절대 경로. */
   agentCliPaths: Partial<Record<AgentId, string>>;
   /** 에이전트별로 고른 모델. */
@@ -25,6 +89,10 @@ export interface Settings {
   extraSecretPatterns: string[];
   /** 모든 초안에 적용할 추가 지침. */
   extraInstructions: string;
+  /** 병렬 작업 수. 초안과 진단을 합쳐 함께 진행하는 최대 수(1~5)다. 이 값이 없던 옛 파일은 기본값 1로 읽는다. */
+  parallelWorkCount: number;
+  /** 진단 보고서를 내보낼 폴더(절대 경로). `null`이면 기본 폴더(사용자 문서 폴더 아래 `Stardraft/Reports/Sentry/`)다. 이 값이 없던 옛 파일은 `null`로 읽는다. */
+  diagnosisReportFolder: string | null;
   /** 에디터에서 열기에 쓸 에디터. 아직 고르지 않았으면 `null`. */
   editor: EditorChoice | null;
   /** 로그인 시 자동 시작 여부. */
@@ -39,13 +107,19 @@ export const SETTINGS_SCHEMA_VERSION = 1;
 /** 처음 실행할 때의 설정. */
 export const DEFAULT_SETTINGS: Settings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
-  workFolders: [],
   repoMappings: {},
+  sentryOrganizations: [],
+  sentryProjects: {},
+  sentryRepoMappings: {},
+  reproductionRepos: {},
+  reproductionTools: { mode: 'auto', enabledServers: {} },
   defaultAgent: 'claude-code',
   agentCliPaths: {},
   agentModels: {},
   extraSecretPatterns: [],
   extraInstructions: '',
+  parallelWorkCount: 1,
+  diagnosisReportFolder: null,
   editor: null,
   launchAtLogin: false,
   detectionStarted: false,

@@ -15,7 +15,7 @@ export const IPC_CHANNELS = {
 } as const;
 
 /** 설정 창의 칸. 왼쪽 칸 목록에 이 순서로 보인다. */
-export const SETTINGS_SECTIONS = ['flow-account', 'agent', 'repositories', 'drafts', 'general'] as const;
+export const SETTINGS_SECTIONS = ['flow-account', 'sentry', 'agent', 'repositories', 'drafts', 'general'] as const;
 
 /** 설정 창의 칸 하나. */
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -35,6 +35,9 @@ export type SiteSection = (typeof SITE_SECTIONS)[number];
 /** 키 확인 명령이 받는 키의 최대 길이. 이보다 긴 값은 키가 아니므로 main에 보내지 않는다. */
 export const FLOW_API_KEY_MAX_LENGTH = 512;
 
+/** 토큰 확인 명령이 받는 Sentry 토큰의 최대 길이. 이보다 긴 값은 토큰이 아니므로 main에 보내지 않는다. */
+export const SENTRY_TOKEN_MAX_LENGTH = 512;
+
 /** 앱이 실행할 수 있는 에이전트. */
 export const AGENT_IDS = ['claude-code', 'codex'] as const;
 
@@ -44,11 +47,32 @@ export type AgentId = (typeof AGENT_IDS)[number];
 /** 모델 고르기 명령이 받는 모델 이름의 최대 길이. */
 export const AGENT_MODEL_MAX_LENGTH = 200;
 
-/** 작업 폴더·저장소 매핑 명령이 받는 경로의 최대 길이. */
-export const WORK_FOLDER_PATH_MAX_LENGTH = 4096;
+/** 저장소 매핑 명령이 받는 경로의 최대 길이. */
+export const REPO_FOLDER_PATH_MAX_LENGTH = 4096;
 
 /** 저장소 매핑 명령이 받는 Flow 프로젝트 ID의 최대 길이. */
 export const FLOW_PROJECT_ID_MAX_LENGTH = 64;
+
+/** Sentry 프로젝트 명령이 받는 프로젝트 ID의 최대 길이. */
+export const SENTRY_PROJECT_ID_MAX_LENGTH = 64;
+
+/** Sentry 프로젝트의 환경 필터 이름의 최대 길이. */
+export const SENTRY_ENVIRONMENT_MAX_LENGTH = 64;
+
+/** 재현 도구 권한 명령이 받는 MCP 서버 이름의 최대 길이. */
+export const REPRODUCTION_SERVER_NAME_MAX_LENGTH = 200;
+
+/** 재현 도구 권한의 방식. `auto`는 범위의 MCP 서버를 모두 싣고 `manual`은 사용자가 켠 서버만 싣는다. */
+export const REPRODUCTION_TOOL_MODES = ['auto', 'manual'] as const;
+
+/** 재현 도구 권한의 방식 하나. */
+export type ReproductionToolModeId = (typeof REPRODUCTION_TOOL_MODES)[number];
+
+/** 레벨 필터로 고를 수 있는 Sentry 레벨. 심각한 순서다. */
+export const SENTRY_LEVEL_IDS = ['fatal', 'error', 'warning', 'info', 'debug'] as const;
+
+/** Sentry 오류 이슈 레벨 하나. */
+export type SentryLevelId = (typeof SENTRY_LEVEL_IDS)[number];
 
 /** 초안 편집 명령이 받는 편집기 텍스트의 최대 길이. 게시 본문 상한(4,000)을 넘긴 텍스트도 저장해 안내를 보여야 하므로 그보다 넉넉하다. */
 export const DRAFT_TEXT_MAX_LENGTH = 100_000;
@@ -92,8 +116,8 @@ export type FlowKeyCheckState =
   | { status: 'checking' }
   /** 요청 한도에 걸려 잠시 뒤 자동으로 다시 확인한다. */
   | { status: 'waiting-retry' }
-  /** 다른 계정의 키라서, 지금까지의 기록을 지우고 바꿀지 확인을 기다린다. */
-  | { status: 'awaiting-confirmation'; account: FlowAccountProfile };
+  /** 다른 계정의 키라서, 지금 계정의 기록을 보관하고 바꿀지 확인을 기다린다. `stored`는 그 계정의 기록을 보관해 두었는지 여부다. */
+  | { status: 'awaiting-confirmation'; account: FlowAccountProfile; stored: boolean };
 
 /** 키 확인이 실패한 이유. */
 export type FlowKeyCheckFailure = 'unauthorized' | 'network' | 'rate-limited' | 'unexpected' | 'save-failed';
@@ -106,15 +130,183 @@ export interface FlowAccountSnapshot {
   keyCheck: FlowKeyCheckState;
 }
 
+/** "Sentry" 칸의 토큰 카드에 보일 조직. 지역 주소는 화면에 쓰지 않으므로 넘기지 않는다. */
+export interface SentryOrganizationSnapshot {
+  /** 조직 이름. */
+  name: string;
+}
+
+/** 토큰 확인의 진행 상태. */
+export type SentryTokenCheckState = { status: 'idle' } | { status: 'checking' };
+
+/** 토큰 확인이 실패한 이유. `scope-missing`은 `org:read`가 빠진 것, `no-organizations`는 보이는 조직이 없는 것이다. */
+export type SentryTokenCheckFailure =
+  | 'unauthorized'
+  | 'scope-missing'
+  | 'no-organizations'
+  | 'network'
+  | 'rate-limited'
+  | 'unexpected'
+  | 'save-failed';
+
+/** "Sentry" 칸이 그릴 상태. */
+export interface SentryConnectionSnapshot {
+  /** 토큰을 연결했는지 여부. 거부됐거나 읽을 수 없는 토큰도 연결한 것으로 본다. 아니면 토큰 입력만 보인다. */
+  connected: boolean;
+  /** 토큰으로 보이는 조직. */
+  organizations: SentryOrganizationSnapshot[];
+  /** 토큰 확인의 진행 상태. */
+  tokenCheck: SentryTokenCheckState;
+  /** "토큰 확인 필요"의 이유. 문제가 없으면 `null`. 다른 전역 문제에 가려도 토큰 카드는 이 값으로 이유를 보인다. */
+  tokenProblem: SentryTokenProblemReason | null;
+}
+
+/** 등록한 Sentry 프로젝트에 닿는지 확인한 상태. `inaccessible`이면 그 프로젝트 줄만 "접근 불가"를 보인다. */
+export type SentryProjectAccessSnapshot = 'unchecked' | 'ok' | 'inaccessible';
+
+/** 등록한 Sentry 프로젝트의 저장소 매핑. */
+export interface SentryRepoSnapshot {
+  /** 저장소 폴더의 절대 경로. */
+  path: string;
+  /** 폴더가 있는지 확인한 상태. */
+  status: MappedRepoStatus;
+}
+
+/** 진단하려고 등록한 Sentry 프로젝트 하나. */
+export interface SentryProjectSnapshot {
+  /** 프로젝트 ID. 편집·등록 해제·저장소 명령에 실어 보낸다. */
+  projectId: string;
+  /** 화면에 보일 조직 이름. */
+  organizationName: string;
+  /** 화면에 보일 프로젝트 이름. */
+  projectName: string;
+  /** 환경 필터. `null`이면 모든 환경이다. */
+  environment: string | null;
+  /** 레벨 필터. */
+  levels: SentryLevelId[];
+  /** 매핑된 저장소. 매핑이 없으면 `null`. */
+  repo: SentryRepoSnapshot | null;
+  /** 프로젝트에 닿는지 확인한 상태. */
+  access: SentryProjectAccessSnapshot;
+  /** 저장소 매핑이 없어 기다리는 진단 수. "저장소 매핑 없음 · n건 대기"의 n이다. */
+  waitingCount: number;
+}
+
+/** 등록할 수 있는 Sentry 프로젝트 하나. */
+export interface SentryCandidateSnapshot {
+  /** 프로젝트 ID. */
+  projectId: string;
+  /** 화면에 보일 조직 이름. */
+  organizationName: string;
+  /** 화면에 보일 프로젝트 이름. */
+  projectName: string;
+  /** 프로젝트에 이벤트가 들어온 환경. 환경 필터를 이 목록에서 고른다. */
+  environments: string[];
+}
+
+/** 등록할 프로젝트 목록을 받지 못한 이유. `no-token`은 토큰이 없거나 "토큰 확인 필요"인 것이다. */
+export type SentryCandidatesFailure = 'no-token' | 'unauthorized' | 'scope-missing' | 'network' | 'rate-limited' | 'unexpected';
+
+/** 등록할 프로젝트 목록의 상태. `incomplete`는 일부 조직의 목록을 받지 못했다는 뜻이다. */
+export type SentryCandidatesSnapshot =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'loaded'; projects: SentryCandidateSnapshot[]; incomplete: boolean }
+  | { status: 'failed'; reason: SentryCandidatesFailure };
+
+/** 설정 "Sentry" 칸의 프로젝트 목록과 "저장소" 칸 `Sentry` 탭이 그릴 상태. */
+export interface SentryProjectsSnapshot {
+  /** 등록한 프로젝트. 등록한 순서다. */
+  projects: SentryProjectSnapshot[];
+  /** 등록할 수 있는 프로젝트 목록. */
+  candidates: SentryCandidatesSnapshot;
+}
+
+/** 프로젝트 등록이나 편집이 끝난 결과. 모달이 닫히거나 이유를 보인다. */
+export type SentryProjectSaveResult =
+  | 'registered'
+  | 'updated'
+  | 'no-token'
+  | 'token-problem'
+  | 'unknown-project'
+  | 'already-registered'
+  | 'not-registered'
+  | 'invalid-filter'
+  | 'unauthorized'
+  | 'scope-missing'
+  | 'project-unavailable'
+  | 'network'
+  | 'rate-limited'
+  | 'unexpected'
+  | 'save-failed';
+
+/** 재현 설정 화면의 저장소 한 줄. */
+export interface ReproductionRepoSnapshot {
+  /** 저장소 절대 경로. 명령에 실어 보낸다. */
+  path: string;
+  /** 재현 허용 여부. */
+  enabled: boolean;
+  /** 재현용 환경 파일 절대 경로. `null`이면 지정 안 함(원본 `.env` 사용)이다. */
+  envFile: string | null;
+  /** 지정한 환경 파일이 없어졌는지 여부. */
+  envFileMissing: boolean;
+}
+
+/** MCP 서버의 연결 종류. */
+export type ReproductionServerKind = 'stdio' | 'http' | 'sse' | 'ws' | 'unknown';
+
+/** 재현 도구 권한 목록의 MCP 서버 한 줄. 서버 정의의 값(환경 변수, 헤더)은 담지 않는다. */
+export interface ReproductionServerSnapshot {
+  /** 서버가 등록된 CLI. */
+  agent: AgentId;
+  /** 서버 이름. */
+  name: string;
+  /** 연결 종류. */
+  kind: ReproductionServerKind;
+  /** 외부로 보낼 수 있는 서버인지 여부. "외부로 보냄" 꼬리표를 붙인다. */
+  external: boolean;
+  /** 앱이 고정으로 뺀 위험 도구. */
+  deniedTools: string[];
+  /** `직접 선택`에서 켠 서버인지 여부. */
+  enabled: boolean;
+}
+
+/** 설정 "저장소" 칸의 재현 항목과 "에이전트" 칸 `재현` 탭이 그릴 상태. */
+export interface ReproductionSnapshot {
+  /** 재현을 지원하는 OS인지 여부. 거짓이면 재현 항목과 `재현` 탭을 그리지 않는다. */
+  supported: boolean;
+  /** 재현 허용을 정할 수 있는 저장소. 매핑된 저장소마다 한 줄이다. */
+  repos: ReproductionRepoSnapshot[];
+  /** 재현 도구 권한. */
+  tools: {
+    /** 방식. */
+    mode: ReproductionToolModeId;
+    /** MCP 서버 목록을 읽은 상태. */
+    status: 'idle' | 'loading' | 'loaded';
+    /** 목록의 서버. */
+    servers: ReproductionServerSnapshot[];
+    /** Codex 목록 명령이 실패해 Codex 서버를 읽지 못했는지 여부. */
+    codexListFailed: boolean;
+  };
+}
+
+/** 재현을 켜거나 환경 파일을 정한 결과. 확인 모달이 닫히거나 이유를 보인다. */
+export type ReproductionSaveResult = 'saved' | 'invalid-env-file' | 'not-mapped' | 'unsupported';
+
 /** 감지를 멈추게 하는 전역 문제. 작은 창 띠, 트레이 메뉴, OS 알림에 하나만 보인다. */
 export type GlobalProblemSnapshot =
   /** 키 확인 필요. */
   | { cause: 'flow-key'; reason: FlowKeyProblemReason }
+  /** 토큰 확인 필요. Sentry 감지만 멈춘다. */
+  | { cause: 'sentry-token'; reason: SentryTokenProblemReason }
   /** 에이전트 확인 필요. `agent`는 실패한 에이전트다. */
   | { cause: 'agent'; agent: AgentId; reason: AgentProblemReason };
 
 /** "키 확인 필요"가 생긴 이유. `rejected`는 Flow가 키를 거부한 것(`401`), `unreadable`은 저장된 키를 읽을 수 없는 것이다. */
 export type FlowKeyProblemReason = 'rejected' | 'unreadable';
+
+/** "토큰 확인 필요"가 생긴 이유. 거부(`401`), scope 부족(`403`), 저장된 토큰을 읽을 수 없음이다. */
+export type SentryTokenProblemReason = 'rejected' | 'scope-missing' | 'unreadable';
 
 /** 에이전트 전역 실패의 이유. CLI 없음, 미로그인, CLI 업데이트 필요, 점검 실행(작동 확인) 실패다. */
 export type AgentProblemReason = 'cli-missing' | 'not-logged-in' | 'update-required' | 'check-failed';
@@ -217,60 +409,6 @@ export interface AgentPreferencesSnapshot {
   models: Partial<Record<AgentId, ModelChoiceSnapshot>>;
 }
 
-/** 작업 폴더에서 찾은 저장소 하나. */
-export interface RepoCandidateSnapshot {
-  /** 화면에 보일 이름. 작업 폴더에서의 상대 경로이고, 작업 폴더 자체가 저장소면 폴더 이름이다. */
-  name: string;
-  /** 저장소의 절대 경로. */
-  path: string;
-}
-
-/** 작업 폴더 하나를 훑은 상태. */
-export type WorkFolderScanSnapshot =
-  /** 훑고 있다. */
-  | { status: 'scanning' }
-  /** 훑기를 마쳤다. 저장소가 없으면 빈 목록이다. */
-  | { status: 'found'; repos: RepoCandidateSnapshot[] }
-  /** 폴더가 없거나 읽을 수 없다. */
-  | { status: 'missing' };
-
-/** 작업 폴더로 받지 않은 이유. `network`는 네트워크 경로, `wsl`은 WSL 경로다. */
-export type RejectedFolderReason = 'network' | 'wsl';
-
-/** 작업 폴더 하나. */
-export interface WorkFolderSnapshot {
-  /** 작업 폴더의 절대 경로. */
-  path: string;
-  /** 훑은 상태. */
-  scan: WorkFolderScanSnapshot;
-}
-
-/** "이 PC에서 찾은 폴더" 하나. */
-export interface WorkFolderSuggestionSnapshot {
-  /** 폴더의 절대 경로. */
-  path: string;
-  /** 그 안에서 찾은 저장소 수. */
-  repoCount: number;
-}
-
-/** 작업 폴더로 받지 않은 폴더 하나. */
-export interface RejectedFolderSnapshot {
-  /** 고른 경로. */
-  path: string;
-  /** 받지 않은 이유. */
-  reason: RejectedFolderReason;
-}
-
-/** 설정 "저장소" 칸의 작업 폴더. */
-export interface WorkFoldersSnapshot {
-  /** 작업 폴더. 저장한 순서다. */
-  folders: WorkFolderSnapshot[];
-  /** 작업 폴더가 아닌 "이 PC에서 찾은 폴더". */
-  suggestions: WorkFolderSuggestionSnapshot[];
-  /** 마지막 추가에서 받지 않은 폴더. */
-  rejected: RejectedFolderSnapshot[];
-}
-
 /** 매핑된 저장소 폴더를 확인한 상태. `missing`은 폴더를 찾을 수 없는 것이다. */
 export type MappedRepoStatus = 'checking' | 'found' | 'missing';
 
@@ -312,18 +450,30 @@ export type ParticipantProjectsSnapshot =
   | { status: 'loaded'; projects: ParticipantProjectSnapshot[] }
   | { status: 'failed'; reason: ParticipantProjectsFailure };
 
+/** 저장소 매핑이 없어 묶음이 기다리는 Flow 프로젝트 하나. 설정 "저장소" 칸 맨 위에 "저장소 매핑 없음 · n건 대기"로 보인다. */
+export interface WaitingRepoProjectSnapshot {
+  /** Flow 프로젝트 ID. [폴더 고르기…] 명령에 실어 보낸다. */
+  projectId: string;
+  /** Flow 프로젝트 이름. 모르면 `null`. */
+  title: string | null;
+  /** 저장소 매핑 필요로 기다리는 묶음 수. */
+  waitingCount: number;
+}
+
 /** 설정 "저장소" 칸의 저장소 매핑. */
 export interface RepoMappingsSnapshot {
   /** 저장된 매핑. */
   mappings: RepoMappingSnapshot[];
+  /** 매핑이 없어 묶음이 기다리는 Flow 프로젝트. 대기 건수가 많은 순이다. */
+  waiting: WaitingRepoProjectSnapshot[];
   /** 매핑에서 고를 참여 Flow 프로젝트 목록. */
   projects: ParticipantProjectsSnapshot;
 }
 
-/** 감지를 시작하기 전에 필요한 필수 세 가지. 작은 창과 설정 창 띠에 이 순서로 보인다. */
-export const SETUP_REQUIREMENTS = ['flow-key', 'agent', 'work-folders'] as const;
+/** 감지를 시작하기 전에 필요한 필수 설정. 에이전트 연결 하나다. */
+export const SETUP_REQUIREMENTS = ['agent'] as const;
 
-/** 필수 설정 하나. `flow-key`는 확인된 키, `agent`는 에이전트 연결, `work-folders`는 작업 폴더 1개 이상이다. */
+/** 필수 설정 하나. `agent`는 에이전트 연결이다. */
 export type SetupRequirement = (typeof SETUP_REQUIREMENTS)[number];
 
 /** 필수 설정 하나의 상태. `checking`은 에이전트 연결을 확인하는 중이다. */
@@ -342,10 +492,16 @@ export type DetectionStartSnapshot =
 export interface OnboardingSnapshot {
   /** 감지를 시작했는지 여부. 시작한 뒤에는 첫 설정 띠와 필수 설정 전 화면이 나오지 않는다. */
   detectionStarted: boolean;
-  /** 필수 세 가지의 상태. */
+  /** 필수 설정의 상태. */
   requirements: Record<SetupRequirement, SetupRequirementStatus>;
-  /** 필수 세 가지가 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
+  /** 필수 설정이 모두 되어 [감지 시작]을 보일 수 있는지 여부. */
   ready: boolean;
+  /** 감지할 대상(Flow 계정, Sentry)을 하나라도 연결했는지 여부. 없으면 [감지 시작] 위에 안내 문구를 보인다. */
+  hasDetectionTarget: boolean;
+  /** Flow 계정이 연결되어 있고 "키 확인 필요"가 없는지 여부. 체크리스트 Flow 줄이 `✓`나 "연결 안 함"을 보인다. */
+  flowConnected: boolean;
+  /** Sentry 토큰이 연결되어 있고 "토큰 확인 필요"가 없는지 여부. 체크리스트 Sentry 줄이 `✓`나 "연결 안 함"을 보인다. */
+  sentryConnected: boolean;
   /** [감지 시작]의 진행 상태. */
   start: DetectionStartSnapshot;
 }
@@ -477,10 +633,10 @@ export type PostingSnapshot =
   /** 게시 요청을 보냈고 결과를 기다린다. 취소할 수 없다. */
   | { phase: 'sending' };
 
-/** 펼친 창 목록의 묶음. 목록에 이 순서로 보인다. 검토 대기·생성 중·실패·처리됨이다. */
+/** 묶음이 상태로 든 그룹. 검토 대기·생성 중·실패·처리됨이다. 바닥 줄과 처리됨 구분에 쓰고, 펼친 창 목록은 종류별로 묶는다. */
 export const BUNDLE_GROUPS = ['awaiting-review', 'generating', 'failed', 'processed'] as const;
 
-/** 펼친 창 목록의 묶음 하나. */
+/** 묶음의 상태 그룹 하나. */
 export type BundleGroup = (typeof BUNDLE_GROUPS)[number];
 
 /** 멘션이 일어난 글의 종류. 게시물 본문, 댓글, 대댓글이다. */
@@ -583,13 +739,6 @@ export interface RepositorySnapshot {
   path: string;
 }
 
-/** 자동 선택으로 초안의 저장소를 정한 내력. 저장소 영역에 자동으로 고른 이유로 보인다. */
-export type AutoSelectionSnapshot =
-  /** 작업 폴더에서 찾은 후보가 하나라 선택 실행 없이 그 저장소를 썼다. */
-  | { kind: 'single-candidate' }
-  /** 선택 실행이 골랐다. `reason`이 비어 있으면 "이유 없음"으로 보인다. */
-  | { kind: 'chosen'; reason: string };
-
 /** 초안 실행이 만든 초안. */
 export interface DraftSnapshot {
   /** 에이전트가 이해한 요구. `summary`는 목록 행에 보인다. */
@@ -600,8 +749,6 @@ export interface DraftSnapshot {
   evidence: EvidenceSnapshot[];
   /** 쓴 저장소. 첫 저장소가 실행의 cwd였다. */
   repositories: RepositorySnapshot[];
-  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑이나 사용자가 고른 구성으로 정했으면 `null`. */
-  autoSelection: AutoSelectionSnapshot | null;
   /** 쓴 저장소 구성을 그 Flow 프로젝트의 저장소 매핑과 견준 것. 저장소 영역의 연결 버튼 문구를 정한다. */
   mapping: MappingMatchSnapshot;
   /** 편집기 텍스트. 편집했으면 편집본, 아니면 원래 초안의 문장을 이은 것이다(근거 번호 없음). */
@@ -610,8 +757,13 @@ export interface DraftSnapshot {
   edited: boolean;
   /** 편집기를 고치고 받는 사람을 뺄 수 있는지 여부. 준비됨과 게시 실패 묶음만 참이다. */
   canEdit: boolean;
-  /** 요구를 고쳐 다시 만들 수 있는지 여부(망치 아이콘). 준비됨 묶음만 참이다. */
+  /** 요구를 고쳐 다시 만들 수 있는지 여부(망치 아이콘). 준비됨 묶음만 참이다. 저장소가 정해지지 않은 초안은 거짓이다. */
   canRegenerate: boolean;
+  /**
+   * 저장소가 정해지지 않은 초안인지 여부. 사용자가 고른 저장소도 Flow 프로젝트의 저장소 매핑도 없다.
+   * 참이면 "다시 만들기"와 "지시를 덧붙여 다시 만들기"가 꺼지고 "다른 저장소로 다시 만들기"만 된다. 게시와 무시는 된다.
+   */
+  repoUndetermined: boolean;
   /** 받는 사람. 처음 멘션한 순서다. 사용자 ID는 main이 가지고 있다. */
   recipients: RecipientSnapshot[];
   /**
@@ -638,8 +790,8 @@ export const POST_BODY_CHAR_LIMIT = 4_000;
  */
 export type MappingMatchSnapshot = 'unmapped' | 'same' | 'different';
 
-/** 저장소 선택 창의 후보 무리. 지금 쓰는 저장소, 작업 폴더에서 찾은 저장소, 매핑에 쓰인 저장소, "폴더 직접 고르기"로 더한 폴더 순서다. */
-export type RepoChoiceGroupSnapshot = 'current' | 'work-folder' | 'mapping' | 'added';
+/** 저장소 선택 창의 후보 무리. 지금 쓰는 저장소, 다른 매핑에 쓰인 저장소, "폴더 직접 고르기"로 더한 폴더 순서다. */
+export type RepoChoiceGroupSnapshot = 'current' | 'mapping' | 'added';
 
 /** 저장소 선택 창의 후보 하나. */
 export interface RepoChoiceSnapshot {
@@ -654,14 +806,19 @@ export interface RepoChoiceSnapshot {
 }
 
 /** 열린 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. */
-export type RepoPickerSnapshot =
-  /** 작업 폴더를 훑고 있다. */
-  | { bundleId: number; status: 'loading' }
-  /** 후보를 보이고 있다. `mapping`은 체크한 구성을 그 묶음 Flow 프로젝트의 저장소 매핑과 견준 것이다. */
-  | { bundleId: number; status: 'ready'; choices: RepoChoiceSnapshot[]; mapping: MappingMatchSnapshot };
+export interface RepoPickerSnapshot {
+  /** 창을 연 묶음 ID. */
+  bundleId: number;
+  /** 후보. */
+  choices: RepoChoiceSnapshot[];
+  /** 체크한 구성을 그 묶음 Flow 프로젝트의 저장소 매핑과 견준 것. */
+  mapping: MappingMatchSnapshot;
+}
 
 /** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"처럼 보인다. 비용은 넘기지 않는다. */
 export interface RunLineSnapshot {
+  /** 실행의 종류. 과거 기록의 저장소 선택 실행은 `selection`이고 "저장소 선택(폐지됨)"으로 보인다. */
+  kind: GenerationRunKindSnapshot;
   /** 실행한 에이전트. */
   agent: AgentId;
   /** 걸린 시간(밀리초). */
@@ -695,8 +852,8 @@ export type DraftFailureReasonSnapshot =
   | 'max-turns'
   | 'agent-error';
 
-/** 묶음 하나를 만들 때 돌리는 실행의 종류. 선택 실행과 초안 실행이다. */
-export type GenerationRunKindSnapshot = 'selection' | 'draft';
+/** 대상 하나를 만들 때 돌리는 실행의 종류. 초안 실행, 진단 실행과, 과거 기록에만 있는 폐지된 저장소 선택 실행(`selection`)이다. */
+export type GenerationRunKindSnapshot = 'selection' | 'draft' | 'diagnosis';
 
 /** 생성이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
 export interface FailureSnapshot {
@@ -710,20 +867,21 @@ export interface FailureSnapshot {
   runKind: GenerationRunKindSnapshot | null;
 }
 
-/** 저장소 확인 필요의 사유. */
+/** 저장소 대기의 사유. 저장소 매핑 필요(`unmapped`)와 저장소 확인 필요(`missing-folders`)다. */
 export type RepoCheckSnapshot =
+  /** 저장소 매핑 필요. 매핑도 사용자가 고른 저장소도 없어 기다린다. */
+  | { kind: 'unmapped' }
   /**
    * 연결된 저장소 폴더를 찾을 수 없음. `paths`는 찾을 수 없는 폴더의 절대 경로다.
    * `chosenByUser`면 저장소 매핑이 아니라 저장소 선택 창에서 고른 구성의 폴더라 "고른 저장소 폴더를 찾을 수 없음"으로 보인다.
    */
-  | { kind: 'missing-folders'; paths: string[]; chosenByUser: boolean }
-  /** 자동 선택을 하려 했지만 작업 폴더에서 저장소를 찾지 못함. */
-  | { kind: 'no-candidates' }
-  /**
-   * 선택 실행이 저장소를 확신하지 못했거나 코드와 무관한 멘션이라고 판정함. 사유와 작업 폴더의 후보(작업 폴더 안의 이름과 경로)다.
-   * 후보는 에이전트가 짚은 것(`picked`, 짚은 순서)과 나머지(`others`, 찾은 순서)로 나눈다.
-   */
-  | { kind: 'unsure' | 'unrelated'; reason: string; picked: RepositorySnapshot[]; others: RepositorySnapshot[] };
+  | { kind: 'missing-folders'; paths: string[]; chosenByUser: boolean };
+
+/**
+ * 저장소 대기 묶음이 바닥 줄에 쓰는 값. 사유와 같은 프로젝트에서 같은 사유로 기다리는 묶음 수(`waitingCount`, 이 묶음 포함)다.
+ * 상세에 이유 상자를 두지 않고 노란 바닥 줄 글이 이 값으로 쓰인다.
+ */
+export type RepoWaitSnapshot = RepoCheckSnapshot & { waitingCount: number };
 
 /** 작은 창과 펼친 창이 그릴 멘션 묶음 하나. */
 export interface BundleSnapshot {
@@ -779,8 +937,8 @@ export interface BundleSnapshot {
   generation: GenerationSnapshot | null;
   /** 생성이 실패한 까닭. 실패가 아니면 `null`. */
   failure: FailureSnapshot | null;
-  /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
-  repoCheck: RepoCheckSnapshot | null;
+  /** 저장소 대기의 사유와 같은 프로젝트에서 같은 사유로 기다리는 묶음 수. 저장소 대기가 아니면 `null`. */
+  repoCheck: RepoWaitSnapshot | null;
   /** 게시 중 묶음의 단계. 게시 중이 아니면 `null`. */
   posting: PostingSnapshot | null;
   /** 게시 실패의 사유. 상세 머리에 한 줄로 보인다. 게시 실패가 아니면 `null`. */
@@ -805,10 +963,216 @@ export const REVIEW_SECTIONS = ['original', 'requirement', 'draft', 'evidence', 
 /** 접고 펴는 상세 영역 하나. */
 export type ReviewSection = (typeof REVIEW_SECTIONS)[number];
 
-/** 작은 창과 펼친 창이 그릴 멘션 묶음 상태. */
+/** 진단의 상태. 진행 중(`running`)은 대기 가운데 생성 대기열이 진행하고 있는 진단이다. */
+export type DiagnosisStatusSnapshot = 'queued' | 'running' | 'repo-check-needed' | 'ready' | 'failed' | 'completed';
+
+/**
+ * 진행 중인 재현하는 진단이 시간 상한을 앞두고 있을 때의 상태. `asking`은 상한 5분 전에 계속할지 묻는 중(노란 바닥 줄의 [멈추기] · [계속 진행]),
+ * `wrapping-up`은 [멈추기]나 답 없음 뒤에 보고서를 마무리하기를 기다리는 중이다. `canSteer`는 에이전트가 실행 중 전달을 받는지 여부로,
+ * 거짓이면 멈추거나 답이 없을 때 보고서 없이 끝난다는 문장이 바닥 줄에 보인다.
+ */
+export interface DiagnosisTimeExtensionSnapshot {
+  /** 단계. */
+  phase: 'asking' | 'wrapping-up';
+  /** 에이전트가 실행 중 전달을 받는지 여부. */
+  canSteer: boolean;
+}
+
+/** 대기·진행 중 진단의 진행. 대기면 앞에 있는 수, 진행 중이면 단계와 읽은 파일 수, 시작한 시각이다. */
+export type DiagnosisProgressSnapshot =
+  /** 차례를 기다린다. `ahead`는 앞에 있는 대상 수다. 대기열이 아직 넣지 않았으면 `null`. */
+  | { status: 'waiting'; ahead: number | null }
+  /** 진행 중이다. `extension`은 연장을 묻는 중이거나 마무리를 기다리는 중일 때만 있다. */
+  | { status: 'running'; step: string; filesRead: number; startedAt: number; extension?: DiagnosisTimeExtensionSnapshot };
+
+/** 재현 칸. 읽기 전용 진단은 앱이 "불가(허용 안 됨)"로 채운다. */
+export interface DiagnosisReproductionSnapshot {
+  /** 결과. */
+  result: 'success' | 'failure' | 'impossible';
+  /** 불가의 까닭. 불가가 아니면 `null`. */
+  impossibleReason: 'no-tool' | 'insufficient-data' | 'env-failed' | 'not-allowed' | 'timed-out' | null;
+  /** 재현에 쓴 방법. */
+  method: string;
+  /** 재현 순서 또는 시도한 것. */
+  steps: string[];
+}
+
+/** 진단 보고서. 에이전트가 쓴 칸과 앱이 채운 오류 이슈 정보·실행 정보다. */
+export interface DiagnosisReportSnapshot {
+  /** 요약. */
+  summary: string;
+  /** 재현. */
+  reproduction: DiagnosisReproductionSnapshot;
+  /** 원인과 확신도. 원인 글은 근거를 `[근거 n]`으로 가리킨다. */
+  cause: { text: string; confidence: 'high' | 'medium' | 'low' };
+  /** 개선 방향. */
+  improvements: string[];
+  /** 남은 의문. */
+  openQuestions: string[];
+  /** 근거. Flow 초안의 근거와 같은 필드다. */
+  evidence: { id: number; explanation: string; repository: string; path: string; startLine: number; endLine: number; located: boolean }[];
+  /** 앱이 Sentry에서 받은 오류 이슈 정보. */
+  event: {
+    /** 최신 이벤트의 release. */
+    release: string | null;
+    /** 최초 release. */
+    firstRelease: string | null;
+    /** 최근 release. */
+    lastRelease: string | null;
+    /** 소스맵 적용 여부. */
+    sourceMaps: 'applied' | 'failed' | 'unknown';
+    /** 없는 데이터 항목. */
+    missingData: string[];
+    /** 스택 앞부분. */
+    stackHead: string[];
+  };
+  /** 실행 정보. */
+  run: {
+    /** 저장소 경로. */
+    repository: string;
+    /** HEAD 해시. 모르면 `null`. */
+    headCommit: string | null;
+    /** 커밋하지 않은 변경 유무. 모르면 `null`. */
+    uncommittedChanges: boolean | null;
+    /** 에이전트. */
+    agent: AgentId;
+    /** 에이전트 CLI 버전. 모르면 `null`. */
+    cliVersion: string | null;
+    /** 재현 허용 여부. */
+    reproductionAllowed: boolean;
+    /** 걸린 시간(밀리초). */
+    durationMs: number;
+    /** 생성 시각(Unix epoch 밀리초). */
+    createdAt: number;
+    /** 재현에 실은 MCP 서버와 빠진 서버·까닭. 재현하지 않은 진단은 `null`이다. */
+    mcpServers: DiagnosisMcpServersSnapshot | null;
+  };
+  /**
+   * 같은 오류 이슈의 앞선 진단. 없으면 `null`. 오류 이슈 정보에 적힌다.
+   * `in-review`는 앞선 보고서가 검토 대기 중이었던 것, `completed`는 완료한 뒤의 재발이다(완료한 시각과 마지막으로 내보낸 파일 경로, 없으면 `null`).
+   */
+  priorDiagnosis: { kind: 'in-review' } | { kind: 'completed'; completedAt: number; exportPath: string | null } | null;
+  /** 종류나 한도를 넘어 옮기지 않은 첨부 수. 0보다 크면 "첨부 n개 생략"으로 보인다. */
+  omittedAttachments: number;
+}
+
+/** 재현에서 MCP 서버가 빠진 까닭. 꺼 둠, 변수 없음, 변수 충돌, 설정을 옮기지 못함, 연결 실패다. */
+export type McpSkipReasonSnapshot = 'disabled' | 'missing-variable' | 'variable-conflict' | 'unreadable' | 'connection-failed';
+
+/** 보고서 실행 정보의 MCP 서버. 이름과 까닭만 있다. */
+export interface DiagnosisMcpServersSnapshot {
+  /** 실린 서버 이름. */
+  loaded: string[];
+  /** 빠진 서버와 까닭. */
+  skipped: { name: string; reason: McpSkipReasonSnapshot }[];
+}
+
+/** 진단 실패의 까닭. Flow 초안과 같은 빨간 상자에 사유와 마지막 단계로 보인다. */
+export interface DiagnosisFailureSnapshot {
+  /**
+   * 사유. `sentry-unavailable`은 Sentry에서 오류 데이터를 가져오지 못한 것이고,
+   * `repository-unavailable`은 다시 진단하려는데 저장소 매핑이나 폴더가 사라진 것이다.
+   */
+  reason: DraftFailureReasonSnapshot | 'sentry-unavailable' | 'repository-unavailable';
+  /** 에이전트가 알려 준 오류 원문. 없으면 `null`. */
+  detail: string | null;
+  /** 마지막 단계. 없으면 `null`. */
+  lastStep: string | null;
+}
+
+/** 저장소 대기 진단의 사유와 바닥 줄 글의 "기다리는 n건". */
+export type DiagnosisRepoWaitSnapshot =
+  /** 저장소 매핑 필요. `waitingCount`는 같은 프로젝트에서 매핑을 기다리는 진단 수다. */
+  | { kind: 'unmapped'; waitingCount: number }
+  /** 저장소 확인 필요. `path`는 찾을 수 없는 폴더다. */
+  | { kind: 'missing-folder'; path: string; waitingCount: number };
+
+/** 진단에 딸린 첨부 파일 하나. 파일 이름과 크기만 넘긴다. */
+export interface DiagnosisAttachmentSnapshot {
+  /** 파일 이름. */
+  name: string;
+  /** 파일 크기(바이트). */
+  sizeBytes: number;
+}
+
+/** 검토 화면이 그릴 Sentry 진단 하나. */
+export interface DiagnosisSnapshot {
+  /** 진단 ID. */
+  id: number;
+  /** 등록한 Sentry 프로젝트 ID. [저장소 매핑하기]가 짚는다. */
+  projectId: string;
+  /** 신규인지 재발인지. */
+  origin: 'new' | 'regression';
+  /** 오류 제목. */
+  title: string;
+  /** 감지한 시각(Unix epoch 밀리초). */
+  detectedAt: number;
+  /** 상태. */
+  status: DiagnosisStatusSnapshot;
+  /** 저장소 대기의 사유. 저장소 대기가 아니면 `null`. */
+  repoWait: DiagnosisRepoWaitSnapshot | null;
+  /** 대기·진행 중의 진행. 대기·진행 중이 아니면 `null`. */
+  progress: DiagnosisProgressSnapshot | null;
+  /** 진단 보고서. 검토 대기가 아니면 `null`. */
+  report: DiagnosisReportSnapshot | null;
+  /** 진단 실패의 까닭. 진단 실패가 아니면 `null`. */
+  failure: DiagnosisFailureSnapshot | null;
+  /** 시간 초과로 실패한 재현하던 진단이라 [재현 없이 다시 시도]를 보일지 여부. */
+  canRetryWithoutReproduction: boolean;
+  /**
+   * 다시 진단하는 중인지 여부. 대기·진행 중인데 앞선 보고서(`report`)와 첨부를 보관하고 있다.
+   * 이 동안 내보내기와 완료를 할 수 없고 목록 태그는 `다시 진단 중`이다.
+   */
+  rediagnosing: boolean;
+  /** 다시 진단에서 쌓인 지시. 덧붙인 순서다. 지시 입력이 "앞서 덧붙인 지시"로 보인다. */
+  directives: string[];
+  /** 마지막 다시 진단이 실패하거나 취소해 앞선 보고서로 돌아왔다는 사유. 보고서 위 알림 줄과 [다시 걸기]가 보인다. 없으면 `null`. */
+  rediagnosisFailure: DiagnosisFailureSnapshot | null;
+  /** 완료한 시각. 완료가 아니면 `null`. */
+  completedAt: number | null;
+  /** 지금 보이는 보고서를 내보낸 적이 있는지 여부. 거짓이면 [완료]가 "내보내지 않았습니다" 확인을 거친다. */
+  exported: boolean;
+  /** 마지막으로 내보낸 파일의 경로. 내보낸 적 없으면 `null`. 완료함의 `기록`에 보인다. */
+  lastExportedPath: string | null;
+  /** [Sentry에서 열기]로 열 주소가 있는지 여부. 주소는 main이 가지고 있다. */
+  canOpenInSentry: boolean;
+  /** 보고서의 첨부 파일. 보고서가 없으면 비어 있다. 첨부는 재현하는 진단이 만들므로 읽기 전용 진단의 보고서에는 없다. */
+  attachments: DiagnosisAttachmentSnapshot[];
+  /** 이 진단의 저장소가 지금 재현을 허용하는지 여부(macOS). 참일 때만 지시 입력에 "재현도 다시 하기" 체크가 보인다. */
+  reproductionAllowed: boolean;
+  /** 오류 정보. 감지할 때 오류 이슈 목록에서 받은 값이다. */
+  issue: {
+    /** 짧은 ID. 없으면 빈 문자열. */
+    shortId: string;
+    /** 오류가 난 자리. 없으면 빈 문자열. */
+    culprit: string;
+    /** 레벨. 없으면 빈 문자열. */
+    level: string;
+    /** 등록의 환경 필터. `null`이면 모든 환경이다. */
+    environment: string | null;
+    /** 처음 보인 시각. */
+    firstSeen: number;
+    /** 마지막으로 보인 시각. 모르면 `null`. */
+    lastSeen: number | null;
+    /** 발생 수. 모르면 `null`. */
+    count: number | null;
+    /** 사용자 수. 모르면 `null`. */
+    userCount: number | null;
+    /** 플랫폼. 없으면 `null`. */
+    platform: string | null;
+    /** 조직 이름. */
+    organizationName: string;
+    /** 프로젝트 이름. */
+    projectName: string;
+  };
+}
+
+/** 작은 창과 펼친 창이 그릴 멘션 묶음과 진단 상태. */
 export interface ReviewSnapshot {
   /** 묶음. 처리되지 않은 묶음이 작은 창 대기열 순서(가장 오래된 미처리 멘션 순)로 먼저 오고, 처리됨 묶음이 최근에 처리한 것부터 뒤에 온다. */
   bundles: BundleSnapshot[];
+  /** Sentry 진단. 묶음 배열과 따로 둔다. 감지한 순서다. */
+  diagnoses: DiagnosisSnapshot[];
   /** 창마다 영역의 펼침 상태. 다른 묶음으로 넘어가도 유지한다. */
   sections: Record<ReviewWindow, Record<ReviewSection, boolean>>;
   /** 열린 저장소 선택 창. 닫혀 있으면 `null`. */
@@ -888,6 +1252,27 @@ export interface UpdateStateSnapshot {
   dismissedBanners: string[];
 }
 
+/** 병렬 작업 수 슬라이더의 가장 작은 값. main의 생성 대기열과 같은 범위인지는 테스트가 확인한다. */
+export const PARALLEL_WORK_COUNT_MIN = 1;
+/** 병렬 작업 수 슬라이더의 가장 큰 값. */
+export const PARALLEL_WORK_COUNT_MAX = 5;
+
+/** 설정 "에이전트" 칸 `병렬 작업` 탭의 상태. */
+export interface ParallelWorkSnapshot {
+  /** 고른 병렬 작업 수(1~5). */
+  count: number;
+  /** 지금 진행 중인 초안·진단 수. 고른 값보다 많을 때만 "진행 중인 n개가 끝나면" 띠가 보인다. */
+  running: number;
+}
+
+/** 진단 보고서를 내보낼 폴더. */
+export interface ReportFolderSnapshot {
+  /** 폴더 경로. 고르지 않았으면 기본 폴더(사용자 문서 폴더 아래 `Stardraft/Reports/Sentry`)다. */
+  path: string;
+  /** 기본 폴더를 쓰는 중인지 여부. */
+  isDefault: boolean;
+}
+
 /** 렌더러가 그릴 앱 상태 전체. */
 export interface AppSnapshot {
   /** 화면에 보일 앱 이름. 소스에서 실행하면 `Stardraft Dev`다. */
@@ -898,17 +1283,21 @@ export interface AppSnapshot {
   platform: 'darwin' | 'win32' | 'other';
   /** "Flow 계정" 칸의 상태. */
   flowAccount: FlowAccountSnapshot;
+  /** "Sentry" 칸의 상태. */
+  sentry: SentryConnectionSnapshot;
+  /** 등록한 Sentry 프로젝트와 등록할 수 있는 프로젝트 목록. */
+  sentryProjects: SentryProjectsSnapshot;
+  /** 저장소별 재현 허용과 재현 도구 권한. */
+  reproduction: ReproductionSnapshot;
   /** 지금 보일 전역 문제. 없으면 `null`. */
   globalProblem: GlobalProblemSnapshot | null;
   /** 이 OS의 후보 에이전트마다의 연결 확인 상태. 후보 순서다(macOS는 Claude Code와 Codex, Windows는 Claude Code). */
   agentConnections: AgentConnectionSnapshot[];
   /** 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferencesSnapshot;
-  /** 작업 폴더와 "이 PC에서 찾은 폴더". */
-  workFolders: WorkFoldersSnapshot;
   /** 저장소 매핑과 고를 참여 Flow 프로젝트 목록. */
   repoMappings: RepoMappingsSnapshot;
-  /** 필수 세 가지와 감지 시작 여부. */
+  /** 필수 설정와 감지 시작 여부. */
   onboarding: OnboardingSnapshot;
   /** 로그인 시 자동 시작이 켜져 있는지 여부. */
   launchAtLogin: boolean;
@@ -920,29 +1309,50 @@ export interface AppSnapshot {
   manualCheck: ManualCheckSnapshot;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettingsSnapshot;
+  /** 설정 "에이전트" 칸의 병렬 작업 수와 진행 중인 수. */
+  parallelWork: ParallelWorkSnapshot;
+  /** 설정 "Sentry" 칸의 "보고서를 내보낼 폴더". */
+  reportFolder: ReportFolderSnapshot;
   /** 앱 내 업데이트의 화면 상태. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
   update: UpdateStateSnapshot | null;
 }
 
 /** main → 렌더러 변경 이벤트. */
 export type AppEvent =
-  /** 이미 열린 설정 창에 이 칸을 보이라고 알린다. */
-  | { type: 'settings-section-requested'; section: SettingsSection }
+  /**
+   * 이미 열린 설정 창에 이 칸을 보이라고 알린다. `projectId`가 있으면 그 Flow 프로젝트의 저장소 매핑을,
+   * `sentryProjectId`가 있으면 `Sentry` 탭에서 그 Sentry 프로젝트의 저장소 매핑을 짚어 보인다.
+   */
+  | { type: 'settings-section-requested'; section: SettingsSection; projectId?: string; sentryProjectId?: string }
   /** "Flow 계정" 칸의 상태가 바뀌었다. */
   | { type: 'flow-account-changed'; flowAccount: FlowAccountSnapshot }
   /** 키 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인과 확인을 기다리는 경우는 알리지 않는다. */
   | { type: 'flow-key-check-finished'; result: 'connected' | FlowKeyCheckFailure }
+  /** "Sentry" 칸의 상태가 바뀌었다. */
+  | { type: 'sentry-changed'; sentry: SentryConnectionSnapshot }
+  /** 토큰 확인 하나가 연결이나 실패로 끝났다. 그만둔 확인은 알리지 않는다. */
+  | { type: 'sentry-token-check-finished'; result: 'connected' | SentryTokenCheckFailure }
+  /** 등록한 Sentry 프로젝트, 그 저장소 매핑, 등록할 수 있는 프로젝트 목록이 바뀌었다. */
+  | { type: 'sentry-projects-changed'; sentryProjects: SentryProjectsSnapshot }
+  /** 프로젝트 등록이나 편집이 끝났다. 등록·편집 모달이 닫히거나 이유를 보인다. */
+  | { type: 'sentry-project-saved'; result: SentryProjectSaveResult }
+  /** 프로젝트 모달의 [폴더 고르기…]로 폴더를 골랐다. 모달이 이 경로를 보이고 [등록]·[저장]에 싣는다. */
+  | { type: 'sentry-draft-folder-picked'; path: string }
+  /** 재현 허용, 환경 파일, 재현 도구 권한, MCP 서버 목록이 바뀌었다. */
+  | { type: 'reproduction-changed'; reproduction: ReproductionSnapshot }
+  /** 재현을 켜는 확인 모달의 저장이 끝났다. 모달이 닫히거나 이유를 보인다. */
+  | { type: 'reproduction-saved'; result: ReproductionSaveResult }
+  /** 재현을 켜는 확인 모달의 [파일 고르기…]로 환경 파일을 골랐다. 모달이 이 경로를 보이고 [켜기]에 싣는다. */
+  | { type: 'reproduction-env-file-picked'; path: string }
   /** 보일 전역 문제가 바뀌었다. */
   | { type: 'global-problem-changed'; globalProblem: GlobalProblemSnapshot | null }
   /** 에이전트 연결 확인 상태가 바뀌었다. */
   | { type: 'agent-connections-changed'; agentConnections: AgentConnectionSnapshot[] }
   /** 기본 에이전트나 모델 선택이 바뀌었다. 연결된 에이전트가 바뀔 때도 온다. */
   | { type: 'agent-preferences-changed'; agentPreferences: AgentPreferencesSnapshot }
-  /** 작업 폴더나 그 훑은 결과, "이 PC에서 찾은 폴더"가 바뀌었다. */
-  | { type: 'work-folders-changed'; workFolders: WorkFoldersSnapshot }
   /** 저장소 매핑이나 그 폴더 확인 결과, 참여 Flow 프로젝트 목록이 바뀌었다. */
   | { type: 'repo-mappings-changed'; repoMappings: RepoMappingsSnapshot }
-  /** 필수 세 가지의 상태나 감지 시작 여부, [감지 시작]의 진행 상태가 바뀌었다. */
+  /** 필수 설정의 상태나 감지 시작 여부, [감지 시작]의 진행 상태가 바뀌었다. */
   | { type: 'onboarding-changed'; onboarding: OnboardingSnapshot }
   /** 로그인 시 자동 시작이 켜지거나 꺼졌다. */
   | { type: 'launch-at-login-changed'; launchAtLogin: boolean }
@@ -954,10 +1364,20 @@ export type AppEvent =
   | { type: 'manual-check-changed'; manualCheck: ManualCheckSnapshot }
   /** 설정 "초안" 칸의 추가 지침이나 비밀 파일 패턴이 바뀌었다. */
   | { type: 'draft-settings-changed'; draftSettings: DraftSettingsSnapshot }
+  /** 보고서를 내보낼 폴더가 바뀌었다. */
+  | { type: 'report-folder-changed'; reportFolder: ReportFolderSnapshot }
+  /** 진단 보고서를 내보냈다. 토스트가 파일 이름을 보인다. */
+  | { type: 'diagnosis-exported'; diagnosisId: number; fileName: string }
+  /** 진단 보고서를 내보내지 못했다. 토스트가 알린다. */
+  | { type: 'diagnosis-export-failed'; diagnosisId: number }
+  /** 병렬 작업 수나 진행 중인 수가 바뀌었다. */
+  | { type: 'parallel-work-changed'; parallelWork: ParallelWorkSnapshot }
   /** 앱 내 업데이트의 상태가 바뀌었다. */
   | { type: 'update-changed'; update: UpdateStateSnapshot }
   /** 이미 열린 창에 이 묶음을 보이라고 알린다. OS 알림을 눌렀을 때 온다. */
   | { type: 'review-bundle-requested'; bundleId: number }
+  /** 이미 열린 펼친 창에 이 진단을 보이라고 알린다(진단 알림을 눌렀을 때). */
+  | { type: 'review-diagnosis-requested'; diagnosisId: number }
   /** 묶음의 게시가 실패했다. 다른 묶음을 보고 있어도 토스트를 한 번 띄운다. */
   | { type: 'post-failed'; bundleId: number }
   /** 게시를 누를 때의 확인이 묶음의 게시를 멈췄다. 카운트다운 토스트 대신 "게시하지 않았습니다: …" 토스트를 한 번 띄운다. */
@@ -967,14 +1387,53 @@ export type AppEvent =
 export type AppCommand =
   /** 설정 창을 연다. 칸을 주면 그 칸을 보인다. */
   | { type: 'open-settings'; section?: SettingsSection }
+  /** 묶음의 Flow 프로젝트 저장소 매핑 편집으로 간다. 설정 "저장소" 칸을 열고 그 프로젝트의 줄을 짚어 보인다. */
+  | { type: 'open-repo-mapping'; bundleId: number }
+  /** 저장소 대기 진단의 [저장소 매핑하기]·[매핑 고치기]. 설정 "저장소" 칸 `Sentry` 탭에서 그 프로젝트를 짚는다. */
+  | { type: 'open-sentry-repo-mapping'; diagnosisId: number }
+  /** 줄 서 있거나 진행 중인 진단을 취소한다. 진단 실패(취소함)가 된다. */
+  | { type: 'cancel-diagnosis'; diagnosisId: number }
+  /** 진단 실패를 [다시 시도]한다. 생성 대기열의 `user` 칸에 선다. */
+  | { type: 'retry-diagnosis'; diagnosisId: number }
+  /** 시간 초과로 실패한 재현하던 진단을 [재현 없이 다시 시도]한다. 읽기 전용으로 돌고 보고서의 재현 칸은 "불가(시간 초과)"다. 생성 대기열의 `user` 칸에 선다. */
+  | { type: 'retry-diagnosis-without-reproduction'; diagnosisId: number }
+  /** 연장을 묻는 진단의 [계속 진행]. 상한을 10분 늘린다. */
+  | { type: 'continue-diagnosis'; diagnosisId: number }
+  /** 연장을 묻는 진단의 [멈추기]. 전달이 되는 에이전트는 보고서를 마무리하게 하고, 아니면 바로 끊는다. */
+  | { type: 'stop-diagnosis'; diagnosisId: number }
+  /** 검토 대기 보고서를 지시 없이 [다시 진단]한다. 앞선 보고서를 넘기지 않고 쌓인 지시를 비운다. 생성 대기열의 `user` 칸에 선다. */
+  | { type: 'rediagnose'; diagnosisId: number }
+  /**
+   * 검토 대기 보고서를 지시를 덧붙여 다시 진단한다. 앞선 보고서와 쌓인 지시 전부를 넘긴다. 생성 대기열의 `user` 칸에 선다.
+   * `reproduce`는 "재현도 다시 하기"다. 끄면 읽기 전용으로 돌고 앞선 재현 칸과 첨부를 그대로 옮긴다. 재현을 허용하지 않은 저장소에서는 쓰이지 않는다.
+   */
+  | { type: 'rediagnose-with-directive'; diagnosisId: number; directive: string; reproduce: boolean }
+  /** 진단을 [완료]한다. 진단 실패와 검토 대기 보고서가 대상이고, 최소 기록만 남기고 본문과 첨부를 지운다. Sentry에는 요청하지 않는다. */
+  | { type: 'complete-diagnosis'; diagnosisId: number }
+  /** 검토 대기 보고서를 설정의 폴더에 마크다운 파일로 내보낸다. 끝나면 `diagnosis-exported`나 `diagnosis-export-failed`로 알린다. 상태는 바뀌지 않는다. */
+  | { type: 'export-diagnosis'; diagnosisId: number }
+  /** 보고서를 내보낼 폴더를 폴더 선택 창으로 바꾼다. */
+  | { type: 'pick-report-folder' }
+  /** 보고서를 내보낼 폴더를 OS 파일 관리자로 연다. 아직 없으면 만들어서 연다. */
+  | { type: 'open-report-folder' }
+  /** 진단의 오류 이슈를 Sentry에서 연다. 주소는 main이 정한다. */
+  | { type: 'open-diagnosis-in-sentry'; diagnosisId: number }
+  /** 진단 보고서의 근거 하나를 에디터에서 연다. `evidenceIndex`는 보고서 근거 목록의 위치다. */
+  | { type: 'open-diagnosis-evidence-in-editor'; diagnosisId: number; evidenceIndex: number }
   /** 데이터 폴더나 로그 폴더를 OS 파일 관리자로 연다. */
   | { type: 'open-folder'; folder: AppFolder }
   /** 붙여 넣은 Flow 개인 API 키를 확인한다. 성공하면 main이 키를 저장한다. */
   | { type: 'check-flow-key'; apiKey: string }
-  /** 다른 계정의 키로 바꾸는 것을 확인했다. 지금까지의 기록을 지우고 새 계정으로 시작한다. */
+  /** 다른 계정의 키로 바꾸는 것을 확인했다. 지금 계정의 기록을 보관하고 새 계정의 기록으로 바꾼다. */
   | { type: 'confirm-flow-account-switch' }
   /** 진행 중인 키 확인이나 확인을 기다리는 계정 바꾸기를 그만둔다. */
   | { type: 'cancel-flow-key-check' }
+  /** 붙여 넣은 Sentry 개인 토큰을 조직 목록으로 확인한다. 성공하면 main이 토큰을 저장한다. */
+  | { type: 'check-sentry-token'; token: string }
+  /** 진행 중인 토큰 확인을 그만둔다. */
+  | { type: 'cancel-sentry-token-check' }
+  /** Sentry 연결을 끊는다. 토큰만 지운다. */
+  | { type: 'disconnect-sentry' }
   /** 이 OS의 후보 에이전트를 모두 확인한다. 에이전트 칸을 열 때 쓴다. 저장한 CLI 경로가 있으면 그대로 쓴다. */
   | { type: 'check-agents' }
   /** 에이전트 하나의 연결을 확인한다. [다시 확인]에 쓴다. */
@@ -989,14 +1448,6 @@ export type AppCommand =
   | { type: 'set-default-agent'; agent: AgentId }
   /** 에이전트의 모델을 고른다. `null`은 기본 모델(에이전트가 정함)이다. 목록에 없는 모델은 main이 받지 않는다. */
   | { type: 'set-agent-model'; agent: AgentId; model: string | null }
-  /** 폴더 선택 창으로 작업 폴더를 여러 개 고른다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
-  | { type: 'pick-work-folders' }
-  /** "이 PC에서 찾은 폴더"를 작업 폴더로 더한다. 지금 제안에 없는 경로는 main이 받지 않는다. */
-  | { type: 'add-suggested-work-folder'; path: string }
-  /** 작업 폴더를 지운다. 그 안을 가리키는 저장소 매핑은 그대로 둔다. */
-  | { type: 'remove-work-folder'; path: string }
-  /** 작업 폴더와 "이 PC에서 찾은 폴더"를 다시 훑는다. "저장소" 칸을 열 때 보낸다. */
-  | { type: 'refresh-work-folders' }
   /** 연결된 폴더를 다시 확인하고 참여 Flow 프로젝트 목록을 다시 받는다. "저장소" 칸을 열 때와 [다시 불러오기]에 보낸다. */
   | { type: 'refresh-repo-mappings' }
   /** 폴더 선택 창으로 고른 폴더를 Flow 프로젝트에 연결한다. 경로는 main이 받으므로 렌더러는 보내지 않는다. */
@@ -1005,10 +1456,43 @@ export type AppCommand =
   | { type: 'remove-mapping-repo'; projectId: string; path: string }
   /** 매핑을 통째로 지운다. */
   | { type: 'remove-repo-mapping'; projectId: string }
-  /** [감지 시작]. 필수 세 가지가 다 되기 전이거나 이미 시작했으면 main이 무시한다. */
+  /** 등록한 Sentry 프로젝트에 닿는지, 매핑된 폴더가 있는지 다시 확인한다. "Sentry"·"저장소" 칸을 열 때 보낸다. */
+  | { type: 'refresh-sentry-projects' }
+  /** 등록할 수 있는 Sentry 프로젝트 목록을 조직마다 받는다. 프로젝트 모달을 열 때 보낸다. */
+  | { type: 'load-sentry-candidates' }
+  /** 목록에서 고른 Sentry 프로젝트를 등록한다. `event:read`를 확인한 뒤 저장하고 `sentry-project-saved`로 알린다. */
+  | { type: 'register-sentry-project'; projectId: string; environment: string | null; levels: SentryLevelId[]; repoPath: string | null }
+  /** 등록한 Sentry 프로젝트의 필터와 저장소를 바꾼다. `repoPath`가 `null`이면 저장소 매핑을 지운다. */
+  | { type: 'update-sentry-project'; projectId: string; environment: string | null; levels: SentryLevelId[]; repoPath: string | null }
+  /** Sentry 프로젝트 등록을 푼다. 그 프로젝트의 저장소 매핑도 지워진다. */
+  | { type: 'unregister-sentry-project'; projectId: string }
+  /** 프로젝트 모달의 저장소로 쓸 폴더를 폴더 선택 창으로 고른다. 고르면 `sentry-draft-folder-picked`로 알린다. */
+  | { type: 'pick-sentry-draft-folder' }
+  /** 폴더 선택 창으로 고른 폴더를 등록한 Sentry 프로젝트의 저장소로 정한다. "저장소" 칸의 [바꾸기…]·[폴더 고르기…]가 보낸다. */
+  | { type: 'pick-sentry-project-repo'; projectId: string }
+  /** 저장소 칸의 재현 항목을 열 때 지정한 환경 파일이 아직 있는지 다시 확인한다. */
+  | { type: 'refresh-reproduction-repos' }
+  /** 에이전트 칸 `재현` 탭을 열 때 MCP 서버 목록을 다시 읽는다. */
+  | { type: 'refresh-reproduction-servers' }
+  /**
+   * 저장소의 재현 허용을 켜거나 끈다. 켤 때 `envFile`(확인 모달에서 고른 값, `null`은 지정 안 함)을 함께 보내고,
+   * 끌 때는 보내지 않아 저장해 둔 환경 파일을 그대로 둔다. 켜는 요청의 결과는 `reproduction-saved`로 알린다.
+   */
+  | { type: 'set-reproduction-enabled'; repoPath: string; enabled: boolean; envFile?: string | null }
+  /** 재현을 켠 저장소의 재현용 환경 파일을 파일 선택 창으로 고른다. */
+  | { type: 'pick-reproduction-env-file'; repoPath: string }
+  /** 재현을 켜는 확인 모달의 환경 파일을 파일 선택 창으로 고른다. 고르면 `reproduction-env-file-picked`로 알린다. */
+  | { type: 'pick-reproduction-env-file-draft' }
+  /** 재현 도구 권한의 방식을 바꾼다. */
+  | { type: 'set-reproduction-tool-mode'; mode: ReproductionToolModeId }
+  /** `직접 선택`에서 MCP 서버 하나를 켜거나 끈다. 에이전트별로 서버 이름만 저장한다. */
+  | { type: 'set-reproduction-server-enabled'; agent: AgentId; name: string; enabled: boolean }
+  /** [감지 시작]. 필수 설정가 다 되기 전이거나 이미 시작했으면 main이 무시한다. */
   | { type: 'start-detection' }
   /** 로그인 시 자동 시작을 켜거나 끈다. */
   | { type: 'set-launch-at-login'; enabled: boolean }
+  /** 병렬 작업 수를 바꾼다. 1~5의 정수만 받는다. 돌던 실행은 그대로 두고 다음 실행을 꺼낼 때부터 쓴다. */
+  | { type: 'set-parallel-work-count'; count: number }
   /** 묶음을 무시한다. 처리됨이면 main이 무시한다. */
   | { type: 'ignore-bundle'; bundleId: number }
   /** 처리됨 묶음을 되돌린다. 되돌릴 수 없는 묶음이면 main이 무시한다. */
@@ -1049,9 +1533,9 @@ export type AppCommand =
   /** 저장소 선택 창을 닫는다. */
   | { type: 'close-repo-picker' }
   /** 작은 창을 닫고 펼친 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
-  | { type: 'expand-review'; bundleId: number | null }
+  | { type: 'expand-review'; bundleId: number | null; diagnosisId?: number | null }
   /** 펼친 창을 닫고 작은 창을 연다. 보고 있던 묶음을 고른 채로 연다. */
-  | { type: 'collapse-review'; bundleId: number | null }
+  | { type: 'collapse-review'; bundleId: number | null; diagnosisId?: number | null }
   /** 창의 영역을 접거나 편다. */
   | { type: 'set-review-section'; window: ReviewWindow; section: ReviewSection; open: boolean }
   /** [게시]. 준비됨 묶음의 5초 카운트다운을 시작한다. 게시할 수 없는 묶음이면 main이 무시한다. 게시 본문은 main이 묶음에서 만든다. */
@@ -1148,9 +1632,9 @@ function isAgentModelInput(value: unknown): value is string | null {
   return value === null || (typeof value === 'string' && value !== '' && value.length <= AGENT_MODEL_MAX_LENGTH);
 }
 
-/** 작업 폴더·저장소 매핑 명령에 실을 수 있는 경로인지 확인한다. 목록이나 제안에 있는 경로인지는 main이 본다. */
-function isWorkFolderPathInput(value: unknown): value is string {
-  return typeof value === 'string' && value !== '' && value.length <= WORK_FOLDER_PATH_MAX_LENGTH;
+/** 저장소 매핑 명령에 실을 수 있는 경로인지 확인한다. 목록에 있는 경로인지는 main이 본다. */
+function isFolderPathInput(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= REPO_FOLDER_PATH_MAX_LENGTH;
 }
 
 /** 저장소 매핑 명령에 실을 수 있는 Flow 프로젝트 ID인지 확인한다. 참여 목록이나 매핑에 있는 ID인지는 main이 본다. */
@@ -1158,8 +1642,38 @@ function isFlowProjectIdInput(value: unknown): value is string {
   return typeof value === 'string' && value !== '' && value.length <= FLOW_PROJECT_ID_MAX_LENGTH;
 }
 
+/** Sentry 프로젝트 명령에 실을 수 있는 프로젝트 ID인지 확인한다. 등록할 수 있는 프로젝트인지는 main이 본다. */
+function isSentryProjectIdInput(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= SENTRY_PROJECT_ID_MAX_LENGTH;
+}
+
+/** 환경 필터로 실을 수 있는 값인지 확인한다. `null`은 모든 환경이다. */
+function isSentryEnvironmentInput(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && value !== '' && value.length <= SENTRY_ENVIRONMENT_MAX_LENGTH);
+}
+
+/** 레벨 필터로 실을 수 있는 값인지 확인한다. 하나 이상이고 모두 아는 레벨이다. */
+function isSentryLevelsInput(value: unknown): value is SentryLevelId[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= SENTRY_LEVEL_IDS.length &&
+    value.every((level) => (SENTRY_LEVEL_IDS as readonly unknown[]).includes(level))
+  );
+}
+
+/** 저장소 폴더로 실을 수 있는 값인지 확인한다. `null`은 저장소 없음이다. */
+function isOptionalFolderPathInput(value: unknown): value is string | null {
+  return value === null || isFolderPathInput(value);
+}
+
 /** 묶음 명령에 실을 수 있는 묶음 ID인지 확인한다. 있는 묶음인지는 main이 본다. */
 function isBundleIdInput(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+/** 진단 ID인지 확인한다. 진단 ID는 `sentry_diagnosis` 행의 ID라 양의 정수다. */
+function isDiagnosisIdInput(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
@@ -1218,6 +1732,11 @@ function isReviewSection(value: unknown): value is ReviewSection {
   return typeof value === 'string' && (REVIEW_SECTIONS as readonly string[]).includes(value);
 }
 
+/** 토큰 확인 명령에 실을 수 있는 토큰인지 확인한다. 앞뒤 공백 정리는 main이 한다. */
+function isSentryTokenInput(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '' && value.length <= SENTRY_TOKEN_MAX_LENGTH;
+}
+
 /** 키 확인 명령에 실을 수 있는 키인지 확인한다. 앞뒤 공백 정리와 키 형식 판단은 main이 한다. */
 function isFlowApiKeyInput(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '' && value.length <= FLOW_API_KEY_MAX_LENGTH;
@@ -1245,6 +1764,8 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isUpdateBannerInput(candidate.banner) ? { type: 'dismiss-update-banner', banner: candidate.banner } : null;
     case 'check-flow-key':
       return isFlowApiKeyInput(candidate.apiKey) ? { type: 'check-flow-key', apiKey: candidate.apiKey } : null;
+    case 'check-sentry-token':
+      return isSentryTokenInput(candidate.token) ? { type: 'check-sentry-token', token: candidate.token } : null;
     case 'set-default-agent':
       return isAgentId(candidate.agent) ? { type: 'set-default-agent', agent: candidate.agent } : null;
     case 'check-agent':
@@ -1256,22 +1777,58 @@ export function parseAppCommand(value: unknown): AppCommand | null {
       return isAgentId(candidate.agent) && isAgentModelInput(candidate.model)
         ? { type: 'set-agent-model', agent: candidate.agent, model: candidate.model }
         : null;
-    case 'add-suggested-work-folder':
-    case 'remove-work-folder':
-      return isWorkFolderPathInput(candidate.path) ? { type: candidate.type, path: candidate.path } : null;
     case 'pick-mapping-repos':
     case 'remove-repo-mapping':
       return isFlowProjectIdInput(candidate.projectId) ? { type: candidate.type, projectId: candidate.projectId } : null;
+    case 'register-sentry-project':
+    case 'update-sentry-project':
+      return isSentryProjectIdInput(candidate.projectId) &&
+        isSentryEnvironmentInput(candidate.environment) &&
+        isSentryLevelsInput(candidate.levels) &&
+        isOptionalFolderPathInput(candidate.repoPath)
+        ? {
+            type: candidate.type,
+            projectId: candidate.projectId,
+            environment: candidate.environment,
+            levels: [...candidate.levels],
+            repoPath: candidate.repoPath,
+          }
+        : null;
+    case 'unregister-sentry-project':
+    case 'pick-sentry-project-repo':
+      return isSentryProjectIdInput(candidate.projectId) ? { type: candidate.type, projectId: candidate.projectId } : null;
     case 'remove-mapping-repo':
-      return isFlowProjectIdInput(candidate.projectId) && isWorkFolderPathInput(candidate.path)
+      return isFlowProjectIdInput(candidate.projectId) && isFolderPathInput(candidate.path)
         ? { type: 'remove-mapping-repo', projectId: candidate.projectId, path: candidate.path }
         : null;
     case 'set-repo-picker-checked':
-      return isWorkFolderPathInput(candidate.path) && typeof candidate.checked === 'boolean'
+      return isFolderPathInput(candidate.path) && typeof candidate.checked === 'boolean'
         ? { type: 'set-repo-picker-checked', path: candidate.path, checked: candidate.checked }
         : null;
     case 'set-launch-at-login':
       return typeof candidate.enabled === 'boolean' ? { type: 'set-launch-at-login', enabled: candidate.enabled } : null;
+    case 'set-reproduction-enabled':
+      if (!isFolderPathInput(candidate.repoPath) || typeof candidate.enabled !== 'boolean') return null;
+      if (candidate.envFile === undefined) return { type: 'set-reproduction-enabled', repoPath: candidate.repoPath, enabled: candidate.enabled };
+      return isOptionalFolderPathInput(candidate.envFile)
+        ? { type: 'set-reproduction-enabled', repoPath: candidate.repoPath, enabled: candidate.enabled, envFile: candidate.envFile }
+        : null;
+    case 'pick-reproduction-env-file':
+      return isFolderPathInput(candidate.repoPath) ? { type: 'pick-reproduction-env-file', repoPath: candidate.repoPath } : null;
+    case 'set-reproduction-tool-mode':
+      return (REPRODUCTION_TOOL_MODES as readonly unknown[]).includes(candidate.mode)
+        ? { type: 'set-reproduction-tool-mode', mode: candidate.mode as ReproductionToolModeId }
+        : null;
+    case 'set-reproduction-server-enabled':
+      return isAgentId(candidate.agent) &&
+        typeof candidate.name === 'string' &&
+        candidate.name !== '' &&
+        candidate.name.length <= REPRODUCTION_SERVER_NAME_MAX_LENGTH &&
+        typeof candidate.enabled === 'boolean'
+        ? { type: 'set-reproduction-server-enabled', agent: candidate.agent, name: candidate.name, enabled: candidate.enabled }
+        : null;
+    case 'set-parallel-work-count':
+      return isParallelWorkCount(candidate.count) ? { type: 'set-parallel-work-count', count: candidate.count } : null;
     case 'edit-draft':
       return isBundleIdInput(candidate.bundleId) && isDraftTextInput(candidate.text) ? { type: 'edit-draft', bundleId: candidate.bundleId, text: candidate.text } : null;
     case 'remove-recipient':
@@ -1281,6 +1838,10 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'regenerate-with-directive':
       return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.directive)
         ? { type: 'regenerate-with-directive', bundleId: candidate.bundleId, directive: candidate.directive }
+        : null;
+    case 'rediagnose-with-directive':
+      return isDiagnosisIdInput(candidate.diagnosisId) && isRegenerationTextInput(candidate.directive) && typeof candidate.reproduce === 'boolean'
+        ? { type: 'rediagnose-with-directive', diagnosisId: candidate.diagnosisId, directive: candidate.directive, reproduce: candidate.reproduce }
         : null;
     case 'fix-requirement':
       return isBundleIdInput(candidate.bundleId) && isRegenerationTextInput(candidate.requirement)
@@ -1293,14 +1854,34 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'cancel-generation':
     case 'retry-bundle':
     case 'open-bundle-in-flow':
+    case 'open-repo-mapping':
     case 'link-bundle-repos':
     case 'open-repo-picker':
     case 'post-bundle':
     case 'cancel-posting':
       return isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
+    case 'open-sentry-repo-mapping':
+    case 'cancel-diagnosis':
+    case 'retry-diagnosis':
+    case 'retry-diagnosis-without-reproduction':
+    case 'continue-diagnosis':
+    case 'stop-diagnosis':
+    case 'rediagnose':
+    case 'complete-diagnosis':
+    case 'export-diagnosis':
+    case 'open-diagnosis-in-sentry':
+      return isDiagnosisIdInput(candidate.diagnosisId) ? { type: candidate.type, diagnosisId: candidate.diagnosisId } : null;
+    case 'open-diagnosis-evidence-in-editor':
+      return isDiagnosisIdInput(candidate.diagnosisId) && Number.isSafeInteger(candidate.evidenceIndex) && (candidate.evidenceIndex as number) >= 0
+        ? { type: 'open-diagnosis-evidence-in-editor', diagnosisId: candidate.diagnosisId, evidenceIndex: candidate.evidenceIndex as number }
+        : null;
     case 'expand-review':
-    case 'collapse-review':
-      return candidate.bundleId === null || isBundleIdInput(candidate.bundleId) ? { type: candidate.type, bundleId: candidate.bundleId } : null;
+    case 'collapse-review': {
+      if (candidate.bundleId !== null && !isBundleIdInput(candidate.bundleId)) return null;
+      // 진단 ID는 없을 수 있다. 있으면 진단 ID여야 하고, 없으면 싣지 않는다.
+      if (candidate.diagnosisId === undefined || candidate.diagnosisId === null) return { type: candidate.type, bundleId: candidate.bundleId };
+      return isDiagnosisIdInput(candidate.diagnosisId) ? { type: candidate.type, bundleId: candidate.bundleId, diagnosisId: candidate.diagnosisId } : null;
+    }
     case 'set-review-section':
       return isReviewWindow(candidate.window) && isReviewSection(candidate.section) && typeof candidate.open === 'boolean'
         ? { type: 'set-review-section', window: candidate.window, section: candidate.section, open: candidate.open }
@@ -1340,10 +1921,13 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'close-editor-picker':
     case 'confirm-flow-account-switch':
     case 'cancel-flow-key-check':
+    case 'cancel-sentry-token-check':
+    case 'disconnect-sentry':
     case 'check-agents':
-    case 'pick-work-folders':
-    case 'refresh-work-folders':
     case 'refresh-repo-mappings':
+    case 'refresh-sentry-projects':
+    case 'load-sentry-candidates':
+    case 'pick-sentry-draft-folder':
     case 'start-detection':
     case 'pick-repo-picker-folders':
     case 'link-repo-picker':
@@ -1359,7 +1943,19 @@ export function parseAppCommand(value: unknown): AppCommand | null {
     case 'cancel-update-restart':
     case 'retry-update-install':
       return { type: candidate.type };
+    // 인자 없는 명령이 한 갈래에 너무 많으면 TypeScript가 합집합 대입을 검사하지 못해 갈래를 나눈다.
+    case 'pick-report-folder':
+    case 'open-report-folder':
+    case 'refresh-reproduction-repos':
+    case 'refresh-reproduction-servers':
+    case 'pick-reproduction-env-file-draft':
+      return { type: candidate.type };
     default:
       return null;
   }
+}
+
+/** 병렬 작업 수로 받을 수 있는 값(1~5의 정수)인지 본다. */
+function isParallelWorkCount(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= PARALLEL_WORK_COUNT_MIN && (value as number) <= PARALLEL_WORK_COUNT_MAX;
 }

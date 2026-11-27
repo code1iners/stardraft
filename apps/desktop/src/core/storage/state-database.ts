@@ -11,11 +11,15 @@ import {
   type RepoCheck,
   type UnsavedBundle,
 } from '../bundles/mention-bundle';
-import { isQueuePriority, type Draft, type DraftFailure, type QueuedDraft, type Regeneration, type RunRecord } from '../drafts/draft';
+import type { Draft, DraftFailure, Regeneration } from '../drafts/draft';
+import { isQueuePriority, type QueuedTarget, type RunRecord } from '../generation/generation-run';
 import type { BundleContext } from '../flow/bundle-context';
 import { mentionLocationOf, type MentionLocation } from '../detection/mention';
 import type { FlowEmployee } from '../ports/flow-api';
-import type { StateStore } from '../ports/state-store';
+import type { GenerationQueueStore } from '../ports/generation-queue-store';
+import type { AccountLeaving, AccountSwitchResult, StateStore } from '../ports/state-store';
+import { FLOW_TARGET_KIND } from '../drafts/flow-target-adapter';
+import { isSameFlowUser } from '../flow/user-id';
 import type { UpdateAttempt } from '../update/update-restart';
 
 /** 열린 `state.db` 연결. */
@@ -311,13 +315,185 @@ export const STATE_MIGRATIONS: readonly string[] = [
   DROP TABLE trial_mention;
   ALTER TABLE mention_bundle DROP COLUMN trial;
   `,
+  // 23: 생성 대기열. 대기열이 Flow 묶음 말고 다른 종류의 대상도 담도록 대상 종류(`kind`)를 두고, 묶음 ID 열을 대상 ID(`target_id`)로 바꾼다.
+  // 이미 있던 줄은 모두 Flow 묶음이다. 종류 열에 기본값을 두지 않으려고 표를 새로 만들어 옮긴다.
+  `
+  CREATE TABLE draft_queue_new (
+    position INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    priority TEXT NOT NULL CHECK (priority IN ('resume', 'user', 'auto'))
+  ) STRICT;
+  INSERT INTO draft_queue_new (position, kind, target_id, priority) SELECT position, 'flow', bundle_id, priority FROM draft_queue;
+  DROP TABLE draft_queue;
+  ALTER TABLE draft_queue_new RENAME TO draft_queue;
+  `,
+  // 24: Flow 기록의 계정별 보관. 다른 계정의 키로 바꿔도 기록을 지우지 않고 계정마다 보관한다.
+  // 계정 표는 계정마다 한 줄이 되고 움직이는 계정 표시, 마지막으로 쓴 시각, 떠날 때의 비밀 파일 패턴을 갖는다.
+  // 기준점과 담당 업무 감지 상태는 계정마다 한 줄, 묶음·최소 기록·담당 업무 기록·대기열의 Flow 줄은 계정 열을 갖는다.
+  // 멘션과 최소 기록의 멘션 위치는 뿌리의 계정을 함께 적어, "이미 본 것"의 유일성이 계정 안에서만 걸리게 한다.
+  // 이미 있던 줄은 모두 지금 계정의 것으로 채운다. 계정이 없던 설치본의 줄은 빈 계정('')으로 두고, 처음 넣는 계정이 이어받는다.
+  `
+  CREATE TABLE detection_new (account_id TEXT PRIMARY KEY, baseline_alarm_id TEXT NOT NULL) STRICT;
+  INSERT INTO detection_new SELECT coalesce((SELECT user_id FROM account WHERE id = 1), ''), baseline_alarm_id FROM detection;
+  DROP TABLE detection;
+  ALTER TABLE detection_new RENAME TO detection;
+
+  CREATE TABLE assignment_detection_new (account_id TEXT PRIMARY KEY, state TEXT NOT NULL) STRICT;
+  INSERT INTO assignment_detection_new SELECT coalesce((SELECT user_id FROM account WHERE id = 1), ''), state FROM assignment_detection;
+  DROP TABLE assignment_detection;
+  ALTER TABLE assignment_detection_new RENAME TO assignment_detection;
+
+  CREATE TABLE assignment_record_new (
+    account_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    bundle_id INTEGER NOT NULL,
+    PRIMARY KEY (account_id, project_id, task_id)
+  ) STRICT;
+  INSERT INTO assignment_record_new SELECT coalesce((SELECT user_id FROM account WHERE id = 1), ''), project_id, task_id, bundle_id FROM assignment_record;
+  DROP TABLE assignment_record;
+  ALTER TABLE assignment_record_new RENAME TO assignment_record;
+
+  ALTER TABLE mention_bundle ADD COLUMN account_id TEXT NOT NULL DEFAULT '';
+  UPDATE mention_bundle SET account_id = coalesce((SELECT user_id FROM account WHERE id = 1), '');
+  CREATE INDEX mention_bundle_account_id ON mention_bundle (account_id);
+
+  CREATE TABLE mention_new (
+    account_id TEXT NOT NULL,
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    reply_id TEXT NOT NULL,
+    bundle_id INTEGER NOT NULL REFERENCES mention_bundle (id),
+    project_id TEXT NOT NULL,
+    alarm_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_name TEXT NOT NULL,
+    registered_date_time TEXT NOT NULL,
+    detected_at INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    answered INTEGER NOT NULL,
+    gone INTEGER NOT NULL DEFAULT 0,
+    gone_excluded INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, post_id, remark_id, reply_id)
+  ) STRICT;
+  INSERT INTO mention_new
+    SELECT b.account_id, m.post_id, m.remark_id, m.reply_id, m.bundle_id, m.project_id, m.alarm_id, m.sender_id, m.sender_name,
+      m.registered_date_time, m.detected_at, m.text, m.answered, m.gone, m.gone_excluded
+    FROM mention m JOIN mention_bundle b ON b.id = m.bundle_id;
+  DROP TABLE mention;
+  ALTER TABLE mention_new RENAME TO mention;
+  CREATE INDEX mention_bundle_id ON mention (bundle_id);
+
+  ALTER TABLE minimal_record ADD COLUMN account_id TEXT NOT NULL DEFAULT '';
+  UPDATE minimal_record SET account_id = coalesce((SELECT user_id FROM account WHERE id = 1), '');
+  CREATE INDEX minimal_record_account_id ON minimal_record (account_id);
+
+  CREATE TABLE minimal_record_mention_new (
+    account_id TEXT NOT NULL,
+    post_id TEXT NOT NULL,
+    remark_id TEXT NOT NULL,
+    reply_id TEXT NOT NULL,
+    bundle_id INTEGER NOT NULL REFERENCES minimal_record (bundle_id) ON DELETE CASCADE,
+    PRIMARY KEY (account_id, post_id, remark_id, reply_id)
+  ) STRICT;
+  INSERT INTO minimal_record_mention_new
+    SELECT r.account_id, m.post_id, m.remark_id, m.reply_id, m.bundle_id
+    FROM minimal_record_mention m JOIN minimal_record r ON r.bundle_id = m.bundle_id;
+  DROP TABLE minimal_record_mention;
+  ALTER TABLE minimal_record_mention_new RENAME TO minimal_record_mention;
+  CREATE INDEX minimal_record_mention_bundle_id ON minimal_record_mention (bundle_id);
+
+  CREATE TABLE draft_queue_new (
+    id INTEGER PRIMARY KEY,
+    position INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    priority TEXT NOT NULL CHECK (priority IN ('resume', 'user', 'auto')),
+    account_id TEXT
+  ) STRICT;
+  INSERT INTO draft_queue_new (position, kind, target_id, priority, account_id)
+    SELECT position, kind, target_id, priority,
+      CASE WHEN kind = 'flow' THEN coalesce((SELECT user_id FROM account WHERE id = 1), '') ELSE NULL END
+    FROM draft_queue ORDER BY position;
+  DROP TABLE draft_queue;
+  ALTER TABLE draft_queue_new RENAME TO draft_queue;
+
+  CREATE TABLE account_new (
+    user_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    division TEXT NOT NULL,
+    email TEXT NOT NULL,
+    active INTEGER NOT NULL CHECK (active IN (0, 1)),
+    last_used_at INTEGER NOT NULL,
+    secret_patterns TEXT
+  ) STRICT;
+  INSERT INTO account_new SELECT user_id, name, division, email, 1, CAST(strftime('%s', 'now') AS INTEGER) * 1000, NULL FROM account;
+  DROP TABLE account;
+  ALTER TABLE account_new RENAME TO account;
+  CREATE UNIQUE INDEX account_active ON account (active) WHERE active = 1;
+  `,
+  // 25: Sentry 오류 이슈 감지. 프로젝트별 체크포인트, 중복 억제 기록(신규는 이벤트 ID가 빈 문자열), 진단을 둔다.
+  // Flow 계정과 무관한 기록이라 계정 열(`account_id`)을 두지 않는다. 계정 열이 있으면 계정 이어받기와 30일 삭제가 건드린다.
+  // 진단의 상태 열에는 검사를 두지 않아, 뒤 단계가 상태를 더해도 표를 다시 만들지 않는다.
+  `
+  CREATE TABLE sentry_checkpoint (project_id TEXT PRIMARY KEY, checked_at INTEGER NOT NULL) STRICT;
+  CREATE TABLE sentry_detection_key (
+    issue_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    PRIMARY KEY (issue_id, event_id)
+  ) STRICT;
+  CREATE INDEX sentry_detection_key_project_id ON sentry_detection_key (project_id);
+  CREATE TABLE sentry_diagnosis (
+    id INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    issue_id TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ('new', 'regression')),
+    regression_event_id TEXT,
+    detected_at INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    repo_check TEXT,
+    issue TEXT NOT NULL
+  ) STRICT;
+  CREATE INDEX sentry_diagnosis_project_id ON sentry_diagnosis (project_id);
+  `,
+  // 26: 읽기 전용 진단. 진단에 보고서(JSON), 진단 실패의 까닭(JSON), 실행 기록(JSON 배열), 완료 시각을 둔다.
+  // 기존 줄은 감지만 된 진단(대기, 저장소 대기)이라 보고서·실패·완료 시각이 없고 실행 기록은 빈 배열이다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN report TEXT;
+  ALTER TABLE sentry_diagnosis ADD COLUMN failure TEXT;
+  ALTER TABLE sentry_diagnosis ADD COLUMN runs TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE sentry_diagnosis ADD COLUMN completed_at INTEGER;
+  `,
+  // 27: 보고서 내보내기. 진단에 마지막으로 내보낸 기록(JSON: 파일 경로, 시각, 내보낸 보고서의 생성 시각)을 둔다.
+  // 기존 줄은 내보낸 적이 없어 `NULL`이다. 완료 최소 기록에도 이 칸이 남는다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN last_export TEXT;
+  `,
+  // 28: 다시 진단. 진단에 쌓인 지시(JSON 배열)와, 마지막 다시 진단이 실패해 앞선 보고서로 돌아왔다는 기록(JSON)을 둔다.
+  // 기존 줄은 다시 진단한 적이 없어 지시는 빈 배열이고 실패 기록은 `NULL`이다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN directives TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE sentry_diagnosis ADD COLUMN rediagnosis_failure TEXT;
+  `,
+  // 29: 재현하는 진단. 지시를 덧붙인 다시 진단에서 "재현도 다시 하기"를 껐는지(앞선 재현 칸과 첨부를 그대로 옮길지)를 둔다.
+  // 기존 줄은 그런 다시 진단이 없어 0이다. 보고서의 첨부 목록은 보고서 JSON 안에 있어 열을 더하지 않는다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN keep_reproduction INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 30: 시간 연장. 시간 초과로 실패한 재현하는 진단을 [재현 없이 다시 시도]해 읽기 전용으로 돌고 있는지를 둔다.
+  // 기존 줄은 그런 다시 시도가 없어 0이다. 진단 실패의 까닭(JSON)에 재현하던 진단이었는지 칸이 생기지만 JSON 안이라 열을 더하지 않는다.
+  `
+  ALTER TABLE sentry_diagnosis ADD COLUMN without_reproduction INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
-/**
- * 다른 계정으로 처음부터 시작할 때도 지우지 않는 표. 계정과 상관없는 앱의 기록이다.
- * 옛 버전 앱이 다운그레이드 안내에 쓰는 앱 버전 기록, 서명 검증에 실패한 업데이트 버전, 업데이트 시도다.
- */
-const TABLES_KEPT_ON_RESET: ReadonlySet<string> = new Set(['app_meta', 'update_signature_failure', 'update_attempt']);
+/** 계정에 매이는 대기열 줄의 종류. Flow 초안만 계정에 매이고, 다른 종류(진단 등)는 계정과 무관하다. */
+const ACCOUNT_BOUND_QUEUE_KIND = FLOW_TARGET_KIND;
+
+/** 계정을 넣은 적 없는 설치본의 Flow 기록이 쓰는 빈 계정. 처음 넣는 계정이 이 기록을 이어받는다. */
+const NO_ACCOUNT = '';
 
 /** 열기 전에 읽은 `state.db`의 형식. */
 export interface StateDatabaseInfo {
@@ -399,38 +575,79 @@ function readAppVersion(db: StateDatabase): string | null {
   }
 }
 
-/** `state.db`를 쓰는 상태 저장소. 연결을 열고 마이그레이션하는 일은 `openStateDatabase`가 한다. */
-export class SqliteStateStore implements StateStore {
+/**
+ * `state.db`를 쓰는 상태 저장소. 연결을 열고 마이그레이션하는 일은 `openStateDatabase`가 한다.
+ * Flow 기록은 계정마다 보관하고, 읽고 쓰는 일은 움직이는 계정(지금 넣은 키의 계정)의 기록만 다룬다.
+ * 보관 중인 계정의 기록은 처리됨 정리(`listStoredBundles`, `archiveBundles`)와 30일 삭제만 건드린다.
+ */
+export class SqliteStateStore implements StateStore, GenerationQueueStore {
   constructor(private readonly db: StateDatabase) {}
 
   async getAccount(): Promise<FlowEmployee | null> {
-    /** 계정 한 줄. */
-    const row = this.db.prepare('SELECT user_id, name, division, email FROM account WHERE id = 1').get() as
+    /** 움직이는 계정 한 줄. */
+    const row = this.db.prepare('SELECT user_id, name, division, email FROM account WHERE active = 1').get() as
       | { user_id: string; name: string; division: string; email: string }
       | undefined;
     return row ? { userId: row.user_id, name: row.name, division: row.division, email: row.email } : null;
   }
 
   async setAccount(account: FlowEmployee): Promise<void> {
-    this.writeAccount(account);
+    /** 지금 움직이는 계정. */
+    const active = this.activeAccountId();
+    if (active !== null && !isSameFlowUser(active, account.userId)) throw new Error('다른 계정은 계정 바꾸기로만 연결합니다.');
+    this.db.transaction(() => {
+      if (active !== null) {
+        this.db.prepare('UPDATE account SET name = @name, division = @division, email = @email WHERE active = 1').run(account);
+        return;
+      }
+      // 처음 넣는 계정은 계정 없이 쌓인 기록(계정을 넣기 전 설치본의 줄)을 이어받는다.
+      // 마지막으로 쓴 시각은 보관할 때(떠날 때) 다시 적으므로, 움직이는 동안의 값은 30일 삭제에 쓰이지 않는다.
+      this.activate(account, Date.now());
+      this.adoptUnboundRecords(this.activeAccountId()!);
+    })();
   }
 
-  async resetForAccount(account: FlowEmployee): Promise<void> {
-    // 뒤 티켓이 더하는 표도 빠짐없이 지우도록, 표 목록을 코드에 적지 않고 DB에서 읽는다.
-    /** 지울 표 이름. */
-    const tables = (this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
-      .map((row) => row.name)
-      .filter((name) => !name.startsWith('sqlite_') && !TABLES_KEPT_ON_RESET.has(name));
-
-    // 모두 지우고 새 계정을 넣는 일을 한 트랜잭션으로 한다. 중간에 실패하면 지우기 전 그대로 남는다.
-    this.db.transaction(() => {
-      // 표끼리 외래 키가 있어도 지우는 순서와 상관없이 지우도록 검사를 커밋 때로 미룬다. 커밋 때는 모두 비어 있다.
-      this.db.pragma('defer_foreign_keys = ON');
-      for (const table of tables) this.db.exec(`DELETE FROM "${table.replaceAll('"', '""')}"`);
-      this.writeAccount(account);
+  async switchAccount(account: FlowEmployee, { now, secretPatterns }: AccountLeaving): Promise<AccountSwitchResult> {
+    return this.db.transaction((): AccountSwitchResult => {
+      // 떠나는 계정은 기록을 그대로 두고 보관한다. 돌아왔을 때 떠나 있던 동안 더한 비밀 파일 패턴을 알 수 있게 그때의 패턴을 남긴다.
+      /** 떠나는 계정이 있었는지 여부. */
+      const left = this.db
+        .prepare('UPDATE account SET active = 0, last_used_at = ?, secret_patterns = ? WHERE active = 1')
+        .run(now, JSON.stringify(secretPatterns)).changes > 0;
+      /** 보관해 둔 계정이면 그 줄. */
+      const stored = this.storedAccountRow(account.userId);
+      this.activate(account, now);
+      if (!left) this.adoptUnboundRecords(this.activeAccountId()!);
+      return { returning: stored !== null, secretPatternsWhenLeft: stored ? readJson<string[]>(stored.secret_patterns) : null };
     })();
+  }
 
+  async isStoredAccount(userId: string): Promise<boolean> {
+    return this.storedAccountRow(userId) !== null;
+  }
+
+  async deleteAccountsUnusedBefore(cutoff: number): Promise<number> {
+    /** 지울 계정. 움직이는 계정은 지우지 않는다. */
+    const expired = (this.db.prepare('SELECT user_id FROM account WHERE active = 0 AND last_used_at < ?').all(cutoff) as { user_id: string }[]).map(
+      (row) => row.user_id,
+    );
+    if (expired.length === 0) return 0;
+
+    /** 계정에 매인 표. */
+    const tables = this.accountBoundTables();
+    // 기준점과 최소 기록까지 그 계정의 기록 전체를 한 트랜잭션으로 지운다. 최소 기록의 답한 범위는 외래 키로 함께 지워진다.
+    this.db.transaction(() => {
+      // 표끼리 외래 키가 있어도 지우는 순서와 상관없이 지우도록 검사를 커밋 때로 미룬다.
+      this.db.pragma('defer_foreign_keys = ON');
+      for (const accountId of expired) {
+        // 내 답은 계정 열 없이 묶음을 따르므로 묶음을 지우기 전에 지운다.
+        this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id IN (SELECT id FROM mention_bundle WHERE account_id = ?)').run(accountId);
+        for (const table of tables) this.db.prepare(`DELETE FROM ${table} WHERE account_id = ?`).run(accountId);
+        this.db.prepare('DELETE FROM account WHERE user_id = ?').run(accountId);
+      }
+    })();
     this.clearWal();
+    return expired.length;
   }
 
   /** secure_delete는 본 파일의 지운 자리만 덮으므로, 지운 글이 WAL에 남지 않게 본 파일에 반영하고 WAL을 비운다. */
@@ -438,42 +655,105 @@ export class SqliteStateStore implements StateStore {
     this.db.pragma('wal_checkpoint(TRUNCATE)');
   }
 
-  /** 계정 한 줄을 넣거나 바꾼다. */
-  private writeAccount(account: FlowEmployee): void {
+  /** 움직이는 계정의 사용자 ID. 계정을 넣은 적이 없으면 `null`. */
+  private activeAccountId(): string | null {
+    /** 움직이는 계정 한 줄. */
+    const row = this.db.prepare('SELECT user_id FROM account WHERE active = 1').get() as { user_id: string } | undefined;
+    return row?.user_id ?? null;
+  }
+
+  /** 지금 읽고 쓰는 Flow 기록의 계정. 계정을 넣은 적이 없으면 빈 계정이다. */
+  private scope(): string {
+    return this.activeAccountId() ?? NO_ACCOUNT;
+  }
+
+  /** 보관 중인(움직이지 않는) 계정의 줄. 사용자 ID는 `isSameFlowUser`와 같게 대소문자와 앞뒤 공백을 가리지 않는다. 없으면 `null`. */
+  private storedAccountRow(userId: string): { user_id: string; secret_patterns: string | null } | null {
+    /** 같은 사람의 계정 줄. */
+    const row = this.db
+      .prepare('SELECT user_id, secret_patterns, active FROM account WHERE lower(trim(user_id)) = lower(trim(?))')
+      .get(userId) as { user_id: string; secret_patterns: string | null; active: number } | undefined;
+    return row && row.active === 0 ? row : null;
+  }
+
+  /**
+   * 계정을 움직이는 계정으로 둔다. 보관해 둔 같은 사람의 줄이 있으면 그 줄의 사용자 ID를 그대로 두고 이름·소속·이메일만 바꾼다.
+   * 움직이는 계정은 하나뿐이므로, 다른 계정을 먼저 보관한 뒤에 부른다. 트랜잭션 안에서만 부른다.
+   */
+  private activate(account: FlowEmployee, now: number): void {
+    /** 같은 사람의 기존 줄. */
+    const existing = this.db.prepare('SELECT user_id FROM account WHERE lower(trim(user_id)) = lower(trim(?))').get(account.userId) as
+      | { user_id: string }
+      | undefined;
+    if (existing) {
+      this.db
+        .prepare('UPDATE account SET name = ?, division = ?, email = ?, active = 1, last_used_at = ?, secret_patterns = NULL WHERE user_id = ?')
+        .run(account.name, account.division, account.email, now, existing.user_id);
+      return;
+    }
     this.db
-      .prepare(
-        `INSERT INTO account (id, user_id, name, division, email) VALUES (1, @userId, @name, @division, @email)
-         ON CONFLICT (id) DO UPDATE SET
-           user_id = excluded.user_id, name = excluded.name, division = excluded.division, email = excluded.email`,
-      )
-      .run(account);
+      .prepare('INSERT INTO account (user_id, name, division, email, active, last_used_at, secret_patterns) VALUES (?, ?, ?, ?, 1, ?, NULL)')
+      .run(account.userId, account.name, account.division, account.email, now);
+  }
+
+  /** 계정 없이 쌓인 Flow 기록을 `accountId`의 것으로 옮긴다. 트랜잭션 안에서만 부른다. */
+  private adoptUnboundRecords(accountId: string): void {
+    for (const table of this.accountBoundTables()) this.db.prepare(`UPDATE ${table} SET account_id = ? WHERE account_id = ?`).run(accountId, NO_ACCOUNT);
+  }
+
+  /**
+   * 계정 열(`account_id`)이 있는 표. 뒤 티켓이 계정에 매인 표를 더해도 이어받기와 30일 삭제에서 빠지지 않게, 표 목록을 코드에 적지 않고 DB에서 읽는다.
+   * 계정 열 없이 뿌리를 따르는 표(내 답, 최소 기록의 답한 범위)는 들지 않는다.
+   */
+  private accountBoundTables(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c
+           WHERE m.type = 'table' AND c.name = 'account_id' ORDER BY m.name`,
+        )
+        .all() as { name: string }[]
+    ).map((row) => `"${row.name.replaceAll('"', '""')}"`);
   }
 
   async getBaselineAlarmId(): Promise<string | null> {
-    /** 감지 상태 한 줄. */
-    const row = this.db.prepare('SELECT baseline_alarm_id FROM detection WHERE id = 1').get() as
+    /** 움직이는 계정의 감지 상태 한 줄. */
+    const row = this.db.prepare('SELECT baseline_alarm_id FROM detection WHERE account_id = ?').get(this.scope()) as
       | { baseline_alarm_id: string }
       | undefined;
     return row?.baseline_alarm_id ?? null;
   }
 
-  async setBaselineAlarmId(alarmId: string): Promise<void> {
+  async setBaselineAlarmId(alarmId: string, accountId?: string): Promise<void> {
+    /** 움직이는 계정. */
+    const active = this.activeAccountId();
+    if (accountId !== undefined && (active === null || !isSameFlowUser(active, accountId))) return;
     this.writeBaseline(alarmId);
   }
 
   async hasMentionLocation({ postId, remarkId, replyId }: MentionLocation): Promise<boolean> {
+    // 회사가 달라 같은 ID가 나와도 섞이지 않게, 움직이는 계정의 기록에서만 찾는다.
     return (
       this.db
         .prepare(
-          `SELECT 1 FROM mention WHERE post_id = @postId AND remark_id = @remarkId AND reply_id = @replyId
+          `SELECT 1 FROM mention WHERE account_id = @account AND post_id = @postId AND remark_id = @remarkId AND reply_id = @replyId
            UNION ALL
-           SELECT 1 FROM minimal_record_mention WHERE post_id = @postId AND remark_id = @remarkId AND reply_id = @replyId`,
+           SELECT 1 FROM minimal_record_mention WHERE account_id = @account AND post_id = @postId AND remark_id = @remarkId AND reply_id = @replyId`,
         )
-        .get({ postId, remarkId, replyId }) !== undefined
+        .get({ account: this.scope(), postId, remarkId, replyId }) !== undefined
     );
   }
 
   async listBundles(): Promise<MentionBundle[]> {
+    return this.readBundles('account_id = ?', [this.scope()]);
+  }
+
+  async listStoredBundles(): Promise<MentionBundle[]> {
+    return this.readBundles('account_id IN (SELECT user_id FROM account WHERE active = 0)', []);
+  }
+
+  /** `where`에 맞는 묶음 줄과 그 멘션·내 답을 읽는다. */
+  private readBundles(where: string, params: readonly unknown[]): MentionBundle[] {
     /** 묶음마다 멘션. 알림 시각, 같으면 alarmId 크기 순서다. */
     const mentions = groupBy(
       this.db
@@ -481,17 +761,22 @@ export class SqliteStateStore implements StateStore {
           `SELECT * FROM (
              SELECT bundle_id, post_id, remark_id, reply_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
                gone, gone_excluded
-             FROM mention
+             FROM mention WHERE bundle_id IN (SELECT id FROM mention_bundle WHERE ${where})
            ) ORDER BY bundle_id, registered_date_time, length(alarm_id), alarm_id`,
         )
-        .all() as MentionRow[],
+        .all(...params) as MentionRow[],
     );
     /** 묶음마다 기록한 내 답. 기록한 순서다. */
     const answers = groupBy(
-      this.db.prepare('SELECT bundle_id, answer_id, registered_date_time, excluded FROM bundle_answer ORDER BY bundle_id, rowid').all() as AnswerRow[],
+      this.db
+        .prepare(
+          `SELECT bundle_id, answer_id, registered_date_time, excluded FROM bundle_answer
+           WHERE bundle_id IN (SELECT id FROM mention_bundle WHERE ${where}) ORDER BY bundle_id, rowid`,
+        )
+        .all(...params) as AnswerRow[],
     );
     /** 묶음 줄. */
-    const rows = this.db.prepare('SELECT * FROM mention_bundle ORDER BY id').all() as BundleRow[];
+    const rows = this.db.prepare(`SELECT * FROM mention_bundle WHERE ${where} ORDER BY id`).all(...params) as BundleRow[];
     return rows.map((row) => ({
       id: row.id,
       postId: row.post_id,
@@ -525,7 +810,7 @@ export class SqliteStateStore implements StateStore {
       processedAt: row.processed_at,
       context: readJson<BundleContext>(row.context),
       watchedContext: readJson<BundleContext>(row.watched_context),
-      repoCheck: readJson<RepoCheck>(row.repo_check),
+      repoCheck: readRepoCheck(row.repo_check),
       userRepos: readJson<string[]>(row.user_repos),
       draft: readJson<Draft>(row.draft),
       editedText: row.edited_text,
@@ -543,23 +828,27 @@ export class SqliteStateStore implements StateStore {
   }
 
   async getAssignmentState(): Promise<AssignmentState | null> {
-    /** 계정 초기화와 함께 지워지는 감지 기록. */
-    const row = this.db.prepare('SELECT state FROM assignment_detection WHERE id = 1').get() as { state: string } | undefined;
+    /** 움직이는 계정의 담당 업무 감지 기록. */
+    const row = this.db.prepare('SELECT state FROM assignment_detection WHERE account_id = ?').get(this.scope()) as { state: string } | undefined;
     return row ? JSON.parse(row.state) as AssignmentState : null;
   }
 
   async setAssignmentState(state: AssignmentState): Promise<void> {
-    if ((await this.getAccount())?.userId !== state.accountId) return;
-    this.db.prepare('INSERT OR REPLACE INTO assignment_detection (id, state) VALUES (1, ?)').run(JSON.stringify(state));
+    /** 움직이는 계정. */
+    const active = this.activeAccountId();
+    if (active === null || !isSameFlowUser(active, state.accountId)) return;
+    this.db.prepare('INSERT OR REPLACE INTO assignment_detection (account_id, state) VALUES (?, ?)').run(active, JSON.stringify(state));
   }
 
   async addAssignmentBundle(bundle: UnsavedBundle, accountId: string): Promise<MentionBundle | null> {
-    if ((await this.getAccount())?.userId !== accountId || !bundle.assignment) return null;
+    /** 움직이는 계정. */
+    const active = this.activeAccountId();
+    if (active === null || !isSameFlowUser(active, accountId) || !bundle.assignment) return null;
     return this.db.transaction(() => {
-      if (this.db.prepare('SELECT 1 FROM assignment_record WHERE project_id = ? AND task_id = ?').get(bundle.projectId, bundle.assignment!.taskId)) return null;
+      if (this.db.prepare('SELECT 1 FROM assignment_record WHERE account_id = ? AND project_id = ? AND task_id = ?').get(active, bundle.projectId, bundle.assignment!.taskId)) return null;
       /** 초안 성공이 아니라 묶음 발견 기록이다. 실패는 같은 묶음에서 재시도한다. */
       const saved = this.writeBundle(bundle);
-      this.db.prepare('INSERT INTO assignment_record VALUES (?, ?, ?)').run(bundle.projectId, bundle.assignment!.taskId, saved.id);
+      this.db.prepare('INSERT INTO assignment_record (account_id, project_id, task_id, bundle_id) VALUES (?, ?, ?, ?)').run(active, bundle.projectId, bundle.assignment!.taskId, saved.id);
       return saved;
     })();
   }
@@ -574,13 +863,19 @@ export class SqliteStateStore implements StateStore {
   }
 
   async addManualBundle(bundle: UnsavedBundle, replacedRecordIds: readonly number[]): Promise<MentionBundle> {
+    /** 움직이는 계정. */
+    const account = this.scope();
     return this.db.transaction(() => {
       // 최소 기록의 멘션 위치·게시 범위는 외래 키로 함께 지워진다.
-      for (const recordId of replacedRecordIds) this.db.prepare('DELETE FROM minimal_record WHERE bundle_id = ?').run(recordId);
+      for (const recordId of replacedRecordIds) this.db.prepare('DELETE FROM minimal_record WHERE bundle_id = ? AND account_id = ?').run(recordId, account);
       /** 저장한 묶음. */
       const saved = this.writeBundle({ ...bundle, id: null, manual: true });
       // 전에 처리한 업무면 처리 기록이 옛 묶음을 가리키고 있어 새 묶음으로 바꾼다.
-      if (bundle.assignment) this.db.prepare('INSERT OR REPLACE INTO assignment_record VALUES (?, ?, ?)').run(bundle.projectId, bundle.assignment.taskId, saved.id);
+      if (bundle.assignment) {
+        this.db
+          .prepare('INSERT OR REPLACE INTO assignment_record (account_id, project_id, task_id, bundle_id) VALUES (?, ?, ?, ?)')
+          .run(account, bundle.projectId, bundle.assignment.taskId, saved.id);
+      }
       return saved;
     })();
   }
@@ -590,12 +885,15 @@ export class SqliteStateStore implements StateStore {
   }
 
   /**
-   * 묶음 한 줄을 넣거나 바꾸고, 그 묶음의 멘션과 내 답을 주어진 값으로 맞춘다. 새 묶음은 ID를 받는다.
-   * 다른 묶음에 이미 든 멘션 위치는 기본 키가 막아 실패한다. 트랜잭션 안에서만 부른다.
+   * 움직이는 계정의 묶음 한 줄을 넣거나 바꾸고, 그 묶음의 멘션과 내 답을 주어진 값으로 맞춘다. 새 묶음은 ID를 받는다.
+   * 같은 계정의 다른 묶음에 이미 든 멘션 위치는 기본 키가 막아 실패한다. 다른 계정의 묶음은 바꾸지 않는다. 트랜잭션 안에서만 부른다.
    */
   private writeBundle(bundle: UnsavedBundle): MentionBundle {
+    /** 묶음의 계정. */
+    const account = this.scope();
     /** 묶음 줄의 값. */
     const values = {
+      account,
       postId: bundle.postId,
       remarkId: bundle.remarkId,
       projectId: bundle.projectId,
@@ -628,10 +926,10 @@ export class SqliteStateStore implements StateStore {
       id = Number(
         this.db
           .prepare(
-            `INSERT INTO mention_bundle (post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
+            `INSERT INTO mention_bundle (account_id, post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at,
                context, watched_context, repo_check, user_repos, draft, edited_text, removed_recipients, directives, fixed_requirement, regeneration, failure, runs, posting,
                quit_during_countdown, manual, assignment)
-             VALUES (@postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
+             VALUES (@account, @postId, @remarkId, @projectId, @status, @postTitle, @connectUrl, @newMentionCount, @createdAt, @processedAt,
                @context, @watchedContext, @repoCheck, @userRepos, @draft, @editedText, @removedRecipients, @directives, @fixedRequirement, @regeneration, @failure, @runs, @posting,
                @quitDuringCountdown, @manual, @assignment)`,
           )
@@ -647,7 +945,7 @@ export class SqliteStateStore implements StateStore {
              removed_recipients = @removedRecipients, directives = @directives, fixed_requirement = @fixedRequirement,
              regeneration = @regeneration, failure = @failure, runs = @runs, posting = @posting,
              quit_during_countdown = @quitDuringCountdown, manual = @manual, assignment = @assignment
-           WHERE id = @id`,
+           WHERE id = @id AND account_id = @account`,
         )
         .run({ ...values, id });
       if (changes === 0) throw new Error(`저장하지 않은 묶음 ${id}입니다.`);
@@ -656,14 +954,15 @@ export class SqliteStateStore implements StateStore {
     this.db.prepare('DELETE FROM mention WHERE bundle_id = ?').run(id);
     /** 멘션 하나를 넣는 문장. */
     const insertMention = this.db.prepare(
-      `INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered,
-         gone, gone_excluded)
-       VALUES (@postId, @remarkId, @replyId, @bundleId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt, @text, @answered,
-         @gone, @goneExcluded)`,
+      `INSERT INTO mention (account_id, post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text,
+         answered, gone, gone_excluded)
+       VALUES (@account, @postId, @remarkId, @replyId, @bundleId, @projectId, @alarmId, @senderId, @senderName, @registeredDateTime, @detectedAt, @text,
+         @answered, @gone, @goneExcluded)`,
     );
     for (const mention of bundle.mentions) {
       insertMention.run({
         ...mention,
+        account,
         bundleId: id,
         answered: mention.answered ? 1 : 0,
         gone: mention.gone ? 1 : 0,
@@ -682,16 +981,25 @@ export class SqliteStateStore implements StateStore {
   }
 
   async listMinimalRecords(): Promise<MinimalRecord[]> {
+    /** 움직이는 계정. */
+    const account = this.scope();
     /** 최소 기록마다 묶음에 있던 멘션 위치. */
     const mentions = groupBy(
-      this.db.prepare('SELECT bundle_id, post_id, remark_id, reply_id FROM minimal_record_mention ORDER BY bundle_id, rowid').all() as LocationRow[],
+      this.db
+        .prepare('SELECT bundle_id, post_id, remark_id, reply_id FROM minimal_record_mention WHERE account_id = ? ORDER BY bundle_id, rowid')
+        .all(account) as LocationRow[],
     );
     /** 최소 기록마다 이 PC가 게시한 글이 답한 멘션 위치. */
     const answered = groupBy(
-      this.db.prepare('SELECT bundle_id, post_id, remark_id, reply_id FROM minimal_record_answered ORDER BY bundle_id, rowid').all() as LocationRow[],
+      this.db
+        .prepare(
+          `SELECT bundle_id, post_id, remark_id, reply_id FROM minimal_record_answered
+           WHERE bundle_id IN (SELECT bundle_id FROM minimal_record WHERE account_id = ?) ORDER BY bundle_id, rowid`,
+        )
+        .all(account) as LocationRow[],
     );
     /** 최소 기록 줄. */
-    const rows = this.db.prepare('SELECT * FROM minimal_record ORDER BY bundle_id').all() as MinimalRecordRow[];
+    const rows = this.db.prepare('SELECT * FROM minimal_record WHERE account_id = ? ORDER BY bundle_id').all(account) as MinimalRecordRow[];
     return rows.map((row) => ({
       bundleId: row.bundle_id,
       postId: row.post_id,
@@ -705,14 +1013,16 @@ export class SqliteStateStore implements StateStore {
 
   async archiveBundles(records: readonly MinimalRecord[]): Promise<void> {
     if (records.length === 0) return;
+    /** 묶음의 계정을 읽는 문장. 최소 기록은 그 묶음의 계정에 남는다(보관 중인 계정의 묶음도 정리한다). */
+    const accountOf = this.db.prepare('SELECT account_id FROM mention_bundle WHERE id = ?');
     /** 최소 기록 한 줄을 넣는 문장. */
     const insertRecord = this.db.prepare(
-      `INSERT INTO minimal_record (bundle_id, post_id, remark_id, status, processed_at, posted_id)
-       VALUES (@bundleId, @postId, @remarkId, @status, @processedAt, @postedId)`,
+      `INSERT INTO minimal_record (bundle_id, account_id, post_id, remark_id, status, processed_at, posted_id)
+       VALUES (@bundleId, @account, @postId, @remarkId, @status, @processedAt, @postedId)`,
     );
     /** 묶음에 있던 멘션 위치 하나를 넣는 문장. */
     const insertMention = this.db.prepare(
-      'INSERT INTO minimal_record_mention (post_id, remark_id, reply_id, bundle_id) VALUES (@postId, @remarkId, @replyId, @bundleId)',
+      'INSERT INTO minimal_record_mention (account_id, post_id, remark_id, reply_id, bundle_id) VALUES (@account, @postId, @remarkId, @replyId, @bundleId)',
     );
     /** 묶음의 멘션을 지우는 문장. */
     const deleteMentions = this.db.prepare('DELETE FROM mention WHERE bundle_id = ?');
@@ -728,21 +1038,23 @@ export class SqliteStateStore implements StateStore {
     // 묶음마다 전체 기록을 지우고 최소 기록을 넣는다. 하나라도 실패하면 아무것도 바뀌지 않는다.
     this.db.transaction(() => {
       for (const record of records) {
+        /** 묶음의 계정. */
+        const row = accountOf.get(record.bundleId) as { account_id: string } | undefined;
+        if (!row) throw new Error(`저장하지 않은 묶음 ${record.bundleId}입니다.`);
         deleteMentions.run(record.bundleId);
         deleteAnswers.run(record.bundleId);
-        /** 지운 묶음 줄 수. */
-        const { changes } = deleteBundle.run(record.bundleId);
-        if (changes === 0) throw new Error(`저장하지 않은 묶음 ${record.bundleId}입니다.`);
+        deleteBundle.run(record.bundleId);
 
         insertRecord.run({
           bundleId: record.bundleId,
+          account: row.account_id,
           postId: record.postId,
           remarkId: record.remarkId,
           status: record.status,
           processedAt: record.processedAt,
           postedId: record.posted?.postedId ?? null,
         });
-        for (const location of record.mentions) insertMention.run({ ...mentionLocationOf(location), bundleId: record.bundleId });
+        for (const location of record.mentions) insertMention.run({ ...mentionLocationOf(location), account: row.account_id, bundleId: record.bundleId });
         for (const location of record.posted?.answeredMentions ?? []) insertAnswered.run({ ...mentionLocationOf(location), bundleId: record.bundleId });
       }
     })();
@@ -756,8 +1068,10 @@ export class SqliteStateStore implements StateStore {
     const deleteMentions = this.db.prepare('DELETE FROM mention WHERE bundle_id = ?');
     /** 묶음에 기록한 내 답을 지우는 문장. */
     const deleteAnswers = this.db.prepare('DELETE FROM bundle_answer WHERE bundle_id = ?');
-    /** 묶음 줄을 지우는 문장. */
-    const deleteBundle = this.db.prepare('DELETE FROM mention_bundle WHERE id = ?');
+    /** 움직이는 계정의 묶음 줄을 지우는 문장. */
+    const deleteBundle = this.db.prepare('DELETE FROM mention_bundle WHERE id = ? AND account_id = ?');
+    /** 움직이는 계정. */
+    const account = this.scope();
 
     // 하나라도 실패하면 아무것도 지우지 않는다.
     this.db.transaction(() => {
@@ -765,7 +1079,7 @@ export class SqliteStateStore implements StateStore {
         deleteMentions.run(bundleId);
         deleteAnswers.run(bundleId);
         /** 지운 묶음 줄 수. */
-        const { changes } = deleteBundle.run(bundleId);
+        const { changes } = deleteBundle.run(bundleId, account);
         if (changes === 0) throw new Error(`저장하지 않은 묶음 ${bundleId}입니다.`);
       }
     })();
@@ -773,19 +1087,25 @@ export class SqliteStateStore implements StateStore {
     this.clearWal();
   }
 
-  async getDraftQueue(): Promise<QueuedDraft[]> {
-    /** 남긴 대기열의 줄. 실행할 순서다. */
-    const rows = this.db.prepare('SELECT bundle_id, priority FROM draft_queue ORDER BY position').all() as { bundle_id: number; priority: string }[];
-    // 표의 검사가 자리를 막아 두지만, 이 앱이 모르는 자리가 있으면 그 줄만 빼고 작은 창 순서에 맡긴다.
-    return rows.flatMap(({ bundle_id: bundleId, priority }) => (isQueuePriority(priority) ? [{ bundleId, priority }] : []));
+  async getGenerationQueue(): Promise<QueuedTarget[]> {
+    /** 남긴 대기열 가운데 움직이는 계정의 Flow 줄과 계정에 매이지 않은 줄. 실행할 순서다. */
+    const rows = this.db
+      .prepare('SELECT kind, target_id, priority FROM draft_queue WHERE account_id IS NULL OR account_id = ? ORDER BY position, id')
+      .all(this.scope()) as { kind: string; target_id: number; priority: string }[];
+    // 표의 검사가 자리를 막아 두지만, 이 앱이 모르는 자리가 있으면 그 줄만 빼고 화면 순서에 맡긴다.
+    return rows.flatMap(({ kind, target_id: targetId, priority }) => (isQueuePriority(priority) ? [{ kind, targetId, priority }] : []));
   }
 
-  async setDraftQueue(queue: readonly QueuedDraft[]): Promise<void> {
+  async setGenerationQueue(queue: readonly QueuedTarget[]): Promise<void> {
+    /** 움직이는 계정. 보관 중인 계정의 Flow 줄은 그대로 둔다. */
+    const account = this.scope();
     /** 대기열 한 줄을 넣는 문장. */
-    const insert = this.db.prepare('INSERT INTO draft_queue (position, bundle_id, priority) VALUES (?, ?, ?)');
+    const insert = this.db.prepare('INSERT INTO draft_queue (position, kind, target_id, priority, account_id) VALUES (?, ?, ?, ?, ?)');
     this.db.transaction(() => {
-      this.db.prepare('DELETE FROM draft_queue').run();
-      queue.forEach(({ bundleId, priority }, position) => insert.run(position, bundleId, priority));
+      this.db.prepare('DELETE FROM draft_queue WHERE account_id IS NULL OR account_id = ?').run(account);
+      queue.forEach(({ kind, targetId, priority }, position) =>
+        insert.run(position, kind, targetId, priority, kind === ACCOUNT_BOUND_QUEUE_KIND ? account : null),
+      );
     })();
   }
 
@@ -825,13 +1145,13 @@ export class SqliteStateStore implements StateStore {
     this.db.prepare('DELETE FROM update_attempt').run();
   }
 
-  /** 기준점 한 줄을 넣거나 바꾼다. */
+  /** 움직이는 계정의 기준점 한 줄을 넣거나 바꾼다. */
   private writeBaseline(alarmId: string): void {
     this.db
       .prepare(
-        'INSERT INTO detection (id, baseline_alarm_id) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET baseline_alarm_id = excluded.baseline_alarm_id',
+        'INSERT INTO detection (account_id, baseline_alarm_id) VALUES (?, ?) ON CONFLICT (account_id) DO UPDATE SET baseline_alarm_id = excluded.baseline_alarm_id',
       )
-      .run(alarmId);
+      .run(this.scope(), alarmId);
   }
 }
 
@@ -860,6 +1180,17 @@ function readJson<T>(json: string | null): T | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 저장소 대기의 사유를 읽는다. 자동 선택 때 저장한 옛 사유(후보 없음, 확신 없음, 코드와 무관함)는 저장소 매핑 필요로 읽는다.
+ * 저장된 값은 고치지 않으며, 앱을 켤 때의 다시 판정이 묶음을 맞는 상태로 옮긴다.
+ */
+function readRepoCheck(json: string | null): RepoCheck | null {
+  /** 저장된 사유. */
+  const stored = readJson<{ kind?: string }>(json);
+  if (stored === null) return null;
+  return stored.kind === 'missing-folders' ? (stored as RepoCheck) : { kind: 'unmapped' };
 }
 
 /** 값을 JSON으로 쓴다. `null`이면 열을 비운다. */

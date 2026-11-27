@@ -346,11 +346,26 @@ html[data-platform='win32'] .popover {
   background: var(--side);
 }
 
-/* 작은 창: 감지를 시작하기 전의 필수 세 줄과 [감지 시작]. */
+/* 작은 창: 감지를 시작하기 전의 필수 설정과 감지할 대상 묶음, [감지 시작]. */
 /* 작은 창 본문의 문단 여백(0)보다 뒤에 두어 덮는다. */
 p.setup-lead {
   margin: 0 0 10px;
   font-weight: 600;
+}
+
+.setup-group-title {
+  margin: 14px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.setup-group-title:first-of-type {
+  margin-top: 0;
+}
+
+p.setup-notice {
+  margin: 10px 0 0;
 }
 
 .setup-row {
@@ -477,24 +492,6 @@ p.setup-tray-hint {
 .setup-band-space {
   flex: 1;
   min-width: 0;
-}
-
-.setup-meter {
-  flex: none;
-  display: flex;
-  gap: 4px;
-}
-
-.setup-meter i {
-  display: block;
-  width: 26px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--border-strong);
-}
-
-.setup-meter i.on {
-  background: var(--ok);
 }
 
 /* 설정 창: 왼쪽 칸 목록(180px)과 오른쪽 내용. */
@@ -655,38 +652,37 @@ p.setup-tray-hint {
   white-space: nowrap;
 }
 
-/* 확인 시트: 설정 창 위쪽에 붙어 창 전체를 덮는다. */
-.sheet-backdrop {
+/* 확인 모달: 배경을 어둡게 덮고 화면 가운데에 뜬다. */
+.modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 10;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.4);
 }
 
-.sheet {
+.modal {
   width: 420px;
   max-width: calc(100% - 32px);
   padding: 14px 16px;
   border: 1px solid var(--border-strong);
-  border-top: 0;
-  border-radius: 0 0 10px 10px;
+  border-radius: 10px;
   background: var(--surface);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
 }
 
-.sheet h3 {
+.modal h3 {
   margin: 0 0 4px;
   font-size: 14px;
 }
 
-.sheet p {
+.modal p {
   margin: 6px 0 0;
 }
 
-.sheet-actions {
+.modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
@@ -1034,7 +1030,7 @@ p.setup-tray-hint {
   font-family: var(--mono);
 }
 
-/* 저장소 칸: 작업 폴더와 "이 PC에서 찾은 폴더" 목록. */
+/* 저장소 칸: 저장소 매핑 목록. */
 .folder-list {
   margin: 0 0 10px;
   padding: 0;
@@ -1046,6 +1042,11 @@ p.setup-tray-hint {
 
 .folder-item + .folder-item {
   border-top: 1px solid var(--border);
+}
+
+/* 검토 화면에서 [저장소 매핑하기]나 [매핑 고치기]로 짚은 프로젝트의 줄. */
+.folder-item[aria-current='true'] {
+  background: var(--sel);
 }
 
 .folder-row {
@@ -1063,22 +1064,6 @@ p.setup-tray-hint {
   text-overflow: ellipsis;
   white-space: nowrap;
   font: 12px/1.5 var(--mono);
-  user-select: text;
-}
-
-.folder-warning {
-  margin: -2px 12px 8px;
-  font-size: 12px;
-  color: var(--warn);
-}
-
-.repo-names {
-  margin: 0 12px 8px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: var(--surface-2);
-  list-style: none;
-  font: 12px/1.6 var(--mono);
   user-select: text;
 }
 
@@ -1134,8 +1119,15 @@ p.setup-tray-hint {
   color: var(--danger);
 }
 
-/* 수동 요청 묶음의 "수동 요청" 표시. 경고색이 아니라 옅은 테두리다. */
-.tag.manual {
+/* 재현 성공 같은 성공 표시. */
+.tag.success {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+/* 수동 요청 묶음의 "수동 요청" 표시와 불가를 뜻하는 표시. 경고색이 아니라 옅은 테두리다. */
+.tag.manual,
+.tag.outline {
   border: 1px solid var(--border);
   color: var(--muted);
 }
@@ -1343,6 +1335,53 @@ p.post-status-line.failure {
 
 .section-body p {
   margin: 0;
+}
+
+/* 진단 상세의 구역 이름. 접고 펴지 않으므로 초안 영역 머리와 같은 글자 모양만 쓴다. */
+.section-title {
+  margin: 0;
+  padding: 7px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 구역 이름 옆의 재현 결과·확신도. */
+.section-aside {
+  font-weight: 400;
+}
+
+/* 진단의 오류 정보·실행 정보 표. */
+.diagnosis-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.diagnosis-fact {
+  display: contents;
+}
+
+.diagnosis-fact dt {
+  color: var(--muted);
+}
+
+.diagnosis-fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* 진단 보고서의 개선 방향·남은 의문·재현 순서. */
+.diagnosis-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.diagnosis-list li + li {
+  margin-top: 2px;
 }
 
 /* 원문 영역: 묶인 멘션을 시간순으로 쌓는다. */
@@ -1637,11 +1676,6 @@ button.cite:hover {
   margin-bottom: 4px;
 }
 
-/* 저장소 영역의 작은 머리말(자동으로 고른 이유, 에이전트가 짚은 후보). 위 내용과 띄운다. */
-.section-body p.repo-subhead {
-  margin-top: 8px;
-}
-
 /* 저장소 확인 필요 묶음의 [저장소를 골라 만들기]. */
 .repo-check-actions {
   margin-top: 8px;
@@ -1731,7 +1765,7 @@ button.cite:hover {
 }
 
 /* 저장소 선택 창: 후보 목록은 창 높이 안에서 스크롤한다. */
-.sheet.repo-picker {
+.modal.repo-picker {
   display: flex;
   flex-direction: column;
   max-height: calc(100% - 24px);
@@ -1778,7 +1812,7 @@ button.cite:hover {
   overflow-wrap: anywhere;
 }
 
-.repo-picker .sheet-actions {
+.repo-picker .modal-actions {
   flex-wrap: wrap;
 }
 
@@ -1823,6 +1857,56 @@ button.cite:hover {
   padding: 10px 14px;
   border-top: 1px solid var(--border);
   background: var(--side);
+}
+
+/* 저장소 대기의 노란 바닥 줄. 펼친 창은 [무시], 글, 나머지 버튼이 한 줄에 놓인다. */
+.review-foot.warn {
+  background: var(--warn-bg);
+  border-top-color: var(--warn-dot);
+}
+
+.review-foot.warn .repo-wait-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.review-foot.warn .repo-wait-text code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.review-foot.warn .repo-wait-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 작은 창은 글이 윗줄, 버튼이 아랫줄이다. [무시]는 왼쪽, 나머지 버튼은 오른쪽이다. */
+.review-foot.warn.compact {
+  display: grid;
+  grid-template-areas:
+    'text text'
+    'ignore actions';
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+}
+
+.review-foot.warn.compact .repo-wait-text {
+  grid-area: text;
+}
+
+.review-foot.warn.compact .repo-wait-ignore {
+  grid-area: ignore;
+}
+
+.review-foot.warn.compact .repo-wait-actions {
+  grid-area: actions;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 /* 지시를 쓰는 칸이 열린 바닥 줄. 칸이 바닥 줄 너비를 다 쓴다. */
@@ -2035,13 +2119,13 @@ p.detail-empty {
 }
 
 /* 최근 멘션 확인 목록: 최근 멘션을 한 줄에 하나씩 두고, 목록은 창 높이 안에서 스크롤한다. */
-.sheet.manual-check {
+.modal.manual-check {
   display: flex;
   flex-direction: column;
   max-height: calc(100% - 24px);
 }
 
-/* 확인 시트의 "멘션 | 담당 업무" 탭. 고른 탭은 밑줄과 강조색으로 보인다. */
+/* 확인 모달의 "멘션 | 담당 업무" 탭. 고른 탭은 밑줄과 강조색으로 보인다. */
 .manual-check-tabs {
   display: flex;
   margin-top: 8px;
@@ -2145,4 +2229,258 @@ textarea.instructions-input {
 .pattern-input {
   width: 240px;
   font-family: var(--mono);
+}
+
+/* 설정 칸 안의 밑줄형 탭. 고른 탭에 강조색 밑줄을 긋고, 탭마다 점 하나까지 찍는다. */
+.underline-tabs {
+  display: flex;
+  gap: 2px;
+  max-width: 600px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.underline-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.underline-tab[aria-selected='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.underline-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn-dot);
+}
+
+/* 진단 상세 머리 아래의 탭. 설정 칸 안 탭과 달리 상세 몸통 너비를 다 쓰고 몸통과 같은 좌우 여백을 둔다. */
+.underline-tabs.detail-tabs {
+  flex: none;
+  max-width: none;
+  margin: 0;
+  padding: 0 20px;
+}
+
+/* 병렬 작업 수: 눈금 숫자 없는 네이티브 range와 오른쪽 현재 값. */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider {
+  width: 240px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.slider-value {
+  min-width: 36px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.limit-table {
+  width: 100%;
+  max-width: 420px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.limit-table td {
+  padding: 7px 12px;
+}
+
+.limit-table tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.limit-table td:last-child {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 진행 중인 작업이 고른 값보다 많을 때의 노란 띠. */
+.pending-band {
+  max-width: 420px;
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+/* 이름 옆 물음표 단추. 올리거나 초점을 주거나 누르면 설명이 단추 아래로 펼쳐진다. */
+.help-tip {
+  position: relative;
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: -3px;
+}
+
+.help-tip-button {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  cursor: help;
+}
+
+.help-tip-button:hover,
+.help-tip-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.help-tip-body {
+  display: none;
+  position: absolute;
+  top: 22px;
+  left: -8px;
+  z-index: 3;
+  width: max-content;
+  max-width: 260px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.help-tip:hover .help-tip-body,
+.help-tip:focus-within .help-tip-body,
+.help-tip[data-open='true'] .help-tip-body {
+  display: block;
+}
+
+/* Sentry 칸: 진단할 프로젝트 목록과 프로젝트 모달. */
+.btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.sentry-project-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.sentry-project-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.sentry-project-item + .sentry-project-item {
+  border-top: 1px solid var(--border);
+}
+
+.sentry-project-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sentry-project-info > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal.sentry-project-modal {
+  width: 460px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}
+
+.sentry-project-modal .field {
+  margin-top: 12px;
+}
+
+.level-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.sentry-repo-row {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sentry-unregister {
+  margin-right: auto;
+}
+
+.sentry-project-modal .modal-actions .btn.danger:first-child {
+  margin-right: auto;
+}
+
+/* 설정 "Sentry" 칸의 보고서 폴더 경로. 길면 가운데가 아니라 끝을 줄인다. */
+.path-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 재현 설정: 켜는 확인 모달, 저장소의 환경 파일 줄, 재현 도구 권한 서버 목록. */
+.modal.reproduction-modal {
+  width: 480px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}
+
+.reproduction-modal .field {
+  margin-top: 12px;
+}
+
+.reproduction-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.reproduction-env {
+  margin-top: 4px;
+  padding-left: 22px;
+}
+
+.reproduction-server-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  min-width: 0;
 }

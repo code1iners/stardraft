@@ -114,7 +114,7 @@ export function PopoverMenu({ manualCheck, canExpand, onExpand, defaultOpen = fa
     const action = menuKeyAction(event.key, current, enabled);
     if (!action) return;
     event.preventDefault();
-    // Esc가 시트나 창의 닫기까지 번지지 않게 한다.
+    // Esc가 모달이나 창의 닫기까지 번지지 않게 한다.
     event.stopPropagation();
     if (action.kind === 'focus') {
       itemRefs.current[action.index]?.focus();

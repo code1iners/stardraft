@@ -22,14 +22,18 @@ export function useSnapshot(): AppSnapshot | null {
       // 스냅숏을 받기 전에 온 변경은 버린다. 곧 받을 스냅숏이 그 변경을 담고 있다.
       if (event.type === 'flow-account-changed') {
         setSnapshot((current) => current && { ...current, flowAccount: event.flowAccount });
+      } else if (event.type === 'sentry-changed') {
+        setSnapshot((current) => current && { ...current, sentry: event.sentry });
+      } else if (event.type === 'sentry-projects-changed') {
+        setSnapshot((current) => current && { ...current, sentryProjects: event.sentryProjects });
+      } else if (event.type === 'reproduction-changed') {
+        setSnapshot((current) => current && { ...current, reproduction: event.reproduction });
       } else if (event.type === 'global-problem-changed') {
         setSnapshot((current) => current && { ...current, globalProblem: event.globalProblem });
       } else if (event.type === 'agent-connections-changed') {
         setSnapshot((current) => current && { ...current, agentConnections: event.agentConnections });
       } else if (event.type === 'agent-preferences-changed') {
         setSnapshot((current) => current && { ...current, agentPreferences: event.agentPreferences });
-      } else if (event.type === 'work-folders-changed') {
-        setSnapshot((current) => current && { ...current, workFolders: event.workFolders });
       } else if (event.type === 'repo-mappings-changed') {
         setSnapshot((current) => current && { ...current, repoMappings: event.repoMappings });
       } else if (event.type === 'onboarding-changed') {
@@ -44,6 +48,10 @@ export function useSnapshot(): AppSnapshot | null {
         setSnapshot((current) => current && { ...current, manualCheck: event.manualCheck });
       } else if (event.type === 'draft-settings-changed') {
         setSnapshot((current) => current && { ...current, draftSettings: event.draftSettings });
+      } else if (event.type === 'parallel-work-changed') {
+        setSnapshot((current) => current && { ...current, parallelWork: event.parallelWork });
+      } else if (event.type === 'report-folder-changed') {
+        setSnapshot((current) => current && { ...current, reportFolder: event.reportFolder });
       } else if (event.type === 'update-changed') {
         setSnapshot((current) => current && { ...current, update: event.update });
       }

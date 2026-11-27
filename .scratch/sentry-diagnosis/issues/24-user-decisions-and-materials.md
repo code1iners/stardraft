@@ -1,0 +1,25 @@
+# 24: 사용자 결정과 자료
+
+**Spec:** [스펙](../spec.md) 추가 참고의 "스펙을 쓰며 정한 것", 테스트 결정의 "실기 점검 목록"
+
+**What to build:** 구현 전에 사용자에게서 받아야 하는 결정과 자료를 한곳에 모은다. 결정은 2026-11-25 대화에서 모두 받았다. 남은 것은 실측에 쓸 자료 둘이다. 자료를 받으면 이 티켓의 Comments에 **위치만**(파일 경로나 환경 변수 이름) 적고 `resolved`로 바꾼다. 토큰 값은 저장소와 대화에 적지 않는다.
+
+**Blocked by:** None (can start immediately)
+
+**Status:** resolved
+
+- [x] 화면 항목 넷은 시안의 추천안으로 확정했다. 보관 안내는 목록 맨 아래 한 줄, 내보내기 폴더는 Sentry 칸 맨 아래, 실행 중 전달이 안 되는 에이전트의 연장 문구, 앞선 시안에 없던 알림 문구 넷이다(스펙 12·13·14절에 이미 적혀 있다).
+- [x] 티켓에 답이 없던 기본값 일곱 가지(폴더 다시 확인 60초, 등록 해제 때 목록에서 빼기, 매핑 저장 때 모두 줄 세우기, 같은 오류 이슈의 진단 둘을 각각 한 줄로, 완료 최소 기록 기한 없음과 내보내지 않음 확인의 기준, 겹쳐 조회 10분, 읽기 전용 진단 상한 20분)를 스펙대로 확정했다.
+- [x] Sentry 실측용 자료를 받았다: 신규와 재발을 일부러 만들 수 있는 Sentry 프로젝트 하나, `org:read`와 `event:read` scope의 개인 토큰이 있는 위치.
+- [x] 재현 실측용 자료를 받았다: 재현을 돌려 볼 저장소 하나와 그 저장소에서 써도 되는 재현용 환경 파일의 경로.
+- [x] Codex 계정의 사용량 한도가 풀렸는지 확인했다(조사 때 2026-11-29까지 걸려 있었다). 안 풀렸으면 풀리는 날짜를 Comments에 적는다. → 구독하지 않아 검증할 수 없다. 미검증으로 남긴다(Comments 참고).
+
+## Comments
+
+### 2026-11-25 자료 받는 중
+
+- **Sentry 실측 프로젝트**: `mukkebicom/paytech-dashboard-korea`. Sentry MCP로 프로젝트가 있는 것을 확인했다. 사용자가 회사 프로젝트에서 바로 실측하기로 했다. 시험 이벤트에는 시험용이라는 표시를 분명히 붙이고, 실측이 끝나면 해결 처리한다. 팀 알림 규칙에 걸릴 수 있다는 점은 사용자가 알고 정했다.
+- **Sentry 토큰**: `~/.config/stardraft/sentry-token`(권한 600, 저장소 밖). 사용자가 `org:read`·`event:read` 개인 토큰 `stardraft-sentry-diagnosis`를 만들어 넣었다. 2026-11-26에 확인했다. 조직 목록(`mukkebicom`, `codeliners`, 둘 다 `https://us.sentry.io`), `mukkebicom` 이슈 조회, 프로젝트 목록 모두 200이고 `paytech-dashboard-korea`가 보인다.
+- **재현 저장소**: `~/workspace/work/react-paytech-app`. 재현은 Claude Code로만 돌린다.
+- **재현용 환경 파일**: 지정하지 않는다. 원본 `.env`를 그대로 쓴다(스펙의 기본 동작). 2026-11-26에 사용자 허락을 받아 값은 보지 않고 주소 값의 호스트만 확인했다. `NEXT_PUBLIC_API_BASE_URL`은 `dev-api.paytechkorea.com`, `NEXT_PUBLIC_PAYMENTS_PAYTECH_BASE_URL`은 `dev.payments.paytechkorea.com`으로 개발 서버다. `NEXT_PUBLIC_SENTRY_DSN`은 실제 Sentry 수집 주소라서 재현 중 일으킨 오류가 Sentry에 올라갈 수 있다. 주소가 아닌 값(`.env` 6개, `.env.local` 1개)은 확인하지 않았다.
+- **Codex**: 사용자가 Codex를 구독하지 않아 검증할 수 없다(2026-11-25 확인). 시험 요청은 한도에 걸리기 전에 모델 단계에서 거절됐다. 기본 모델 `gpt-6-astra`에서 `not supported when using Codex with a ChatGPT account` 오류가 났다. 이 항목은 미검증으로 남기고 티켓을 막지 않는다. Codex 실행기는 스펙대로 구현하고 자동 테스트까지만 확인한다. 실기 점검 목록의 Codex 항목은 구독한 뒤로 미룬다.

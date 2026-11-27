@@ -6,11 +6,14 @@
 /** 초안 실행 직전에 Flow에서 맥락을 새로 조회하는 단계. */
 export const FETCHING_CONTEXT_STEP = 'Flow에서 맥락 가져오는 중';
 
-/** 선택 실행을 시작했을 때의 단계. 도구를 부르기 전까지 보이고, 고른 뒤 초안 실행으로 넘어가면 "초안 쓰는 중"으로 바뀐다. */
-export const CHOOSING_REPO_STEP = '저장소 고르는 중';
-
 /** 초안 실행을 시작했을 때의 단계. 도구를 부르기 전까지 보인다. */
 export const WRITING_DRAFT_STEP = '초안 쓰는 중';
+
+/** 진단 실행 직전에 Sentry에서 오류 이슈 상태와 최신 이벤트를 받는 단계. */
+export const FETCHING_SENTRY_EVENT_STEP = 'Sentry에서 오류 데이터 가져오는 중';
+
+/** 진단 실행을 시작했을 때의 단계. 도구를 부르기 전까지 보인다. */
+export const DIAGNOSING_STEP = '오류 진단하는 중';
 
 /** 파일을 읽을 때의 단계. 경로는 파일 이름만 쓴다. */
 export function readingFileStep(filePath: string): string {

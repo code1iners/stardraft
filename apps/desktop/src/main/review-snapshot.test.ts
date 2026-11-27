@@ -5,7 +5,8 @@ import type { RunRecord } from '../core/drafts/draft';
 import type { BundleContext } from '../core/flow/bundle-context';
 import { POST_BODY_CHAR_LIMIT as CORE_POST_BODY_CHAR_LIMIT } from '../core/drafts/post-body';
 import { POST_BODY_CHAR_LIMIT } from '../shared/ipc';
-import { bundleSnapshot, flowUrlOf, manualCheckSnapshot, reviewSnapshot } from './review-snapshot';
+import type { SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
+import { bundleSnapshot, diagnosisSnapshots, flowUrlOf, manualCheckSnapshot, reviewSnapshot } from './review-snapshot';
 
 /** 가짜 멘션. 실제 사람이나 글이 아니다. 기본은 08:50(한국 표준시)에 온 댓글 멘션이다. */
 function mention(alarmId: string, overrides: Partial<BundledMention> = {}): BundledMention {
@@ -81,6 +82,8 @@ function run(overrides: Partial<RunRecord> = {}): RunRecord {
 }
 
 /** 가짜 Flow 프로젝트 정보. */
+/** 저장소 매핑이 있는 프로젝트의 매핑 조회. 초안의 구성이 매핑과 같다고 답한다. */
+const MAPPED = () => 'same' as const;
 const PROJECT = { title: '가짜 프로젝트', projectUrl: 'https://fake.flow.test/project/900001' };
 
 describe('묶음 스냅숏', () => {
@@ -357,6 +360,8 @@ describe('묶음 스냅숏: 초안 실행', () => {
         runs: [run({ result: 'invalid-output', startedAt: 1_000, finishedAt: 9_000 }), run({ omittedContextItems: 3 })],
       }),
       () => PROJECT,
+      undefined,
+      MAPPED,
     );
 
     expect(snapshot).toMatchObject({ status: 'ready', group: 'awaiting-review', generation: null, failure: null, repoCheck: null });
@@ -387,18 +392,18 @@ describe('묶음 스냅숏: 초안 실행', () => {
         { name: 'billing-api', path: '/fake/work/billing-api' },
         { name: 'billing-web', path: '/fake/work/billing-web' },
       ],
-      autoSelection: null,
-      mapping: 'unmapped',
+      mapping: 'same',
       editorText: '다섯 번까지 다시 시도합니다. 테스트 환경은 세 번으로 보입니다.',
       edited: false,
       canEdit: true,
       canRegenerate: true,
+      repoUndetermined: false,
       recipients: [{ name: '보낸 사람' }],
       // `@[보낸 사람](sender@example.test)` 29자와 공백 하나.
       postBodyPrefixLength: 30,
       canPost: true,
     });
-    expect(snapshot.run).toEqual({ agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
+    expect(snapshot.run).toEqual({ kind: 'draft', agent: 'claude-code', durationMs: 134_000, contextOmitted: true });
     expect(JSON.stringify(snapshot)).not.toContain('costUsd');
   });
 
@@ -427,85 +432,85 @@ describe('묶음 스냅숏: 초안 실행', () => {
     expect(failed).toMatchObject({
       group: 'failed',
       failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry', runKind: 'selection' },
-      run: { agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
+      run: { kind: 'draft', agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
       draft: null,
     });
-    expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false });
+    expect(repoCheck.repoCheck).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 });
     // 저장소 선택 창에서 고른 구성의 폴더가 사라졌으면 연결(매핑)된 폴더가 아니라고 넘긴다.
     expect(
       bundleSnapshot(bundle({ userRepos: ['/fake/work/gone'], repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).repoCheck,
-    ).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true });
+    ).toEqual({ kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true, waitingCount: 1 });
   });
 });
 
-describe('묶음 스냅숏: 자동 선택', () => {
-  it('선택 실행이 고르지 않은 저장소 확인 필요 묶음은 선택 실행의 사유와, 에이전트가 짚은 후보(짚은 순서)와 작업 폴더의 나머지 후보를 나눠 넘긴다. 후보가 없었으면 그 사유를 넘긴다', () => {
-    /** 작업 폴더의 후보. */
-    const candidates = [
-      { name: 'billing-api', path: '/fake/work/billing-api' },
-      { name: 'team/billing-batch', path: '/fake/work/team/billing-batch' },
-      { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
-    ];
-    /** 선택 실행이 확신하지 못한 묶음의 스냅숏. */
-    const unsure = bundleSnapshot(
-      bundle({
-        repoCheck: {
-          kind: 'unsure',
-          reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽인지 알 수 없습니다.',
-          candidates,
-          picked: ['/fake/work/team/billing-web', '/fake/work/billing-api'],
-        },
-      }),
-      () => null,
-    );
+describe('묶음 스냅숏: 저장소 대기', () => {
+  /** 저장소 하나로 만든 초안. */
+  const draft = {
+    requirement: { text: '재시도 횟수를 알고 싶다.', summary: '재시도 횟수' },
+    paragraphs: [{ sentences: [{ text: '다섯 번까지 다시 시도합니다.', evidence: [] }] }],
+    evidence: [],
+    repositories: ['/fake/work/web'],
+    autoSelection: null,
+    createdAt: 144_000,
+  };
 
-    expect(unsure.repoCheck).toEqual({
-      kind: 'unsure',
-      reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽인지 알 수 없습니다.',
-      picked: [
-        { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
-        { name: 'billing-api', path: '/fake/work/billing-api' },
-      ],
-      others: [{ name: 'team/billing-batch', path: '/fake/work/team/billing-batch' }],
+  it('매핑도 고른 저장소도 없어 기다리는 묶음은 저장소 매핑 필요 사유를 넘기고, 폴더가 없으면 저장소 확인 필요 사유를 넘긴다', () => {
+    expect(bundleSnapshot(bundle({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } }), () => null).repoCheck).toEqual({ kind: 'unmapped', waitingCount: 1 });
+    expect(bundleSnapshot(bundle({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }), () => null).repoCheck).toMatchObject({
+      kind: 'missing-folders',
     });
-    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'unrelated', reason: '', candidates, picked: [] } }), () => null).repoCheck).toMatchObject({
-      picked: [],
-      others: candidates,
-    });
-    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'no-candidates' } }), () => null).repoCheck).toEqual({ kind: 'no-candidates' });
   });
 
-  it('선택 실행만 돌고 저장소 확인 필요가 된 묶음은 그 선택 실행의 실행 줄을 넘기고, 매핑된 폴더가 사라져 실행하지 않은 묶음은 실행 줄이 없다', () => {
-    /** 선택 실행이 확신하지 못한 묶음의 스냅숏. */
-    const unsure = bundleSnapshot(
-      bundle({
-        repoCheck: { kind: 'unsure', reason: '모르겠습니다.', candidates: [], picked: [] },
-        runs: [run({ kind: 'selection', startedAt: 0, finishedAt: 62_000 })],
-      }),
-      () => null,
-    );
+  it('고른 저장소도 저장소 매핑도 없는 초안은 저장소가 정해지지 않은 초안이라 다시 만들 수 없다고 넘긴다. 매핑이 있거나 고른 저장소가 있으면 아니다', () => {
+    /** 저장소가 정해지지 않은 초안의 스냅숏. */
+    const undetermined = bundleSnapshot(bundle({ status: 'ready', draft }), () => null, undefined, () => 'unmapped').draft;
+    /** 매핑이 있는 초안의 스냅숏. */
+    const mapped = bundleSnapshot(bundle({ status: 'ready', draft }), () => null, undefined, MAPPED).draft;
+    /** 고른 저장소로 만든 초안의 스냅숏. 매핑이 없어도 저장소가 정해져 있다. */
+    const chosen = bundleSnapshot(bundle({ status: 'ready', draft, userRepos: ['/fake/work/web'] }), () => null, undefined, () => 'unmapped').draft;
 
-    expect(unsure.run).toEqual({ agent: 'claude-code', durationMs: 62_000, contextOmitted: false });
-    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).run).toBeNull();
+    /** 무시한 묶음의 스냅숏. 처리됨 묶음은 다시 만들 수 없다는 안내를 따로 하지 않는다. */
+    const ignored = bundleSnapshot(bundle({ status: 'ignored', processedAt: 20_000, draft }), () => null, undefined, () => 'unmapped').draft;
+
+    expect(ignored?.repoUndetermined).toBe(false);
+    expect(undetermined).toMatchObject({ repoUndetermined: true, canRegenerate: false, canPost: true, canEdit: true });
+    expect(mapped).toMatchObject({ repoUndetermined: false, canRegenerate: true });
+    expect(chosen).toMatchObject({ repoUndetermined: false, canRegenerate: true });
   });
+});
 
-  it('자동 선택으로 만든 준비됨 묶음의 초안은 자동 선택의 내력(선택 실행의 이유, 후보가 하나였음)을 넘긴다', () => {
-    /** 초안 하나. */
-    const draft = {
-      requirement: { text: '요구', summary: '요약' },
-      paragraphs: [{ sentences: [{ text: '문장입니다.', evidence: [] }] }],
-      evidence: [],
-      repositories: ['/fake/work/billing-api'],
-      createdAt: 144_000,
-    };
-
+describe('묶음 스냅숏: 저장소 대기와 폐지된 선택 실행', () => {
+  it('저장소 대기 묶음은 저장소 매핑 필요와 저장소 확인 필요의 사유만 넘긴다. 고른 구성이 있으면 그 구성의 폴더라고 알린다', () => {
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'unmapped' } }), () => null).repoCheck).toEqual({ kind: 'unmapped', waitingCount: 1 });
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).repoCheck).toEqual({
+      kind: 'missing-folders',
+      paths: ['/fake/work/gone'],
+      chosenByUser: false,
+      waitingCount: 1,
+    });
     expect(
-      bundleSnapshot(bundle({ status: 'ready', draft: { ...draft, autoSelection: { kind: 'chosen', reason: '서버 설정을 묻고 있습니다.' } } }), () => null).draft
-        ?.autoSelection,
-    ).toEqual({ kind: 'chosen', reason: '서버 설정을 묻고 있습니다.' });
-    expect(bundleSnapshot(bundle({ status: 'ready', draft: { ...draft, autoSelection: { kind: 'single-candidate' } } }), () => null).draft?.autoSelection).toEqual({
-      kind: 'single-candidate',
-    });
+      bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] }, userRepos: ['/fake/work/gone'] }), () => null).repoCheck,
+    ).toMatchObject({ chosenByUser: true });
+  });
+
+  it('실패한 묶음의 마지막 실행이 과거의 저장소 선택 실행이면 실행 줄이 선택 실행으로 읽히고, 초안 실행이면 초안 실행이다', () => {
+    /** 선택 실행에서 멈춘 실패 묶음의 스냅숏. */
+    const selection = bundleSnapshot(
+      bundle({ status: 'failed', failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'selection' }, runs: [run({ kind: 'selection', startedAt: 0, finishedAt: 62_000 })] }),
+      () => null,
+    );
+    /** 초안 실행에서 멈춘 실패 묶음의 스냅숏. */
+    const draft = bundleSnapshot(
+      bundle({ status: 'failed', failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'draft' }, runs: [run({ kind: 'draft', startedAt: 0, finishedAt: 62_000 })] }),
+      () => null,
+    );
+
+    expect(selection.run).toEqual({ kind: 'selection', agent: 'claude-code', durationMs: 62_000, contextOmitted: false });
+    expect(draft.run).toEqual({ kind: 'draft', agent: 'claude-code', durationMs: 62_000, contextOmitted: false });
+  });
+
+  it('매핑된 폴더가 사라져 실행하지 않은 묶음은 실행 줄이 없다', () => {
+    expect(bundleSnapshot(bundle({ repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'] } }), () => null).run).toBeNull();
   });
 });
 
@@ -539,15 +544,33 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     /** 열린 창. */
     const picker = {
       bundleId: 7,
-      status: 'ready' as const,
       choices: [{ name: 'web', path: '/fake/work/web', group: 'current' as const, checked: true }],
       mapping: 'same' as const,
     };
     /** 창 하나의 영역 펼침 상태. */
     const sections = { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true };
 
-    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', picker, () => null).repoPicker).toEqual(picker);
-    expect(reviewSnapshot([], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).repoPicker).toBeNull();
+    expect(reviewSnapshot([], [], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', picker, () => null).repoPicker).toEqual(picker);
+    expect(reviewSnapshot([], [], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).repoPicker).toBeNull();
+  });
+});
+
+describe('묶음 스냅숏: 저장소 대기 건수', () => {
+  it('같은 프로젝트에서 같은 사유로 기다리는 묶음 수를 바닥 줄 글에 쓰도록 넘긴다. 사유나 프로젝트가 다르면 따로 센다', () => {
+    /** 영역 펼침 상태. */
+    const sections = { original: true, requirement: true, draft: true, evidence: true, repository: true, progress: true };
+    /** 같은 프로젝트의 저장소 매핑 필요 묶음 둘, 다른 프로젝트의 하나, 같은 프로젝트의 저장소 확인 필요 하나. */
+    const bundles = [
+      bundle({ id: 1, repoCheck: { kind: 'unmapped' } }),
+      bundle({ id: 2, repoCheck: { kind: 'unmapped' } }),
+      bundle({ id: 3, projectId: '900002', repoCheck: { kind: 'unmapped' } }),
+      bundle({ id: 4, repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }),
+    ];
+
+    /** 건수만 모은 값. */
+    const counts = reviewSnapshot(bundles, [], { compact: sections, expanded: sections }, () => null, () => null, () => 'unmapped', null, () => null).bundles.map((item) => item.repoCheck?.waitingCount);
+
+    expect(counts).toEqual([2, 2, 1, 1]);
   });
 });
 
@@ -693,7 +716,7 @@ describe('게시', () => {
     );
 
     expect(ignored.postFailure).toBeNull();
-    expect(bundleSnapshot(bundle({ status: 'ready', draft, mentions }), () => null).draft?.canRegenerate).toBe(true);
+    expect(bundleSnapshot(bundle({ status: 'ready', draft, mentions }), () => null, undefined, MAPPED).draft?.canRegenerate).toBe(true);
   });
 
   it('카운트다운 중에 앱이 꺼져 준비됨으로 돌아온 묶음은 그렇다고 넘기고 게시할 수 있다. 준비됨이 아니게 되면 넘기지 않는다', () => {
@@ -923,8 +946,264 @@ describe('묶음 스냅숏: 담당 해제', () => {
     const snapshot = bundleSnapshot(
       bundle({ status: 'ready', remarkId: '-1', mentions: [mention('101', { remarkId: '-1' })], draft, assignment: { ...assignment, unassignedAt: 5_000 } }),
       () => PROJECT,
+      undefined,
+      MAPPED,
     );
     expect(snapshot.assignment?.blockedByUnassignment).toBe(false);
     expect(snapshot.draft).toMatchObject({ canPost: true, canRegenerate: true });
+  });
+});
+
+describe('진단 스냅숏', () => {
+  /** 가짜 진단. */
+  function diagnosis(id: number, overrides: Partial<SentryDiagnosis> = {}): SentryDiagnosis {
+    return {
+      id,
+      projectId: '11',
+      issueId: String(100 + id),
+      origin: 'new',
+      regressionEventId: null,
+      detectedAt: 1_000 + id,
+      status: 'repo-check-needed',
+      repoCheck: { kind: 'unmapped' },
+      report: null,
+      failure: null,
+      runs: [],
+      completedAt: null,
+      lastExport: null,
+      directives: [],
+      rediagnosisFailure: null,
+      keepReproduction: false,
+      withoutReproduction: false,
+      issue: {
+        shortId: `WEB-${id}`,
+        title: `시험 오류 ${id}`,
+        culprit: 'app/checkout',
+        level: 'error',
+        environment: 'production',
+        firstSeen: 500,
+        lastSeen: 900,
+        count: 3,
+        userCount: 1,
+        permalink: 'https://fake.sentry.test/issues/1/',
+        platform: 'javascript',
+        organizationName: '가짜 조직',
+        projectName: '가짜 프로젝트',
+      },
+      ...overrides,
+    };
+  }
+
+  it('진단은 묶음과 따로 배열로 넘기고, 오류 제목·감지 시각·프로젝트·자리·상태를 담는다', () => {
+    const [snapshot] = diagnosisSnapshots([diagnosis(1, { status: 'queued', repoCheck: null })]);
+
+    expect(snapshot).toEqual({
+      id: 1,
+      projectId: '11',
+      origin: 'new',
+      title: '시험 오류 1',
+      detectedAt: 1_001,
+      status: 'queued',
+      repoWait: null,
+      progress: { status: 'waiting', ahead: null },
+      report: null,
+      failure: null,
+      canRetryWithoutReproduction: false,
+      rediagnosing: false,
+      directives: [],
+      rediagnosisFailure: null,
+      completedAt: null,
+      exported: false,
+      lastExportedPath: null,
+      canOpenInSentry: false,
+      attachments: [],
+      reproductionAllowed: false,
+      issue: {
+        shortId: 'WEB-1',
+        culprit: 'app/checkout',
+        level: 'error',
+        environment: 'production',
+        firstSeen: 500,
+        lastSeen: 900,
+        count: 3,
+        userCount: 1,
+        platform: 'javascript',
+        organizationName: '가짜 조직',
+        projectName: '가짜 프로젝트',
+      },
+    });
+  });
+
+  it('보고서의 첨부 이름·크기와 생략한 수를 넘기고, 저장소가 지금 재현을 허용하는지(재현도 다시 하기 체크)를 프로젝트로 찾아 넘긴다', () => {
+    /** 재현한 보고서. */
+    const report: NonNullable<SentryDiagnosis['report']> = {
+      summary: '요약',
+      reproduction: { result: 'success', impossibleReason: null, method: '셸로 3번 중 3번', steps: ['pnpm test'] },
+      cause: { text: '원인', confidence: 'high' },
+      improvements: [],
+      openQuestions: [],
+      evidence: [],
+      event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
+      run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: true, durationMs: 1, createdAt: 7, mcpServers: null },
+      priorDiagnosis: null,
+      attachments: [{ name: 'screen.png', sizeBytes: 2048 }],
+      omittedAttachments: 2,
+    };
+    const [reproduced, other] = diagnosisSnapshots(
+      [diagnosis(1, { status: 'ready', repoCheck: null, report }), diagnosis(2, { projectId: '22', status: 'queued', repoCheck: null })],
+      () => null,
+      (projectId) => projectId === '11',
+    );
+
+    expect(reproduced).toMatchObject({ attachments: [{ name: 'screen.png', sizeBytes: 2048 }], reproductionAllowed: true, report: { omittedAttachments: 2 } });
+    expect(other).toMatchObject({ attachments: [], reproductionAllowed: false });
+  });
+
+  it('다시 진단하는 중이면 앞선 보고서를 보관한 채 대기·진행 중이고, 돌아온 진단은 사유와 쌓인 지시를 넘긴다', () => {
+    /** 앞선 보고서. */
+    const report: NonNullable<SentryDiagnosis['report']> = {
+      summary: '요약',
+      reproduction: { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
+      cause: { text: '원인', confidence: 'low' },
+      improvements: [],
+      openQuestions: [],
+      evidence: [],
+      event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
+      run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: false, durationMs: 1, createdAt: 7, mcpServers: null },
+      priorDiagnosis: { kind: 'in-review' },
+      attachments: [],
+      omittedAttachments: 0,
+    };
+    const [again, running, returned, fresh] = diagnosisSnapshots(
+      [
+        diagnosis(1, { status: 'queued', repoCheck: null, report, directives: ['더 짧게'] }),
+        diagnosis(2, { status: 'queued', repoCheck: null, report }),
+        diagnosis(3, { status: 'ready', repoCheck: null, report, directives: ['더 짧게'], rediagnosisFailure: { reason: 'cancelled', detail: null, lastStep: null, runKind: null } }),
+        diagnosis(4, { status: 'queued', repoCheck: null }),
+      ],
+      (id) => (id === 2 ? { status: 'running', step: '진단하는 중', filesRead: 1, startedAt: 5 } : null),
+    );
+
+    expect(again).toMatchObject({ status: 'queued', rediagnosing: true, directives: ['더 짧게'], rediagnosisFailure: null });
+    expect(again!.report?.summary).toBe('요약');
+    expect(again!.report?.priorDiagnosis).toEqual({ kind: 'in-review' });
+    expect(running).toMatchObject({ status: 'running', rediagnosing: true });
+    expect(returned).toMatchObject({ status: 'ready', rediagnosing: false, directives: ['더 짧게'], rediagnosisFailure: { reason: 'cancelled', detail: null, lastStep: null } });
+    // 처음 진단하는 대기에는 보고서가 없어 다시 진단이 아니다.
+    expect(fresh).toMatchObject({ status: 'queued', rediagnosing: false, report: null });
+  });
+
+  it('내보낸 기록은 지금 보고서를 내보냈는지(exported)와 마지막 파일 경로로 넘긴다', () => {
+    /** 보고서 생성 시각이 7인 가짜 보고서. */
+    const report: NonNullable<SentryDiagnosis['report']> = {
+      summary: '요약',
+      reproduction: { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
+      cause: { text: '원인', confidence: 'low' },
+      improvements: [],
+      openQuestions: [],
+      evidence: [],
+      event: { eventId: 'e1', release: null, firstRelease: null, lastRelease: null, sourceMaps: 'unknown', missingData: [], stackHead: [] },
+      run: { repository: '/fake/web', headCommit: null, uncommittedChanges: null, agent: 'claude-code', cliVersion: null, reproductionAllowed: false, durationMs: 1, createdAt: 7, mcpServers: null },
+      priorDiagnosis: null,
+      attachments: [],
+      omittedAttachments: 0,
+    };
+    /** 검토 대기 진단. */
+    const ready = (lastExport: SentryDiagnosis['lastExport']) => diagnosis(1, { status: 'ready', repoCheck: null, report, lastExport });
+    const [fresh, same, older] = diagnosisSnapshots([
+      ready(null),
+      ready({ path: '/내보냄/a.md', at: 10, reportCreatedAt: 7 }),
+      ready({ path: '/내보냄/b.md', at: 10, reportCreatedAt: 3 }),
+    ]);
+
+    expect([fresh?.exported, fresh?.lastExportedPath]).toEqual([false, null]);
+    expect([same?.exported, same?.lastExportedPath]).toEqual([true, '/내보냄/a.md']);
+    // 다시 진단으로 보고서가 바뀌면 옛 내보내기는 지금 보고서의 것이 아니지만 마지막 파일 경로는 남는다.
+    expect([older?.exported, older?.lastExportedPath]).toEqual([false, '/내보냄/b.md']);
+  });
+
+  it('[Sentry에서 열기]는 공식 sentry.io 주소가 있을 때만 열 수 있다고 넘기고 주소 자체는 넘기지 않는다', () => {
+    /** 주소만 다른 진단. */
+    const withLink = (permalink: string | null) => diagnosis(1, { issue: { ...diagnosis(1).issue, permalink } });
+    const snapshots = diagnosisSnapshots([
+      withLink('https://org-a.sentry.io/issues/1/'),
+      withLink('https://sentry.io/organizations/org-a/issues/1/'),
+      withLink('http://org-a.sentry.io/issues/1/'),
+      withLink('https://evil.example/issues/1/'),
+      withLink('https://notsentry.io/issues/1/'),
+      withLink('javascript:alert(1)'),
+      withLink(null),
+    ]);
+
+    expect(snapshots.map((item) => item.canOpenInSentry)).toEqual([true, true, false, false, false, false, false]);
+    expect(JSON.stringify(snapshots)).not.toContain('sentry.io/issues');
+  });
+
+  it('대기 진단은 생성 대기열이 진행하고 있으면 진행 중으로 넘기고, 기다리면 앞에 있는 수를 넘긴다', () => {
+    /** 진단 ID마다 대기열의 진행. */
+    const progress = new Map([
+      [1, { status: 'running' as const, step: '오류 진단하는 중', filesRead: 2, startedAt: 5_000 }],
+      [2, { status: 'waiting' as const, ahead: 1 }],
+    ]);
+    const snapshots = diagnosisSnapshots(
+      [diagnosis(1, { status: 'queued', repoCheck: null }), diagnosis(2, { status: 'queued', repoCheck: null }), diagnosis(3)],
+      (id) => progress.get(id) ?? null,
+    );
+
+    expect(snapshots.map((item) => [item.status, item.progress])).toEqual([
+      ['running', { status: 'running', step: '오류 진단하는 중', filesRead: 2, startedAt: 5_000 }],
+      ['queued', { status: 'waiting', ahead: 1 }],
+      ['repo-check-needed', null],
+    ]);
+  });
+
+  it('진단 실패는 사유와 마지막 단계를, 완료는 완료 시각을 넘긴다', () => {
+    const [failed, completed] = diagnosisSnapshots([
+      diagnosis(1, { status: 'failed', repoCheck: null, failure: { reason: 'cancelled', detail: null, lastStep: '오류 진단하는 중', runKind: 'diagnosis' } }),
+      diagnosis(2, { status: 'completed', repoCheck: null, completedAt: 7_000 }),
+    ]);
+
+    expect(failed).toMatchObject({ status: 'failed', failure: { reason: 'cancelled', detail: null, lastStep: '오류 진단하는 중' }, progress: null });
+    expect(completed).toMatchObject({ status: 'completed', completedAt: 7_000, report: null });
+  });
+
+  it('연장을 묻는 중이거나 마무리를 기다리는 진행은 단계와 전달 가능 여부를 그대로 넘긴다', () => {
+    const [asking] = diagnosisSnapshots(
+      [diagnosis(1, { status: 'queued', repoCheck: null })],
+      () => ({ status: 'running', step: '재현 중', filesRead: 2, startedAt: 5_000, extension: { phase: 'asking', canSteer: false } }),
+    );
+
+    expect(asking).toMatchObject({ status: 'running', progress: { extension: { phase: 'asking', canSteer: false } } });
+  });
+
+  it('시간 초과로 실패한 재현하던 진단만 [재현 없이 다시 시도]를 보이게 한다', () => {
+    /** 실패 사유만 다른 진단. */
+    const failed = (failure: { reason: 'timed-out' | 'cancelled'; reproducing?: boolean }) =>
+      diagnosisSnapshots([diagnosis(1, { status: 'failed', repoCheck: null, failure: { detail: null, lastStep: null, runKind: 'diagnosis', ...failure } })])[0]!.canRetryWithoutReproduction;
+
+    expect(failed({ reason: 'timed-out', reproducing: true })).toBe(true);
+    expect(failed({ reason: 'timed-out' })).toBe(false);
+    expect(failed({ reason: 'timed-out', reproducing: false })).toBe(false);
+    expect(failed({ reason: 'cancelled', reproducing: true })).toBe(false);
+    // 다시 진단하다 돌아온 실패나 검토 대기 보고서에는 보이지 않는다.
+    expect(diagnosisSnapshots([diagnosis(2, { status: 'ready', repoCheck: null, failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'diagnosis', reproducing: true } })])[0]!.canRetryWithoutReproduction).toBe(false);
+  });
+
+  it('저장소 대기는 같은 프로젝트·사유로 기다리는 진단 수를 넘긴다. 사유나 프로젝트가 다르면 따로 센다', () => {
+    const snapshots = diagnosisSnapshots([
+      diagnosis(1),
+      diagnosis(2),
+      diagnosis(3, { projectId: '12' }),
+      diagnosis(4, { repoCheck: { kind: 'missing-folder', path: '/fake/gone' } }),
+      diagnosis(5, { status: 'queued', repoCheck: null }),
+    ]);
+
+    expect(snapshots.map((item) => item.repoWait)).toEqual([
+      { kind: 'unmapped', waitingCount: 2 },
+      { kind: 'unmapped', waitingCount: 2 },
+      { kind: 'unmapped', waitingCount: 1 },
+      { kind: 'missing-folder', path: '/fake/gone', waitingCount: 1 },
+      null,
+    ]);
   });
 });

@@ -2,17 +2,25 @@ import type { AppSnapshot, DetectionStartFailure, SettingsSection, SetupRequirem
 
 /** 필수 설정 줄의 이름. */
 export const SETUP_REQUIREMENT_LABELS: Record<SetupRequirement, string> = {
-  'flow-key': 'Flow 개인 API 키',
   agent: '에이전트',
-  'work-folders': '작업 폴더',
 };
 
 /** 필수 설정 줄을 누르면 여는 설정 창의 칸. */
 export const SETUP_REQUIREMENT_SECTIONS: Record<SetupRequirement, SettingsSection> = {
-  'flow-key': 'flow-account',
   agent: 'agent',
-  'work-folders': 'repositories',
 };
+
+/** 작은 창 체크리스트의 묶음 이름. 필수 설정과, 연결하지 않아도 되는 감지할 대상이다. */
+export const SETUP_GROUP_LABELS = { required: '필수', targets: '감지할 대상 · 선택' } as const;
+
+/** 감지할 대상 줄의 이름. 연결하면 `✓`, 아니면 "연결 안 함"이 오른쪽에 보인다. */
+export const DETECTION_TARGET_LABELS = { flow: 'Flow 계정', sentry: 'Sentry' } as const;
+
+/** 설정 창 맨 위 띠의 안내. 필수 설정이 남았을 때 보이고, 칸으로 가는 단추는 [에이전트 설정]이다. */
+export const SETUP_BAND_TEXT = '필수 설정: 에이전트 연결';
+
+/** 필수 설정을 마쳤는데 연결한 서비스가 없을 때 [감지 시작] 위에 보이는 안내. 막지는 않는다. */
+export const NO_DETECTION_TARGET_NOTICE = '연결한 서비스가 없어 아직 감지할 대상이 없습니다. 지금 시작하고 나중에 서비스를 연결해도 됩니다.';
 
 /** [감지 시작]이 실패했을 때 버튼 아래에 보일 문장. */
 export const DETECTION_START_FAILURE_MESSAGES: Record<DetectionStartFailure, string> = {

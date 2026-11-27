@@ -69,13 +69,13 @@ export function claudeUpdateCommand(realPath: string, cliCommand: string): strin
 
 /**
  * 실행 종류별 `--max-turns`. 넘으면 실행이 턴 상한 오류로 끝난다.
- * 선택 실행 값은 비밀 파일 제외 실측에서 쓴 40이다.
  * 초안 실행은 여러 저장소의 파일을 하나씩 읽어 가므로 60으로 넉넉하게 둔다. 주 안전장치는 10분 제한이고,
  * 턴 상한은 같은 일을 되풀이하는 실행을 일찍 끊는 보조 장치다. 실제 사용에서 턴 상한 실패가 잦으면 늘린다.
+ * 진단 실행은 시간 상한이 20분으로 초안의 두 배라 턴 상한도 두 배로 둔다.
  */
 export const CLAUDE_MAX_TURNS: Readonly<Record<RunKind, number>> = {
-  selection: 40,
   draft: 60,
+  diagnosis: 120,
   check: 3,
 };
 

@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { bundleChanges, type BundleChanges } from '../core/bundles/bundle-changes';
-import { activeMentions, canEditDraft, canRegenerate, isRestorable, isUnassignedBlocked, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
+import { activeMentions, repoWaitKey, canEditDraft, canRegenerate, isRepoUndetermined, isRestorable, isUnassignedBlocked, listGroupOf, type MentionBundle, type RepoCheck } from '../core/bundles/mention-bundle';
 import type { Draft } from '../core/drafts/draft';
 import { bundleRecipients, draftEditorText, isPostable, postBody } from '../core/drafts/post-body';
 import { bundleSourceWords, developerTerms } from '../core/drafts/style-check';
@@ -9,14 +9,18 @@ import { namedMentionText, splitMentionMarkup } from '../core/flow/mention-marku
 import { isPostBody, mentionPlaceOf } from '../core/flow/mention-place';
 import { mentionWritingOf, type BundleContext, type ContextWriting } from '../core/flow/bundle-context';
 import { commentKey, mentionWritingKey, POST_WRITING_KEY, replyKey } from '../core/flow/context-changes';
-import type { RepoCandidate } from '../core/repos/repo-candidates';
 import type { MappingMatch } from '../core/repos/repo-mappings';
 import type { RepoPickerState } from '../core/repos/repo-picker';
 import type { ManualPlace } from '../core/bundles/mention-bundles';
 import type { ManualCheckState } from '../core/manual-check/manual-check-session';
 import type { ManualAssignmentCandidate, ManualMentionCandidate } from '../core/manual-check/manual-mention-check';
+import { hasExportedCurrentReport, isRediagnosing, isRepoWaiting, openableSentryUrl, timedOutWhileReproducing, type DiagnosisFailure, type DiagnosisReport, type SentryDiagnosis } from '../core/sentry/sentry-diagnosis';
 import type {
   BundleMentionSnapshot,
+  DiagnosisFailureSnapshot,
+  DiagnosisProgressSnapshot,
+  DiagnosisReportSnapshot,
+  DiagnosisSnapshot,
   BundleSnapshot,
   DraftSnapshot,
   GenerationSnapshot,
@@ -24,7 +28,6 @@ import type {
   PostingSnapshot,
   RepoCheckSnapshot,
   RepoPickerSnapshot,
-  RepositorySnapshot,
   ReviewSnapshot,
   RunLineSnapshot,
   ThreadEntrySnapshot,
@@ -51,23 +54,130 @@ export type GenerationLookup = (bundleId: number) => GenerationSnapshot | null;
 /** Flow 프로젝트의 저장소 매핑과 저장소 구성을 견준다. */
 export type MappingLookup = (projectId: string, repos: readonly string[]) => MappingMatch;
 
+/** 진단 ID로 생성 대기열의 진행을 찾는다. 대기열에 없으면 `null`. */
+export type DiagnosisProgressLookup = (diagnosisId: number) => DiagnosisProgressSnapshot | null;
+
 /** 묶음 ID로 게시 카운트다운이 끝날 시각을 찾는다. 카운트다운 중이 아니면 `null`. */
 export type CountdownLookup = (bundleId: number) => number | null;
 
-/** 작은 창과 펼친 창이 그릴 묶음 상태. `bundles`는 대기열 순서 그대로 넘긴다. */
+/** 작은 창과 펼친 창이 그릴 묶음과 진단 상태. `bundles`는 대기열 순서 그대로 넘긴다. 진단은 묶음과 따로 감지한 순서로 넘긴다. */
 export function reviewSnapshot(
   bundles: readonly MentionBundle[],
+  diagnoses: readonly SentryDiagnosis[],
   sections: ReviewSnapshot['sections'],
   projectOf: ProjectLookup,
   generationOf: GenerationLookup,
   mappingOf: MappingLookup,
   repoPicker: RepoPickerState | null,
   countdownOf: CountdownLookup,
+  diagnosisProgressOf: DiagnosisProgressLookup = () => null,
+  reproductionAllowedOf: (projectId: string) => boolean = () => false,
 ): ReviewSnapshot {
+  /** 프로젝트와 사유별로 기다리는 저장소 대기 묶음 수. 바닥 줄 글의 "기다리는 n건"이다. */
+  const waitCounts = new Map<string, number>();
+  for (const bundle of bundles) {
+    if (bundle.draft !== null || bundle.status !== 'repo-check-needed') continue;
+    /** 센 키. */
+    const key = repoWaitKey(bundle);
+    waitCounts.set(key, (waitCounts.get(key) ?? 0) + 1);
+  }
   return {
-    bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf)),
+    bundles: bundles.map((bundle) => bundleSnapshot(bundle, projectOf, generationOf, mappingOf, countdownOf, (item) => waitCounts.get(repoWaitKey(item)) ?? 1)),
+    diagnoses: diagnosisSnapshots(diagnoses, diagnosisProgressOf, reproductionAllowedOf),
     sections: { compact: { ...sections.compact }, expanded: { ...sections.expanded } },
     repoPicker: repoPicker && repoPickerSnapshot(repoPicker),
+  };
+}
+
+/**
+ * 진단을 렌더러에 넘길 모양으로 바꾼다. 저장소 대기는 같은 프로젝트·사유로 기다리는 진단 수를 함께 넘겨 바닥 줄의 "기다리는 오류 n건"이 된다.
+ * 대기 진단은 생성 대기열이 진행하고 있으면 진행 중(`running`)으로 넘긴다. 오류 제목은 검토 화면에만 보이고 OS 알림에는 넣지 않는다.
+ */
+export function diagnosisSnapshots(
+  diagnoses: readonly SentryDiagnosis[],
+  progressOf: DiagnosisProgressLookup = () => null,
+  reproductionAllowedOf: (projectId: string) => boolean = () => false,
+): DiagnosisSnapshot[] {
+  /** 프로젝트와 사유별로 기다리는 진단 수. */
+  const waitCounts = new Map<string, number>();
+  /** 프로젝트와 사유를 묶는 키. */
+  const waitKey = (diagnosis: SentryDiagnosis) => `${diagnosis.projectId}\u0000${diagnosis.repoCheck?.kind ?? ''}`;
+  for (const diagnosis of diagnoses) if (isRepoWaiting(diagnosis)) waitCounts.set(waitKey(diagnosis), (waitCounts.get(waitKey(diagnosis)) ?? 0) + 1);
+  return diagnoses.map((diagnosis): DiagnosisSnapshot => {
+    /** 같은 프로젝트·사유로 기다리는 진단 수. */
+    const waitingCount = waitCounts.get(waitKey(diagnosis)) ?? 1;
+    /** 오류 이슈 정보와 저장소 대기 사유. */
+    const { issue, repoCheck } = diagnosis;
+    /** 대기 진단의 진행. 대기가 아니면 `null`. */
+    const progress = diagnosis.status === 'queued' ? (progressOf(diagnosis.id) ?? { status: 'waiting', ahead: null }) : null;
+    return {
+      id: diagnosis.id,
+      projectId: diagnosis.projectId,
+      origin: diagnosis.origin,
+      title: issue.title,
+      detectedAt: diagnosis.detectedAt,
+      status: progress?.status === 'running' ? 'running' : diagnosis.status,
+      progress,
+      report: diagnosis.report && reportSnapshot(diagnosis.report),
+      failure: diagnosis.failure && failureSnapshot(diagnosis.failure),
+      canRetryWithoutReproduction: diagnosis.status === 'failed' && timedOutWhileReproducing(diagnosis.failure),
+      rediagnosing: isRediagnosing(diagnosis),
+      directives: [...diagnosis.directives],
+      rediagnosisFailure: diagnosis.rediagnosisFailure && failureSnapshot(diagnosis.rediagnosisFailure),
+      completedAt: diagnosis.completedAt,
+      exported: hasExportedCurrentReport(diagnosis),
+      lastExportedPath: diagnosis.lastExport?.path ?? null,
+      canOpenInSentry: openableSentryUrl(issue.permalink) !== null,
+      attachments: diagnosis.report?.attachments.map((item) => ({ ...item })) ?? [],
+      reproductionAllowed: reproductionAllowedOf(diagnosis.projectId),
+      repoWait:
+        !isRepoWaiting(diagnosis) || repoCheck === null
+          ? null
+          : repoCheck.kind === 'unmapped'
+            ? { kind: 'unmapped', waitingCount }
+            : { kind: 'missing-folder', path: repoCheck.path, waitingCount },
+      issue: {
+        shortId: issue.shortId,
+        culprit: issue.culprit,
+        level: issue.level,
+        environment: issue.environment,
+        firstSeen: issue.firstSeen,
+        lastSeen: issue.lastSeen,
+        count: issue.count,
+        userCount: issue.userCount,
+        platform: issue.platform,
+        organizationName: issue.organizationName,
+        projectName: issue.projectName,
+      },
+    };
+  });
+}
+
+/** 진단 실패의 까닭을 렌더러에 넘길 모양으로 바꾼다. */
+function failureSnapshot(failure: DiagnosisFailure): DiagnosisFailureSnapshot {
+  return { reason: failure.reason, detail: failure.detail, lastStep: failure.lastStep };
+}
+
+/** 진단 보고서를 렌더러에 넘길 모양으로 바꾼다. */
+function reportSnapshot(report: DiagnosisReport): DiagnosisReportSnapshot {
+  return {
+    summary: report.summary,
+    reproduction: { ...report.reproduction, steps: [...report.reproduction.steps] },
+    cause: { ...report.cause },
+    improvements: [...report.improvements],
+    openQuestions: [...report.openQuestions],
+    evidence: report.evidence.map((item) => ({ ...item })),
+    event: {
+      release: report.event.release,
+      firstRelease: report.event.firstRelease,
+      lastRelease: report.event.lastRelease,
+      sourceMaps: report.event.sourceMaps,
+      missingData: [...report.event.missingData],
+      stackHead: [...report.event.stackHead],
+    },
+    run: { ...report.run },
+    priorDiagnosis: report.priorDiagnosis && { ...report.priorDiagnosis },
+    omittedAttachments: report.omittedAttachments,
   };
 }
 
@@ -165,7 +275,6 @@ function firstLineOf(text: string): string {
 
 /** 저장소 선택 창의 상태를 렌더러에 넘길 모양으로 바꾼다. */
 function repoPickerSnapshot(picker: RepoPickerState): RepoPickerSnapshot {
-  if (picker.status === 'loading') return { ...picker };
   return { ...picker, choices: picker.choices.map((choice) => ({ ...choice })) };
 }
 
@@ -180,6 +289,7 @@ export function bundleSnapshot(
   generationOf: GenerationLookup = () => null,
   mappingOf: MappingLookup = () => 'unmapped',
   countdownOf: CountdownLookup = () => null,
+  repoWaitCountOf: (bundle: MentionBundle) => number = () => 1,
 ): BundleSnapshot {
   /** 묶음에 남은 멘션. */
   const active = activeMentions(bundle);
@@ -218,7 +328,7 @@ export function bundleSnapshot(
     run: runLine(bundle),
     generation: bundle.status === 'generating' ? (generationOf(bundle.id) ?? { status: 'waiting' }) : null,
     failure: bundle.failure && { ...bundle.failure },
-    repoCheck: bundle.repoCheck && repoCheckSnapshot(bundle.repoCheck, bundle.userRepos !== null),
+    repoCheck: bundle.repoCheck && { ...repoCheckSnapshot(bundle.repoCheck, bundle.userRepos !== null), waitingCount: repoWaitCountOf(bundle) },
     posting: postingSnapshot(bundle, countdownOf),
     postFailure: bundle.status === 'post-failed' ? (bundle.posting?.failure ?? 'no-response') : null,
     // 그 뒤 게시 중이 되었거나 처리한 묶음에는 보이지 않는다.
@@ -240,7 +350,7 @@ function postingSnapshot(bundle: MentionBundle, countdownOf: CountdownLookup): P
 }
 
 /**
- * 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘기고, 자동 선택으로 정했으면 그 내력도 넘긴다.
+ * 초안을 렌더러에 넘길 모양으로 바꾼다. 저장소는 폴더 이름을 붙여 넘긴다.
  * `mapping`은 그 구성을 저장소 매핑과 견준 것이다. 편집기 텍스트와 받는 사람도 함께 넘기되, 받는 사람의 사용자 ID는 넘기지 않는다.
  */
 function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatch): DraftSnapshot {
@@ -248,6 +358,8 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
   const recipients = bundleRecipients(bundle);
   /** 문체 검사에서 뺄 단어. */
   const source = bundleSourceWords(bundle);
+  /** 저장소가 정해지지 않은 초안인지 여부. 고른 저장소도 저장소 매핑도 없다. 다시 만들 수 있는 준비됨 묶음에서만 알린다. */
+  const repoUndetermined = bundle.status === 'ready' && isRepoUndetermined(bundle, mapping !== 'unmapped');
   return {
     requirement: { ...draft.requirement },
     paragraphs: draft.paragraphs.map((paragraph) => ({
@@ -264,12 +376,12 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
       developerTerms: developerTerms(explanation, source),
     })),
     repositories: draft.repositories.map((path) => ({ name: basename(path), path })),
-    autoSelection: draft.autoSelection && { ...draft.autoSelection },
     mapping,
     editorText: bundle.editedText ?? draftEditorText(draft),
     edited: bundle.editedText !== null,
     canEdit: canEditDraft(bundle.status),
-    canRegenerate: canRegenerate(bundle.status) && !isUnassignedBlocked(bundle),
+    canRegenerate: canRegenerate(bundle.status) && !isUnassignedBlocked(bundle) && !repoUndetermined,
+    repoUndetermined,
     recipients: recipients.map(({ name }) => ({ name })),
     // 빈 편집기 텍스트의 게시 본문이 곧 받는 사람 표기와 이어 붙이는 공백이다.
     postBodyPrefixLength: postBody(recipients, '').length,
@@ -278,45 +390,33 @@ function draftSnapshot(bundle: MentionBundle, draft: Draft, mapping: MappingMatc
 }
 
 /**
- * 저장소 확인 필요의 사유를 렌더러에 넘길 모양으로 바꾼다.
- * 선택 실행의 후보는 에이전트가 짚은 것(짚은 순서)과 나머지(작업 폴더에서 찾은 순서)로 나눈다.
+ * 저장소 대기의 사유를 렌더러에 넘길 모양으로 바꾼다.
  * `chosenByUser`는 묶음에 고른 구성이 있는지다. 있으면 실행 직전에 매핑 대신 그 구성을 확인했으므로 사라진 폴더도 그 구성의 것이다.
  */
 function repoCheckSnapshot(repoCheck: RepoCheck, chosenByUser: boolean): RepoCheckSnapshot {
   switch (repoCheck.kind) {
+    case 'unmapped':
+      return { kind: repoCheck.kind };
     case 'missing-folders':
       return { kind: repoCheck.kind, paths: [...repoCheck.paths], chosenByUser };
-    case 'no-candidates':
-      return { kind: repoCheck.kind };
-    case 'unsure':
-    case 'unrelated': {
-      /** 후보를 렌더러의 저장소 모양으로 바꾼다. */
-      const repositoryOf = ({ name, path }: RepoCandidate): RepositorySnapshot => ({ name, path });
-      return {
-        kind: repoCheck.kind,
-        reason: repoCheck.reason,
-        picked: repoCheck.picked.flatMap((path) => repoCheck.candidates.filter((candidate) => candidate.path === path)).map(repositoryOf),
-        others: repoCheck.candidates.filter((candidate) => !repoCheck.picked.includes(candidate.path)).map(repositoryOf),
-      };
-    }
   }
 }
 
 /**
- * 상세 머리의 실행 줄. 초안이 있으면 그 초안을 만든 실행(마지막 성공), 실패 묶음이면 마지막 실행,
- * 선택 실행이 고르지 않아 저장소 확인 필요가 된 묶음이면 그 선택 실행이다. 생성 중이거나 그런 실행이 없으면 `null`.
+ * 상세 머리의 실행 줄. 초안이 있으면 그 초안을 만든 실행(마지막 성공), 실패 묶음이면 마지막 실행이다.
+ * 생성 중이거나 그런 실행이 없으면 `null`. 과거 기록의 저장소 선택 실행은 종류를 `selection`으로 넘긴다.
  */
 function runLine(bundle: MentionBundle): RunLineSnapshot | null {
   if (bundle.status === 'generating') return null;
   /** 실행 줄에 보일 실행. */
-  const run = bundle.draft ? bundle.runs.findLast((record) => record.result === 'succeeded') : bundle.status === 'failed' || decidedBySelection(bundle) ? bundle.runs.at(-1) : undefined;
+  const run = bundle.draft ? bundle.runs.findLast((record) => record.result === 'succeeded') : bundle.status === 'failed' ? bundle.runs.at(-1) : undefined;
   if (!run) return null;
-  return { agent: run.agent, durationMs: Math.max(0, run.finishedAt - run.startedAt), contextOmitted: run.omittedContextItems > 0 };
-}
-
-/** 선택 실행의 판정으로 저장소 확인 필요가 된 묶음인지 본다. 마지막 실행 기록이 그 선택 실행이다. */
-function decidedBySelection(bundle: MentionBundle): boolean {
-  return bundle.status === 'repo-check-needed' && (bundle.repoCheck?.kind === 'unsure' || bundle.repoCheck?.kind === 'unrelated');
+  return {
+    kind: run.kind === 'selection' ? 'selection' : 'draft',
+    agent: run.agent,
+    durationMs: Math.max(0, run.finishedAt - run.startedAt),
+    contextOmitted: run.omittedContextItems > 0,
+  };
 }
 
 /**

@@ -86,11 +86,12 @@ export class AppWindows {
 
   /**
    * 작은 창을 트레이 근처에 연다. 이미 열려 있으면 앞으로 가져온다.
-   * 묶음 ID를 주면 그 묶음을 연 작은 창이 된다(OS 알림 클릭, "접어 보기").
+   * 묶음 ID를 주면 그 묶음을, 진단 ID를 주면 그 진단을 연 작은 창이 된다(OS 알림 클릭, "접어 보기").
    */
-  openPopover(bundleId: number | null = null): void {
+  openPopover(bundleId: number | null = null, diagnosisId: number | null = null): void {
     if (this.popover) {
       if (bundleId !== null) this.send(this.popover, { type: 'review-bundle-requested', bundleId });
+      if (diagnosisId !== null) this.send(this.popover, { type: 'review-diagnosis-requested', diagnosisId });
       this.popover.show();
       this.popover.focus();
       return;
@@ -142,15 +143,19 @@ export class AppWindows {
     });
 
     this.popover = window;
-    this.load(window, 'popover', bundleParam(bundleId));
+    this.load(window, 'popover', { ...bundleParam(bundleId), ...diagnosisParam(diagnosisId) });
   }
 
-  /** "펼쳐 보기". 작은 창을 닫고 목록+상세 창을 연다. 이미 열려 있으면 그 묶음을 보이고 앞으로 가져온다. */
-  openReview(bundleId: number | null): void {
+  /**
+   * "펼쳐 보기". 작은 창을 닫고 목록+상세 창을 연다. 이미 열려 있으면 그 묶음을 보이고 앞으로 가져온다.
+   * `diagnosisId`를 주면 그 진단을 보인다.
+   */
+  openReview(bundleId: number | null, diagnosisId: number | null = null): void {
     this.popover?.close();
 
     if (this.review) {
       if (bundleId !== null) this.send(this.review, { type: 'review-bundle-requested', bundleId });
+      if (diagnosisId !== null) this.send(this.review, { type: 'review-diagnosis-requested', diagnosisId });
       void this.showWithDock(this.review);
       return;
     }
@@ -173,23 +178,41 @@ export class AppWindows {
     });
 
     this.review = window;
-    this.load(window, 'review', bundleParam(bundleId));
+    this.load(window, 'review', { ...bundleParam(bundleId), ...diagnosisParam(diagnosisId) });
   }
 
-  /** "접어 보기". 펼친 창을 닫고, Dock 아이콘까지 숨긴 뒤에 그 묶음을 연 작은 창을 띄운다. */
-  async collapseReview(bundleId: number | null): Promise<void> {
+  /**
+   * 진단 알림을 눌렀을 때. 펼친 창이 열려 있으면 거기에 그 진단을 보이고, 아니면 그 진단을 연 작은 창을 띄운다.
+   */
+  openDiagnosis(diagnosisId: number): void {
+    if (this.review) this.openReview(null, diagnosisId);
+    else this.openPopover(null, diagnosisId);
+  }
+
+  /** "접어 보기". 펼친 창을 닫고, Dock 아이콘까지 숨긴 뒤에 그 묶음이나 진단을 연 작은 창을 띄운다. */
+  async collapseReview(bundleId: number | null, diagnosisId: number | null = null): Promise<void> {
     await closeAndWait(this.review);
     // Dock 아이콘을 숨기며 앱이 뒤로 가면 작은 창이 포커스를 받자마자 잃고 닫히므로, 사용자가 누른 이 경우에는 앱을 앞으로 가져온다.
     if (process.platform === 'darwin') app.focus({ steal: true });
-    this.openPopover(bundleId);
+    this.openPopover(bundleId, diagnosisId);
   }
 
-  /** 설정 창을 연다. 칸을 주면 그 칸을 보인다. 작은 창은 닫는다. */
-  openSettings(section?: SettingsSection): void {
+  /**
+   * 설정 창을 연다. 칸을 주면 그 칸을 보이고, 프로젝트를 주면 저장소 매핑에서 그 Flow 프로젝트의 줄을,
+   * Sentry 프로젝트를 주면 `Sentry` 탭에서 그 프로젝트의 줄을 짚는다. 작은 창은 닫는다.
+   */
+  openSettings(section?: SettingsSection, projectId?: string, sentryProjectId?: string): void {
     this.popover?.close();
 
     if (this.settings) {
-      if (section) this.send(this.settings, { type: 'settings-section-requested', section });
+      if (section) {
+        this.send(this.settings, {
+          type: 'settings-section-requested',
+          section,
+          ...(projectId ? { projectId } : {}),
+          ...(sentryProjectId ? { sentryProjectId } : {}),
+        });
+      }
       void this.showWithDock(this.settings);
       return;
     }
@@ -213,7 +236,11 @@ export class AppWindows {
     });
 
     this.settings = window;
-    this.load(window, 'settings', section ? { section } : {});
+    this.load(window, 'settings', {
+      ...(section ? { section } : {}),
+      ...(projectId ? { project: projectId } : {}),
+      ...(sentryProjectId ? { sentryProject: sentryProjectId } : {}),
+    });
   }
 
   /** 설정 창이 열려 있으면 닫고, 다 닫혀 Dock 아이콘을 숨긴 뒤에 끝난다. */
@@ -258,6 +285,11 @@ export class AppWindows {
 /** 창 주소에 실을 묶음 ID. 없으면 싣지 않는다. */
 function bundleParam(bundleId: number | null): Record<string, string> {
   return bundleId === null ? {} : { bundle: String(bundleId) };
+}
+
+/** 진단 ID를 창 주소에 실을 값으로 바꾼다. 없으면 싣지 않는다. */
+function diagnosisParam(diagnosisId: number | null): Record<string, string> {
+  return diagnosisId === null ? {} : { diagnosis: String(diagnosisId) };
 }
 
 /** 창이 열려 있으면 닫고, 다 닫힌 뒤에 끝난다. */

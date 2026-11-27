@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS } from '../ports/settings-store';
+import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../ports/settings-store';
 import { FileSettingsStore } from './file-settings-store';
 
 /** 테스트마다 만드는 임시 데이터 폴더. */
@@ -71,8 +71,30 @@ describe('설정 파일 저장소', () => {
   });
 
   it('같은 형식 버전에서 빠진 필드는 기본값으로 채운다', async () => {
-    writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 1, workFolders: ['/fake/code'] }));
+    writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 1, extraInstructions: '가짜 지침' }));
 
-    await expect(createStore().load()).resolves.toEqual({ ...DEFAULT_SETTINGS, workFolders: ['/fake/code'] });
+    await expect(createStore().load()).resolves.toEqual({ ...DEFAULT_SETTINGS, extraInstructions: '가짜 지침' });
+  });
+
+  it('재현 키가 없던 옛 파일은 재현 허용 없음과 재현 도구 권한 자동으로 읽는다. 스키마 버전은 올리지 않는다', async () => {
+    writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 1, extraInstructions: '가짜 지침' }));
+
+    const settings = await createStore().load();
+
+    expect(settings.reproductionRepos).toEqual({});
+    expect(settings.reproductionTools).toEqual({ mode: 'auto', enabledServers: {} });
+    expect(SETTINGS_SCHEMA_VERSION).toBe(1);
+  });
+
+  it('옛 작업 폴더 키는 설정에 없고, 파일에는 그대로 남으며 형식 버전도 그대로다', async () => {
+    writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 1, workFolders: ['/fake/code'], extraInstructions: '가짜 지침' }));
+    const store = createStore();
+
+    /** 읽은 설정. */
+    const loaded = await store.load();
+    await store.save({ ...loaded, launchAtLogin: true });
+
+    expect(DEFAULT_SETTINGS).not.toHaveProperty('workFolders');
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toMatchObject({ schemaVersion: 1, workFolders: ['/fake/code'], launchAtLogin: true });
   });
 });

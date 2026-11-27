@@ -1,6 +1,5 @@
 import {
   POST_BODY_CHAR_LIMIT,
-  type BundleGroup,
   type BundleSnapshot,
   type BundleStatusSnapshot,
   type DraftFailureReasonSnapshot,
@@ -13,6 +12,7 @@ import {
   type PostStopSnapshot,
   type RepoCheckSnapshot,
   type RepoChoiceGroupSnapshot,
+  type RepoWaitSnapshot,
   type RunLineSnapshot,
   type WritingChangeSnapshot,
 } from '../../shared/ipc';
@@ -33,13 +33,16 @@ export const BUNDLE_STATUS_TAGS: Record<BundleStatusSnapshot, { label: string; c
   unassigned: { label: '담당 해제', className: 'done' },
 };
 
-/** 펼친 창의 목록 묶음 이름. */
-export const BUNDLE_GROUP_LABELS: Record<BundleGroup, string> = {
-  'awaiting-review': '검토 대기',
-  generating: '생성 중',
-  failed: '실패',
-  processed: '처리됨',
-};
+/** 저장소 매핑 필요 묶음의 상태 태그. 같은 `repo-check-needed` 상태라도 매핑이 없어 기다리면 이 이름으로 보인다. */
+const REPO_MAPPING_NEEDED_TAG = { label: '저장소 매핑 필요', className: 'warn' };
+
+/** 묶음 상태 태그의 이름과 색. 저장소 대기는 사유에 따라 저장소 매핑 필요와 저장소 확인 필요로 나뉜다. */
+export function statusTagOf(status: BundleStatusSnapshot, repoCheck: RepoCheckSnapshot | null = null): { label: string; className: string } {
+  return status === 'repo-check-needed' && repoCheck?.kind === 'unmapped' ? REPO_MAPPING_NEEDED_TAG : BUNDLE_STATUS_TAGS[status];
+}
+
+/** 펼친 창 목록에서 Flow 초안을 묶는 종류 이름. 진단은 자기 종류 이름으로 같은 묶음 머리를 쓴다. */
+export const DRAFT_KIND_LABEL = '초안';
 
 /** 멘션 묶음 자리의 이름. 본문 묶음과 댓글 스레드 묶음이다. */
 export const BUNDLE_PLACE_LABELS: Record<BundleSnapshot['place'], string> = {
@@ -78,10 +81,13 @@ export const WRITING_CHANGE_LABELS: Record<WritingChangeSnapshot, string> = {
 /** 준비된 뒤의 변화 감시가 묶음을 이미 답함으로 옮긴 뒤 초안 위에 띄우는 말. 옆에 [되돌리기]를 둔다. */
 export const ANSWERED_NOTICE = 'Flow에 이미 내 답이 있습니다';
 
+/** 저장소가 정해지지 않은 초안의 알림 줄 문구. 다시 만들 수 없는 까닭과 길을 알린다. */
+export const REPO_UNDETERMINED_NOTICE = '이 초안에 쓸 저장소가 정해지지 않아 다시 만들 수 없습니다. 프로젝트에 저장소를 매핑하거나 "다른 저장소로 다시 만들기"를 쓰세요.';
+
 /**
  * 초안 위 알림 줄의 문구. 합쳐진 새 멘션 수와 초안을 만든 뒤의 변화를 한 줄로 잇는다.
  * 예: "새 멘션 1건 · 초안을 만든 뒤 새 글 2건 · 원문 수정됨 · 멘션 1건 사라짐". 초안이 없는 묶음은 새 멘션만 알린다.
- * 알릴 것이 없으면 `null`.
+ * 저장소가 정해지지 않은 초안이면 그 안내를 더한다. 알릴 것이 없으면 `null`.
  */
 export function noticeText({ newMentionCount, changes, draft }: Pick<BundleSnapshot, 'newMentionCount' | 'changes' | 'draft'>): string | null {
   /** 초안을 만든 뒤의 변화. */
@@ -93,14 +99,16 @@ export function noticeText({ newMentionCount, changes, draft }: Pick<BundleSnaps
       ].filter((part) => part !== null)
     : [];
   /** 알림 줄에 이을 조각. */
-  const parts = [newMentionCount > 0 ? `새 멘션 ${newMentionCount}건` : null, changed.length > 0 ? `초안을 만든 뒤 ${changed.join(' · ')}` : null].filter(
-    (part) => part !== null,
-  );
+  const parts = [
+    newMentionCount > 0 ? `새 멘션 ${newMentionCount}건` : null,
+    changed.length > 0 ? `초안을 만든 뒤 ${changed.join(' · ')}` : null,
+    draft?.repoUndetermined ? REPO_UNDETERMINED_NOTICE : null,
+  ].filter((part) => part !== null);
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-/** 처리됨 목록 아래의 보관 안내. */
-export const RETENTION_NOTE = '처리한 지 7일이 지나면 목록에서 사라지고 되돌릴 수 없습니다.';
+/** 끝낸 항목이 하나라도 있을 때 목록 맨 아래에 한 줄로 보이는 보관 안내. 종류를 가리지 않는다. */
+export const RETENTION_NOTE = '끝낸 항목은 7일이 지나면 목록에서 사라집니다.';
 
 /** 오늘 시각 표기. 예: 오전 9:50 */
 const TIME_FORMAT = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
@@ -236,22 +244,41 @@ const FAILURE_REASON_TEXT: Record<DraftFailureReasonSnapshot, string> = {
   'agent-error': '에이전트가 오류로 끝났습니다.',
 };
 
-/** 선택 실행이 제한 시간(5분) 안에 끝나지 않아 실패한 묶음의 오류 문장. 초안 실행의 시간 초과(10분)와 구분한다. */
-const SELECTION_TIMED_OUT_TEXT = '에이전트가 5분 안에 저장소를 고르지 못해 멈췄습니다.';
-
-/** 실패 화면에 보일 오류 문장. 사유마다 정해 두고, 선택 실행의 시간 초과만 선택 실행의 제한 시간으로 적는다. */
+/** 실패 화면에 보일 오류 문장. 사유마다 정해 둔다. */
 export function failureText(failure: FailureSnapshot): string {
-  if (failure.reason === 'timed-out' && failure.runKind === 'selection') return SELECTION_TIMED_OUT_TEXT;
   return FAILURE_REASON_TEXT[failure.reason];
 }
 
-/** 저장소 확인 필요의 사유마다 저장소 영역 첫 줄에 보일 문장. */
-export const REPO_CHECK_TEXT: Record<RepoCheckSnapshot['kind'], string> = {
-  'missing-folders': '연결된 저장소 폴더를 찾을 수 없음',
-  'no-candidates': '작업 폴더에서 저장소를 찾지 못함',
-  unsure: '에이전트가 저장소를 확신하지 못함',
-  unrelated: '에이전트가 코드와 무관한 멘션으로 판정함',
-};
+/** 저장소 대기의 노란 바닥 줄 글. 굵은 첫 문장(`lead`)과 이어지는 문장(`before`, 폴더 경로, `after`)이다. 경로가 없으면 `path`는 `null`이다. */
+export interface RepoWaitText {
+  /** 굵게 보이는 첫 문장. */
+  lead: string;
+  /** 첫 문장 뒤, 경로 앞의 글. 경로가 없으면 이어지는 글 전부다. */
+  before: string;
+  /** 찾을 수 없는 폴더 경로들. 쉼표로 이어 코드체로 보인다. 경로가 없으면 `null`. */
+  path: string | null;
+  /** 경로 뒤의 글. */
+  after: string;
+}
+
+/**
+ * 저장소 대기의 노란 바닥 줄 글. 저장소 매핑 필요는 기다리는 건수를, 저장소 확인 필요는 찾을 수 없는 폴더 경로를 알린다.
+ * 진단 바닥 줄은 건수를 "오류 n건"으로 쓰므로 이 글을 쓰지 않고 자기 글을 만든다.
+ */
+export function repoWaitText(repoCheck: RepoWaitSnapshot): RepoWaitText {
+  if (repoCheck.kind === 'unmapped') {
+    return { lead: '이 프로젝트에 연결한 저장소가 없습니다.', before: `매핑하면 기다리는 멘션 ${repoCheck.waitingCount}건의 초안을 만듭니다.`, path: null, after: '' };
+  }
+  return { lead: '연결한 저장소 폴더를 찾을 수 없습니다.', before: '', path: repoCheck.paths.join(', '), after: '폴더가 돌아오거나 매핑을 고치면 이어 갑니다.' };
+}
+
+/** 저장소 대기의 주 버튼 이름. 매핑이 없으면 만들고, 있으면 고친다. */
+export function repoWaitMainButton(repoCheck: RepoCheckSnapshot): string {
+  return repoCheck.kind === 'unmapped' ? '저장소 매핑하기' : '매핑 고치기';
+}
+
+/** 저장소가 정해지지 않은 초안의 저장소 영역 글. */
+export const NO_DETERMINED_REPOSITORY_NOTE = '정해진 저장소가 없습니다.';
 
 /** 연결 버튼 문구. 저장소 매핑이 이미 있으면(같은 구성이어도) "매핑을 이 구성으로 바꾸기"다. */
 export function linkButtonText(mapping: MappingMatchSnapshot): string {
@@ -264,20 +291,9 @@ export const LINKED_NOTE = '이 Flow 프로젝트의 저장소 매핑이 이 구
 /** 저장소 선택 창의 후보 무리 머리말. */
 export const REPO_CHOICE_GROUP_LABELS: Record<RepoChoiceGroupSnapshot, string> = {
   current: '지금 쓰는 저장소',
-  'work-folder': '작업 폴더에서 찾은 저장소',
   mapping: '다른 매핑에 쓰인 저장소',
   added: '직접 고른 폴더',
 };
-
-/** 저장소 확인 필요 사유의 첫 줄. 저장소 선택 창에서 고른 폴더가 사라졌으면 연결(매핑)된 폴더가 아니라고 밝힌다. */
-export function repoCheckText(repoCheck: RepoCheckSnapshot): string {
-  return repoCheck.kind === 'missing-folders' && repoCheck.chosenByUser ? '고른 저장소 폴더를 찾을 수 없음' : REPO_CHECK_TEXT[repoCheck.kind];
-}
-
-/** 선택 실행이 적은 이유. 에이전트가 비워 두었으면 "이유 없음"이다. */
-export function reasonText(reason: string): string {
-  return reason === '' ? '이유 없음' : reason;
-}
 
 /** 걸린 시간을 보인다. 1분이 넘으면 "2분 14초", 넘지 않으면 "45초"다. */
 export function formatDuration(durationMs: number): string {
@@ -289,9 +305,17 @@ export function formatDuration(durationMs: number): string {
   return seconds === 0 ? `${minutes}분` : `${minutes}분 ${seconds}초`;
 }
 
-/** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"이다. */
+/** 과거 기록에 남은 폐지된 저장소 선택 실행의 이름. 실행 줄 맨 앞에 붙는다. */
+export const RETIRED_SELECTION_RUN_TEXT = '저장소 선택(폐지됨)';
+
+/** 상세 머리의 실행 줄. "Claude Code · 2분 14초 · 맥락 일부 생략"이고, 과거의 저장소 선택 실행은 맨 앞에 "저장소 선택(폐지됨)"이 붙는다. */
 export function runLineText(run: RunLineSnapshot): string {
-  return [AGENT_INFO[run.agent].name, formatDuration(run.durationMs), ...(run.contextOmitted ? ['맥락 일부 생략'] : [])].join(' · ');
+  return [
+    ...(run.kind === 'selection' ? [RETIRED_SELECTION_RUN_TEXT] : []),
+    AGENT_INFO[run.agent].name,
+    formatDuration(run.durationMs),
+    ...(run.contextOmitted ? ['맥락 일부 생략'] : []),
+  ].join(' · ');
 }
 
 /** 근거 번호를 원문자(①②…)로 보인다. ⑳을 넘으면 괄호 숫자다. */

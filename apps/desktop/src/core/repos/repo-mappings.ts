@@ -4,6 +4,7 @@ import { errorFields, type Logger } from '../logging/logger';
 import type { FlowApiFailure, FlowConnection, FlowProject } from '../ports/flow-api';
 import type { SettingsStore } from '../ports/settings-store';
 import { SerialQueue } from '../serial-queue';
+import { splitRejectedFolders, type RejectedFolder } from './folder-rules';
 
 /** 매핑된 저장소 폴더를 확인한 상태. */
 export type MappedRepoStatus = 'checking' | 'found' | 'missing';
@@ -54,7 +55,7 @@ export interface RepoMappingsState {
 export type RepoResolution =
   /** 저장소 매핑이 없다. */
   | { kind: 'unmapped' }
-  /** 연결된 폴더 가운데 없는 것이 있다. 자동 선택으로 넘어가지 않고 저장소 확인 필요로 올린다. `paths`는 없는 폴더다. */
+  /** 연결된 폴더 가운데 없는 것이 있다. 저장소 확인 필요로 올린다. `paths`는 없는 폴더다. */
   | { kind: 'missing-folders'; paths: string[] }
   /** 연결된 폴더가 모두 있다. 연결한 순서이고 첫 저장소가 초안 실행의 cwd가 된다. */
   | { kind: 'mapped'; repos: string[] };
@@ -78,7 +79,7 @@ export interface RepoMappingsOptions {
 
 /**
  * 저장소 매핑 목록: Flow 프로젝트 ID → 저장소 절대 경로 목록.
- * 저장소 개수에 제한이 없고 git 저장소가 아닌 코드 폴더도 받는다. 작업 폴더와는 따로 저장하므로 작업 폴더를 지워도 남는다.
+ * 저장소 개수에 제한이 없고 git 저장소가 아닌 코드 폴더도 받는다. 네트워크·WSL 폴더는 받지 않는다.
  */
 export class RepoMappings {
   /** 저장된 매핑. */
@@ -164,32 +165,36 @@ export class RepoMappings {
   }
 
   /** 받은 참여 목록에서 Flow 프로젝트 이름을 찾는다. 이름이 비어 있으면 모르는 것으로 본다. */
-  private loadedProjectTitle(projectId: string): string | null {
+  loadedProjectTitle(projectId: string): string | null {
     if (this.projects.status !== 'loaded') return null;
     return this.projects.projects.find((project) => project.projectId === projectId)?.title || null;
   }
 
   /**
    * 폴더 선택 창에서 고른 폴더를 Flow 프로젝트에 연결한다. 매핑이 없으면 새로 만들고, 이미 연결된 폴더는 다시 더하지 않는다.
-   * 참여 목록에도 저장된 매핑에도 없는 Flow 프로젝트는 받지 않는다.
+   * 참여 목록에도 저장된 매핑에도 없는 Flow 프로젝트는 받지 않는다. 다만 `waiting`이 참이면(그 프로젝트의 묶음이 저장소 매핑을 기다리는 중) 받는다.
+   * 네트워크·WSL 폴더는 연결하지 않고 받지 않은 폴더로 돌려준다.
    */
-  async addRepos(projectId: string, paths: readonly string[]): Promise<void> {
+  async addRepos(projectId: string, paths: readonly string[], waiting = false): Promise<RejectedFolder[]> {
+    /** 받을 폴더와 받지 않을 폴더. */
+    const { accepted, rejected } = splitRejectedFolders(paths);
     /** 새로 연결한 폴더. OS 고유 형식의 절대 경로로 맞춘다. */
     const added = await this.updates.run(async () => {
-      if (!this.isKnownProject(projectId)) {
+      if (!waiting && !this.isKnownProject(projectId)) {
         this.options.logger.warn('repo-mappings.unknown-project', {});
         return [];
       }
       /** 지금 연결된 폴더. */
       const current = this.mappings[projectId] ?? [];
       /** 아직 연결되지 않은 폴더. 같은 폴더를 두 번 골라도 한 번만 더한다. */
-      const fresh = [...new Set(paths.map((path) => resolve(path)))].filter((path) => !current.includes(path));
+      const fresh = [...new Set(accepted.map((path) => resolve(path)))].filter((path) => !current.includes(path));
       if (fresh.length === 0) return [];
       return (await this.save({ ...this.mappings, [projectId]: [...current, ...fresh] })) ? fresh : [];
     });
-    if (added.length === 0) return;
+    if (added.length === 0) return rejected;
     this.emit();
     await Promise.all(added.map((path) => this.check(path)));
+    return rejected;
   }
 
   /**

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeClock } from '../fakes/fake-clock';
 import { FakeEncryption } from '../fakes/fake-encryption';
 import { createLogger } from '../logging/logger';
-import { FileSecretStore } from './file-secret-store';
+import { FileSecretStore, FileSentryTokenStore } from './file-secret-store';
 
 /** 테스트마다 만드는 임시 데이터 폴더. */
 let dataDir: string;
@@ -127,5 +127,43 @@ describe('Flow 개인 API 키 보관', () => {
     mkdirSync(keyPath());
 
     await expect(createStore().readFlowApiKey()).resolves.toEqual({ kind: 'unreadable' });
+  });
+});
+
+describe('Sentry 개인 토큰 보관', () => {
+  /** 토큰 파일 경로. Flow 키 파일과 다르다. */
+  const tokenPath = () => join(dataDir, 'sentry-token.bin');
+
+  it('저장한 토큰을 다시 읽으면 같은 토큰이 나오고, 파일에는 암호문만 남는다', async () => {
+    const store = new FileSentryTokenStore(tokenPath(), new FakeEncryption(), silentLogger);
+
+    await store.write('fake-sentry-token-1');
+
+    await expect(store.read()).resolves.toEqual({ kind: 'found', value: 'fake-sentry-token-1' });
+    expect(readFileSync(tokenPath()).includes(Buffer.from('fake-sentry-token-1'))).toBe(false);
+  });
+
+  it('토큰이 없거나 지운 뒤에는 없다고, 풀 수 없으면 읽을 수 없다고 돌려준다', async () => {
+    const encryption = new FakeEncryption();
+    const store = new FileSentryTokenStore(tokenPath(), encryption, silentLogger);
+
+    await expect(store.read()).resolves.toEqual({ kind: 'missing' });
+    await store.write('fake-sentry-token-1');
+    encryption.failDecrypt = true;
+    await expect(store.read()).resolves.toEqual({ kind: 'unreadable' });
+    encryption.failDecrypt = false;
+    await store.delete();
+    await expect(store.read()).resolves.toEqual({ kind: 'missing' });
+  });
+
+  it('열쇠가 바뀌었으면 읽으면서 새 열쇠로 다시 암호화해 저장한다', async () => {
+    const encryption = new FakeEncryption();
+    const store = new FileSentryTokenStore(tokenPath(), encryption, silentLogger);
+    await store.write('fake-sentry-token-1');
+    encryption.keyVersion = 2;
+
+    await expect(store.read()).resolves.toEqual({ kind: 'found', value: 'fake-sentry-token-1' });
+
+    expect(readFileSync(tokenPath(), 'utf8').startsWith('fake-v2:')).toBe(true);
   });
 });

@@ -34,14 +34,7 @@ export type DraftCheck =
  */
 export async function checkDraftOutput(output: DraftOutput, options: DraftCheckOptions): Promise<DraftCheck> {
   /** 근거 파일이 실제로 가리키는 파일. 비밀 파일 판정과 위치 검증이 같은 저장소·경로를 한 번만 푼다. */
-  const targets = new Map<string, Promise<EvidenceTarget>>();
-  /** 근거 하나의 실제 파일. */
-  const targetOf: TargetOf = (item) => {
-    /** 저장소와 경로로 만든 열쇠. */
-    const key = `${item.repository}\0${item.path}`;
-    if (!targets.has(key)) targets.set(key, evidenceTarget(item, options.repositories));
-    return targets.get(key) as Promise<EvidenceTarget>;
-  };
+  const targetOf = cachedTargetOf(options.repositories);
   /** 비밀 파일 패턴에 맞는 근거. */
   const secret = await firstSecretEvidence(output.evidence, options.secretPatterns, targetOf);
   if (secret) return { kind: 'secret-evidence', fixes: [`비밀 파일 패턴에 맞는 근거: ${secret.id}번(${secret.path})`] };
@@ -58,14 +51,69 @@ export async function checkDraftOutput(output: DraftOutput, options: DraftCheckO
   const numbered = renumber(output, fixes);
 
   /** 위치를 확인한 근거. */
-  const evidence: DraftEvidence[] = [];
-  for (const item of numbered.evidence) {
-    /** 위치를 찾지 못한 까닭. 찾았으면 `null`. */
-    const problem = await locationProblem(item, options.repositories, targetOf);
-    if (problem) fixes.push(`위치를 찾을 수 없는 근거: ${item.id}번(${problem})`);
-    evidence.push({ ...item, located: problem === null });
-  }
+  const evidence = await locateEvidence(numbered.evidence, options.repositories, targetOf, fixes);
   return { kind: 'draft', output: { requirement, paragraphs: numbered.paragraphs, evidence }, fixes };
+}
+
+/** 근거 검사에 필요한 것. */
+export interface EvidenceCheckOptions {
+  /** 읽기 범위로 넘긴 저장소(절대 경로). 근거의 `repository`는 이 가운데 하나여야 한다. */
+  repositories: readonly string[];
+  /** 비밀 파일 패턴 전부(기본 목록과 추가 패턴). 근거 경로가 하나라도 맞으면 결과 전체를 버린다. */
+  secretPatterns: readonly string[];
+}
+
+/** 근거 검사의 결과. `fixes`는 앱이 고친 것과 위치를 찾지 못한 근거로, 실행 기록에만 남는다. */
+export type EvidenceCheck =
+  /** 위치를 확인한 근거. */
+  | { kind: 'checked'; evidence: DraftEvidence[]; fixes: string[] }
+  /** 근거 경로가 비밀 파일 패턴에 맞았다. 결과 전체를 버린다. */
+  | { kind: 'secret-evidence'; fixes: string[] };
+
+/**
+ * 진단 보고서처럼 문장별 근거 연결이 없는 결과의 근거를 검사한다. Flow 초안과 같은 비밀 파일 근거 검사와 근거 위치 검사다.
+ * 같은 번호의 근거가 여럿이면 처음 것만 남긴다. 번호는 원인 글이 `[근거 n]`으로 가리키므로 다시 매기지 않는다.
+ */
+export async function checkEvidence(evidence: readonly AgentEvidence[], options: EvidenceCheckOptions): Promise<EvidenceCheck> {
+  /** 근거 파일이 실제로 가리키는 파일. */
+  const targetOf = cachedTargetOf(options.repositories);
+  /** 비밀 파일 패턴에 맞는 근거. */
+  const secret = await firstSecretEvidence(evidence, options.secretPatterns, targetOf);
+  if (secret) return { kind: 'secret-evidence', fixes: [`비밀 파일 패턴에 맞는 근거: ${secret.id}번(${secret.path})`] };
+  /** 고친 것. */
+  const fixes: string[] = [];
+  /** 번호가 겹치지 않는 근거. */
+  const unique: AgentEvidence[] = [];
+  for (const item of evidence) {
+    if (unique.some((kept) => kept.id === item.id)) fixes.push(`겹친 근거 번호: ${item.id}번이 여러 근거에 붙어 처음 것만 남김`);
+    else unique.push(item);
+  }
+  return { kind: 'checked', evidence: await locateEvidence(unique, options.repositories, targetOf, fixes), fixes };
+}
+
+/** 근거마다 위치를 확인한다. 찾지 못한 근거는 지우지 않고 표시만 하고, 까닭을 `fixes`에 더한다. */
+async function locateEvidence(evidence: readonly AgentEvidence[], repositories: readonly string[], targetOf: TargetOf, fixes: string[]): Promise<DraftEvidence[]> {
+  /** 위치를 확인한 근거. */
+  const located: DraftEvidence[] = [];
+  for (const item of evidence) {
+    /** 위치를 찾지 못한 까닭. 찾았으면 `null`. */
+    const problem = await locationProblem(item, repositories, targetOf);
+    if (problem) fixes.push(`위치를 찾을 수 없는 근거: ${item.id}번(${problem})`);
+    located.push({ ...item, located: problem === null });
+  }
+  return located;
+}
+
+/** 한 번의 검사 안에서 근거 파일의 실제 파일을 저장소·경로마다 한 번만 푸는 함수를 만든다. */
+function cachedTargetOf(repositories: readonly string[]): TargetOf {
+  /** 저장소와 경로마다 푼 결과. */
+  const targets = new Map<string, Promise<EvidenceTarget>>();
+  return (item) => {
+    /** 저장소와 경로로 만든 열쇠. */
+    const key = `${item.repository}\0${item.path}`;
+    if (!targets.has(key)) targets.set(key, evidenceTarget(item, repositories));
+    return targets.get(key) as Promise<EvidenceTarget>;
+  };
 }
 
 /**

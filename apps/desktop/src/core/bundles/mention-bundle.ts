@@ -5,15 +5,14 @@ import { compareAlarmIds } from '../flow/alarm-id';
 import { flowTimeToEpochMs } from '../flow/flow-time';
 import { isPostBody } from '../flow/mention-place';
 import type { MyAnswer } from '../flow/mention-judgement';
-import type { RepoCandidate } from '../repos/repo-candidates';
 
 /** 멘션 묶음의 상태. */
 export type BundleStatus =
-  /** 생성 중. 선택 실행이나 초안 실행이 대기열에 있거나 돌고 있다. */
+  /** 생성 중. 초안 실행이 대기열에 있거나 돌고 있다. */
   | 'generating'
   /** 준비됨. 초안이 있고 사용자 행동을 기다린다. */
   | 'ready'
-  /** 저장소 확인 필요. 초안 없이 저장소를 골라 달라고 기다린다. */
+  /** 저장소 대기. 초안 없이 저장소 매핑 필요나 저장소 확인 필요로 기다린다. 사유는 묶음의 `repoCheck`에 있다. */
   | 'repo-check-needed'
   /** 게시 중. 게시 취소 카운트다운(5초)이나 게시 요청 중이다. 게시 기록이 없으면 카운트다운 중이다. */
   | 'posting'
@@ -90,6 +89,14 @@ export function canPickRepos(status: BundleStatus): boolean {
   return status === 'ready' || status === 'repo-check-needed';
 }
 
+/**
+ * 저장소가 정해지지 않은 초안인지 본다. 초안은 있는데 사용자가 고른 저장소도 Flow 프로젝트의 저장소 매핑(`mapped`)도 없다.
+ * 자동 선택으로 만든 기존 초안이나, 매핑으로 만든 뒤 매핑을 지운 초안이다. 이 초안은 검토와 게시는 되지만 다시 만들 저장소가 없다.
+ */
+export function isRepoUndetermined(bundle: Pick<MentionBundle, 'draft' | 'userRepos'>, mapped: boolean): boolean {
+  return bundle.draft !== null && bundle.userRepos === null && !mapped;
+}
+
 /** 초안을 편집하고 받는 사람을 뺄 수 있는 상태인지 본다. 준비됨과 게시 실패다. */
 export function canEditDraft(status: BundleStatus): boolean {
   return status === 'ready' || status === 'post-failed';
@@ -113,33 +120,24 @@ export function isDraftTouched(bundle: Pick<MentionBundle, 'editedText' | 'fixed
   return bundle.editedText !== null || bundle.fixedRequirement !== null || bundle.directives.length > 0;
 }
 
-/** 트레이 검토 수에 세는 상태인지 본다. 검토 대기 가운데 준비됨과 저장소 확인 필요다. 게시 중은 검토 대기에 남지만 세지 않는다. */
-export function countsForReview(status: BundleStatus): boolean {
-  return status === 'ready' || status === 'repo-check-needed';
-}
-
 /**
- * 저장소 확인 필요의 사유. 자동 선택이 생기기 전에 저장소 매핑이 없어 저장소 확인 필요가 된 묶음은 사유가 없다(`null`).
+ * 저장소 대기(`repo-check-needed`)의 사유. 저장소 매핑 필요(`unmapped`)와 저장소 확인 필요(`missing-folders`)가 지금의 두 상태다.
+ * 자동 선택 때 쓰던 옛 사유(후보 없음, 확신 없음, 코드와 무관함)는 없다. 저장된 옛 사유는 읽을 때 저장소 매핑 필요로 보고, 앱을 켤 때 한 번 다시 판정해 맞는 상태로 옮긴다.
  */
 export type RepoCheck =
-  /** 저장소 매핑에 연결된 폴더 가운데 없는 것이 있다. 화면 사유는 "연결된 저장소 폴더를 찾을 수 없음"이다. */
+  /** 저장소 매핑 필요. 매핑도 사용자가 고른 저장소도 없어 기다린다. 그 Flow 프로젝트에 매핑이 저장되면 저절로 생성 중이 된다. */
+  | { kind: 'unmapped' }
+  /** 저장소 확인 필요. 정해 둔 저장소(매핑이나 사용자가 고른 구성)에 연결된 폴더 가운데 없는 것이 있다. 화면 사유는 "연결된 저장소 폴더를 찾을 수 없음"이다. */
   | {
       kind: 'missing-folders';
       /** 찾을 수 없는 폴더의 절대 경로. */
       paths: string[];
-    }
-  /** 자동 선택을 하려 했지만 작업 폴더에서 저장소 후보를 찾지 못했다(작업 폴더가 없거나 비어 있음). */
-  | { kind: 'no-candidates' }
-  /** 선택 실행이 저장소를 확신하지 못했거나(`unsure`) 코드와 무관한 멘션이라고(`unrelated`) 판정했다. */
-  | {
-      kind: 'unsure' | 'unrelated';
-      /** 선택 실행이 적은 사유. 에이전트가 비워 두었으면 빈 문자열이고 화면에는 "이유 없음"으로 보인다. */
-      reason: string;
-      /** 선택 실행에 넘긴 후보. 작업 폴더에서 찾은 저장소 전부이고 찾은 순서다. */
-      candidates: RepoCandidate[];
-      /** 선택 실행이 짚은 후보의 절대 경로. 판정이 고름이 아니어도 가능성이 있는 저장소를 넣을 수 있다. 에이전트가 낸 순서이고, 짚지 않았으면 비어 있다. */
-      picked: string[];
     };
+
+/** 저장소 대기 묶음을 프로젝트와 사유(저장소 매핑 필요, 저장소 확인 필요)별로 묶는 키. 바닥 줄 글의 건수를 센다. */
+export function repoWaitKey(bundle: Pick<MentionBundle, 'projectId' | 'repoCheck'>): string {
+  return `${bundle.projectId}\u0000${bundle.repoCheck?.kind === 'missing-folders' ? 'missing-folders' : 'unmapped'}`;
+}
 
 /** 묶음에 든 멘션. */
 export interface BundledMention extends Mention {
@@ -331,11 +329,11 @@ export interface MentionBundle extends BundlePlace {
    * 원문 영역은 이것을 지금 내용으로 보인다. 아직 감시하지 않았거나 비교 기준이 바뀌었으면 `null`.
    */
   watchedContext: BundleContext | null;
-  /** 저장소 확인 필요의 사유. 저장소 확인 필요가 아니거나, 자동 선택이 생기기 전에 사유 없이 저장소 확인 필요가 되었으면 `null`. */
+  /** 저장소 대기의 사유. 저장소 대기가 아니거나 사유가 남지 않은 옛 묶음이면 `null`. */
   repoCheck: RepoCheck | null;
   /**
    * 사용자가 저장소 선택 창에서 고른 구성(절대 경로). 첫 저장소가 초안 실행의 cwd가 된다.
-   * 있으면 저장소 매핑과 자동 선택 대신 이 구성으로 초안 실행만 돌린다. 저장소 매핑은 아니고, 고른 적이 없으면 `null`.
+   * 있으면 저장소 매핑 대신 이 구성으로 초안 실행만 돌린다. 저장소 매핑은 아니고, 고른 적이 없으면 `null`.
    */
   userRepos: string[] | null;
   /** 초안 실행이 만든 초안(원래 초안). 아직 없으면 `null`. */

@@ -8,7 +8,9 @@ import { AgentConnection } from '../agent/agent-connection';
 import { AgentConnections } from '../agent/agent-connections';
 import { AgentPreferences } from '../agent/agent-preferences';
 import { CHECK_RUN_INPUT } from '../agent/check-run';
+import type { MentionBundle } from '../bundles/mention-bundle';
 import { MentionBundles } from '../bundles/mention-bundles';
+import { RepoWaitMonitor } from '../bundles/repo-wait-monitor';
 import { MentionDetection } from '../detection/mention-detection';
 import { claudeNotLoggedInStream, claudeSuccessStream, fakeClaudeAuthStatus } from '../fakes/fake-claude-stream';
 import { codexModelsOutput, codexSuccessStream, fakeCodexLoginStatus } from '../fakes/fake-codex-events';
@@ -31,6 +33,7 @@ import type { FlowAlarm, FlowEmployee, FlowTask } from '../ports/flow-api';
 import type { FakeFlowPost } from '../fakes/fake-flow-api';
 import type { StateStore } from '../ports/state-store';
 import { GlobalProblems } from '../problems/global-problems';
+import { AccountRecords } from '../account/account-records';
 import { FlowAccount } from '../account/flow-account';
 import { MemorySecretStore } from '../fakes/memory-secret-store';
 import { RepoMappings } from '../repos/repo-mappings';
@@ -39,7 +42,6 @@ import { draftAgentFrom, DraftQueue, type DraftQueueOptions } from './draft-queu
 import { DraftSettings } from './draft-settings';
 import { Posting } from '../posting/posting';
 import { openStateDatabase, SqliteStateStore, STATE_MIGRATIONS } from '../storage/state-database';
-import { SELECTION_INSTRUCTIONS } from './repo-selection';
 import { ManualCheckSession } from '../manual-check/manual-check-session';
 import { ManualMentionCheck } from '../manual-check/manual-mention-check';
 
@@ -53,7 +55,7 @@ const SENDER = 'sender@example.test';
 const OTHER_SENDER = 'other@example.test';
 /** 멘션이 온 Flow 프로젝트. */
 const PROJECT_ID = '900001';
-/** 저장소 매핑이 없는 Flow 프로젝트. 이 프로젝트의 멘션 묶음은 자동 선택으로 저장소를 정한다. */
+/** 저장소 매핑이 없는 Flow 프로젝트. 이 프로젝트의 멘션 묶음은 매핑이 생길 때까지 저장소 매핑 필요로 기다린다. */
 const UNMAPPED_PROJECT_ID = '900002';
 /** 멘션이 온 게시물. */
 const POST_ID = '90000011';
@@ -320,6 +322,10 @@ async function setup(queueAgent?: Pick<DraftQueueOptions, 'agent' | 'onAgentChan
     await restarted.start();
     return restarted;
   };
+  // 앱처럼 저장소 대기 묶음을 앱을 켤 때, 매핑이 바뀔 때, 폴더 없음이 있는 동안 60초마다 다시 확인해 재개한다.
+  const repoWait = new RepoWaitMonitor({ bundles, clock, logger });
+  repoWait.start();
+  repoMappings.onChange(() => repoWait.checkNow());
   const detection = new MentionDetection({ stateStore, bundles, clock, logger, connectFlow });
   flow.addPost({
     postId: POST_ID,
@@ -356,7 +362,7 @@ async function setup(queueAgent?: Pick<DraftQueueOptions, 'agent' | 'onAgentChan
     agent.connected = connected;
     for (const listener of agent.listeners) listener();
   };
-  return { clock, flow, stateStore, settingsStore, notifier, problems, bundles, executor, agent, drafts, repos, poll, setConnected, restartApp, createQueue };
+  return { clock, flow, stateStore, settingsStore, notifier, problems, bundles, executor, agent, drafts, repos, repoMappings, repoWait, poll, setConnected, restartApp, createQueue };
 }
 
 /** 가짜 CLI 경로. 실제 파일은 없고, 연결 확인이 실행할 수 있는 파일로 본다. */
@@ -468,7 +474,7 @@ describe('초안 실행: 생성 중에서 준비됨으로', () => {
       createdAt: NOW,
     });
     expect(bundles.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', bundleId: ready?.id }]);
+    expect(notifier.sent).toEqual([{ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', target: { kind: 'draft', id: ready?.id } }]);
   });
 });
 
@@ -648,7 +654,7 @@ describe('초안 실행: 형식 위반과 실패', () => {
     ]);
     expect(second?.status).toBe('ready');
     expect(executor.requests).toHaveLength(2);
-    expect(notifier.sent.map((sent) => sent.bundleId)).toEqual([second?.id]);
+    expect(notifier.sent.map((sent) => sent.target?.id)).toEqual([second?.id]);
   });
 
   it('사용자가 추가한 비밀 파일 패턴에 맞는 근거도 결과 전체를 버린다', async () => {
@@ -930,7 +936,7 @@ describe('초안 실행: 저장소 매핑', () => {
     const [bundle] = bundles.state();
     expect(bundle).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: [repos.b] }, draft: null });
     expect(bundles.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: bundle?.id }]);
+    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '이 프로젝트에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.', target: { kind: 'draft', id: bundle?.id } }]);
     expect(executor.requests).toEqual([]);
   });
 
@@ -951,405 +957,391 @@ describe('초안 실행: 저장소 매핑', () => {
 
 });
 
-describe('자동 선택: 후보 찾기', () => {
-  it('저장소 매핑이 없는 Flow 프로젝트의 멘션 묶음은 작업 폴더에서 후보를 찾고, 작업 폴더가 없으면 실행 없이 "작업 폴더에서 저장소를 찾지 못함" 사유로 저장소 확인 필요가 되며 OS 알림을 띄운다', async () => {
+describe('저장소 매핑 필요', () => {
+  it('저장소 매핑이 없는 Flow 프로젝트의 멘션 묶음은 실행하지 않고 저장소 매핑 필요로 기다리며 OS 알림을 띄운다. 맥락은 조회해 둔다', async () => {
     const { executor, bundles, notifier, poll } = await setup();
 
     await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
 
-    /** 저장소 확인 필요 묶음. */
+    /** 저장소 매핑 필요 묶음. */
     const [bundle] = bundles.state();
-    expect(bundle).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'no-candidates' }, draft: null });
+    expect(bundle).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' }, draft: null, userRepos: null });
     expect(bundles.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: bundle?.id }]);
+    expect(notifier.sent).toEqual([{ title: '저장소 매핑 필요', body: '이 프로젝트에 연결한 저장소가 없습니다. 매핑하면 기다리는 초안을 만듭니다.', target: { kind: 'draft', id: bundle?.id } }]);
     expect(executor.requests).toEqual([]);
     // 원문 영역의 "스레드 보기"에 보일 맥락은 조회해 둔다.
     expect(bundle?.context?.post.title).toBe('가짜 게시물');
   });
 
-  it('작업 폴더가 비어 있거나 사라졌어도 후보가 0개라 같은 사유로 저장소 확인 필요가 된다', async () => {
-    const { executor, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 없는 작업 폴더. */
-    const empty = makeWorkFolder('empty', []);
-    settingsStore.settings.workFolders = [empty.folder, join(workDir, 'gone')];
+  it('매핑이 없어 기다리는 묶음은 Flow 프로젝트별 건수를 알려 설정 "저장소" 칸 맨 위에 보이게 한다', async () => {
+    const { bundles, poll } = await setup();
+    expect(bundles.waitingForMapping()).toEqual([]);
 
     await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
 
-    expect(bundles.state()[0]).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'no-candidates' } });
+    expect(bundles.waitingForMapping()).toEqual([{ projectId: UNMAPPED_PROJECT_ID, count: 1 }]);
+  });
+
+  it('담당 업무 초안도 매핑이 없으면 같은 상태로 기다린다', async () => {
+    const { flow, clock, stateStore, bundles, executor } = await setup();
+    /** 담당 업무 감지. */
+    const detection = new AssignmentDetection({ stateStore, bundles, clock, connectFlow: () => ({ api: flow, reportKeyRejected: () => {} }) });
+    await detection.checkNow();
+    clock.advance(60_000);
+    flow.addPost({ postId: 'assignment-post', title: '매핑 없는 업무', registerId: SENDER, registerName: '업무 작성자',
+      registeredDateTime: '20261020090100', editedDateTime: '20261020090100',
+      textComponents: [{ contents: '운영 재시도 횟수를 확인해주세요.', mentions: [] }],
+      tasks: [{ taskId: 'task-1', workerIds: [ME], completion: 'active' }] });
+    flow.addWorkerAlarm(alarm('201', { projectId: UNMAPPED_PROJECT_ID, postId: 'assignment-post', remarkId: '-1', registeredDateTime: '20261020090100' }));
+
+    await detection.checkNow();
+    await settle();
+
+    expect(bundles.state()[0]).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' }, assignment: { taskId: 'task-1' } });
     expect(executor.requests).toEqual([]);
   });
 
-  it('후보가 1개면 선택 실행 없이 그 저장소로 초안 실행을 돌리고, 초안에 후보가 하나라 그 저장소를 썼다고 남긴다. 저장소 매핑으로 저장하지 않는다', async () => {
-    const { executor, bundles, settingsStore, repos, poll } = await setup();
-    /** 저장소가 하나인 작업 폴더. */
-    const work = makeWorkFolder('work', ['only-repo']);
-    settingsStore.settings.workFolders = [work.folder];
-    executor.script({ outcome: { type: 'completed', output: draftOutput(work.repos[0]!) } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    expect(executor.requests.map((request) => request.kind)).toEqual(['draft']);
-    expect(executor.requests[0]?.readRoots).toEqual(work.repos);
-    expect(executor.requests[0]?.input).toContain(`# 읽을 저장소\n- ${work.repos[0]}\n`);
-    expect(bundles.state()[0]).toMatchObject({ status: 'ready', draft: { repositories: work.repos, autoSelection: { kind: 'single-candidate' } } });
-    expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [repos.a, repos.b] });
-  });
-});
-
-describe('자동 선택: 선택 실행', () => {
-  it('후보가 여럿이면 선택 실행이 먼저 돌고 고른 저장소로 초안 실행이 바로 이어진다. 선택 실행은 작업 폴더 전부를 읽고(첫 폴더가 cwd) 선택 실행 지침, 후보 enum 스키마, 5분 제한으로 돈다', async () => {
-    const { executor, bundles, settingsStore, repos, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더와 하나인 작업 폴더. */
-    const [work, side] = [makeWorkFolder('work', ['api', 'web']), makeWorkFolder('side', ['batch'])];
-    /** 후보 저장소. */
-    const [api, web, batch] = [...work.repos, ...side.repos] as [string, string, string];
-    settingsStore.settings.workFolders = [work.folder, side.folder];
-    settingsStore.settings.extraInstructions = '맺음말로 "확인 부탁드립니다"를 붙입니다.';
-    settingsStore.settings.extraSecretPatterns = ['*.secret.yml'];
-    /** 선택 실행이 적은 이유. */
-    const reason = '화면에서 쓰는 재시도 설정을 묻고 있어 웹 화면 저장소와 그 서버 저장소를 골랐습니다.';
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [web, api], reason } } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(web) } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    /** 선택 실행 요청과 초안 실행 요청. */
-    const [selection, draft] = executor.requests;
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'draft']);
-    expect(selection).toMatchObject({ readRoots: [work.folder, side.folder], secretPatterns: ['*.secret.yml'], model: 'sonnet', timeoutMs: 5 * 60 * 1000 });
-    // 선택 실행은 전용 지침만 쓰고, 초안 문체를 바꾸는 추가 지침은 붙이지 않는다.
-    expect(selection?.instructions).toBe(SELECTION_INSTRUCTIONS);
-    for (const rule of ['확신이 낮다고 후보를 모두 넣지 않습니다', '"# 데이터" 줄부터', 'chosen', 'unsure', 'unrelated', '쉬운 말']) {
-      expect(selection?.instructions).toContain(rule);
-    }
-    expect(selection?.outputSchema).toEqual({
-      type: 'object',
-      properties: {
-        verdict: { type: 'string', enum: ['chosen', 'unsure', 'unrelated'] },
-        repositories: { type: 'array', items: { type: 'string', enum: [api, web, batch] } },
-        reason: { type: 'string' },
-      },
-      required: ['verdict', 'repositories', 'reason'],
-      additionalProperties: false,
-    });
-    /** 선택 실행의 입력 문서. */
-    const input = selection?.input ?? '';
-    expect(input).toContain(`# 후보 저장소\n- ${api}\n- ${web}\n- ${batch}\n`);
-    expect(input).toContain('Flow 프로젝트: 매핑 없는 프로젝트');
-    expect(input).toContain('1. [답할 대상] 보낸 사람 · 2026-10-20 08:50 · 댓글\n   @테스트 사용자 재시도는 몇 번 하나요?');
-    expect(input).toContain('재시도 설정을 정리한 글입니다.');
-    expect(input.indexOf('\n# 데이터\n')).toBeGreaterThan(input.indexOf('\n# 후보 저장소\n'));
-    for (const userId of [ME, SENDER]) expect(input).not.toContain(userId);
-    // 초안 실행은 고른 순서대로 저장소를 읽고, 데이터 구획(맥락)은 선택 실행과 같다.
-    expect(draft?.readRoots).toEqual([web, api]);
-    expect(draft?.input.slice(draft.input.indexOf('\n# 데이터\n'))).toBe(input.slice(input.indexOf('\n# 데이터\n')));
-
-    /** 준비된 묶음. */
-    const [ready] = bundles.state();
-    expect(ready).toMatchObject({ status: 'ready', draft: { repositories: [web, api], autoSelection: { kind: 'chosen', reason } } });
-    expect(ready?.runs.map((run) => [run.kind, run.result])).toEqual([
-      ['selection', 'succeeded'],
-      ['draft', 'succeeded'],
-    ]);
-    // 자동으로 고른 저장소는 저장소 매핑으로 저장하지 않는다.
-    expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [repos.a, repos.b] });
-  });
-
-  it('선택 실행에서 초안 실행으로 넘어가도 묶음은 생성 중 하나로 보이고, 진행 단계만 "저장소 고르는 중"에서 "초안 쓰는 중"으로 바뀐다', async () => {
-    const { executor, drafts, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
-    const work = makeWorkFolder('work', ['api', 'web']);
-    settingsStore.settings.workFolders = [work.folder];
-    /** 끝나지 않고 기다리는 선택 실행과 초안 실행. */
-    const [selection, draft] = [heldOutcome(), heldOutcome()];
-    executor.script({ outcome: selection.outcome });
-    executor.script({ outcome: draft.outcome });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-    /** 생성 중 묶음. */
-    const bundleId = bundles.state()[0]!.id;
-    expect(bundles.get(bundleId)?.status).toBe('generating');
-    expect(drafts.progress(bundleId)).toEqual({ status: 'running', step: '저장소 고르는 중', filesRead: 0 });
-
-    selection.release({ type: 'completed', output: { verdict: 'chosen', repositories: [work.repos[1]], reason: '웹 화면 질문입니다.' } });
-    await settle();
-
-    expect(bundles.get(bundleId)?.status).toBe('generating');
-    expect(drafts.progress(bundleId)).toEqual({ status: 'running', step: '초안 쓰는 중', filesRead: 0 });
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'draft']);
-  });
-
-  it.each([
-    ['unsure', '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽을 묻는지 알 수 없습니다.'],
-    ['unrelated', '회의 일정을 묻는 멘션이라 저장소를 읽을 필요가 없습니다.'],
-  ] as const)('선택 실행의 판정이 %s면 초안 없이 에이전트의 사유, 작업 폴더의 후보, 에이전트가 짚은 저장소를 담아 저장소 확인 필요가 되고, OS 알림을 띄우며 트레이 숫자에 센다', async (verdict, reason) => {
-    const { executor, bundles, notifier, settingsStore, poll } = await setup();
-    /** 저장소가 셋인 작업 폴더. */
-    const work = makeWorkFolder('work', ['api', 'batch', 'web']);
-    settingsStore.settings.workFolders = [work.folder];
-    /** 에이전트가 짚은 후보. 판정이 고름이 아니어도 가능성이 있는 저장소를 넣을 수 있다. */
-    const picked = verdict === 'unsure' ? [work.repos[2]!, work.repos[0]!] : [];
-    executor.script({ outcome: { type: 'completed', output: { verdict, repositories: picked, reason } } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection']);
-    /** 저장소 확인 필요 묶음. */
-    const [bundle] = bundles.state();
-    expect(bundle).toMatchObject({ status: 'repo-check-needed', draft: null });
-    expect(bundle?.repoCheck).toEqual({
-      kind: verdict,
-      reason,
-      candidates: [
-        { name: 'api', path: work.repos[0] },
-        { name: 'batch', path: work.repos[1] },
-        { name: 'web', path: work.repos[2] },
-      ],
-      picked,
-    });
-    expect(bundle?.runs.map((run) => [run.kind, run.result])).toEqual([['selection', 'succeeded']]);
-    expect(bundles.reviewCount()).toBe(1);
-    expect(notifier.sent).toEqual([{ title: '저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId: bundle?.id }]);
-  });
-});
-
-describe('자동 선택: 선택 실행의 내용 불일치', () => {
-  /** 저장소가 다섯인 작업 폴더를 만들고 작업 폴더로 둔다. */
-  function fiveRepos(settingsStore: MemorySettingsStore) {
-    /** 작업 폴더. */
-    const work = makeWorkFolder('work', ['a-api', 'b-web', 'c-batch', 'd-admin', 'e-docs']);
-    settingsStore.settings.workFolders = [work.folder];
-    return work;
-  }
-
-  it('판정이 고름인데 저장소가 0개면 확신 못함으로 다뤄 저장소 확인 필요가 되고, 고친 내용은 실행 기록에만 남긴다', async () => {
-    const { executor, bundles, settingsStore, poll } = await setup();
-    fiveRepos(settingsStore);
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [], reason: '고를 저장소가 보이지 않습니다.' } } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    /** 저장소 확인 필요 묶음. */
-    const [bundle] = bundles.state();
-    expect(bundle).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unsure', reason: '고를 저장소가 보이지 않습니다.', picked: [] } });
-    expect(bundle?.runs.map(({ kind, result, fixes }) => ({ kind, result, fixes }))).toEqual([
-      { kind: 'selection', result: 'succeeded', fixes: ['판정이 고름인데 저장소가 0개라 확신 못함으로 다룸'] },
-    ]);
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection']);
-  });
-
-  it('판정이 고름인데 저장소가 4개 이상이면 앞의 3개만 써서 초안 실행을 돌린다. 같은 저장소를 거듭 고르면 한 번만 센다', async () => {
-    const { executor, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 다섯인 작업 폴더. */
-    const work = fiveRepos(settingsStore);
-    /** 에이전트가 고른 순서. 같은 저장소가 거듭 나온다. */
-    const [a, b, c, d, e] = work.repos as [string, string, string, string, string];
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [e, c, e, a, d, b], reason: '여러 저장소가 관련 있습니다.' } } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(e) } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    expect(executor.requests[1]?.readRoots).toEqual([e, c, a]);
-    /** 준비된 묶음. */
-    const [ready] = bundles.state();
-    expect(ready).toMatchObject({ status: 'ready', draft: { repositories: [e, c, a] } });
-    expect(ready?.runs[0]?.fixes).toEqual(['같은 저장소를 거듭 고름: 1개를 뺌', '저장소를 5개 골라 앞의 3개만 씀']);
-  });
-
-  it('이유가 비어 있으면 빈 이유로 두고(화면에는 "이유 없음") 고친 내용을 실행 기록에 남긴다', async () => {
-    const { executor, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 다섯인 작업 폴더. */
-    const work = fiveRepos(settingsStore);
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [work.repos[1]], reason: '   ' } } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(work.repos[1]!) } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    /** 준비된 묶음. */
-    const [ready] = bundles.state();
-    expect(ready?.draft?.autoSelection).toEqual({ kind: 'chosen', reason: '' });
-    expect(ready?.runs[0]?.fixes).toEqual(['이유가 비어 있음']);
-  });
-
-  it('후보가 아닌 저장소를 고르거나 판정이 세 값이 아니면 구조 실패라 한 번 더 실행하고, 두 번 모두 그러면 선택 실행의 구조 실패로 실패가 된다', async () => {
-    const { executor, bundles, settingsStore, poll } = await setup();
-    fiveRepos(settingsStore);
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: ['/somewhere/else'], reason: '다른 곳입니다.' } } });
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'maybe', repositories: [], reason: '모르겠습니다.' } } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    /** 실패한 묶음. */
-    const [failed] = bundles.state();
-    expect(failed).toMatchObject({ status: 'failed', failure: { reason: 'invalid-output', detail: '구조화 출력이 선택 실행 스키마 모양이 아닙니다.' } });
-    expect(failed?.runs.map(({ kind, result }) => [kind, result])).toEqual([
-      ['selection', 'invalid-output'],
-      ['selection', 'invalid-output'],
-    ]);
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'selection']);
-  });
-});
-
-describe('자동 선택: 잇기 순서와 선택 실행의 실패', () => {
-  /** 저장소가 둘인 작업 폴더를 만들고 작업 폴더로 둔다. */
-  function twoRepos(settingsStore: MemorySettingsStore) {
-    /** 작업 폴더. */
-    const work = makeWorkFolder('work', ['api', 'web']);
-    settingsStore.settings.workFolders = [work.folder];
-    return work;
-  }
-
-  it('선택 실행이 끝나면 그사이 사용자가 누른 다시 시도나 감지한 묶음보다 앞서, 그 묶음의 초안 실행이 바로 이어진다', async () => {
-    const { flow, executor, drafts, bundles, settingsStore, repos, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
-    const work = twoRepos(settingsStore);
-    executor.script({ outcome: { type: 'failed', reason: 'agent-error', detail: 'usage limit' } });
-    await poll(alarm('101'));
-    /** 실패한 묶음. 저장소 매핑이 있다. */
-    const failed = bundles.state()[0]!;
-    expect(failed.status).toBe('failed');
-
-    /** 끝나지 않고 기다리는 선택 실행. */
-    const selection = heldOutcome();
-    executor.script({ outcome: selection.outcome });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(work.repos[0]!) } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+  it('프로젝트에 매핑을 저장하면 기다리던 묶음이 모두 처음 보인 순서대로 대기열에 서서 초안이 만들어진다. 다른 프로젝트의 묶음은 계속 기다린다', async () => {
+    const { flow, executor, bundles, repoMappings, settingsStore, repos, poll } = await setup();
+    // 같은 프로젝트의 두 번째 묶음(다른 댓글 스레드)과 매핑이 없는 다른 프로젝트의 묶음.
+    await repoMappings.replaceRepos('900003', [join(workDir, 'other-repo')]);
+    await repoMappings.removeMapping('900003');
     await poll(
-      { ...addThreadMention(flow, '102', '701', '매핑 없는 질문', '20261020085100'), projectId: UNMAPPED_PROJECT_ID },
-      addThreadMention(flow, '103', '702', '감지한 질문', '20261020085200'),
+      alarm('101', { projectId: UNMAPPED_PROJECT_ID }),
+      { ...addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085100'), projectId: UNMAPPED_PROJECT_ID },
+      { ...addThreadMention(flow, '103', '702', '다른 프로젝트 질문', '20261020085200'), projectId: '900003' },
     );
-    await drafts.retry(failed.id);
-    await settle();
-    expect(executor.requests.map((request) => request.kind)).toEqual(['draft', 'selection']);
+    expect(bundles.state().map((bundle) => bundle.repoCheck?.kind)).toEqual(['unmapped', 'unmapped', 'unmapped']);
+    expect(executor.requests).toEqual([]);
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
 
-    selection.release({ type: 'completed', output: { verdict: 'chosen', repositories: [work.repos[0]], reason: '서버 질문입니다.' } });
+    // 폴더 선택 창에서 저장소를 더하는 길이든 검토 화면의 연결 버튼이든, 매핑이 저장되면 같다.
+    await repoMappings.replaceRepos(UNMAPPED_PROJECT_ID, [repos.a]);
     await settle();
 
     expect(executor.requests.map((request) => [request.kind, targetMentionOf(request)])).toEqual([
       ['draft', '@테스트 사용자 재시도는 몇 번 하나요?'],
-      ['selection', '@테스트 사용자 매핑 없는 질문'],
-      ['draft', '@테스트 사용자 매핑 없는 질문'],
-      ['draft', '@테스트 사용자 재시도는 몇 번 하나요?'],
-      ['draft', '@테스트 사용자 감지한 질문'],
+      ['draft', '@테스트 사용자 두 번째 질문'],
     ]);
-    expect(bundles.state().map((bundle) => bundle.status)).toEqual(['ready', 'ready', 'ready']);
+    expect(executor.requests[0]?.readRoots).toEqual([repos.a]);
+    expect(bundles.state().map((bundle) => [bundle.projectId, bundle.status])).toEqual([
+      [UNMAPPED_PROJECT_ID, 'ready'],
+      [UNMAPPED_PROJECT_ID, 'ready'],
+      ['900003', 'repo-check-needed'],
+    ]);
+    expect(settingsStore.settings.repoMappings[UNMAPPED_PROJECT_ID]).toEqual([repos.a]);
   });
 
-  it('선택 실행이 5분 제한 시간을 넘기면 다시 실행하지 않고 초안 실행 없이 실패가 되며, 실패에는 선택 실행에서 실패했다고 남는다', async () => {
-    const { executor, bundles, settingsStore, poll } = await setup();
-    twoRepos(settingsStore);
-    executor.script({ progress: [{ step: '파일 읽는 중: README.md', filesRead: 1 }], outcome: { type: 'timed-out' } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    expect(bundles.state()[0]).toMatchObject({
-      status: 'failed',
-      failure: { reason: 'timed-out', detail: null, lastStep: '파일 읽는 중: README.md', runKind: 'selection' },
-    });
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection']);
-  });
-
-  it('선택 실행 중에 취소하면 실행을 끊고 선택 실행에서 "취소함" 실패가 된다', async () => {
-    const { executor, drafts, bundles, settingsStore, poll } = await setup();
-    twoRepos(settingsStore);
-    executor.script({ outcome: 'wait-for-abort' });
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-    /** 생성 중 묶음. */
-    const bundleId = bundles.state()[0]!.id;
-
-    await drafts.cancel(bundleId);
-    await settle();
-
-    expect(executor.requests[0]?.signal.aborted).toBe(true);
-    expect(bundles.get(bundleId)).toMatchObject({ status: 'failed', failure: { reason: 'cancelled', lastStep: '저장소 고르는 중', runKind: 'selection' } });
-    expect(bundles.get(bundleId)?.runs.map(({ kind, result }) => [kind, result])).toEqual([['selection', 'cancelled']]);
-  });
-
-  it('초안 실행에서 실패하면 실패에 초안 실행에서 실패했다고 남는다', async () => {
-    const { executor, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
-    const work = twoRepos(settingsStore);
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [work.repos[0]], reason: '서버 질문입니다.' } } });
-    executor.script({ outcome: { type: 'timed-out' } });
-
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-
-    expect(bundles.state()[0]).toMatchObject({ status: 'failed', failure: { reason: 'timed-out', runKind: 'draft' } });
-  });
-
-  it('선택 실행 중에 새 멘션이 합쳐지면 실행을 끊고 선택 실행부터 처음부터 다시 한다', async () => {
-    const { flow, executor, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
-    const work = twoRepos(settingsStore);
-    executor.script({ outcome: 'wait-for-abort' });
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [work.repos[1]], reason: '웹 질문입니다.' } } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(work.repos[1]!) } });
+  it('기다리는 동안 합쳐진 새 멘션은 수만 늘고, 재개할 때 함께 다룬다', async () => {
+    const { flow, executor, bundles, repoMappings, repos, poll } = await setup();
     await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
     flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 화면 기준으로요`, registerId: SENDER, registeredDateTime: '20261020085500' });
-
     await poll(alarm('102', { projectId: UNMAPPED_PROJECT_ID, replyId: '801', registeredDateTime: '20261020085500' }));
+    expect(bundles.state()[0]).toMatchObject({ status: 'repo-check-needed', newMentionCount: 1 });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
 
-    expect(executor.requests.map((request) => [request.kind, targetMentionOf(request)])).toEqual([
-      ['selection', '@테스트 사용자 재시도는 몇 번 하나요?'],
-      ['selection', '@테스트 사용자 화면 기준으로요'],
-      ['draft', '@테스트 사용자 화면 기준으로요'],
-    ]);
-    /** 준비된 묶음. */
-    const [ready] = bundles.state();
-    expect(ready?.status).toBe('ready');
-    expect(ready?.runs.map(({ kind, result }) => [kind, result])).toEqual([
-      ['selection', 'bundle-changed'],
-      ['selection', 'succeeded'],
-      ['draft', 'succeeded'],
-    ]);
+    await repoMappings.replaceRepos(UNMAPPED_PROJECT_ID, [repos.a]);
+    await settle();
+
+    expect(executor.requests).toHaveLength(1);
+    expect(targetMentionOf(executor.requests[0])).toBe('@테스트 사용자 화면 기준으로요');
+    expect(bundles.state()[0]).toMatchObject({ status: 'ready', newMentionCount: 0 });
   });
 
-  it('일시적 실패는 선택 실행과 초안 실행에서 각각 한 번씩 다시 실행한다', async () => {
-    const { executor, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
-    const work = twoRepos(settingsStore);
-    executor.script({ outcome: { type: 'failed', reason: 'overloaded', detail: 'Overloaded' } });
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [work.repos[0]], reason: '서버 질문입니다.' } } });
-    executor.script({ outcome: { type: 'invalid-output', detail: '결과에 구조화 출력이 없습니다.' } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(work.repos[0]!) } });
+  it('[저장소를 골라 만들기]는 그 묶음만 만들고 매핑은 저장하지 않으며, 같은 프로젝트의 다른 묶음은 계속 기다린다. 나중에 매핑이 생겨도 고른 저장소를 쓴다', async () => {
+    const { flow, executor, drafts, bundles, repoMappings, settingsStore, repos, poll } = await setup();
+    await poll(
+      alarm('101', { projectId: UNMAPPED_PROJECT_ID }),
+      { ...addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085100'), projectId: UNMAPPED_PROJECT_ID },
+    );
+    /** 먼저 보인 묶음과 둘째 묶음. */
+    const [first, second] = bundles.state();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
 
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
+    await drafts.regenerateWithRepos(first!.id, [repos.a]);
+    await settle();
+
+    expect(executor.requests.map((request) => request.kind)).toEqual(['draft']);
+    expect(executor.requests[0]?.readRoots).toEqual([repos.a]);
+    expect(bundles.get(first!.id)).toMatchObject({ status: 'ready', userRepos: [repos.a], draft: { repositories: [repos.a] } });
+    expect(bundles.get(second!.id)).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } });
+    expect(settingsStore.settings.repoMappings[UNMAPPED_PROJECT_ID]).toBeUndefined();
+
+    // 나중에 매핑이 생기면 기다리던 둘째 묶음만 매핑으로 만든다. 첫 묶음은 고른 저장소를 그대로 쓴다.
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    await repoMappings.replaceRepos(UNMAPPED_PROJECT_ID, [repos.b]);
+    await settle();
+
+    expect(executor.requests[1]?.readRoots).toEqual([repos.b]);
+    expect(bundles.get(first!.id)?.userRepos).toEqual([repos.a]);
+  });
+
+  it('처리됨에서 되돌린 묶음에 초안도 매핑도 고른 저장소도 없으면 저장소 매핑 필요가 된다. 고른 저장소가 있으면 그 저장소로 다시 만든다', async () => {
+    const { flow, executor, drafts, bundles, repos, poll } = await setup();
+    await poll(
+      alarm('101', { projectId: UNMAPPED_PROJECT_ID }),
+      { ...addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085100'), projectId: UNMAPPED_PROJECT_ID },
+    );
+    /** 먼저 보인 묶음과 둘째 묶음. */
+    const [first, second] = bundles.state();
+    // 둘째 묶음은 아직 없는 폴더를 골라 저장소 확인 필요로 멈춘 채 무시한다. 초안은 없다.
+    /** 나중에 생길 폴더. */
+    const later = join(workDir, 'later');
+    await drafts.regenerateWithRepos(second!.id, [later]);
+    await settle();
+    expect(bundles.get(second!.id)).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders' }, userRepos: [later] });
+    await bundles.ignore(first!.id);
+    await bundles.ignore(second!.id);
+    mkdirSync(later);
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+
+    await bundles.restore(first!.id);
+    await bundles.restore(second!.id);
+    await settle();
+
+    expect(bundles.get(first!.id)).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' }, draft: null });
+    expect(bundles.get(second!.id)?.status).toBe('ready');
+    expect(executor.requests.at(-1)?.readRoots).toEqual([later]);
+  });
+});
+
+describe('저장소 확인 필요: 폴더가 돌아오면 재개', () => {
+  it('매핑된 폴더가 없어 멈춘 묶음은 폴더가 돌아오면 60초 안에 저절로 만들어진다', async () => {
+    const { clock, executor, bundles, repos, poll } = await setup();
+    rmSync(repos.b, { recursive: true });
+    await poll(alarm('101'));
+    expect(bundles.state()[0]).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: [repos.b] } });
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+
+    // 폴더가 아직 없으면 60초가 지나도 멈춰 있다.
+    clock.advance(60_000);
+    await settle();
+    expect(bundles.state()[0]?.status).toBe('repo-check-needed');
+    mkdirSync(repos.b);
+    clock.advance(60_000);
+    await settle();
+
+    expect(bundles.state()[0]).toMatchObject({ status: 'ready', repoCheck: null });
+    expect(executor.requests).toHaveLength(1);
+  });
+
+  it('절전에서 깰 때와 앱을 켤 때의 확인(checkNow)은 60초를 기다리지 않고 재개한다', async () => {
+    const { executor, bundles, repoWait, repos, poll } = await setup();
+    rmSync(repos.b, { recursive: true });
+    await poll(alarm('101'));
+    mkdirSync(repos.b);
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+
+    repoWait.checkNow();
+    await settle();
 
     expect(bundles.state()[0]?.status).toBe('ready');
-    expect(bundles.state()[0]?.runs.map(({ kind, result }) => [kind, result])).toEqual([
-      ['selection', 'overloaded'],
-      ['selection', 'succeeded'],
-      ['draft', 'invalid-output'],
-      ['draft', 'succeeded'],
-    ]);
   });
 
-  it('선택 실행이 미로그인으로 끝나 다시 한 연결 확인도 실패하면, 묶음을 실패로 두지 않고 대기열을 멈췄다가 연결되면 선택 실행부터 다시 돈다', async () => {
-    const { executor, drafts, bundles, settingsStore, poll, setConnected } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
-    const work = twoRepos(settingsStore);
-    /** 끝나지 않고 기다리는 선택 실행. */
-    const selection = heldOutcome();
-    executor.script({ outcome: selection.outcome });
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [work.repos[0]], reason: '서버 질문입니다.' } } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(work.repos[0]!) } });
+  it('매핑을 고쳐 폴더가 있는 구성이 되면 재개한다. 그 전에는 사유의 폴더를 지금 없는 폴더로 맞춘다', async () => {
+    const { executor, bundles, repoMappings, repos, poll } = await setup();
+    rmSync(repos.a, { recursive: true });
+    rmSync(repos.b, { recursive: true });
+    await poll(alarm('101'));
+    expect(bundles.state()[0]?.repoCheck).toEqual({ kind: 'missing-folders', paths: [repos.a, repos.b] });
+    // a만 돌아오면 b만 없는 폴더로 사유가 맞춰지고, 매핑에서 b를 빼면 재개한다.
+    mkdirSync(repos.a);
+    await repoMappings.refresh();
+    await settle();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
+    expect(bundles.state()[0]?.repoCheck).toEqual({ kind: 'missing-folders', paths: [repos.b] });
+
+    await repoMappings.removeRepo(PROJECT_ID, repos.b);
+    await settle();
+
+    expect(bundles.state()[0]?.status).toBe('ready');
+    expect(executor.requests[0]?.readRoots).toEqual([repos.a]);
+  });
+
+  it('저장소 매핑 필요만 있으면 60초마다 다시 확인하지 않는다. 매핑이 바뀔 때만 풀린다', async () => {
+    const { clock, executor, bundles, settingsStore, repos, poll } = await setup();
     await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-    /** 생성 중 묶음. */
-    const bundleId = bundles.state()[0]!.id;
+    // 설정 파일만 바꿔 매핑 변경 알림 없이 매핑이 생긴 것처럼 만든다.
+    settingsStore.settings.repoMappings[UNMAPPED_PROJECT_ID] = [repos.a];
 
-    setConnected(false);
-    selection.release({ type: 'failed', reason: 'not-logged-in', detail: 'Not logged in · Please run /login' });
+    clock.advance(10 * 60_000);
     await settle();
 
-    expect(bundles.get(bundleId)).toMatchObject({ status: 'generating', failure: null });
-    expect(drafts.progress(bundleId)).toEqual({ status: 'waiting' });
+    expect(bundles.state()[0]?.repoCheck).toEqual({ kind: 'unmapped' });
+    expect(executor.requests).toEqual([]);
+  });
+});
 
-    setConnected(true);
+describe('저장소가 정해지지 않은 초안', () => {
+  /** 매핑으로 만든 준비됨 초안을 두고 매핑을 지운 상태까지 만든다. */
+  async function draftWithoutRepo() {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repos.a) } });
+    await env.poll(alarm('101'));
+    /** 준비됨 묶음. */
+    const [ready] = env.bundles.state();
+    expect(ready?.status).toBe('ready');
+    await env.repoMappings.removeMapping(PROJECT_ID);
+    return { ...env, ready: ready! };
+  }
+
+  it('다시 만들기, 지시를 덧붙여 다시 만들기, 요구 고치기는 하지 않고 초안을 그대로 둔다', async () => {
+    const { executor, drafts, bundles, ready } = await draftWithoutRepo();
+
+    await drafts.regenerate(ready.id, { path: 'again' });
+    await drafts.regenerate(ready.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
+    await drafts.regenerate(ready.id, { path: 'requirement', requirement: '재시도 횟수만 알고 싶다.' });
     await settle();
 
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'selection', 'draft']);
-    expect(bundles.get(bundleId)?.status).toBe('ready');
+    expect(executor.requests).toHaveLength(1);
+    expect(bundles.get(ready.id)).toMatchObject({ status: 'ready', draft: ready.draft, directives: [], fixedRequirement: null });
+  });
+
+  it('새 멘션이 합쳐져도 저절로 다시 만들지 않고 새 멘션 수만 늘린다', async () => {
+    const { flow, executor, bundles, poll, ready } = await draftWithoutRepo();
+    flow.addReply(POST_ID, '700', { replyId: '801', contents: `${MY_MARKUP} 화면 기준으로요`, registerId: SENDER, registeredDateTime: '20261020085500' });
+
+    await poll(alarm('102', { replyId: '801', registeredDateTime: '20261020085500' }));
+
+    expect(executor.requests).toHaveLength(1);
+    expect(bundles.get(ready.id)).toMatchObject({ status: 'ready', draft: ready.draft, newMentionCount: 1 });
+  });
+
+  it('"다른 저장소로 다시 만들기"는 되고, 무시도 된다. 저장된 자동 선택 값은 그대로 남는다', async () => {
+    const { stateStore, executor, drafts, bundles, repos, ready } = await draftWithoutRepo();
+    // 자동 선택으로 만든 기존 초안처럼 보이게 저장된 자동 선택 값을 심는다.
+    await stateStore.saveBundle({ ...bundles.get(ready.id)!, draft: { ...ready.draft!, autoSelection: { kind: 'chosen', reason: '웹 화면 저장소입니다.' } } });
+    await bundles.load();
+    executor.script({ outcome: { type: 'completed', output: draftOutput(repos.b) } });
+
+    await drafts.regenerateWithRepos(ready.id, [repos.b]);
+    await settle();
+
+    expect(bundles.get(ready.id)).toMatchObject({ status: 'ready', userRepos: [repos.b], draft: { repositories: [repos.b] } });
+    await bundles.ignore(ready.id);
+    expect(bundles.get(ready.id)?.status).toBe('ignored');
+    expect((await stateStore.listBundles()).find((bundle) => bundle.id === ready.id)?.status).toBe('ignored');
+  });
+
+  it('저장된 자동 선택 값이 있는 초안도 그대로 검토하고 게시할 수 있고, 값은 지워지지 않는다', async () => {
+    const { stateStore, bundles, ready } = await draftWithoutRepo();
+    /** 자동 선택 값을 심은 초안. */
+    const autoSelected = { ...ready.draft!, autoSelection: { kind: 'chosen' as const, reason: '웹 화면 저장소입니다.' } };
+    await stateStore.saveBundle({ ...bundles.get(ready.id)!, draft: autoSelected });
+    await bundles.load();
+
+    await bundles.editDraft(ready.id, '확인한 결과입니다.');
+    await settle();
+
+    expect(bundles.get(ready.id)).toMatchObject({ status: 'ready', editedText: '확인한 결과입니다.', draft: { autoSelection: { kind: 'chosen', reason: '웹 화면 저장소입니다.' } } });
+    expect((await stateStore.listBundles())[0]?.draft?.autoSelection).toEqual({ kind: 'chosen', reason: '웹 화면 저장소입니다.' });
+  });
+});
+
+describe('업데이트 뒤 첫 시작: 자동 선택 때문에 멈췄던 묶음', () => {
+  /** 묶음 하나를 만들어 `state`로 바꿔 저장한 뒤 앱을 다시 켠 것처럼 읽고 다시 판정한다. */
+  async function restartedWith(overrides: Partial<MentionBundle>, projectId: string = UNMAPPED_PROJECT_ID, prepare?: (env: Awaited<ReturnType<typeof setup>>) => void) {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repos.a) } });
+    await env.poll(alarm('101', { projectId }));
+    prepare?.(env);
+    /** 만든 묶음. */
+    const [created] = env.bundles.state();
+    await env.stateStore.saveBundle({ ...created!, ...overrides });
+    await env.bundles.load();
+    await env.bundles.reconcileRepoStates();
+    await settle();
+    return { ...env, id: created!.id };
+  }
+
+  it('초안 없이 생성 중이던 매핑 없는 묶음은 저장소 매핑 필요가 된다', async () => {
+    const { bundles, executor, id } = await restartedWith({ status: 'generating', repoCheck: null });
+
+    expect(bundles.get(id)).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } });
+    expect(executor.requests).toEqual([]);
+  });
+
+  /** 자동 선택 때 저장한 옛 사유. 지금 타입에는 없다. */
+  const LEGACY_NO_CANDIDATES = { kind: 'no-candidates' } as unknown as MentionBundle['repoCheck'];
+
+  it.each([
+    [{ kind: 'no-candidates' }],
+    [{ kind: 'unsure', reason: '모르겠습니다.', candidates: [], picked: [] }],
+    [{ kind: 'unrelated', reason: '코드와 무관합니다.', candidates: [], picked: [] }],
+    [null],
+  ] as const)('옛 사유(%j)로 멈춰 있던 묶음은 고른 저장소도 매핑도 없으면 저장소 매핑 필요가 된다', async (legacy) => {
+    const { bundles, id } = await restartedWith({ status: 'repo-check-needed', repoCheck: legacy as MentionBundle['repoCheck'] });
+
+    expect(bundles.get(id)).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } });
+  });
+
+  it('옛 사유로 멈춰 있던 묶음에 매핑이 이미 있으면 대기열에 넣어 초안을 만든다', async () => {
+    /** 서비스 검증 환경. 매핑이 있는 프로젝트의 묶음을 옛 사유로 멈춘 것처럼 바꾼다. */
+    const env = await setup();
+    env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repos.a) } });
+    await env.poll(alarm('101'));
+    /** 만든 묶음. */
+    const [created] = env.bundles.state();
+    await env.stateStore.saveBundle({ ...created!, status: 'repo-check-needed', repoCheck: LEGACY_NO_CANDIDATES, draft: null, runs: [] });
+    await env.bundles.load();
+    env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repos.a) } });
+
+    await env.bundles.reconcileRepoStates();
+    await settle();
+
+    expect(env.bundles.get(created!.id)?.status).toBe('ready');
+  });
+
+  /** 선택 실행이 실패한 실패 묶음의 실패. */
+  const SELECTION_FAILURE = { reason: 'timed-out', detail: null, lastStep: '저장소 고르는 중', runKind: 'selection' } as const;
+
+  it('선택 실행이 실패한 묶음은 매핑이 없으면 저장소 매핑 필요가 된다', async () => {
+    const { bundles, id } = await restartedWith({ status: 'failed', failure: SELECTION_FAILURE });
+
+    expect(bundles.get(id)).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'unmapped' }, failure: null });
+  });
+
+  it('선택 실행이 실패한 묶음은 매핑된 폴더가 없으면 저장소 확인 필요가 된다', async () => {
+    const { bundles, repos, id } = await restartedWith({ status: 'failed', repoCheck: null, draft: null, failure: SELECTION_FAILURE }, PROJECT_ID, (env) =>
+      rmSync(env.repos.b, { recursive: true }),
+    );
+
+    expect(bundles.get(id)).toMatchObject({ status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: [repos.b] } });
+  });
+
+  it('초안 실행이 실패한 묶음은 그대로 둔다', async () => {
+    const { bundles, id } = await restartedWith({ status: 'failed', failure: { ...SELECTION_FAILURE, runKind: 'draft' } });
+
+    expect(bundles.get(id)).toMatchObject({ status: 'failed', failure: { runKind: 'draft' } });
+  });
+
+  it('선택 실행이 실패한 묶음에 매핑이 이미 있으면 대기열에 넣는다', async () => {
+    /** 서비스 검증 환경. */
+    const env = await setup();
+    env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repos.a) } });
+    await env.poll(alarm('101'));
+    /** 만든 묶음. */
+    const [created] = env.bundles.state();
+    await env.stateStore.saveBundle({ ...created!, status: 'failed', draft: null, failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'selection' } });
+    await env.bundles.load();
+    env.executor.script({ outcome: { type: 'completed', output: draftOutput(env.repos.a) } });
+
+    await env.bundles.reconcileRepoStates();
+    await settle();
+
+    expect(env.bundles.get(created!.id)).toMatchObject({ status: 'ready', failure: null });
+  });
+
+  it('한 번 다시 판정한 묶음은 다시 시작해도 같은 판정을 되풀이하지 않는다', async () => {
+    const { bundles, id } = await restartedWith({ status: 'failed', failure: { reason: 'timed-out', detail: null, lastStep: null, runKind: 'selection' } });
+    const before = JSON.stringify(bundles.get(id));
+
+    await bundles.reconcileRepoStates();
+
+    expect(JSON.stringify(bundles.get(id))).toBe(before);
   });
 });
 
@@ -1475,16 +1467,14 @@ describe('저장소 선택 창으로 다시 만들기', () => {
     expect(settingsStore.settings.repoMappings).toEqual({ [PROJECT_ID]: [repos.a, repos.b] });
   });
 
-  it('저장소 확인 필요 묶음에서 고른 구성으로 만들면, 저장소 매핑이 없어도 선택 실행 없이 그 구성으로 초안 실행만 돈다', async () => {
-    const { executor, drafts, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
+  it('저장소 확인 필요 묶음에서 고른 구성으로 만들면, 저장소 매핑이 없어도 그 구성으로 초안 실행만 돈다', async () => {
+    const { executor, drafts, bundles, poll } = await setup();
+    /** 저장소가 둘인 폴더. */
     const work = makeWorkFolder('work', ['api', 'web']);
-    /** 후보 저장소. */
+    /** 고를 저장소. */
     const [api, web] = work.repos as [string, string];
-    settingsStore.settings.workFolders = [work.folder];
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'unsure', repositories: [api], reason: '알 수 없습니다.' } } });
     await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-    /** 저장소 확인 필요 묶음. */
+    /** 저장소 매핑 필요 묶음. */
     const [check] = bundles.state();
     expect(check?.status).toBe('repo-check-needed');
     executor.script({ outcome: { type: 'completed', output: draftOutput(web) } });
@@ -1492,8 +1482,8 @@ describe('저장소 선택 창으로 다시 만들기', () => {
     await drafts.regenerateWithRepos(check!.id, [web, api]);
     await settle();
 
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'draft']);
-    expect(executor.requests[1]?.readRoots).toEqual([web, api]);
+    expect(executor.requests.map((request) => request.kind)).toEqual(['draft']);
+    expect(executor.requests[0]?.readRoots).toEqual([web, api]);
     expect(bundles.get(check!.id)).toMatchObject({ status: 'ready', repoCheck: null, draft: { repositories: [web, api], autoSelection: null } });
   });
 
@@ -2092,36 +2082,32 @@ async function realCodexAgents(tempRoot: string) {
 }
 
 describe('대기열: Codex 실행기', () => {
-  it('기본 에이전트로 Codex를 고르면 선택 실행과 초안 실행이 Codex 권한 프로필 묶음과 고른 모델로 돌고, 실행 기록에 Codex와 확인한 CLI 버전을 남긴다', async () => {
+  it('기본 에이전트로 Codex를 고르면 초안 실행이 Codex 권한 프로필 묶음과 고른 모델로 돌고, 실행 기록에 Codex와 확인한 CLI 버전을 남긴다', async () => {
     const real = await realCodexAgents(workDir);
     await real.connections.checkAll();
     expect(real.preferences.state()).toMatchObject({ connectedAgents: ['claude-code', 'codex'], defaultAgent: 'codex' });
-    const { bundles, settingsStore, poll } = await setup(real.queueAgent);
-    /** 저장소가 둘인 작업 폴더. 첫 후보(api)를 고른다. */
+    const { bundles, repoMappings, poll } = await setup(real.queueAgent);
+    /** 매핑할 저장소. */
     const work = makeWorkFolder('work', ['api', 'web']);
     const [api] = work.repos as [string];
     mkdirSync(join(api, 'src/main/resources'), { recursive: true });
     writeFileSync(join(api, 'src/main/resources/application-prod.yml'), 'retry: 5\n'.repeat(100));
-    settingsStore.settings.workFolders = [work.folder];
+    await repoMappings.replaceRepos(UNMAPPED_PROJECT_ID, [api]);
 
     await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
 
-    /** Codex 선택 실행과 초안 실행 요청. */
-    const [selection, draft] = real.codexRuns();
-    expect(real.codexRuns()).toHaveLength(2);
+    /** Codex 초안 실행 요청. */
+    const [draft] = real.codexRuns();
+    expect(real.codexRuns()).toHaveLength(1);
     expect(real.claudeRuns()).toEqual([]);
-    // 선택 실행은 작업 폴더(git 저장소가 아님)에서 돌아 --skip-git-repo-check를 붙이고, 초안 실행은 고른 저장소에서 붙이지 않는다.
-    expect(selection?.args.slice(7, 10)).toEqual(['-C', work.folder, '--skip-git-repo-check']);
+    // 초안 실행은 매핑한 저장소에서 돌고, git 저장소라 --skip-git-repo-check를 붙이지 않는다.
     expect(draft?.args.slice(7, 9)).toEqual(['-C', api]);
     expect(draft?.args).not.toContain('--skip-git-repo-check');
-    for (const request of [selection, draft]) {
-      expect(request?.args).toContain('default_permissions="stardraft"');
-      expect(request?.args.find((arg) => arg.startsWith('permissions.stardraft.filesystem='))).toContain(`"${real.codexPath}"="read"`);
-      expect(request?.args.slice(-3)).toEqual(['-m', 'gpt-fake-pro', '-']);
-    }
+    expect(draft?.args).toContain('default_permissions="stardraft"');
+    expect(draft?.args.find((arg) => arg.startsWith('permissions.stardraft.filesystem='))).toContain(`"${real.codexPath}"="read"`);
+    expect(draft?.args.slice(-3)).toEqual(['-m', 'gpt-fake-pro', '-']);
     expect(bundles.state()[0]).toMatchObject({ status: 'ready', draft: { repositories: [api] } });
     expect(bundles.state()[0]?.runs.map((run) => [run.kind, run.agent, run.cliVersion, run.model, run.result])).toEqual([
-      ['selection', 'codex', '0.163.0', 'gpt-fake-pro', 'succeeded'],
       ['draft', 'codex', '0.163.0', 'gpt-fake-pro', 'succeeded'],
     ]);
   });
@@ -2425,58 +2411,6 @@ describe('재생성: 입력', () => {
       draft: { requirement: { text: '운영 환경에서 재시도 횟수만 알고 싶다.', summary: '운영 재시도 횟수' } },
     });
     expect(regenerated?.runs.at(-1)?.fixes).toContain('에이전트가 낸 요구를 사용자가 고친 요구로 덮어씀');
-  });
-  it('자동으로 저장소를 고른 묶음은 다시 만들기, 지시를 덧붙여, 요구 고치기에서 선택 실행을 다시 돌리지 않고 고른 저장소로 초안 실행만 돌린다', async () => {
-    const { executor, drafts, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
-    const work = makeWorkFolder('work', ['api', 'web']);
-    /** 후보 저장소. */
-    const [api, web] = work.repos as [string, string];
-    settingsStore.settings.workFolders = [work.folder];
-    /** 선택 실행이 적은 이유. */
-    const reason = '화면 설정을 묻고 있어 웹 화면 저장소를 골랐습니다.';
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [web], reason } } });
-    for (let run = 0; run < 4; run += 1) executor.script({ outcome: { type: 'completed', output: draftOutput(web) } });
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-    /** 자동 선택으로 만든 준비됨 묶음. */
-    const [ready] = bundles.state();
-
-    await drafts.regenerate(ready!.id, { path: 'again' });
-    await settle();
-    await drafts.regenerate(ready!.id, { path: 'directive', directive: '더 짧게 써 주세요.' });
-    await settle();
-    await drafts.regenerate(ready!.id, { path: 'requirement', requirement: '화면의 재시도 횟수만 알고 싶다.' });
-    await settle();
-
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'draft', 'draft', 'draft', 'draft']);
-    for (const request of executor.requests.slice(1)) expect(request.readRoots).toEqual([web]);
-    // 저장소 영역은 여전히 자동으로 고른 이유를 보인다.
-    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', draft: { repositories: [web], autoSelection: { kind: 'chosen', reason } } });
-    expect(api).not.toBe(web);
-  });
-
-  it('자동으로 고른 저장소 폴더가 사라졌으면 다시 만들 때 자동 선택을 다시 한다', async () => {
-    const { executor, drafts, bundles, settingsStore, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. */
-    const work = makeWorkFolder('work', ['api', 'web']);
-    /** 후보 저장소. */
-    const [api, web] = work.repos as [string, string];
-    settingsStore.settings.workFolders = [work.folder];
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'chosen', repositories: [web], reason: '웹입니다.' } } });
-    executor.script({ outcome: { type: 'completed', output: draftOutput(web) } });
-    await poll(alarm('101', { projectId: UNMAPPED_PROJECT_ID }));
-    /** 자동 선택으로 만든 준비됨 묶음. */
-    const [ready] = bundles.state();
-    rmSync(web, { recursive: true });
-    // 저장소가 하나 남아 선택 실행 없이 그 저장소를 쓴다.
-    executor.script({ outcome: { type: 'completed', output: draftOutput(api) } });
-
-    await drafts.regenerate(ready!.id, { path: 'again' });
-    await settle();
-
-    expect(executor.requests.map((request) => request.kind)).toEqual(['selection', 'draft', 'draft']);
-    expect(executor.requests[2]?.readRoots).toEqual([api]);
-    expect(bundles.get(ready!.id)).toMatchObject({ status: 'ready', draft: { repositories: [api], autoSelection: { kind: 'single-candidate' } } });
   });
 });
 
@@ -3772,14 +3706,15 @@ describe('재시작·재시도·재지정 복구', () => {
     });
     await bundles.load();
     await bundles.recoverAfterRestart();
-    /** 설정 창의 Flow 계정. 앱처럼 다른 계정이 연결되면 묶음을 새 기록으로 다시 읽는다. */
+    /** 계정 기록을 오가는 일. 대기열과 게시를 만든 뒤에 정한다. */
+    let records: AccountRecords | null = null;
+    /** 설정 창의 Flow 계정. 앱처럼 다른 계정의 키로 바꾸면 지금 계정의 기록을 보관하고 새 계정의 기록으로 이어 간다. */
     const flowAccount = new FlowAccount({ connectFlow: () => flow, secretStore: new MemorySecretStore(), stateStore, clock, logger,
+      records: { isStored: (userId) => records!.isStored(userId), switchTo: (account) => records!.switchTo(account), resume: () => records!.resume() },
       problems: new GlobalProblems({ notifier: new RecordingNotifier(), clock, logger, notificationFor: (problem) => ({ title: problem.cause, body: problem.reason }) }) });
     await flowAccount.load();
     flowAccount.onChange(({ account: connected }) => {
-      if (!connected || connected.userId === me.userId) return;
-      me = connected;
-      void bundles.load();
+      if (connected) me = connected;
     });
     const drafts = new DraftQueue({
       bundles,
@@ -3798,6 +3733,7 @@ describe('재시작·재시도·재지정 복구', () => {
     const assignments = new AssignmentDetection({ stateStore, bundles, clock, connectFlow });
     const detection = new MentionDetection({ assignments, stateStore, bundles, clock, logger, connectFlow });
     const posting = new Posting({ bundles, connectFlow, myUserId: () => me.userId, clock, logger });
+    records = new AccountRecords({ bundles, drafts, posting, stateStore, settingsStore, logger });
     /** 앱을 끈다. 폴링과 대기열을 멈추고 DB를 닫는다. */
     const quit = async () => {
       detection.stop();
@@ -4006,7 +3942,7 @@ describe('재시작·재시도·재지정 복구', () => {
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
     await nextPoll(clock);
     expect(first.bundles.state()).toMatchObject([{ status: 'ready', assignment: { taskId: 'recovery-task-id' } }]);
-    // 켜 둔 앱에서 다른 사람의 키를 확인하고 계정 바꾸기를 승인하면 기록을 지우고 새 계정으로 시작한다.
+    // 켜 둔 앱에서 다른 사람의 키를 확인하고 계정 바꾸기를 승인하면 지금 계정의 기록을 보관하고 새 계정으로 시작한다.
     flow.respondToGetMe({ ok: true, value: next });
     expect(await first.flowAccount.checkKey('next-key')).toMatchObject({ kind: 'needs-confirmation' });
     await first.flowAccount.confirmSwitch();
@@ -4156,7 +4092,7 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
       { manual: true, status: 'ready', mentions: [expect.objectContaining({ alarmId: '99' })] },
     ]);
     expect(executor.requests.map(targetMentionOf)).toEqual(['@테스트 사용자 닷새 전 질문', '@테스트 사용자 재시도는 몇 번 하나요?']);
-    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', bundleId: results[0]!.bundleId });
+    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '보낸 사람님 멘션에 답할 초안이 준비됐습니다.', target: { kind: 'draft', id: results[0]!.bundleId } });
     expect(bundles.reviewCount()).toBe(2);
     expect(stateStore.baselineAlarmId).toBe('100');
 
@@ -4327,17 +4263,13 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
     expect(bundles.get(bundleId)?.status).not.toBe('ignored');
   });
 
-  it('감지해서 기다리는 묶음보다 앞에서 실행하고, 저장소 매핑이 없는 프로젝트면 일반 묶음처럼 자동 선택을 거쳐 저장소 확인 필요로 올린다', async () => {
-    const { flow, executor, bundles, notifier, settingsStore, clock, repos, poll } = await setup();
-    /** 저장소가 둘인 작업 폴더. 후보가 둘이어야 선택 실행이 돈다. */
-    const work = makeWorkFolder('work', ['api', 'web']);
-    settingsStore.settings.workFolders = [work.folder];
+  it('저장소 매핑이 없는 프로젝트의 멘션은 일반 묶음처럼 저장소 매핑 필요로 기다리고, 매핑을 저장하면 사용자 요청 칸에서 감지한 묶음보다 앞서 만들어진다', async () => {
+    const { flow, executor, bundles, notifier, repoMappings, clock, repos, poll } = await setup();
     /** 끝나지 않고 기다리는 실행. */
     const run = heldOutcome();
     executor.script({ outcome: run.outcome });
-    executor.script({ outcome: { type: 'completed', output: { verdict: 'unrelated', repositories: [], reason: '회의 일정을 묻는 멘션입니다.' } } });
     executor.script({ outcome: { type: 'completed', output: draftOutput(repos.a) } });
-    await poll(alarm('101'), addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    await poll(alarm('101'));
     flow.addPost({ postId: '90000021', title: '매핑 없는 게시물', textComponents: [{ contents: `${MY_MARKUP} 회의는 언제인가요?`, mentions: [ME] }] });
     flow.respondToListMentionAlarms([alarm('99', { projectId: UNMAPPED_PROJECT_ID, postId: '90000021', remarkId: '-1' })]);
     const { check } = manualCheckOf(flow, bundles, clock);
@@ -4346,13 +4278,17 @@ describe('최근 멘션 확인: 수동 요청 묶음', () => {
 
     /** 고른 결과. */
     const { bundleId } = await check.request(candidate!);
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } });
+    expect(notifier.sent).toContainEqual({ title: '저장소 매핑 필요', body: '이 프로젝트에 연결한 저장소가 없습니다. 매핑하면 기다리는 초안을 만듭니다.', target: { kind: 'draft', id: bundleId } });
+    // 감지로 들어온 묶음이 하나 더 기다리는 동안 매핑을 저장한다.
+    await poll(addThreadMention(flow, '102', '701', '두 번째 질문', '20261020085600'));
+    await repoMappings.replaceRepos(UNMAPPED_PROJECT_ID, [repos.a]);
     run.release({ type: 'completed', output: draftOutput(repos.a) });
     await settle();
 
-    expect(executor.requests.map((request) => request.kind)).toEqual(['draft', 'selection', 'draft']);
-    expect(targetMentionOf(executor.requests[2])).toBe('@테스트 사용자 두 번째 질문');
-    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'repo-check-needed', repoCheck: { kind: 'unrelated' } });
-    expect(notifier.sent).toContainEqual({ title: '저장소 확인 필요', body: '보낸 사람님이 나를 멘션했습니다.', bundleId });
+    expect(executor.requests.map((request) => request.kind)).toEqual(['draft', 'draft', 'draft']);
+    expect(bundles.get(bundleId)).toMatchObject({ manual: true, status: 'ready' });
+    expect(targetMentionOf(executor.requests[1])).toBe('@테스트 사용자 회의는 언제인가요?');
   });
 
   it('목록을 불러오지 못하면 키 없음, 키 거부, 연결 실패, 요청 한도를 구분해 돌려주고, 키 거부는 "키 확인 필요"로 알린다', async () => {
@@ -4812,7 +4748,7 @@ describe('최근 멘션 확인: 담당 업무 수동 요청', () => {
     expect(evidenced?.assignment).toEqual({ taskId: 'task-before-task', authorId: SENDER, authorName: '업무 작성자', assignedAt: '20261020085000' });
     expect(executor.requests.map((request) => request.input.includes('담당 업무'))).toEqual([true, true]);
     expect(bundleRecipients(estimated!)).toEqual([{ id: SENDER, name: '업무 작성자' }]);
-    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '담당 업무 초안이 준비됐습니다.', bundleId: estimated!.id });
+    expect(notifier.sent).toContainEqual({ title: '초안 준비됨', body: '담당 업무 초안이 준비됐습니다.', target: { kind: 'draft', id: estimated!.id } });
     expect(bundles.reviewCount()).toBe(2);
     expect(await stateStore.getAssignmentState()).toEqual(stateBefore);
     expect(stateStore.baselineAlarmId).toBe('100');

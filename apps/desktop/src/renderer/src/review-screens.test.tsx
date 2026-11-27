@@ -1,13 +1,15 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppSnapshot, BundleSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
+import type { AppSnapshot, BundleSnapshot, DiagnosisSnapshot, ManualCheckRowSnapshot, ManualCheckSnapshot, PostStopSnapshot, ReviewSnapshot } from '../../shared/ipc';
 import { BundleSections, DiscardEditConfirm, DirectiveForm, RequirementEditor, ThreadList, ToastStack } from './BundleDetail';
+import { DiagnosisFooter, DiagnosisHead, DiagnosisTabPanel, EvidenceItems, ReadyFooterView, RediagnosisForm, RediagnosisNotice } from './DiagnosisDetail';
 import { DraftsSection } from './DraftsSection';
-import { ManualCheckSheet } from './ManualCheck';
+import { ManualCheckModal } from './ManualCheck';
 import { PopoverContent } from './PopoverView';
 import { PopoverMenu, menuKeyAction } from './PopoverMenu';
 import { ReviewContent } from './ReviewView';
 import { nextBundleAfter, resolveSelection } from './useReview';
+import { UNSUPPORTED_REPRODUCTION } from './reproduction-fixtures';
 
 /** 창마다 처음 영역 펼침 상태. */
 const SECTIONS: ReviewSnapshot['sections'] = {
@@ -83,6 +85,9 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
     version: '0.0.0-test',
     platform: 'darwin',
     flowAccount: { account: null, keyCheck: { status: 'idle' } },
+    sentry: { connected: false, organizations: [], tokenCheck: { status: 'idle' }, tokenProblem: null },
+    sentryProjects: { projects: [], candidates: { status: 'idle' } },
+    reproduction: UNSUPPORTED_REPRODUCTION,
     globalProblem: null,
     agentConnections: [
       {
@@ -103,19 +108,23 @@ function snapshot(bundles: BundleSnapshot[], overrides: Partial<AppSnapshot> = {
       },
     ],
     agentPreferences: { connectedAgents: [], defaultAgent: null, models: {} },
-    workFolders: { folders: [], suggestions: [], rejected: [] },
-    repoMappings: { mappings: [], projects: { status: 'idle' } },
+    repoMappings: { mappings: [], waiting: [], projects: { status: 'idle' } },
     onboarding: {
       detectionStarted: true,
-      requirements: { 'flow-key': 'done', agent: 'done', 'work-folders': 'done' },
+      requirements: { agent: 'done' },
       ready: true,
+      hasDetectionTarget: true,
+      flowConnected: true,
+      sentryConnected: false,
       start: { status: 'idle' },
     },
     launchAtLogin: true,
     editor: { choice: null, installed: [], picker: null },
-    review: { bundles, sections: SECTIONS, repoPicker: null },
+    review: { bundles, diagnoses: [], sections: SECTIONS, repoPicker: null },
     manualCheck: { canOpen: true, sheet: null },
     draftSettings: { extraInstructions: '', defaultSecretPatterns: ['.env'], extraSecretPatterns: [] },
+    parallelWork: { count: 1, running: 0 },
+    reportFolder: { path: '/가짜/문서/Stardraft/Reports/Sentry', isDefault: true },
     update: { status: { kind: 'idle' }, justUpdated: null, restartConfirm: null, dismissedBanners: [] },
     ...overrides,
   };
@@ -147,24 +156,14 @@ describe('작은 창: 멘션 묶음', () => {
   });
 
   it('저장소 영역은 처음에 접혀 있고, 펼침 상태를 따른다', () => {
-    /** 저장소 영역의 안내 문장. */
-    const note = '아직 이 묶음에 쓸 저장소를 정하지 않았습니다.';
+    /** 저장소 영역에만 보이는 저장소 경로. */
+    const path = '/fake/work/billing-api';
+    /** 원문을 접고 저장소를 편 영역 펼침 상태. */
+    const open = { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } };
 
-    expect(textOf(<PopoverContent snapshot={snapshot([bundle(1)])} />)).not.toContain(note);
-    expect(
-      textOf(
-        <PopoverContent
-          snapshot={snapshot([bundle(1)], { review: { bundles: [bundle(1)], sections: { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } }, repoPicker: null } })}
-        />,
-      ),
-    ).toEqual(expect.stringContaining(note));
-    expect(
-      textOf(
-        <PopoverContent
-          snapshot={snapshot([bundle(1)], { review: { bundles: [bundle(1)], sections: { ...SECTIONS, compact: { ...SECTIONS.compact, original: false, repository: true } }, repoPicker: null } })}
-        />,
-      ),
-    ).not.toContain('첫 질문입니다');
+    expect(textOf(<PopoverContent snapshot={snapshot([READY])} />)).not.toContain(path);
+    expect(textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], diagnoses: [], sections: open, repoPicker: null } })} />)).toContain(path);
+    expect(textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], diagnoses: [], sections: open, repoPicker: null } })} />)).not.toContain('첫 질문입니다');
   });
 
   it('맥락을 조회한 묶음은 원문 영역에 "스레드 보기"를 두고, 맥락이 없으면 두지 않는다', () => {
@@ -363,24 +362,41 @@ describe('작은 창: 앱 내 업데이트', () => {
 });
 
 describe('펼친 창', () => {
-  it('목록을 검토 대기와 처리됨으로 묶어 개수를 보이고, 행에 송신자·상태를 보이며, 처리됨 아래에 보관 안내를 둔다', () => {
+  it('목록을 종류(초안)로 묶어 개수를 보이고, 행에 송신자·상태 태그를 보이며, 끝낸 항목이 있으면 맨 아래에 보관 안내를 한 줄 둔다', () => {
     const text = textOf(<ReviewContent snapshot={snapshot([bundle(1), bundle(2), ANSWERED])} />);
 
-    expect(text).toContain('검토 대기 2');
-    expect(text).toContain('처리됨 1');
-    expect(text).not.toContain('생성 중');
+    expect(text).toContain('초안 3');
+    // 상태별 묶음 머리는 없고 상태는 줄의 태그로만 보인다.
+    expect(text).not.toContain('검토 대기');
+    expect(text).not.toContain('처리됨 1');
     expect(text).toContain('보낸 사람, 다른 사람');
     expect(text).toContain('세번째 사람');
-    expect(text).toContain('처리한 지 7일이 지나면 목록에서 사라지고 되돌릴 수 없습니다');
+    expect(text).toContain('이미 답함');
+    expect(text).toContain('끝낸 항목은 7일이 지나면 목록에서 사라집니다.');
+    expect(text).not.toContain('처리한 지 7일이 지나면');
     expect(text).toContain('접어 보기');
   });
 
-  it('상세는 고른 묶음의 원문과 저장소를 처음부터 펼쳐 보인다', () => {
+  it('끝낸 항목이 없으면 보관 안내를 보이지 않는다', () => {
+    expect(textOf(<ReviewContent snapshot={snapshot([bundle(1), bundle(2)])} />)).not.toContain('끝낸 항목은');
+  });
+
+  it('보관 안내는 목록의 마지막 요소다', () => {
+    /** 목록 마크업. */
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={snapshot([ANSWERED, bundle(1)])} />);
+    /** 목록(`aside`)의 마지막 자식. */
+    const list = markup.slice(markup.indexOf('<aside'), markup.indexOf('</aside>'));
+
+    expect(list.lastIndexOf('list-note')).toBeGreaterThan(list.lastIndexOf('list-row'));
+  });
+
+  it('상세는 고른 묶음의 원문을 처음부터 펼쳐 보이고, 저장소 대기 묶음에는 이유 상자 대신 노란 바닥 줄이 있다', () => {
     const text = textOf(<ReviewContent snapshot={snapshot([bundle(1), bundle(2)])} initialBundleId={2} />);
 
     expect(text).toContain('가짜 게시물 2');
     expect(text).toContain('멘션 2건');
-    expect(text).toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+    expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+    expect(text).toContain('이 프로젝트에 연결한 저장소가 없습니다.');
     expect(text).toContain('Flow에서 열기');
   });
 
@@ -430,17 +446,17 @@ const READY = bundle(4, {
       { name: 'billing-api', path: '/fake/work/billing-api' },
       { name: 'billing-web', path: '/fake/work/billing-web' },
     ],
-    autoSelection: null,
     mapping: 'unmapped',
     editorText: '실제 서비스에서는 다섯 번까지 다시 시도합니다. 테스트 환경은 세 번으로 보입니다.\n\n설정을 바꾸면 다음 배포부터 적용됩니다.',
     edited: false,
     canEdit: true,
     canRegenerate: true,
+    repoUndetermined: false,
     recipients: [{ name: '보낸 사람' }, { name: '다른 사람' }],
     postBodyPrefixLength: 59,
     canPost: true,
   },
-  run: { agent: 'claude-code', durationMs: 134_000, contextOmitted: true },
+  run: { kind: 'draft', agent: 'claude-code', durationMs: 134_000, contextOmitted: true },
 });
 
 /** 실행 중인 생성 중 묶음. */
@@ -455,7 +471,7 @@ const FAILED = bundle(6, {
   status: 'failed',
   group: 'failed',
   failure: { reason: 'timed-out', detail: null, lastStep: '검색 중: retry', runKind: 'draft' },
-  run: { agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
+  run: { kind: 'draft', agent: 'claude-code', durationMs: 600_000, contextOmitted: false },
 });
 
 describe('작은 창: 초안 실행', () => {
@@ -479,7 +495,7 @@ describe('작은 창: 초안 실행', () => {
   it('근거를 펼치면 근거마다 자연어 설명과 "저장소 · 파일 · 줄" 위치를, 저장소를 펼치면 쓴 저장소를 보인다', () => {
     /** 근거와 저장소를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, evidence: true, repository: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections, repoPicker: null } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], diagnoses: [], sections, repoPicker: null } })} />);
 
     expect(text).toContain('① 운영 설정에서 다시 시도하는 횟수를 5로 정해 둡니다.');
     expect(text).toContain('billing-api · application-prod.yml · 88번째 줄');
@@ -497,7 +513,7 @@ describe('작은 창: 초안 실행', () => {
     });
     /** 근거를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, evidence: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], sections, repoPicker: null } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], diagnoses: [], sections, repoPicker: null } })} />);
 
     expect(text).toContain('설정을 바꾸면 다음 배포부터 적용됩니다. ① ②');
     expect(text).toContain('billing-api · application-prod.yml · 88번째 줄');
@@ -558,27 +574,16 @@ describe('작은 창: 초안 실행', () => {
     expect(text).toContain('다시 시도');
   });
 
-  it('매핑된 폴더가 없어 저장소 확인 필요가 된 묶음은 저장소 영역에 사유와 찾을 수 없는 폴더를 보인다', () => {
+  it('폴더가 없어 저장소 확인 필요가 된 묶음은 저장소 영역 없이 노란 바닥 줄에 찾을 수 없는 폴더를 보인다', () => {
     /** 폴더가 사라진 묶음. */
-    const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false } });
+    const missing = bundle(9, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 } });
     /** 저장소를 편 작은 창. */
     const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
+    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], diagnoses: [], sections, repoPicker: null } })} />);
 
-    expect(text).toContain('연결된 저장소 폴더를 찾을 수 없음');
-    expect(text).toContain('/fake/work/gone');
-    expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
-  });
-
-  it('저장소 선택 창에서 고른 폴더가 사라진 묶음은 "고른 저장소 폴더를 찾을 수 없음"을 보인다', () => {
-    /** 고른 폴더가 사라진 묶음. */
-    const missing = bundle(10, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: true } });
-    /** 저장소를 편 작은 창. */
-    const sections = { ...SECTIONS, compact: { ...SECTIONS.compact, repository: true } };
-    const text = textOf(<PopoverContent snapshot={snapshot([missing], { review: { bundles: [missing], sections, repoPicker: null } })} />);
-
-    expect(text).toContain('고른 저장소 폴더를 찾을 수 없음');
+    expect(text).toContain('연결한 저장소 폴더를 찾을 수 없습니다. /fake/work/gone 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.');
     expect(text).not.toContain('연결된 저장소 폴더를 찾을 수 없음');
+    expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
   });
 });
 
@@ -588,7 +593,7 @@ describe('저장소 확인 필요와 자동 선택', () => {
 
   /** 저장소 영역을 편 작은 창에 묶음 하나를 그린 마크업. */
   function popoverMarkup(item: BundleSnapshot): string {
-    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], sections: repositoryOpen, repoPicker: null } })} />);
+    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], diagnoses: [], sections: repositoryOpen, repoPicker: null } })} />);
   }
 
   /** 저장소 영역을 편 작은 창에 묶음 하나를 그린 글자. 마크업이 바꾼 따옴표는 되돌린다. */
@@ -596,113 +601,103 @@ describe('저장소 확인 필요와 자동 선택', () => {
     return popoverMarkup(item).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').replaceAll('&quot;', '"');
   }
 
-  it('선택 실행이 확신하지 못한 묶음은 저장소 영역에 에이전트의 사유, 에이전트가 짚은 후보, 작업 폴더의 다른 후보를 보이고, [저장소를 골라 만들기]·[Flow에서 열기]·[무시]를 둔다', () => {
-    /** 선택 실행이 확신하지 못한 묶음. */
-    const unsure = bundle(13, {
-      repoCheck: {
-        kind: 'unsure',
-        reason: '재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽을 묻는지 알 수 없습니다.',
-        picked: [
-          { name: 'team/billing-web', path: '/fake/work/team/billing-web' },
-          { name: 'billing-api', path: '/fake/work/billing-api' },
-        ],
-        others: [{ name: 'team/billing-batch', path: '/fake/work/team/billing-batch' }],
-      },
-      run: { agent: 'claude-code', durationMs: 62_000, contextOmitted: false },
-    });
+  it('매핑도 고른 저장소도 없어 기다리는 묶음은 "저장소 매핑 필요" 태그와 바닥 줄 글을, 폴더가 없어 멈춘 묶음은 "저장소 확인 필요" 태그와 그 글을 보인다', () => {
+    /** 저장소 매핑 필요 묶음. 같은 프로젝트에서 3건이 기다린다. */
+    const unmapped = bundle(30, { repoCheck: { kind: 'unmapped', waitingCount: 3 } });
+    /** 폴더가 없어 멈춘 묶음. */
+    const missing = bundle(31, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 } });
+
+    expect(popoverText(unmapped)).toContain('저장소 매핑 필요');
+    expect(popoverText(unmapped)).not.toContain('저장소 확인 필요');
+    expect(popoverText(unmapped)).toContain('이 프로젝트에 연결한 저장소가 없습니다. 매핑하면 기다리는 멘션 3건의 초안을 만듭니다.');
+    expect(popoverText(unmapped)).toContain('저장소를 골라 만들기');
+    expect(popoverText(missing)).toContain('저장소 확인 필요');
+    expect(popoverText(missing)).toContain('연결한 저장소 폴더를 찾을 수 없습니다.');
+  });
+
+  it('노란 바닥 줄은 왼쪽 [무시], 오른쪽 [저장소를 골라 만들기]와 주 버튼이다. 주 버튼은 매핑이 없으면 [저장소 매핑하기], 폴더가 없으면 [매핑 고치기]다', () => {
+    /** 저장소 매핑 필요 묶음. */
+    const unmapped = bundle(30, { repoCheck: { kind: 'unmapped', waitingCount: 1 } });
+    /** 폴더가 없어 멈춘 묶음. */
+    const missing = bundle(31, { repoCheck: { kind: 'missing-folders', paths: ['/fake/work/gone'], chosenByUser: false, waitingCount: 1 } });
+
+    for (const [item, main] of [
+      [unmapped, '저장소 매핑하기'],
+      [missing, '매핑 고치기'],
+    ] as const) {
+      /** 바닥 줄 마크업. */
+      const foot = popoverMarkup(item).slice(popoverMarkup(item).indexOf('<footer'));
+      expect(foot).toContain('review-foot warn compact');
+      expect(foot).toMatch(/<button[^>]*class="btn repo-wait-ignore"[^>]*>무시<\/button>/);
+      expect(foot).toMatch(/<button[^>]*>저장소를 골라 만들기<\/button>/);
+      expect(foot).toMatch(new RegExp(`<button[^>]*class="btn primary"[^>]*>${main}</button>`));
+      expect(foot.indexOf('무시')).toBeLessThan(foot.indexOf('repo-wait-text'));
+    }
+    // 펼친 창은 한 줄 배치 클래스를 쓴다.
+    expect(renderToStaticMarkup(<ReviewContent snapshot={snapshot([unmapped])} />)).toContain('review-foot warn expanded');
+  });
+
+  it('저장소가 정해지지 않은 초안은 알림 줄에 까닭을 알리고, 다시 만들기와 지시를 덧붙여 다시 만들기를 끄며 다른 저장소로 다시 만들기는 둔다. 게시와 무시는 된다', () => {
+    /** 저장소가 정해지지 않은 초안. */
+    const undetermined = bundle(32, { ...READY, id: 32, draft: { ...READY.draft!, repoUndetermined: true, canRegenerate: false } });
     /** 마크업. */
-    const markup = popoverMarkup(unsure);
+    const markup = popoverMarkup(undetermined);
     /** 글자. */
-    const text = popoverText(unsure);
+    const text = popoverText(undetermined);
 
-    expect(text).toContain('저장소 확인 필요');
-    expect(text).toContain('에이전트가 저장소를 확신하지 못함');
-    expect(text).toContain('재시도 설정이 화면과 서버 양쪽에 있어 어느 쪽을 묻는지 알 수 없습니다.');
-    expect(text).toContain('에이전트가 짚은 후보 team/billing-web /fake/work/team/billing-web billing-api /fake/work/billing-api');
-    expect(text).toContain('작업 폴더의 다른 후보 1개 team/billing-batch /fake/work/team/billing-batch');
-    expect(text).toContain('Claude Code · 1분 2초');
-    expect(text).toContain('Flow에서 열기');
-    expect(text).toContain('무시');
-    expect(markup).toMatch(/<button[^>]*>저장소를 골라 만들기<\/button>/);
-    expect(markup).not.toMatch(/<button[^>]*disabled[^>]*>저장소를 골라 만들기<\/button>/);
-    expect(text).not.toContain('아직 이 묶음에 쓸 저장소를 정하지 않았습니다.');
+    expect(text).toContain('이 초안에 쓸 저장소가 정해지지 않아 다시 만들 수 없습니다. 프로젝트에 저장소를 매핑하거나 "다른 저장소로 다시 만들기"를 쓰세요.');
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>다시 만들기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>지시를 덧붙여 다시 만들기<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*disabled[^>]*>다른 저장소로 다시 만들기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>다른 저장소로 다시 만들기<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>무시<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*disabled[^>]*>게시<\/button>/);
+    // 알림 줄에 [저장소 매핑하기]가 있고, 저장소 구역에는 "정해진 저장소가 없습니다."만 있다.
+    expect(markup).toMatch(/<button[^>]*>저장소 매핑하기<\/button>/);
+    expect(text).toContain('정해진 저장소가 없습니다.');
+    expect(text).not.toContain('/fake/work/billing-api');
+    expect(markup).not.toMatch(/<button[^>]*>이 Flow 프로젝트에 연결<\/button>/);
+    // 매핑이 있는 초안에는 이 안내가 없다.
+    expect(popoverText(bundle(33, { ...READY, id: 33 }))).not.toContain('저장소가 정해지지 않아');
+    expect(popoverText(bundle(33, { ...READY, id: 33 }))).not.toContain('정해진 저장소가 없습니다.');
+    expect(popoverMarkup(bundle(33, { ...READY, id: 33 }))).not.toMatch(/<button[^>]*>저장소 매핑하기<\/button>/);
   });
 
-  it('코드와 무관한 멘션으로 판정한 묶음은 그 사유를 보이고, 사유가 비어 있으면 "이유 없음"을, 짚은 후보가 없으면 작업 폴더의 후보만 보인다', () => {
-    /** 코드와 무관하다고 판정한 묶음. */
-    const unrelated = bundle(14, {
-      repoCheck: {
-        kind: 'unrelated',
-        reason: '',
-        picked: [],
-        others: [
-          { name: 'billing-api', path: '/fake/work/billing-api' },
-          { name: 'billing-web', path: '/fake/work/billing-web' },
-        ],
-      },
-    });
-    /** 글자. */
-    const text = popoverText(unrelated);
-
-    expect(text).toContain('에이전트가 코드와 무관한 멘션으로 판정함');
-    expect(text).toContain('이유 없음');
-    expect(text).not.toContain('에이전트가 짚은 후보');
-    expect(text).toContain('작업 폴더의 후보 2개 billing-api /fake/work/billing-api billing-web /fake/work/billing-web');
-    expect(text).toContain('저장소를 골라 만들기');
-  });
-
-  it('작업 폴더에서 저장소를 찾지 못한 묶음은 그 사유와 작업 폴더를 확인하라는 안내를 보인다', () => {
-    /** 후보가 없던 묶음. */
-    const none = bundle(15, { repoCheck: { kind: 'no-candidates' } });
-    /** 글자. */
-    const text = popoverText(none);
-
-    expect(text).toContain('작업 폴더에서 저장소를 찾지 못함');
-    expect(text).toContain('설정의 "저장소" 칸에서 작업 폴더를 확인하세요.');
-    expect(text).toContain('저장소를 골라 만들기');
-  });
-
-  it('자동 선택으로 만든 준비됨 묶음은 저장소 영역에 쓴 저장소와 자동으로 고른 이유를 보인다. 이유가 비어 있으면 "이유 없음", 후보가 하나였으면 그렇게 썼다고 보인다', () => {
-    /** 선택 실행이 고른 묶음. */
-    const chosen = bundle(16, { ...READY, id: 16, draft: { ...READY.draft!, autoSelection: { kind: 'chosen', reason: '재시도 설정을 묻고 있어 서버 저장소를 골랐습니다.' } } });
-    /** 이유 없이 고른 묶음. */
-    const noReason = bundle(17, { ...READY, id: 17, draft: { ...READY.draft!, autoSelection: { kind: 'chosen', reason: '' } } });
-    /** 후보가 하나였던 묶음. */
-    const single = bundle(18, { ...READY, id: 18, draft: { ...READY.draft!, autoSelection: { kind: 'single-candidate' } } });
+  it('자동 선택으로 만든 옛 초안은 저장소 영역에 쓴 저장소만 보이고 자동으로 고른 이유와 작업 폴더 안내는 없다', () => {
+    /** 저장된 자동 선택 값이 있던 옛 초안을 읽은 묶음. 화면은 그 값을 받지 않는다. */
+    const old = bundle(16, { ...READY, id: 16 });
     /** 펼친 창에 그린 글자. */
-    const textFor = (item: BundleSnapshot) => textOf(<ReviewContent snapshot={snapshot([item])} initialBundleId={item.id} />);
+    const text = textOf(<ReviewContent snapshot={snapshot([old])} initialBundleId={old.id} />);
 
-    expect(textFor(chosen)).toContain('/fake/work/billing-web');
-    expect(textFor(chosen)).toContain('자동으로 고른 이유 재시도 설정을 묻고 있어 서버 저장소를 골랐습니다.');
-    expect(textFor(noReason)).toContain('자동으로 고른 이유 이유 없음');
-    expect(textFor(single)).toContain('작업 폴더에서 찾은 저장소가 하나라 그 저장소를 썼습니다.');
-    expect(textFor(READY)).not.toContain('자동으로 고른 이유');
+    expect(text).toContain('/fake/work/billing-web');
+    expect(text).not.toContain('자동으로 고른 이유');
+    expect(text).not.toContain('작업 폴더');
   });
 
-  it('선택 실행이 5분 제한 시간을 넘겨 실패한 묶음은 저장소를 고르지 못했다고 보인다', () => {
-    /** 선택 실행이 시간 초과로 실패한 묶음. */
+  it('과거의 저장소 선택 실행이 시간 초과로 실패한 묶음도 일반 시간 초과 문장으로 읽히고, 실행 줄에는 "저장소 선택(폐지됨)"이 붙는다', () => {
+    /** 선택 실행이 시간 초과로 실패한 옛 묶음. */
     const failed = bundle(19, {
       ...FAILED,
       id: 19,
       failure: { reason: 'timed-out', detail: null, lastStep: '파일 읽는 중: README.md', runKind: 'selection' },
-      run: { agent: 'claude-code', durationMs: 300_000, contextOmitted: false },
+      run: { kind: 'selection', agent: 'claude-code', durationMs: 300_000, contextOmitted: false },
     });
     /** 글자. */
     const text = textOf(<PopoverContent snapshot={snapshot([failed])} />);
 
-    expect(text).toContain('에이전트가 5분 안에 저장소를 고르지 못해 멈췄습니다.');
-    expect(text).not.toContain('10분');
+    expect(text).not.toContain('5분 안에 저장소를 고르지 못해');
+    expect(text).toContain('저장소 선택(폐지됨) · Claude Code · 5분');
     expect(text).toContain('마지막 단계: 파일 읽는 중: README.md');
   });
 });
 
 describe('펼친 창: 초안 실행', () => {
-  it('목록 행에 요구 요약을 보이고, 생성 중·실패 묶음을 각 목록 묶음에 넣는다. 상세는 원문 → 요구 → 저장소 → 초안 → 근거 순이고 머리에 실행 줄이 있다', () => {
+  it('목록 행에 요구 요약을 보이고, 생성 중·실패 묶음도 같은 초안 묶음에 태그로 보인다. 상세는 원문 → 요구 → 저장소 → 초안 → 근거 순이고 머리에 실행 줄이 있다', () => {
     const text = textOf(<ReviewContent snapshot={snapshot([READY, GENERATING, FAILED])} initialBundleId={4} />);
 
-    expect(text).toContain('검토 대기 1');
-    expect(text).toContain('생성 중 1');
-    expect(text).toContain('실패 1');
+    expect(text).toContain('초안 3');
+    expect(text).toContain('생성 중');
+    expect(text).toContain('실패');
     expect(text).toContain('재시도 횟수');
     expect(text).toContain('Claude Code · 2분 14초 · 맥락 일부 생략');
     /** 상세 영역의 머리 순서. */
@@ -718,7 +713,7 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
 
   /** 저장소 영역을 편 작은 창에 묶음 하나와 저장소 선택 창을 그린 마크업. */
   function popoverMarkup(item: BundleSnapshot, repoPicker: ReviewSnapshot['repoPicker'] = null): string {
-    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], sections: repositoryOpen, repoPicker } })} />);
+    return renderToStaticMarkup(<PopoverContent snapshot={snapshot([item], { review: { bundles: [item], diagnoses: [], sections: repositoryOpen, repoPicker } })} />);
   }
 
   /** 마크업의 글자. */
@@ -754,10 +749,8 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     /** 열린 저장소 선택 창. */
     const picker = {
       bundleId: READY.id,
-      status: 'ready' as const,
       choices: [
         { name: 'billing-api', path: '/fake/work/billing-api', group: 'current' as const, checked: true },
-        { name: 'team/billing-web', path: '/fake/work/team/billing-web', group: 'work-folder' as const, checked: false },
         { name: 'tool', path: '/fake/other/tool', group: 'mapping' as const, checked: true },
         { name: 'extra', path: '/fake/elsewhere/extra', group: 'added' as const, checked: true },
       ],
@@ -770,7 +763,7 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
 
     expect(text).toContain('저장소 고르기');
     expect(text).toContain('지금 쓰는 저장소 billing-api /fake/work/billing-api');
-    expect(text).toContain('작업 폴더에서 찾은 저장소 team/billing-web /fake/work/team/billing-web');
+    expect(text).not.toContain('작업 폴더에서 찾은 저장소');
     expect(text).toContain('다른 매핑에 쓰인 저장소 tool /fake/other/tool');
     expect(text).toContain('직접 고른 폴더 extra /fake/elsewhere/extra');
     expect(markup.match(/type="checkbox" checked=""/g)).toHaveLength(3);
@@ -780,20 +773,18 @@ describe('저장소 영역의 연결 버튼과 저장소 선택 창', () => {
     expect(text).toContain('3개 고름');
   });
 
-  it('저장소 확인 필요 묶음의 선택 창은 "이 저장소로 만들기"이고, 고른 것이 없으면 만들기와 연결을 끈다. 훑는 동안에는 찾는 중이라고 보인다', () => {
-    /** 저장소 확인 필요 묶음. */
-    const check = bundle(21, { repoCheck: { kind: 'no-candidates' } });
+  it('저장소 매핑 필요 묶음의 선택 창은 "이 저장소로 만들기"이고, 고른 것이 없으면 만들기와 연결을 끈다', () => {
+    /** 저장소 매핑 필요 묶음. */
+    const check = bundle(21, { repoCheck: { kind: 'unmapped', waitingCount: 1 } });
     /** 아무것도 고르지 않은 창. */
     const markup = popoverMarkup(check, {
       bundleId: 21,
-      status: 'ready',
-      choices: [{ name: 'billing-api', path: '/fake/work/billing-api', group: 'work-folder', checked: false }],
+      choices: [{ name: 'billing-api', path: '/fake/work/billing-api', group: 'mapping', checked: false }],
       mapping: 'unmapped',
     });
 
     expect(markup).toMatch(/<button[^>]*disabled[^>]*>이 저장소로 만들기<\/button>/);
     expect(markup).toMatch(/<button[^>]*disabled[^>]*>이 Flow 프로젝트에 연결<\/button>/);
-    expect(textIn(popoverMarkup(check, { bundleId: 21, status: 'loading' }))).toContain('작업 폴더에서 저장소를 찾는 중입니다.');
   });
 });
 
@@ -965,7 +956,7 @@ describe('근거와 에디터에서 열기', () => {
       draft: { ...READY.draft!, evidence: [READY.draft!.evidence[0]!, { ...READY.draft!.evidence[1]!, located: false }] },
     });
     /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], sections: evidenceOpen, repoPicker: null } })} />);
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([unlocated], { review: { bundles: [unlocated], diagnoses: [], sections: evidenceOpen, repoPicker: null } })} />);
 
     expect(html.match(/에디터에서 열기/g)).toHaveLength(2);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>에디터에서 열기<\/button>/);
@@ -982,12 +973,12 @@ describe('근거와 에디터에서 열기', () => {
       },
     });
     /** 그린 HTML. */
-    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([flagged], { review: { bundles: [flagged], sections: evidenceOpen, repoPicker: null } })} />);
+    const html = renderToStaticMarkup(<PopoverContent snapshot={snapshot([flagged], { review: { bundles: [flagged], diagnoses: [], sections: evidenceOpen, repoPicker: null } })} />);
 
     expect(html.match(/개발자 용어가 있을 수 있음/g)).toHaveLength(2);
     expect(html).toContain('title="retryCount"');
     expect(html).toContain('title="application-prod.yml"');
-    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], sections: evidenceOpen, repoPicker: null } })} />)).not.toContain(
+    expect(renderToStaticMarkup(<PopoverContent snapshot={snapshot([READY], { review: { bundles: [READY], diagnoses: [], sections: evidenceOpen, repoPicker: null } })} />)).not.toContain(
       '개발자 용어가 있을 수 있음',
     );
   });
@@ -1118,13 +1109,13 @@ describe('게시', () => {
     }
   });
 
-  it('펼친 창에서 게시 중 묶음은 검토 대기에 남고, 게시됨 묶음은 처리됨에 들며 되돌릴 수 없다', () => {
+  it('펼친 창에서 게시 중 묶음과 게시됨 묶음은 같은 초안 묶음에 태그로 보이고, 게시됨 묶음은 되돌릴 수 없다', () => {
     /** 게시됨 묶음. */
     const posted: BundleSnapshot = { ...READY, id: 10, status: 'posted', group: 'processed', processedAt: Date.UTC(2026, 9, 20, 0, 5), draft: { ...READY.draft!, canEdit: false, canRegenerate: false, canPost: false } };
     const list = textOf(<ReviewContent snapshot={snapshot([countingDown(), posted])} initialBundleId={10} />);
 
-    expect(list).toContain('검토 대기 1');
-    expect(list).toContain('처리됨 1');
+    expect(list).toContain('초안 2');
+    expect(list).toContain('게시 중');
     expect(list).toContain('게시됨');
     expect(list).toContain('게시한 묶음입니다. 되돌릴 수 없습니다.');
     expect(list).not.toContain('되돌리기');
@@ -1176,15 +1167,15 @@ describe('게시 실패', () => {
     expect(repostButton(renderToStaticMarkup(<PopoverContent snapshot={snapshot([blocked])} />))).toContain('disabled');
   });
 
-  it('펼친 창에서는 실패 목록에 든다', () => {
+  it('펼친 창에서는 같은 초안 묶음에 "게시 실패" 태그로 보인다', () => {
     const text = textOf(<ReviewContent snapshot={snapshot([POST_FAILED, READY])} initialBundleId={4} />);
 
-    expect(text).toContain('실패 1');
-    expect(text).toContain('검토 대기 1');
+    expect(text).toContain('초안 2');
+    expect(text).toContain('게시 실패');
   });
 
   it('게시 실패 토스트는 "게시하지 못했습니다: 송신자님 멘션"이다', () => {
-    const text = textOf(<ToastStack bundles={[POST_FAILED]} ignoreToast={null} failedToasts={[{ key: 1, bundleId: 11 }]} stoppedToasts={[]} onRestore={() => {}} onCancelPost={() => {}} onStoppedAction={() => {}} />);
+    const text = textOf(<ToastStack bundles={[POST_FAILED]} ignoreToast={null} failedToasts={[{ key: 1, bundleId: 11 }]} stoppedToasts={[]} exportToasts={[]} onRestore={() => {}} onCancelPost={() => {}} onStoppedAction={() => {}} />);
 
     expect(text).toContain('게시하지 못했습니다: 보낸 사람, 다른 사람님 멘션');
   });
@@ -1199,6 +1190,7 @@ describe('게시를 누를 때의 확인으로 멈춘 게시', () => {
         ignoreToast={null}
         failedToasts={[]}
         stoppedToasts={[{ key: 1, bundleId: READY.id, stop }]}
+        exportToasts={[]}
         onRestore={() => {}}
         onCancelPost={() => {}}
         onStoppedAction={() => {}}
@@ -1385,14 +1377,14 @@ describe('시험 폐지', () => {
 });
 
 describe('최근 멘션 확인', () => {
-  /** 확인 시트의 가짜 줄. 둘째는 이미 답한 멘션, 셋째는 이미 묶음이 있는 멘션, 넷째는 최소 기록만 남은 멘션이다. */
+  /** 확인 창의 가짜 줄. 둘째는 이미 답한 멘션, 셋째는 이미 묶음이 있는 멘션, 넷째는 최소 기록만 남은 멘션이다. */
   const ROWS: ManualCheckRowSnapshot[] = [
     { kind: 'mention', alarmId: '104', senderName: '보낸 사람', projectTitle: '가짜 프로젝트', firstLine: '@테스트 사용자 배포 언제 되나요?', at: Date.UTC(2026, 9, 18, 2, 0), tags: [], missReasons: [] },
     { kind: 'mention', alarmId: '103', senderName: '다른 사람', projectTitle: null, firstLine: '@테스트 사용자 확인 부탁드립니다', at: Date.UTC(2026, 9, 10, 2, 0), tags: [{ kind: 'answered' }], missReasons: [] },
     { kind: 'mention', alarmId: '102', senderName: '세 번째', projectTitle: '가짜 프로젝트', firstLine: '이미 묶음이 있는 멘션', at: Date.UTC(2026, 9, 9, 2, 0), tags: [{ kind: 'bundle', bundleId: 7, status: 'posted' }], missReasons: [] },
     { kind: 'mention', alarmId: '101', senderName: '네 번째', projectTitle: '가짜 프로젝트', firstLine: '최소 기록만 남은 멘션', at: Date.UTC(2026, 9, 8, 2, 0), tags: [{ kind: 'archived' }], missReasons: [] },
   ];
-  /** 이어 불러올 수 있는 확인 시트. */
+  /** 이어 불러올 수 있는 확인 창. */
   const LOADED: NonNullable<ManualCheckSnapshot['sheet']> = { window: 'popover', tab: 'mentions', status: 'loaded', rows: ROWS, hasMore: true, loadingMore: false, moreFailure: null };
   /** 담당 업무 탭의 가짜 줄. 첫째는 감지에서 빠진 이유가 둘이고 이미 답했으며, 둘째는 이유가 없다. */
   const ASSIGNMENT_ROWS: ManualCheckRowSnapshot[] = [
@@ -1408,7 +1400,7 @@ describe('최근 멘션 확인', () => {
     },
     { kind: 'assignment', alarmId: '302', senderName: '다른 작성자', projectTitle: '백오피스', firstLine: '정산 화면 수정', at: Date.UTC(2026, 9, 17, 9, 0), tags: [{ kind: 'archived' }], missReasons: [] },
   ];
-  /** 담당 업무 탭을 보는 시트. */
+  /** 담당 업무 탭을 보는 모달. */
   const ASSIGNMENTS: NonNullable<ManualCheckSnapshot['sheet']> = { ...LOADED, tab: 'assignments', rows: ASSIGNMENT_ROWS, hasMore: false };
 
   /** 그린 HTML에서 [최근 멘션 확인] 버튼. */
@@ -1416,7 +1408,7 @@ describe('최근 멘션 확인', () => {
     return html.match(/<button[^>]*>최근 멘션 확인<\/button>/)?.[0];
   }
 
-  /** 확인 시트를 그린 글자. */
+  /** 확인 창를 그린 글자. */
   function sheetText(sheet: NonNullable<ManualCheckSnapshot['sheet']>): string {
     return textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet } })} />);
   }
@@ -1453,7 +1445,7 @@ describe('최근 멘션 확인', () => {
     expect(textOf(<DraftsSection snapshot={noKey} />)).toContain('멘션 감지를 시작하고 Flow 키를 쓸 수 있을 때 열 수 있습니다.');
   });
 
-  it('시트는 연 창에만 뜨고, 설정 창에서 연 시트는 설정 칸에 뜬다', () => {
+  it('모달은 연 창에만 뜨고, 설정 창에서 연 모달은 설정 칸에 뜬다', () => {
     expect(sheetText(LOADED)).toContain('확인할 항목 고르기');
     expect(textOf(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, window: 'settings' } } })} />)).not.toContain('확인할 항목 고르기');
     expect(textOf(<DraftsSection snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: { ...LOADED, window: 'settings' } } })} />)).toContain('확인할 항목 고르기');
@@ -1500,13 +1492,13 @@ describe('최근 멘션 확인', () => {
     expect(sheetText({ ...LOADED, rows: [], hasMore: false })).toContain('확인할 수 있는 최근 멘션이 없습니다.');
   });
 
-  it('Esc와 [닫기]는 시트를 닫는 명령을 보내고, 줄을 고르면 그 알림으로 고르는 명령을 보낸다', () => {
+  it('Esc와 [닫기]는 모달을 닫는 명령을 보내고, 줄을 고르면 그 알림으로 고르는 명령을 보낸다', () => {
     /** main으로 보낸 명령. */
     const send = vi.fn();
     vi.stubGlobal('window', { stardraft: { send } });
     try {
-      /** 시트가 그린 요소. 훅을 쓰지 않아 함수로 직접 부른다. */
-      const element = ManualCheckSheet({ sheet: LOADED });
+      /** 모달이 그린 요소. 훅을 쓰지 않아 함수로 직접 부른다. */
+      const element = ManualCheckModal({ sheet: LOADED });
       /** 요소 트리에서 조건에 맞는 요소를 모두 찾는다. */
       const find = (node: unknown, match: (props: Record<string, unknown>) => boolean): Record<string, unknown>[] => {
         if (Array.isArray(node)) return node.flatMap((child) => find(child, match));
@@ -1527,7 +1519,7 @@ describe('최근 멘션 확인', () => {
     }
   });
 
-  it('시트 위쪽에 "멘션 | 담당 업무" 탭이 있고 멘션 탭이 기본으로 선택된다. 탭마다 안내 문구가 다르다', () => {
+  it('모달 위쪽에 "멘션 | 담당 업무" 탭이 있고 멘션 탭이 기본으로 선택된다. 탭마다 안내 문구가 다르다', () => {
     /** 멘션 탭을 그린 HTML. */
     const mentions = renderToStaticMarkup(<PopoverContent snapshot={snapshot([], { manualCheck: { canOpen: true, sheet: LOADED } })} />);
     expect(mentions).toMatch(/<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>멘션<\/button>/);
@@ -1605,8 +1597,8 @@ describe('최근 멘션 확인', () => {
         const props = (node as { props: Record<string, unknown> }).props;
         return [...(match(props) ? [props] : []), ...find(props.children, match)];
       };
-      /** 멘션 탭을 보는 시트가 그린 요소. */
-      const element = ManualCheckSheet({ sheet: LOADED });
+      /** 멘션 탭을 보는 모달이 그린 요소. */
+      const element = ManualCheckModal({ sheet: LOADED });
       /** 탭 단추. */
       const tabs = find(element, (props) => props.role === 'tab');
       expect(tabs).toHaveLength(2);
@@ -1615,8 +1607,8 @@ describe('최근 멘션 확인', () => {
       (tabs[1]!.onClick as () => void)();
       expect(send).toHaveBeenLastCalledWith({ type: 'select-manual-check-tab', tab: 'assignments' });
 
-      /** 담당 업무 탭을 보는 시트가 그린 요소의 탭 단추. */
-      const assignmentTabs = find(ManualCheckSheet({ sheet: ASSIGNMENTS }), (props) => props.role === 'tab');
+      /** 담당 업무 탭을 보는 모달이 그린 요소의 탭 단추. */
+      const assignmentTabs = find(ManualCheckModal({ sheet: ASSIGNMENTS }), (props) => props.role === 'tab');
       (assignmentTabs[0]!.onClick as () => void)();
       expect(send).toHaveBeenLastCalledWith({ type: 'select-manual-check-tab', tab: 'mentions' });
       (assignmentTabs[1]!.onClick as () => void)();
@@ -1722,4 +1714,966 @@ it('생성 중 담당자에서 제외된 담당 업무는 처리됨의 담당 �
   expect(text).toContain('담당 해제');
   expect(text).toContain('담당자에서 제외되어 초안을 만들지 않았습니다.');
   expect(text).toContain('되돌리기');
+});
+
+describe('펼친 창: 진단', () => {
+  /** 감지 시각. 2026-11-26 09:50(이 PC 시간대와 무관하게 같은 날로 보이도록 시각 글자는 따로 비교하지 않는다). */
+  const DETECTED_AT = new Date(2026, 10, 26, 9, 50).getTime();
+  /** 화면을 그리는 기본 시각. 감지한 날 오후라서 감지 시각이 시각만 보인다. 어느 날에 돌려도 같은 결과가 나오도록 시계를 고정한다. */
+  const SAME_DAY_NOW = new Date(2026, 10, 26, 15, 0).getTime();
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(SAME_DAY_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 가짜 진단. 실제 오류가 아니다. 기본은 저장소 매핑 필요다. */
+  function diagnosis(id: number, overrides: Partial<DiagnosisSnapshot> = {}): DiagnosisSnapshot {
+    return {
+      id,
+      projectId: '11',
+      origin: 'new',
+      title: `시험 오류 ${id}`,
+      detectedAt: DETECTED_AT,
+      status: 'repo-check-needed',
+      repoWait: { kind: 'unmapped', waitingCount: 2 },
+      progress: null,
+      report: null,
+      failure: null,
+      canRetryWithoutReproduction: false,
+      rediagnosing: false,
+      directives: [],
+      rediagnosisFailure: null,
+      completedAt: null,
+      exported: false,
+      lastExportedPath: null,
+      canOpenInSentry: true,
+      attachments: [],
+      reproductionAllowed: false,
+      issue: {
+        shortId: `WEB-${id}`,
+        culprit: 'app/checkout',
+        level: 'error',
+        environment: 'production',
+        firstSeen: DETECTED_AT,
+        lastSeen: null,
+        count: 3,
+        userCount: 1,
+        platform: 'javascript',
+        organizationName: '가짜 조직',
+        projectName: '가짜 프로젝트',
+      },
+      ...overrides,
+    };
+  }
+
+  /** 진단을 넣은 스냅숏. */
+  function withDiagnoses(diagnoses: DiagnosisSnapshot[], bundles: BundleSnapshot[] = []): AppSnapshot {
+    return snapshot(bundles, { review: { bundles, diagnoses, sections: SECTIONS, repoPicker: null } });
+  }
+
+  it('목록은 `진단 n` 묶음이 `초안 n` 위에 오고, 진단 줄에 오류 제목·감지 시각·`프로젝트 · 자리`·상태 태그가 보인다', () => {
+    const text = textOf(
+      <ReviewContent
+        snapshot={withDiagnoses([diagnosis(1), diagnosis(2, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 1 } })], [bundle(7)])}
+        initialDiagnosisId={1}
+      />,
+    );
+
+    expect(text).toMatch(/진단 2 시험 오류 1 \S+ \S+ 가짜 프로젝트 · app\/checkout 저장소 매핑 필요 시험 오류 2 \S+ \S+ 가짜 프로젝트 · app\/checkout 대기 초안 1 /);
+  });
+
+  it('감지한 날이 지나면 목록의 감지 시각에 날짜가 붙는다', () => {
+    vi.setSystemTime(new Date(2026, 10, 28, 9, 0).getTime());
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([diagnosis(1)])} initialDiagnosisId={1} />);
+
+    expect(text).toMatch(/진단 1 시험 오류 1 11월 26일 \S+ \S+ 가짜 프로젝트 · app\/checkout/);
+  });
+
+  it('저장소 매핑 필요 진단의 상세는 `오류 정보`와 노란 바닥 줄(진단용 글, 주 버튼 하나, 치우는 버튼 없음)이다', () => {
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([diagnosis(1)])} initialDiagnosisId={1} />);
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([diagnosis(1)])} initialDiagnosisId={1} />);
+
+    expect(text).toContain('가짜 프로젝트 · 신규 ·');
+    expect(text).toContain('오류 정보 난 자리 app/checkout 발생 수 3회 · 사용자 1명 짧은 ID WEB-1 조직 / 프로젝트 가짜 조직 / 가짜 프로젝트 환경 production 레벨 error');
+    expect(text).toContain('이 프로젝트에 연결한 저장소가 없습니다. 매핑하면 기다리는 오류 2건을 진단합니다.');
+    /** 바닥 줄. */
+    const footer = /<footer class="review-foot warn expanded">[\s\S]*<\/footer>/.exec(markup)?.[0] ?? '';
+    expect(footer.match(/<button/g)).toHaveLength(1);
+    expect(footer).toMatch(/<button[^>]*class="btn primary"[^>]*>저장소 매핑하기<\/button>/);
+    expect(footer).not.toContain('무시');
+  });
+
+  it('저장소 확인 필요 진단은 찾을 수 없는 폴더와 [매핑 고치기]를 보인다', () => {
+    const missing = diagnosis(1, { repoWait: { kind: 'missing-folder', path: '/fake/gone', waitingCount: 1 } });
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([missing])} initialDiagnosisId={1} />);
+
+    expect(text).toContain('저장소 확인 필요');
+    expect(text).toContain('연결한 저장소 폴더를 찾을 수 없습니다. /fake/gone 폴더가 돌아오거나 매핑을 고치면 이어 갑니다. 매핑 고치기');
+  });
+
+  it('대기 진단은 `대기` 태그와 기다린다는 바닥 줄을 보이고 노란 바닥 줄은 없다', () => {
+    const markup = renderToStaticMarkup(
+      <ReviewContent snapshot={withDiagnoses([diagnosis(1, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 2 } })])} initialDiagnosisId={1} />,
+    );
+
+    expect(markup).toContain('<span class="tag generating">대기</span>');
+    expect(markup).toContain('차례를 기다리는 중입니다.');
+    expect(markup).not.toContain('review-foot warn');
+  });
+
+  /** 가짜 보고서. 읽기 전용 진단이라 재현은 불가(허용 안 됨)다. */
+  const REPORT: NonNullable<DiagnosisSnapshot['report']> = {
+    summary: '빈 주문 목록에서 첫 항목을 읽어 오류가 납니다.',
+    reproduction: { result: 'impossible', impossibleReason: 'not-allowed', method: '', steps: [] },
+    cause: { text: '빈 배열을 확인하지 않습니다. [근거 1]', confidence: 'medium' },
+    improvements: ['빈 목록을 먼저 확인합니다.'],
+    openQuestions: ['빈 목록이 언제 오는지 모릅니다.'],
+    evidence: [{ id: 1, explanation: '첫 항목을 읽는 자리', repository: '/fake/web', path: 'src/order.ts', startLine: 4, endLine: 6, located: true }],
+    event: { release: 'web@1.2.0', firstRelease: 'web@1.0.0', lastRelease: null, sourceMaps: 'applied', missingData: [], stackHead: [] },
+    run: {
+      repository: '/fake/web',
+      headCommit: 'a'.repeat(40),
+      uncommittedChanges: false,
+      agent: 'claude-code',
+      cliVersion: '2.1.300',
+      reproductionAllowed: false,
+      durationMs: 134_000,
+      createdAt: DETECTED_AT,
+      mcpServers: null,
+    },
+    priorDiagnosis: null,
+    omittedAttachments: 0,
+  };
+
+  it('대기 진단의 상세는 `진행`에 "앞에 n개가 있습니다."를 보이고 바닥 줄에 [취소]가 있다', () => {
+    const markup = renderToStaticMarkup(
+      <ReviewContent snapshot={withDiagnoses([diagnosis(1, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 2 } })])} initialDiagnosisId={1} />,
+    );
+    const text = textOf(
+      <ReviewContent snapshot={withDiagnoses([diagnosis(1, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 2 } })])} initialDiagnosisId={1} />,
+    );
+
+    expect(text).toContain('진행 앞에 2개가 있습니다. 오류 정보');
+    expect(markup).toMatch(/<footer class="review-foot"><span class="small muted">차례를 기다리는 중입니다.<\/span><span class="spacer"><\/span><button[^>]*>취소<\/button><\/footer>/);
+  });
+
+  it('진행 중 진단은 `진단 중` 태그와 단계·읽은 파일 수, "진단하는 중입니다 · n분 지남"과 [취소]를 보인다', () => {
+    /** 3분 전에 시작한 진단. */
+    const running = diagnosis(1, {
+      status: 'running',
+      repoWait: null,
+      progress: { status: 'running', step: '파일 읽는 중: order.ts', filesRead: 4, startedAt: Date.now() - 3 * 60_000 - 5_000 },
+    });
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([running])} initialDiagnosisId={1} />);
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([running])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<span class="tag generating">진단 중</span>');
+    expect(text).toContain('진행 파일 읽는 중: order.ts 읽은 파일 4개');
+    expect(text).toContain('진단하는 중입니다 · 3분 지남 취소');
+  });
+
+  describe('시간 연장 묻기', () => {
+    /** 재현하는 진단이 연장을 묻거나 마무리를 기다리는 중인 진단. */
+    const extending = (extension: { phase: 'asking' | 'wrapping-up'; canSteer: boolean }, overrides: Partial<DiagnosisSnapshot> = {}) =>
+      diagnosis(1, {
+        status: 'running',
+        repoWait: null,
+        progress: { status: 'running', step: '재현 중', filesRead: 4, startedAt: Date.now() - 16 * 60_000, extension },
+        ...overrides,
+      });
+    /** 그린 HTML에서 태그를 지운 글자. 공백은 하나로 줄인다. */
+    const flat = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+    it('묻는 동안 목록 태그에 노란 `확인 필요`가 `진단 중` 앞에 붙고, 묻지 않는 진행 중과 마무리 기다림에는 붙지 않는다', () => {
+      /** 목록의 태그 줄. */
+      const tags = (item: DiagnosisSnapshot) => /<span class="tag[^"]*">[^<]*<\/span>(<span class="tag[^"]*">[^<]*<\/span>)*/.exec(renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([item])} initialDiagnosisId={1} />))?.[0];
+
+      expect(renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([extending({ phase: 'asking', canSteer: true })])} initialDiagnosisId={1} />)).toContain(
+        '<span class="tag warn">확인 필요</span><span class="tag generating">진단 중</span>',
+      );
+      expect(tags(extending({ phase: 'wrapping-up', canSteer: true }))).not.toContain('확인 필요');
+      const plain = diagnosis(1, { status: 'running', repoWait: null, progress: { status: 'running', step: '재현 중', filesRead: 0, startedAt: Date.now() } });
+      expect(renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([plain])} initialDiagnosisId={1} />)).not.toContain('확인 필요');
+    });
+
+    it('묻는 동안 노란 바닥 줄에 글과 [멈추기] · 주 버튼 [계속 진행]이 보인다. 전달이 되는 에이전트는 답이 없으면 보고서를 마무리한다', () => {
+      const markup = renderToStaticMarkup(<DiagnosisFooter diagnosis={extending({ phase: 'asking', canSteer: true })} />);
+
+      expect(markup).toContain('review-foot warn expanded');
+      expect(markup).toContain('<strong>5분 뒤 멈춥니다. 계속할까요?</strong>');
+      expect(flat(markup)).toContain('5분 뒤 멈춥니다. 계속할까요? 계속하면 10분을 더 씁니다. 답이 없으면 지금까지 알아낸 것으로 보고서를 마무리합니다. 멈추기 계속 진행');
+      expect(markup).toMatch(/<button[^>]*class="btn"[^>]*>멈추기<\/button><button[^>]*class="btn primary"[^>]*>계속 진행<\/button>/);
+    });
+
+    it('전달이 안 되는 에이전트는 글의 둘째 문장이 "멈추거나 답이 없으면 보고서 없이 끝납니다."다', () => {
+      const text = flat(renderToStaticMarkup(<DiagnosisFooter diagnosis={extending({ phase: 'asking', canSteer: false })} />));
+
+      expect(text).toContain('계속하면 10분을 더 씁니다. 멈추거나 답이 없으면 보고서 없이 끝납니다.');
+      expect(text).not.toContain('마무리합니다');
+    });
+
+    it('작은 창의 노란 바닥 줄은 글을 윗줄에, 버튼을 아랫줄에 둔다', () => {
+      const markup = renderToStaticMarkup(<DiagnosisFooter diagnosis={extending({ phase: 'asking', canSteer: true })} windowKind="compact" />);
+
+      expect(markup).toContain('review-foot warn compact');
+      expect(flat(renderToStaticMarkup(<PopoverContent snapshot={withDiagnoses([extending({ phase: 'asking', canSteer: true })])} initialDiagnosisId={1} />))).toContain('계속 진행');
+    });
+
+    it('마무리를 기다리는 동안 바닥 줄은 "보고서를 마무리하는 중입니다. 5분 안에 끝납니다."와 [취소]다', () => {
+      const markup = renderToStaticMarkup(<DiagnosisFooter diagnosis={extending({ phase: 'wrapping-up', canSteer: true })} />);
+
+      expect(markup).toMatch(/<footer class="review-foot"><span class="small muted">보고서를 마무리하는 중입니다. 5분 안에 끝납니다.<\/span><span class="spacer"><\/span><button[^>]*>취소<\/button><\/footer>/);
+      expect(markup).not.toContain('warn');
+    });
+
+    it('다시 진단하는 중에도 묻는 줄이 먼저 보이고, 묻지 않을 때는 다시 진단 글이 보인다', () => {
+      /** 다시 진단하는 중에 연장을 묻는 진단. */
+      const rediagnosing = extending({ phase: 'asking', canSteer: true }, { rediagnosing: true });
+
+      expect(flat(renderToStaticMarkup(<DiagnosisFooter diagnosis={rediagnosing} />))).toContain('5분 뒤 멈춥니다');
+      expect(flat(renderToStaticMarkup(<DiagnosisFooter diagnosis={{ ...rediagnosing, progress: { status: 'running', step: '재현 중', filesRead: 0, startedAt: Date.now() } }} />))).toContain('다시 진단하는 중입니다.');
+    });
+
+    it('[멈추기]와 [계속 진행]은 그 진단의 명령을 보낸다', () => {
+      /** main으로 보낸 명령. */
+      const send = vi.fn();
+      vi.stubGlobal('window', { stardraft: { send } });
+      try {
+        for (const button of pressables(DiagnosisFooter({ diagnosis: extending({ phase: 'asking', canSteer: true }) }))) (button.onClick as () => void)();
+
+        expect(send.mock.calls.map(([command]) => command)).toEqual([
+          { type: 'stop-diagnosis', diagnosisId: 1 },
+          { type: 'continue-diagnosis', diagnosisId: 1 },
+        ]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('시간 초과로 실패한 재현하던 진단에만 [재현 없이 다시 시도]가 [완료] 오른쪽, 주 버튼 [다시 시도] 앞에 보이고 그 명령을 보낸다', () => {
+      /** 시간 초과로 실패한 진단. */
+      const failed = (canRetryWithoutReproduction: boolean) =>
+        diagnosis(2, { status: 'failed', repoWait: null, failure: { reason: 'timed-out', detail: null, lastStep: '재현 중' }, canRetryWithoutReproduction });
+
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={failed(true)} />)).toMatch(
+        /<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><button[^>]*class="btn"[^>]*>재현 없이 다시 시도<\/button><button[^>]*class="btn primary"[^>]*>다시 시도<\/button><\/footer>/,
+      );
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={failed(false)} />)).not.toContain('재현 없이 다시 시도');
+
+      /** main으로 보낸 명령. */
+      const send = vi.fn();
+      vi.stubGlobal('window', { stardraft: { send } });
+      try {
+        for (const button of pressables(DiagnosisFooter({ diagnosis: failed(true) }))) (button.onClick as () => void)();
+
+        expect(send.mock.calls.map(([command]) => command)).toEqual([
+          { type: 'complete-diagnosis', diagnosisId: 2 },
+          { type: 'retry-diagnosis-without-reproduction', diagnosisId: 2 },
+          { type: 'retry-diagnosis', diagnosisId: 2 },
+        ]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
+  it('진단 실패는 `진단 실패` 태그와 빨간 오류 상자(사유와 마지막 단계), 왼쪽 [완료]와 오른쪽 주 버튼 [다시 시도]를 보인다', () => {
+    /** 시간 초과로 실패한 진단. */
+    const failed = diagnosis(1, { status: 'failed', repoWait: null, failure: { reason: 'timed-out', detail: null, lastStep: '오류 진단하는 중' } });
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([failed])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<span class="tag failed">진단 실패</span>');
+    expect(markup).toContain('<div class="failure-box"><strong>에이전트가 정해진 시간 안에 끝내지 못해 멈췄습니다.</strong><p class="failure-detail">마지막 단계: 오류 진단하는 중</p></div>');
+    expect(markup).toMatch(/<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><button[^>]*class="btn primary"[^>]*>다시 시도<\/button><\/footer>/);
+  });
+
+  it('진단 실패의 사유 문장은 초안 대신 진단을 가리키고, Sentry 조회 실패도 쉬운 말로 보인다', () => {
+    /** 사유만 다른 진단 실패. */
+    const failedWith = (reason: NonNullable<DiagnosisSnapshot['failure']>['reason']) =>
+      textOf(
+        <ReviewContent
+          snapshot={withDiagnoses([diagnosis(1, { status: 'failed', repoWait: null, failure: { reason, detail: null, lastStep: null } })])}
+          initialDiagnosisId={1}
+        />,
+      );
+
+    expect(failedWith('cancelled')).toContain('취소함: 진단을 취소했습니다.');
+    expect(failedWith('sentry-unavailable')).toContain('Sentry에서 오류 데이터를 가져오지 못했습니다.');
+    expect(failedWith('secret-evidence')).toContain('비밀 파일을 근거로 듦');
+  });
+
+  it('진단 실패의 [완료]와 [다시 시도], 대기의 [취소]는 그 진단의 명령을 보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 요소 트리에서 누를 수 있는 요소를 모두 찾는다. */
+      const find = (node: unknown): Record<string, unknown>[] => {
+        if (Array.isArray(node)) return node.flatMap((child) => find(child));
+        if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+        /** 요소의 속성. */
+        const props = (node as { props: Record<string, unknown> }).props;
+        return [...(typeof props.onClick === 'function' ? [props] : []), ...find(props.children)];
+      };
+      for (const button of find(DiagnosisFooter({ diagnosis: diagnosis(3, { status: 'failed', repoWait: null }) }))) (button.onClick as () => void)();
+      for (const button of find(DiagnosisFooter({ diagnosis: diagnosis(4, { status: 'queued', repoWait: null }) }))) (button.onClick as () => void)();
+
+      expect(send.mock.calls.map(([command]) => command)).toEqual([
+        { type: 'complete-diagnosis', diagnosisId: 3 },
+        { type: 'retry-diagnosis', diagnosisId: 3 },
+        { type: 'cancel-diagnosis', diagnosisId: 4 },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  /**
+   * 요소 트리에서 누를 수 있는 요소의 속성을 모두 찾는다. 함수 컴포넌트는 직접 불러 펼치고, 훅을 쓰는 컴포넌트는 렌더 밖에서 던지므로 펼치지 않고 지나간다.
+   * DOM이 없는 시험이라 누르는 동작은 이렇게 찾은 `onClick`을 직접 부르는 것으로 대신한다.
+   */
+  const pressables = (node: unknown): Record<string, unknown>[] => {
+    if (Array.isArray(node)) return node.flatMap((child) => pressables(child));
+    if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+    /** 요소의 종류와 속성. */
+    const { type, props } = node as { type: unknown; props: Record<string, unknown> };
+    if (typeof type === 'function') {
+      try {
+        // 컴포넌트가 그린 결과에 자식도 들어 있으므로 결과만 따라간다.
+        return pressables((type as (input: unknown) => unknown)(props));
+      } catch {
+        // 훅을 쓰는 컴포넌트는 렌더 밖에서 그릴 수 없다. 자식만 따라간다.
+      }
+    }
+    return [...(typeof props.onClick === 'function' ? [props] : []), ...pressables(props.children)];
+  };
+
+  /** 보고서가 있는 준비됨 진단. */
+  const readyDiagnosis = (id = 1, overrides: Partial<DiagnosisSnapshot> = {}) => diagnosis(id, { status: 'ready', repoWait: null, report: REPORT, ...overrides });
+
+  it('보고서가 있으면 머리 아래에 `보고서` · `근거 n` · `첨부 n` · `정보` 탭이 있고 처음에는 보고서 탭이다', () => {
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([readyDiagnosis()])} initialDiagnosisId={1} />);
+
+    /** 탭의 이름과 고른 여부. */
+    const tabs = [...markup.matchAll(/<button[^>]*role="tab"[^>]*aria-selected="(true|false)"[^>]*>([^<]*)/g)].map((match) => `${match[2]}:${match[1]}`);
+    expect(tabs).toEqual(['보고서:true', '근거 1:false', '첨부 0:false', '정보:false']);
+    expect(markup).toContain('<span class="tag ready">준비됨</span>');
+  });
+
+  it('보고서가 없는 상태에는 탭이 없다', () => {
+    for (const item of [
+      diagnosis(1),
+      diagnosis(1, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 1 } }),
+      diagnosis(1, { status: 'failed', repoWait: null, failure: { reason: 'timed-out', detail: null, lastStep: null } }),
+      diagnosis(1, { status: 'completed', repoWait: null, completedAt: DETECTED_AT }),
+    ]) {
+      expect(renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([item])} initialDiagnosisId={1} />)).not.toContain('role="tab"');
+    }
+  });
+
+  it('상세 머리에 오류 제목, `프로젝트 · 신규/재발 · 감지 시각`, [Sentry에서 열기], 에이전트와 걸린 시간, 상태 태그가 있다', () => {
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([readyDiagnosis(1, { origin: 'regression' })])} initialDiagnosisId={1} />);
+    /** 상세 머리. */
+    const head = /<header class="detail-head">[\s\S]*?<\/header>/.exec(markup)?.[0] ?? '';
+
+    expect(head).toContain('<h2>시험 오류 1</h2>');
+    expect(head).toContain('가짜 프로젝트 · 재발 ·');
+    expect(head).toMatch(/<button[^>]*class="btn link"[^>]*>Sentry에서 열기<\/button>/);
+    expect(head).toContain('<p class="run-line">Claude Code · 2분 14초</p>');
+    expect(head).toContain('<span class="tag ready">준비됨</span>');
+    expect(head).toContain('접어 보기');
+  });
+
+  it('열 주소가 없는 진단과 보고서가 없는 진단의 머리에는 [Sentry에서 열기]와 실행 줄이 없다', () => {
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([diagnosis(1, { canOpenInSentry: false })])} initialDiagnosisId={1} />);
+
+    expect(markup).not.toContain('Sentry에서 열기');
+    expect(markup).not.toContain('run-line');
+  });
+
+  it('[Sentry에서 열기]는 그 진단의 명령을 보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 머리를 그린 요소 트리. */
+      const head = DiagnosisHead({ diagnosis: readyDiagnosis(8), onCollapse: () => {} });
+      /** 머리의 버튼. [Sentry에서 열기]와 [접어 보기]다. */
+      const buttons = pressables(head);
+      expect(buttons).toHaveLength(2);
+      (buttons[0]!.onClick as () => void)();
+
+      expect(send.mock.calls.map(([command]) => command)).toEqual([{ type: 'open-diagnosis-in-sentry', diagnosisId: 8 }]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('보고서 탭은 요약 → 재현(결과를 제목 옆에) → 원인(확신도를 제목 옆에) → 개선 방향 → 남은 의문 순서다', () => {
+    const markup = renderToStaticMarkup(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={REPORT} tab="report" />);
+    const text = markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+    /** 구역 이름의 순서. */
+    const titles = [...markup.matchAll(/<h3 class="section-title">([^<]+)/g)].map((match) => match[1]);
+    expect(titles).toEqual(['요약', '재현', '원인', '개선 방향', '남은 의문']);
+    expect(text).toContain('요약 빈 주문 목록에서 첫 항목을 읽어 오류가 납니다.');
+    expect(text).toContain('재현 · 불가(허용 안 됨) 이 저장소는 재현을 허용하지 않아 코드만 읽고 진단했습니다');
+    expect(text).toContain('원인 · 확신도 중간 빈 배열을 확인하지 않습니다.');
+    expect(text).toContain('개선 방향 빈 목록을 먼저 확인합니다.');
+    expect(text).toContain('남은 의문 빈 목록이 언제 오는지 모릅니다.');
+    // 근거·오류 정보·진단 정보는 다른 탭에 있다.
+    expect(text).not.toContain('release(');
+    expect(text).not.toContain('첫 항목을 읽는 자리');
+  });
+
+  it('원인 글의 `[근거 n]`은 Flow 초안처럼 원문자 번호가 되고, 있는 근거의 번호는 눌러서 근거를 볼 수 있다', () => {
+    /** 근거 번호를 눌러 근거로 가는 보고서 탭. 번호를 누르는 함수를 넘긴다. */
+    const markup = renderToStaticMarkup(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={REPORT} tab="report" onCite={() => {}} />);
+
+    expect(markup).toContain('<p class="cause-text"><span>빈 배열을 확인하지 않습니다.</span><button type="button" class="cite" aria-label="근거 ① 보기">①</button></p>');
+    expect(markup).not.toContain('[근거');
+  });
+
+  it('보고서에 없는 근거 번호는 누를 수 없는 표시로 남고, 여러 번호는 이어서 보인다', () => {
+    /** 없는 번호 9와 있는 번호 1을 함께 가리키는 원인. */
+    const report = { ...REPORT, cause: { text: '두 곳이 문제입니다. [근거 1] [근거 9]', confidence: 'high' as const } };
+    const markup = renderToStaticMarkup(<DiagnosisTabPanel diagnosis={readyDiagnosis(1, { report })} report={report} tab="report" onCite={() => {}} />);
+
+    expect(markup).toContain('aria-label="근거 ① 보기">①</button>');
+    expect(markup).toContain('<span class="cite none" title="이 번호의 근거가 없습니다">⑨</span>');
+  });
+
+  it('재현 불가(허용 안 됨)의 재현 칸에 안내와 [저장소 설정 열기]가 있고, 누르면 저장소 설정을 연다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      expect(renderToStaticMarkup(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={REPORT} tab="report" />)).toMatch(/<button[^>]*>저장소 설정 열기<\/button>/);
+
+      /** 보고서 탭의 버튼. 근거 번호는 이 탭에서 누를 수 없으므로 [저장소 설정 열기] 하나다. */
+      const buttons = pressables(DiagnosisTabPanel({ diagnosis: readyDiagnosis(), report: REPORT, tab: 'report' }));
+      expect(buttons).toHaveLength(1);
+      (buttons[0]!.onClick as () => void)();
+      expect(send).toHaveBeenCalledWith({ type: 'open-settings', section: 'repositories' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('재현에 성공하거나 실패한 보고서에는 [저장소 설정 열기]가 없고 방법과 순서를 보인다', () => {
+    /** 재현을 시도한 보고서. */
+    const attempted = (result: 'success' | 'failure') => ({
+      ...REPORT,
+      reproduction: { result, impossibleReason: null, method: '주문 목록을 비우고 결제 화면을 열었습니다', steps: ['목록 비우기', '결제 열기'] },
+    });
+    for (const result of ['success', 'failure'] as const) {
+      const report = attempted(result);
+      const text = textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis(1, { report })} report={report} tab="report" />);
+
+      expect(text).toContain(`재현 · ${result === 'success' ? '성공' : '실패'} 주문 목록을 비우고 결제 화면을 열었습니다`);
+      expect(text).toContain('목록 비우기 결제 열기');
+      expect(text).not.toContain('저장소 설정 열기');
+      // 시도만 한 경우에만 "시도한 것"이라 이름 붙인다.
+      expect(text.includes('시도한 것')).toBe(result === 'failure');
+    }
+  });
+
+  it('근거 탭은 Flow 초안의 근거 목록과 같은 모양으로 번호, 설명, `저장소 · 파일 · 줄`, [에디터에서 열기]를 보인다', () => {
+    const markup = renderToStaticMarkup(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={REPORT} tab="evidence" />);
+
+    expect(markup).toContain('<ol class="evidence-list">');
+    expect(markup).toContain('<span class="evidence-number">①</span> 첫 항목을 읽는 자리');
+    expect(markup).toContain('<p class="evidence-location" title="src/order.ts">web · order.ts · 4–6번째 줄</p>');
+    expect(markup).toMatch(/<button type="button" class="btn link sm">에디터에서 열기<\/button>/);
+  });
+
+  it('위치를 확인하지 못한 근거는 "위치를 찾을 수 없음"이고 에디터에서 열 수 없다', () => {
+    /** 위치를 찾지 못한 근거 하나. */
+    const report = { ...REPORT, evidence: [{ ...REPORT.evidence[0]!, located: false }] };
+    const markup = renderToStaticMarkup(<DiagnosisTabPanel diagnosis={readyDiagnosis(1, { report })} report={report} tab="evidence" />);
+
+    expect(markup).toContain('<p class="evidence-location not-found" title="src/order.ts">위치를 찾을 수 없음</p>');
+    expect(markup).toMatch(/<button type="button" class="btn link sm" disabled="">에디터에서 열기<\/button>/);
+  });
+
+  it('근거가 없는 보고서의 근거 탭은 빈 상태 글을 보인다', () => {
+    /** 근거가 없는 보고서. */
+    const report = { ...REPORT, evidence: [] };
+
+    expect(textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis(1, { report })} report={report} tab="evidence" />)).toContain('근거가 없습니다.');
+  });
+
+  it('[에디터에서 열기]는 그 진단과 근거 위치를 보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 근거 목록의 버튼. 근거마다 [에디터에서 열기] 하나다. */
+      const buttons = pressables(EvidenceItems({ diagnosis: readyDiagnosis(6), report: REPORT, highlightedIndex: -1, highlightedRef: null }));
+      expect(buttons).toHaveLength(1);
+      (buttons[0]!.onClick as () => void)();
+
+      expect(send).toHaveBeenCalledWith({ type: 'open-diagnosis-evidence-in-editor', diagnosisId: 6, evidenceIndex: 0 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('첨부 탭은 첨부가 없으면 빈 상태를, 있으면 파일 이름과 크기를 보인다', () => {
+    expect(textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={REPORT} tab="attachments" />)).toContain('첨부가 없습니다.');
+
+    /** 첨부가 있는 진단. */
+    const withFiles = readyDiagnosis(1, { attachments: [{ name: 'screen.png', sizeBytes: 2048 }, { name: 'run.log', sizeBytes: 12 }] });
+    const text = textOf(<DiagnosisTabPanel diagnosis={withFiles} report={REPORT} tab="attachments" />);
+    expect(text).toContain('screen.png 2.0KB run.log 12B');
+    expect(text).not.toContain('첨부가 없습니다.');
+    expect(text).not.toContain('생략');
+
+    // 종류나 한도를 넘어 옮기지 않은 첨부가 있으면 그 수를 적는다.
+    expect(textOf(<DiagnosisTabPanel diagnosis={withFiles} report={{ ...REPORT, omittedAttachments: 2 }} tab="attachments" />)).toContain('첨부 2개 생략');
+    expect(textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={{ ...REPORT, omittedAttachments: 1 }} tab="attachments" />)).toContain('첨부 1개 생략');
+  });
+
+  it('보고서 탭의 재현 칸에도 옮기지 않은 첨부 수를 "첨부 n개 생략"으로 적는다', () => {
+    /** 재현에 성공했고 첨부 둘을 생략한 보고서. */
+    const reproduced = { ...REPORT, reproduction: { result: 'success' as const, impossibleReason: null, method: '셸로 3번 중 3번', steps: ['pnpm test'] }, omittedAttachments: 2 };
+
+    expect(textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={reproduced} tab="report" />)).toContain('첨부 2개 생략');
+    expect(textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={{ ...reproduced, omittedAttachments: 0 }} tab="report" />)).not.toContain('생략');
+  });
+
+  it('정보 탭은 오류 정보와 진단 정보를 보인다', () => {
+    const text = textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={REPORT} tab="info" />);
+
+    expect(text).toContain('오류 정보 난 자리 app/checkout 발생 수 3회 · 사용자 1명 짧은 ID WEB-1 조직 / 프로젝트 가짜 조직 / 가짜 프로젝트');
+    expect(text).toContain('플랫폼 javascript 신규·재발 신규 감지 시각 ');
+    expect(text).toContain('release(이벤트 · 최초 · 최근) web@1.2.0 · web@1.0.0 · 없음 소스맵 적용됨 없는 데이터 없음');
+    expect(text).toContain(`진단 정보 저장소 /fake/web HEAD ${'a'.repeat(40)} 커밋하지 않은 변경 없음 에이전트 Claude Code 2.1.300 재현 허용 허용 안 함 걸린 시간 2분 14초`);
+    // 읽기 전용 진단에는 MCP 줄이 없다.
+    expect(text).not.toContain('MCP');
+  });
+
+  it('재현하는 진단의 정보 탭은 실린 MCP 서버와 빠진 서버·까닭을 이름만 보인다', () => {
+    /** MCP를 실은 재현 보고서. */
+    const reproduced = {
+      ...REPORT,
+      run: { ...REPORT.run, reproductionAllowed: true, mcpServers: { loaded: ['playwright'], skipped: [{ name: 'docs', reason: 'connection-failed' as const }] } },
+    };
+
+    const text = textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={reproduced} tab="info" />);
+
+    expect(text).toContain('실린 MCP 서버 playwright 빠진 MCP 서버 docs(연결 실패)');
+  });
+
+  it('검토 대기의 바닥 줄은 왼쪽 [완료], 오른쪽 [다시 진단 ▾]와 주 버튼 [내보내기]이고 내보내기는 그 진단을 내보낸다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={readyDiagnosis(9)} />)).toMatch(
+        /<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button><span class="spacer"><\/span><details class="menu"><summary class="btn">다시 진단 ▾<\/summary>.*<\/details><button[^>]*class="btn primary"[^>]*>내보내기<\/button><\/footer>/,
+      );
+      /** 평소 바닥 줄의 버튼. */
+      const buttons = pressables(ReadyFooterView({ confirming: false, onComplete: () => send({ type: 'ask' }), onConfirmComplete: () => {}, onCancelConfirm: () => {}, onExport: () => send({ type: 'export' }) }));
+      expect(buttons).toHaveLength(2);
+      (buttons[0]!.onClick as () => void)();
+      (buttons[1]!.onClick as () => void)();
+
+      expect(send.mock.calls.map(([command]) => command)).toEqual([{ type: 'ask' }, { type: 'export' }]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('내보내지 않고 [완료]를 누르면 확인 줄이 안내 글, [취소] · [내보내기] · 주 버튼 [완료]를 보인다', () => {
+    /** 부른 순서. */
+    const calls: string[] = [];
+    /** 확인 줄. */
+    const footer = ReadyFooterView({
+      confirming: true,
+      onComplete: () => calls.push('complete'),
+      onConfirmComplete: () => calls.push('confirm-complete'),
+      onCancelConfirm: () => calls.push('cancel'),
+      onExport: () => calls.push('export'),
+    });
+    expect(renderToStaticMarkup(footer)).toMatch(
+      /<footer class="review-foot"><span class="small">내보내지 않았습니다\. 완료하면 이 보고서가 사라집니다\.<\/span><span class="spacer"><\/span><button[^>]*class="btn"[^>]*>취소<\/button><button[^>]*class="btn"[^>]*>내보내기<\/button><button[^>]*class="btn primary"[^>]*>완료<\/button><\/footer>/,
+    );
+    for (const button of pressables(footer)) (button.onClick as () => void)();
+
+    expect(calls).toEqual(['cancel', 'export', 'confirm-complete']);
+  });
+
+  it('내보낸 적이 있는 보고서의 [완료]는 확인 없이 바로 완료한다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 내보낸 보고서의 바닥 줄 요소. 훅을 쓰는 컴포넌트라 상태 없이 바로 그릴 수 없어, 완료 명령이 가는 경로를 모양 컴포넌트로 확인한다. */
+      const exported = readyDiagnosis(9, { exported: true });
+      // 이미 내보냈다면 확인 줄이 아니라 평소 줄이 나온다.
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={exported} />)).toContain('>내보내기</button></footer>');
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={exported} />)).not.toContain('내보내지 않았습니다');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  describe('다시 진단', () => {
+    /** 앞서 덧붙인 지시가 쌓인 준비됨 진단. */
+    const withDirectives = (overrides: Partial<DiagnosisSnapshot> = {}) => readyDiagnosis(9, { directives: ['더 짧게', '캐시를 먼저 의심해 줘'], ...overrides });
+
+    it('[다시 진단 ▾]에는 다시 진단, 지시를 덧붙여 다시 진단이 이 순서로 있다', () => {
+      /** 그린 HTML. */
+      const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([readyDiagnosis()])} initialDiagnosisId={1} />);
+      /** 메뉴 항목. */
+      const items = [...markup.matchAll(/<button[^>]*role="menuitem"[^>]*>([^<]*)<\/button>/g)].map((match) => match[1]);
+
+      expect(items).toEqual(['다시 진단', '지시를 덧붙여 다시 진단']);
+    });
+
+    it('"다시 진단"은 지시 없이 바로 다시 진단하고, "지시를 덧붙여 다시 진단"은 바닥 줄을 지시 입력으로 연다', () => {
+      /** 고른 경로. */
+      const picked: string[] = [];
+      /** 평소 바닥 줄. */
+      const footer = ReadyFooterView({
+        confirming: false,
+        onComplete: () => {},
+        onConfirmComplete: () => {},
+        onCancelConfirm: () => {},
+        onExport: () => {},
+        onRediagnose: (choice) => picked.push(choice),
+      });
+      /** 메뉴 항목의 누르기. 메뉴를 닫는 일은 DOM이 없어 건너뛴다. */
+      const items = pressables(footer).filter((props) => props.role === 'menuitem');
+      for (const item of items) (item.onClick as (event: unknown) => void)({ currentTarget: { closest: () => null } });
+
+      expect(picked).toEqual(['again', 'directive']);
+    });
+
+    it('내보내지 않고 [완료]를 눌러 확인 줄이 뜬 동안에는 [다시 진단 ▾]가 없다', () => {
+      /** 확인 줄. */
+      const footer = ReadyFooterView({ confirming: true, onComplete: () => {}, onConfirmComplete: () => {}, onCancelConfirm: () => {}, onExport: () => {}, onRediagnose: () => {} });
+
+      expect(renderToStaticMarkup(footer)).not.toContain('다시 진단');
+    });
+
+    it('재현을 허용하지 않은 저장소의 지시 입력은 위에서 아래로 이름, 앞서 덧붙인 지시 안내와 목록, 입력 칸, 새 보고서 안내, [취소] · [다시 진단]이고 재현 체크는 없다', () => {
+      /** 그린 HTML. */
+      const markup = renderToStaticMarkup(
+        <RediagnosisForm diagnosisId={9} directives={['더 짧게', '캐시를 먼저 의심해 줘']} reproductionAllowed={false} previousReproductionSucceeded={false} onClose={() => {}} />,
+      );
+      /** 글자만. */
+      const text = textIn(markup);
+
+      expect(text).toMatch(
+        /^ 지시 앞서 덧붙인 지시도 함께 넘깁니다\. 더 짧게 캐시를 먼저 의심해 줘 새 보고서가 나오면 지금 보고서를 바꿉니다\. 남기려면 먼저 내보내세요\. 취소 다시 진단 $/,
+      );
+      expect(markup).toContain('<textarea');
+      expect(markup.indexOf('<textarea')).toBeGreaterThan(markup.indexOf('캐시를 먼저 의심해 줘'));
+      expect(markup).not.toContain('type="checkbox"');
+      expect(text).not.toContain('재현도 다시 하기');
+      // 빈 지시로는 보낼 수 없다.
+      expect(markup).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>다시 진단<\/button>/);
+    });
+
+    it('앞서 덧붙인 지시가 없으면 그 안내와 목록을 보이지 않는다', () => {
+      expect(
+        textIn(renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={[]} reproductionAllowed={false} previousReproductionSucceeded={false} onClose={() => {}} />)),
+      ).not.toContain('앞서 덧붙인 지시');
+    });
+
+    it('재현을 허용한 저장소면 입력 칸과 새 보고서 안내 사이에 "재현도 다시 하기" 체크와 도움말이 있고, 앞선 재현이 성공이면 꺼진 채, 실패·불가면 켜진 채 열린다', () => {
+      /** 앞선 재현이 성공한 지시 입력. */
+      const succeeded = renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={[]} reproductionAllowed previousReproductionSucceeded onClose={() => {}} />);
+      /** 앞선 재현이 실패·불가인 지시 입력. */
+      const failed = renderToStaticMarkup(<RediagnosisForm diagnosisId={9} directives={[]} reproductionAllowed previousReproductionSucceeded={false} onClose={() => {}} />);
+
+      expect(textIn(succeeded)).toMatch(/^ 지시 재현도 다시 하기 끄면 앞선 재현 결과를 그대로 둡니다\. 새 보고서가 나오면 지금 보고서를 바꿉니다\. 남기려면 먼저 내보내세요\. 취소 다시 진단 $/);
+      expect(succeeded.indexOf('type="checkbox"')).toBeGreaterThan(succeeded.indexOf('<textarea'));
+      expect(succeeded).toMatch(/<input type="checkbox"(?![^>]*checked)[^>]*>/);
+      expect(failed).toMatch(/<input type="checkbox"[^>]*checked=""[^>]*>/);
+    });
+
+    it('바닥 줄은 지시 입력을 연 진단에서만 지시 입력으로 펼쳐진다', () => {
+      /** 지시 입력을 연 진단 ID가 `openId`인 상태. */
+      const pane = (openId: number | null) => ({ openId, open: () => {}, close: () => {} });
+      /** 연 진단의 바닥 줄. */
+      const open = renderToStaticMarkup(<DiagnosisFooter diagnosis={withDirectives()} directivePane={pane(9)} />);
+      /** 다른 진단을 연 상태의 바닥 줄. */
+      const other = renderToStaticMarkup(<DiagnosisFooter diagnosis={withDirectives()} directivePane={pane(2)} />);
+
+      expect(open).toContain('<footer class="review-foot stacked">');
+      expect(textIn(open)).toContain('앞서 덧붙인 지시도 함께 넘깁니다. 더 짧게 캐시를 먼저 의심해 줘');
+      expect(other).not.toContain('stacked');
+      expect(other).toContain('다시 진단 ▾');
+    });
+
+    it('다시 진단하는 동안은 `다시 진단 중` 태그와 앞선 보고서를 보이고, 바닥 줄은 안내와 [취소]뿐이라 내보내기와 완료를 할 수 없다', () => {
+      /** 기다리는 다시 진단. */
+      const waiting = readyDiagnosis(1, { status: 'queued', rediagnosing: true, progress: { status: 'waiting', ahead: 1 } });
+      /** 도는 다시 진단. */
+      const running = readyDiagnosis(2, { status: 'running', rediagnosing: true, progress: { status: 'running', step: '파일 읽는 중', filesRead: 2, startedAt: Date.now() } });
+      for (const item of [waiting, running]) {
+        /** 그린 HTML. */
+        const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([item])} initialDiagnosisId={item.id} />);
+        /** 바닥 줄. */
+        const footer = /<footer class="review-foot">[\s\S]*<\/footer>/.exec(markup)?.[0] ?? '';
+
+        expect(markup).toContain('<span class="tag generating">다시 진단 중</span>');
+        expect(textIn(markup)).toContain('빈 주문 목록에서 첫 항목을 읽어 오류가 납니다.');
+        expect(footer).toContain('다시 진단하는 중입니다. 끝나면 이 보고서를 바꿉니다.');
+        expect(footer.match(/<button/g)).toHaveLength(1);
+        expect(footer).toMatch(/<button[^>]*>취소<\/button>/);
+        expect(footer).not.toMatch(/완료|내보내기|다시 진단 ▾/);
+      }
+    });
+
+    it('다시 진단하지 못하고 돌아오면 보고서 위 알림 줄에 사유와 [다시 걸기]가 보이고 태그는 준비됨이다', () => {
+      /** 취소해 앞선 보고서로 돌아온 진단. */
+      const returned = withDirectives({ rediagnosisFailure: { reason: 'cancelled', detail: null, lastStep: null } });
+      /** 그린 HTML. */
+      const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([returned])} initialDiagnosisId={9} />);
+
+      expect(markup).toContain('<span class="tag ready">준비됨</span>');
+      expect(markup).toMatch(
+        /<div class="notice-line"><span>다시 진단하지 못했습니다: 취소함: 진단을 취소했습니다\. 앞선 보고서를 그대로 둡니다\.<\/span><button[^>]*>다시 걸기<\/button><\/div>/,
+      );
+      // 알림 줄은 탭 위에 있다.
+      expect(markup.indexOf('notice-line')).toBeLessThan(markup.indexOf('role="tablist"'));
+      // 쌓인 지시는 남는다.
+      expect(renderToStaticMarkup(<DiagnosisFooter diagnosis={returned} />)).toContain('다시 진단 ▾');
+    });
+
+    it('돌아오지 않은 진단에는 알림 줄이 없고, [다시 걸기]는 쌓인 지시와 함께 지시 입력을 연다', () => {
+      /** 지시 입력을 열라는 요청. */
+      const opened: number[] = [];
+      /** 돌아온 진단. */
+      const returned = withDirectives({ rediagnosisFailure: { reason: 'timed-out', detail: null, lastStep: null } });
+      /** 알림 줄. */
+      const notice = RediagnosisNotice({ diagnosis: returned, directivePane: { openId: null, open: (id) => opened.push(id), close: () => {} } });
+      for (const button of pressables(notice)) (button.onClick as () => void)();
+
+      expect(opened).toEqual([9]);
+      expect(renderToStaticMarkup(<RediagnosisNotice diagnosis={withDirectives()} />)).toBe('');
+    });
+
+    it('작은 창에서도 알림 줄이 보이고 바닥 줄은 [다시 진단 ▾]를 둔다', () => {
+      /** 돌아온 진단. */
+      const returned = withDirectives({ rediagnosisFailure: { reason: 'repository-unavailable', detail: null, lastStep: null } });
+      /** 작은 창의 글. */
+      const text = textIn(renderToStaticMarkup(<PopoverContent snapshot={withDiagnoses([returned])} initialDiagnosisId={9} />));
+
+      expect(text).toContain('다시 진단하지 못했습니다: 연결한 저장소를 찾을 수 없습니다. 앞선 보고서를 그대로 둡니다. 다시 걸기');
+      expect(text).toContain('다시 진단 ▾');
+    });
+
+    it('정보 탭에 앞선 진단이 적힌다', () => {
+      /** 완료한 뒤의 재발로 만든 보고서. */
+      const report = { ...REPORT, priorDiagnosis: { kind: 'completed' as const, completedAt: new Date(2026, 10, 20, 15, 30).getTime(), exportPath: '/내보냄/old.md' } };
+      /** 정보 탭의 글. */
+      const text = textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis(1, { report })} report={report} tab="info" />);
+
+      expect(text).toContain('없는 데이터 없음 앞선 진단 앞서 진단함(2026-11-20) 앞서 내보낸 파일 /내보냄/old.md');
+      expect(textOf(<DiagnosisTabPanel diagnosis={readyDiagnosis()} report={REPORT} tab="info" />)).not.toContain('앞선 진단');
+    });
+  });
+
+  /** 그린 HTML에서 태그를 지운 글자. 공백은 하나로 줄인다. */
+  function textIn(markup: string): string {
+    return markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  }
+
+  it('완료함의 기록에 마지막으로 내보낸 파일 경로가 보인다', () => {
+    /** 완료한 진단의 상세 몸통. */
+    const text = textOf(
+      <ReviewContent
+        snapshot={withDiagnoses([diagnosis(3, { status: 'completed', repoWait: null, completedAt: DETECTED_AT, lastExportedPath: '/가짜/보고서/2026-11-26-가짜-WEB-3.md' })])}
+        initialDiagnosisId={3}
+      />,
+    );
+
+    expect(text).toContain('마지막으로 내보낸 파일 /가짜/보고서/2026-11-26-가짜-WEB-3.md');
+  });
+
+  it('내보낸 적 없이 완료한 진단의 기록은 "내보낸 적 없음"이다', () => {
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([diagnosis(3, { status: 'completed', repoWait: null, completedAt: DETECTED_AT })])} initialDiagnosisId={3} />);
+
+    expect(text).toContain('마지막으로 내보낸 파일 내보낸 적 없음');
+  });
+
+  it('내보내기 토스트는 "내보냈습니다: 파일 이름"과 [폴더 열기]를 보이고, 실패하면 폴더 열기 없이 알린다', () => {
+    /** 토스트 자리에 그린 글. */
+    const toastText = (exportToasts: { key: number; fileName: string | null }[]) =>
+      textOf(<ToastStack bundles={[]} ignoreToast={null} failedToasts={[]} stoppedToasts={[]} exportToasts={exportToasts} onRestore={() => {}} onCancelPost={() => {}} onStoppedAction={() => {}} />);
+
+    expect(toastText([{ key: 1, fileName: '2026-11-26-가짜-WEB-1.md' }])).toContain('내보냈습니다: 2026-11-26-가짜-WEB-1.md 폴더 열기');
+    expect(toastText([{ key: 2, fileName: null }])).toContain('내보내지 못했습니다');
+    expect(toastText([{ key: 2, fileName: null }])).not.toContain('폴더 열기');
+  });
+
+  it('목록 줄의 둘째 줄은 보고서 요약이고, 보고서가 있으면 재현 태그가 상태 태그 앞에 붙는다', () => {
+    /** 재현 결과만 다른 보고서. */
+    const reportOf = (result: 'success' | 'failure' | 'impossible') => ({
+      ...REPORT,
+      reproduction: { result, impossibleReason: result === 'impossible' ? ('not-allowed' as const) : null, method: '', steps: [] },
+    });
+    const markup = renderToStaticMarkup(
+      <ReviewContent
+        snapshot={withDiagnoses([
+          readyDiagnosis(1, { report: reportOf('success') }),
+          readyDiagnosis(2, { report: reportOf('failure') }),
+          readyDiagnosis(3, { report: reportOf('impossible') }),
+          diagnosis(4, { status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 1 } }),
+        ])}
+        initialDiagnosisId={1}
+      />,
+    );
+
+    expect(markup).toContain('<span class="tag success">재현 성공</span><span class="tag ready">준비됨</span>');
+    expect(markup).toContain('<span class="tag warn">재현 실패</span><span class="tag ready">준비됨</span>');
+    expect(markup).toContain('<span class="tag outline">재현 안 함</span><span class="tag ready">준비됨</span>');
+    expect(markup).toContain('<span class="list-row-sub">빈 주문 목록에서 첫 항목을 읽어 오류가 납니다.</span>');
+    // 보고서가 없는 줄에는 재현 태그가 없고 `프로젝트 · 자리`가 보인다.
+    expect(markup).toContain('<span class="list-row-sub">가짜 프로젝트 · app/checkout</span><span class="list-row-tags"><span class="tag generating">대기</span></span>');
+  });
+
+  it('같은 오류 이슈의 진단이 둘이면 목록에 각각 한 줄이다', () => {
+    /** 같은 오류 이슈의 앞선 보고서와 새 재발 진단. */
+    const diagnoses = [readyDiagnosis(1), diagnosis(2, { origin: 'regression', status: 'queued', repoWait: null, progress: { status: 'waiting', ahead: 0 } })];
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses(diagnoses)} initialDiagnosisId={1} />);
+
+    expect(markup.match(/class="list-row"/g)).toHaveLength(2);
+    expect(textOf(<ReviewContent snapshot={withDiagnoses(diagnoses)} initialDiagnosisId={1} />)).toContain('진단 2');
+  });
+
+  it('완료함 진단이 있으면 목록 맨 아래에 7일 안내가 한 줄 뜨고, 없으면 뜨지 않는다', () => {
+    /** 완료한 진단. */
+    const completed = diagnosis(2, { status: 'completed', repoWait: null, completedAt: DETECTED_AT });
+    const note = '끝낸 항목은 7일이 지나면 목록에서 사라집니다.';
+
+    expect(textOf(<ReviewContent snapshot={withDiagnoses([readyDiagnosis(1), completed])} initialDiagnosisId={1} />)).toContain(note);
+    expect(textOf(<ReviewContent snapshot={withDiagnoses([readyDiagnosis(1)])} initialDiagnosisId={1} />)).not.toContain(note);
+  });
+
+  it('완료함 상세의 `기록`에는 완료한 때만 있고 보고서와 탭은 없다', () => {
+    /** 완료한 진단. */
+    const completed = diagnosis(1, { status: 'completed', repoWait: null, completedAt: DETECTED_AT });
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([completed])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<h3 class="section-title">기록</h3>');
+    expect(markup).not.toContain('role="tab"');
+    expect(markup).not.toContain('요약');
+  });
+
+  describe('작은 창', () => {
+    /** 작은 창의 글. 진단과 초안을 함께 둔 대기열이다. */
+    const compact = (diagnoses: DiagnosisSnapshot[], bundles: BundleSnapshot[] = [], initialDiagnosisId: number | null = null) =>
+      renderToStaticMarkup(<PopoverContent snapshot={withDiagnoses(diagnoses, bundles)} initialDiagnosisId={initialDiagnosisId} />);
+
+    it('진단이 초안과 같은 차례(`3 / 3`)에 들어가고 머리에 `진단` 태그가 붙는다', () => {
+      /** 초안 둘 뒤의 세 번째 칸(진단)을 연 작은 창. */
+      const markup = compact([readyDiagnosis(1)], [bundle(7), bundle(8)], 1);
+      /** 머리. */
+      const head = /<header class="review-head">[\s\S]*?<\/header>/.exec(markup)?.[0] ?? '';
+
+      expect(head).toContain('<span class="queue-pos">3 / 3</span>');
+      expect(head).toContain('<span class="tag">진단</span><span class="tag ready">준비됨</span>');
+    });
+
+    it('진단 알림으로 열면 그 진단을, 묶음이 없고 진단만 있으면 첫 진단을 보인다', () => {
+      expect(compact([readyDiagnosis(1), readyDiagnosis(2)], [], 2)).toContain('2 / 2');
+      expect(compact([readyDiagnosis(1), readyDiagnosis(2)])).toContain('1 / 2');
+      // 묶음이 있는데 고른 진단이 없으면 지금처럼 첫 묶음이 먼저다.
+      expect(compact([readyDiagnosis(1)], [bundle(7)])).toContain('1 / 2');
+      expect(textOf(<PopoverContent snapshot={withDiagnoses([readyDiagnosis(1)], [bundle(7)])} />)).toContain('가짜 게시물 7');
+    });
+
+    it('완료한 진단은 대기열 차례에 넣지 않고 "완료한 진단"으로 보인다', () => {
+      /** 완료한 진단. */
+      const completed = diagnosis(1, { status: 'completed', repoWait: null, completedAt: DETECTED_AT });
+      const markup = compact([completed, readyDiagnosis(2)], [], 1);
+
+      expect(markup).toContain('<span class="queue-pos">완료한 진단</span>');
+      expect(compact([completed, readyDiagnosis(2)])).toContain('<span class="queue-pos">1 / 1</span>');
+    });
+
+    it('탭 대신 접는 구역이고, 요약·재현·원인·개선 방향은 펴고 근거·남은 의문·오류 정보·진단 정보는 접는다', () => {
+      const markup = compact([readyDiagnosis(1)], [], 1);
+
+      expect(markup).not.toContain('role="tab"');
+      /** 구역 이름과 펼침. */
+      const folds = [...markup.matchAll(/<button type="button" class="section-toggle" aria-expanded="(true|false)"><span class="section-chevron"[^>]*>[^<]*<\/span><span>([^<]*)<\/span>/g)].map(
+        (match) => `${match[2]}:${match[1]}`,
+      );
+      expect(folds).toEqual(['요약:true', '재현:true', '원인:true', '개선 방향:true', '근거 1개:false', '남은 의문:false', '오류 정보:false', '진단 정보:false']);
+      /** 펴 둔 구역의 내용만 보인다. */
+      const text = markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+      expect(text).toContain('빈 주문 목록에서 첫 항목을 읽어 오류가 납니다.');
+      expect(text).not.toContain('첫 항목을 읽는 자리');
+      expect(text).not.toContain('release(');
+    });
+
+    it('머리 정보(오류 제목, 프로젝트 · 신규/재발 · 감지 시각, [Sentry에서 열기], 실행 줄)와 [완료] 바닥 줄이 있다', () => {
+      const markup = compact([readyDiagnosis(1)], [], 1);
+
+      expect(markup).toContain('<strong>시험 오류 1</strong>');
+      expect(markup).toContain('가짜 프로젝트 · 신규 ·');
+      expect(markup).toContain('Sentry에서 열기');
+      expect(markup).toContain('<p class="run-line">Claude Code · 2분 14초</p>');
+      expect(markup).toMatch(/<footer class="review-foot"><button[^>]*class="btn"[^>]*>완료<\/button>/);
+    });
+
+    it('저장소 대기 진단의 노란 바닥 줄은 작은 창 모양이고 진단 상세는 오류 정보만 둔다', () => {
+      const markup = compact([diagnosis(1)], [], 1);
+
+      expect(markup).toContain('<footer class="review-foot warn compact">');
+      expect(markup).toContain('<span class="tag">진단</span><span class="tag warn">저장소 매핑 필요</span>');
+      expect(markup).toContain('<h3 class="section-title">오류 정보</h3>');
+    });
+  });
+
+  it('완료한 진단은 `완료함` 태그와 `기록`만 보이고 바닥 줄은 안내뿐이다', () => {
+    /** 완료한 진단. */
+    const completed = diagnosis(1, { status: 'completed', repoWait: null, completedAt: DETECTED_AT });
+    const markup = renderToStaticMarkup(<ReviewContent snapshot={withDiagnoses([completed])} initialDiagnosisId={1} />);
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([completed])} initialDiagnosisId={1} />);
+
+    expect(markup).toContain('<span class="tag done">완료함</span>');
+    expect(text).toContain('기록 완료한 때');
+    expect(text).not.toContain('오류 정보');
+    expect(text).toContain('완료한 진단입니다. 보고서는 지웠습니다.');
+    expect(markup).not.toMatch(/<footer[^>]*>[\s\S]*<button/);
+  });
+
+  it('[저장소 매핑하기]는 그 진단의 Sentry 매핑 편집을 연다', () => {
+    /** main으로 보낸 명령. */
+    const send = vi.fn();
+    vi.stubGlobal('window', { stardraft: { send } });
+    try {
+      /** 바닥 줄이 그린 요소. 훅을 쓰지 않아 함수로 직접 부른다. */
+      const element = DiagnosisFooter({ diagnosis: diagnosis(5) });
+      /** 요소 트리에서 누를 수 있는 요소를 모두 찾는다. */
+      const find = (node: unknown): Record<string, unknown>[] => {
+        if (Array.isArray(node)) return node.flatMap((child) => find(child));
+        if (typeof node !== 'object' || node === null || !('props' in node)) return [];
+        /** 요소의 속성. */
+        const props = (node as { props: Record<string, unknown> }).props;
+        return [...(typeof props.onClick === 'function' ? [props] : []), ...find(props.children)];
+      };
+
+      /** 바닥 줄의 버튼. */
+      const buttons = find(element);
+      expect(buttons).toHaveLength(1);
+      (buttons[0]!.onClick as () => void)();
+      expect(send).toHaveBeenCalledWith({ type: 'open-sentry-repo-mapping', diagnosisId: 5 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

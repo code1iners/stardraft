@@ -1,4 +1,15 @@
-import type { AgentId, ExecutorFailureReason, ExecutorUsage, RunKind } from '../ports/executor';
+import type { GenerationRunKind, RetiredRunKind, RunFailureReason } from '../generation/generation-run';
+
+// 실행 기록과 대기열 자리는 생성 대기열의 것이다. 초안 쪽 코드가 지금처럼 이 모듈에서 읽도록 다시 내보낸다.
+export {
+  isQueuePriority,
+  QUEUE_PRIORITIES,
+  type GenerationRunKind,
+  type QueuePriority,
+  type RunFailureReason,
+  type RunRecord,
+  type RunResult,
+} from '../generation/generation-run';
 
 /** 에이전트가 이해한 요구. */
 export interface DraftRequirement {
@@ -43,7 +54,7 @@ export interface DraftEvidence {
   located: boolean;
 }
 
-/** 자동 선택으로 초안의 저장소를 정한 내력. 저장소 영역에 자동으로 고른 이유로 보인다. */
+/** 자동 선택으로 초안의 저장소를 정한 내력. 폐지된 기능이 남긴 저장값이라 지우지 않지만 읽지도 않는다(화면에 보이지 않고 이어 쓰지 않는다). */
 export type AutoSelection =
   /** 작업 폴더에서 찾은 후보가 하나라 선택 실행 없이 그 저장소를 썼다. */
   | { kind: 'single-candidate' }
@@ -64,7 +75,7 @@ export interface Draft {
   evidence: DraftEvidence[];
   /** 초안을 만들 때 읽기 범위로 넘긴 저장소(절대 경로). 첫 저장소가 실행의 cwd였다. */
   repositories: string[];
-  /** 저장소를 자동 선택으로 정했으면 그 내력. 저장소 매핑이나 사용자가 고른 구성으로 정했으면 `null`. 자동 선택 결과는 매핑으로 저장하지 않는다. */
+  /** 자동 선택으로 정한 초안이 남긴 옛 저장값. 읽지 않는다. 새 초안은 늘 `null`이다. */
   autoSelection: AutoSelection | null;
   /** 만든 시각(Unix epoch 밀리초). */
   createdAt: number;
@@ -105,52 +116,9 @@ export type ContextFailureReason =
   | 'source-gone';
 
 /**
- * 묶음이 실패한 사유. 실행기가 알려 준 실패 이유(CLI 없음, 미로그인, 과부하 등)는 그대로 쓴다.
- * 맥락 조회 실패는 초안 실행 전에 일어난 것이고, `app-error`는 앱의 예외다.
+ * 묶음이 실패한 사유. 에이전트 실행의 실패 사유에 초안 실행 전에 일어나는 맥락 조회 실패를 더한 것이다.
  */
-export type DraftFailureReason =
-  /** 취소함. 사용자가 생성을 취소했다. */
-  | 'cancelled'
-  /** 시간 초과. 초안 실행이 10분 안에 끝나지 않았다. */
-  | 'timed-out'
-  /** 구조 실패. 다시 시도해도 구조화 출력이 없거나 앱이 읽을 수 없었다. */
-  | 'invalid-output'
-  /** 빈 초안. 초안 문장이 하나도 없었다. */
-  | 'empty-draft'
-  /** 비밀 파일을 근거로 듦. 근거 경로가 비밀 파일 패턴에 맞아 결과 전체를 버렸다. */
-  | 'secret-evidence'
-  /** 앱 안에서 예상하지 못한 오류가 났다. */
-  | 'app-error'
-  | ContextFailureReason
-  | ExecutorFailureReason;
-
-/** 묶음 하나를 만들 때 돌리는 실행의 종류. 선택 실행과 초안 실행이다. */
-export type GenerationRunKind = Exclude<RunKind, 'check'>;
-
-/**
- * 초안 대기열에서 묶음이 들어가는 자리. 앞 자리일수록 먼저 실행하고, 같은 자리끼리는 들어온 순서대로 실행한다.
- * - `resume`: 바로 이어서 돌아야 하는 묶음. 끊긴 생성을 처음부터 다시 하는 묶음(실행 중에 새 멘션이 합쳐짐, 전역 실패나 Flow에 닿지 못해 멈춤,
- *   앱이 꺼지며 끊음)이다. 맨 앞이다.
- * - `user`: 사용자가 누른 행동(다시 시도, 되돌리기)으로 생성 중이 된 묶음. 감지한 묶음보다 앞이다.
- * - `auto`: 감지했거나 앱을 켤 때 이미 생성 중이던 묶음. 끝에 들어간다.
- */
-export const QUEUE_PRIORITIES = ['resume', 'user', 'auto'] as const;
-
-/** 초안 대기열에서 묶음이 들어가는 자리. */
-export type QueuePriority = (typeof QUEUE_PRIORITIES)[number];
-
-/** 대기열 자리인지 본다. 저장한 값을 읽을 때 쓴다. */
-export function isQueuePriority(value: string): value is QueuePriority {
-  return (QUEUE_PRIORITIES as readonly string[]).includes(value);
-}
-
-/** 초안 대기열에서 차례를 기다리는 묶음. 앱이 꺼진 뒤 다시 켤 때 같은 순서로 돌도록 이 모양으로 남긴다. */
-export interface QueuedDraft {
-  /** 묶음 ID. */
-  bundleId: number;
-  /** 들어간 자리. */
-  priority: QueuePriority;
-}
+export type DraftFailureReason = RunFailureReason | ContextFailureReason;
 
 /** 묶음이 실패한 까닭. 실패 화면에 오류와 마지막 단계로 보인다. */
 export interface DraftFailure {
@@ -160,50 +128,8 @@ export interface DraftFailure {
   detail: string | null;
   /** 실패할 때의 마지막 진행 단계. 실행을 시작하기 전이면 `null`. */
   lastStep: string | null;
-  /** 실패한 실행의 종류. 실행을 시작하기 전에 실패했으면(맥락 조회 실패, 기다리는 중 취소 등) `null`. */
-  runKind: GenerationRunKind | null;
-}
-
-/** 에이전트를 실행해서 생긴 실패 사유. 맥락을 조회하지 못한 실패는 실행 전에 일어나므로 들지 않는다. */
-export type RunFailureReason = Exclude<DraftFailureReason, ContextFailureReason>;
-
-/**
- * 실행 하나의 결과. 성공, 묶음이 바뀌어 멈춤, 비밀 파일 패턴을 추가해 멈춤, 앱 종료로 중단, 또는 실패 사유다.
- * `bundle-changed`는 실행 중에 새 멘션이 합쳐졌거나 묶음이 처리됨이 되어 앱이 실행을 멈춘 것이다. 생성 중으로 남았으면 처음부터 다시 만든다.
- * `secret-patterns-changed`는 실행 중에 비밀 파일 패턴을 추가해 앱이 실행을 멈춘 것이다. 대기열 맨 앞에서 새 패턴으로 처음부터 다시 만든다.
- * `app-quit`은 앱을 끄며 실행을 끊은 것이다. 자동 재시도 1회에 세지 않고, 다시 켜면 그 묶음을 대기열 맨 앞에서 처음부터 다시 만든다.
- */
-export type RunResult = 'succeeded' | 'bundle-changed' | 'secret-patterns-changed' | 'app-quit' | RunFailureReason;
-
-/**
- * 실행 기록. 에이전트를 한 번 실행할 때마다 남긴다. 화면에는 상세 머리의 실행 줄만 보이고 비용은 보이지 않는다.
- * 묶음의 전체 기록에 속해 묶음과 함께 지운다.
- */
-export interface RunRecord {
-  /** 실행의 종류. */
-  kind: RunKind;
-  /** 실행한 에이전트. */
-  agent: AgentId;
-  /** 실행에서 본 CLI 버전. 모르면 `null`. */
-  cliVersion: string | null;
-  /** 에이전트가 쓴 모델. 모르면 고른 모델이고, 기본 모델을 골랐으면 `null`일 수 있다. */
-  model: string | null;
-  /** 시작 시각(Unix epoch 밀리초). */
-  startedAt: number;
-  /** 끝난 시각(Unix epoch 밀리초). */
-  finishedAt: number;
-  /** 결과. */
-  result: RunResult;
-  /** 에이전트가 알려 준 오류 원문. 없으면 `null`. */
-  detail: string | null;
-  /** 마지막 진행 단계. */
-  lastStep: string | null;
-  /** 앱이 고친 내용 불일치. 화면에는 알리지 않는다. */
-  fixes: string[];
-  /** 맥락에서 길이 상한 때문에 뺀 항목 수. */
-  omittedContextItems: number;
-  /** 에이전트가 알려 준 비용과 토큰 수. 알려 주지 않았으면 `null`. */
-  usage: ExecutorUsage | null;
+  /** 실패한 실행의 종류. 실행을 시작하기 전에 실패했으면(맥락 조회 실패, 기다리는 중 취소 등) `null`. 옛 실패는 폐지된 저장소 선택 실행일 수 있다. */
+  runKind: GenerationRunKind | RetiredRunKind | null;
 }
 
 /** 에이전트가 낸 근거. 위치를 확인하기 전이다. */
@@ -246,7 +172,7 @@ export function draftOutputSchema(): Record<string, unknown> {
   });
 }
 
-/** 모든 속성이 `required`이고 다른 속성을 받지 않는 객체 스키마. 선택 실행의 출력 스키마도 같은 모양을 쓴다. */
+/** 모든 속성이 `required`이고 다른 속성을 받지 않는 객체 스키마. */
 export function objectSchema(properties: Record<string, unknown>): Record<string, unknown> {
   return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false };
 }

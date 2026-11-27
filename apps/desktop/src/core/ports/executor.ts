@@ -1,8 +1,12 @@
 /** 앱이 실행할 수 있는 에이전트. Codex는 macOS에서만 허용한다. */
 export type AgentId = 'claude-code' | 'codex';
 
-/** 에이전트 실행의 종류. 선택 실행은 저장소를 고르고, 초안 실행은 초안을 쓴다. 점검 실행(화면 이름 "작동 확인")은 로그인과 실행 계약이 실제로 도는지 최소 스키마로 확인한다. */
-export type RunKind = 'selection' | 'draft' | 'check';
+/**
+ * 에이전트 실행의 종류. 초안 실행은 초안을 쓴다. 진단 실행은 Sentry 오류 이슈의 진단 보고서를 쓴다.
+ * 점검 실행(화면 이름 "작동 확인")은 로그인과 실행 계약이 실제로 도는지 최소 스키마로 확인한다.
+ * 실행기는 이 값으로 턴 상한을 정한다. 진단 실행은 요청에 재현 경계(`reproduction`)가 있을 때만 재현 경계로 돌고, 아니면 초안 실행과 같은 읽기 전용 경계로 돈다.
+ */
+export type RunKind = 'draft' | 'diagnosis' | 'check';
 
 /** 실행 중에 에이전트가 하고 있는 일. 상세 화면의 진행 단계 한 줄이 된다. */
 export interface ExecutorProgress {
@@ -34,6 +38,70 @@ export interface ExecutorRunRequest {
   signal: AbortSignal;
   /** 진행 단계가 바뀔 때마다 부른다. */
   onProgress: (progress: ExecutorProgress) => void;
+  /** 재현 경계로 돌릴 때만 있다. 없으면 읽기 전용 경계로 돈다. */
+  reproduction?: ReproductionBoundary | null;
+  /**
+   * 실행 중 전달을 쓰려는 실행만 준다. 실행기가 메시지를 받을 준비가 되면(`supportsSteering`인 실행기만) 보내는 함수를 넘겨 부른다.
+   * 보내는 함수는 메시지를 에이전트에게 전하면 `true`, 실행이 이미 끝났거나 보낼 수 없으면 `false`를 돌려준다.
+   * 메시지는 에이전트가 도구 호출을 마친 자리에서만 반영된다.
+   */
+  onSteerable?: (send: (message: string) => boolean) => void;
+}
+
+/**
+ * 재현하는 진단의 경계. 셸과 사본 쓰기, 네트워크를 열고 사용자 설정은 끌어오지 않는다.
+ * `.env` 계열만 사본에서 읽게 하고, 다른 비밀 파일 패턴과 저장소 밖 개인 비밀은 계속 막는다. 환경 변수는 최소 목록만 넘긴다.
+ * 이때 `readRoots`는 사본 하나이고 실행의 cwd다.
+ */
+export interface ReproductionBoundary {
+  /** 사본의 실제 경로(심볼릭 링크를 푼 절대 경로). 쓰기는 이 아래만 허용한다. */
+  copyRoot: string;
+  /** 사본을 만든 원본 저장소의 절대 경로. 원본 경로로 원본의 비밀 파일을 읽지 못하게 사본과 같은 비밀 패턴으로 막는다. */
+  sourceRoot: string;
+  /** 실을 MCP 서버. 없거나 서버가 비어 있으면 MCP를 싣지 않는다. */
+  mcp?: ReproductionMcp | null;
+}
+
+/** 재현에서 MCP 서버가 빠진 까닭. */
+export type McpSkipReason =
+  /** 사용자가 CLI에서 꺼 두었거나 `직접 선택`에서 켜지 않았다. */
+  | 'disabled'
+  /** 정의가 참조한 환경 변수를 로그인 셸에서 찾지 못했다. */
+  | 'missing-variable'
+  /** 정의의 평문 값이 실행 환경의 같은 이름 변수와 겹쳐 환경 변수로 넘길 수 없다(Codex). */
+  | 'variable-conflict'
+  /** 서버 정의를 읽거나 옮기지 못했다(Codex 상세 명령 실패, 헤더 값을 계산하는 명령이 있음). 꺼 둔 도구나 인증을 잃은 채 싣지 않으려고 뺀다. */
+  | 'unreadable'
+  /** CLI가 서버에 연결하지 못했다(뜨지 않음, 로그인 필요 등). */
+  | 'connection-failed';
+
+/** 재현에서 빠진 MCP 서버 하나. 이름과 까닭만 있다. */
+export interface McpServerSkip {
+  /** 서버 이름. */
+  name: string;
+  /** 빠진 까닭. */
+  reason: McpSkipReason;
+}
+
+/**
+ * 재현에 실을 MCP 서버 하나. 정의는 실행하는 CLI의 형식이고 평문 값(환경 변수, 헤더)이 들어 있을 수 있어
+ * 메모리에서만 다룬다. 로그·설정·보고서에 남기지 않는다. 이름은 사용자가 등록한 이름 그대로다(CLI가 저장한 로그인을 이름으로 찾는다).
+ */
+export interface ReproductionMcpServer {
+  /** 서버 이름. */
+  name: string;
+  /** 서버 정의. */
+  definition: Record<string, unknown>;
+}
+
+/** 재현에 실을 MCP. 실행할 때마다 실행하는 CLI의 정의를 다시 읽어 만든다. */
+export interface ReproductionMcp {
+  /** 실을 서버. */
+  servers: ReproductionMcpServer[];
+  /** 실행 환경에 더할 변수. 정의가 참조한 변수의 값(로그인 셸에서 읽음)과, Codex는 정의의 평문 값을 옮긴 변수다. */
+  env: Record<string, string>;
+  /** 싣기 전에 빠진 서버. 연결 실패는 실행이 끝난 뒤 실행기가 알린다. */
+  skipped: McpServerSkip[];
 }
 
 /** 실행 하나의 결과. */
@@ -86,6 +154,8 @@ export interface ExecutorReport {
   model: string | null;
   /** 에이전트가 알려 준 사용량. 결과를 알리지 않고 끝났으면 `null`. */
   usage: ExecutorUsage | null;
+  /** 재현에 실었지만 CLI가 연결하지 못한 MCP 서버 이름. MCP를 싣지 않은 실행에는 없다. */
+  mcpFailedServers?: string[];
 }
 
 /**
@@ -95,6 +165,11 @@ export interface ExecutorReport {
 export interface Executor {
   /** 이 실행기가 부르는 에이전트. */
   readonly agent: AgentId;
+  /**
+   * 실행 중인 에이전트에게 메시지를 더 보낼 수 있는지 여부(선택 능력). 참이면 `onSteerable`을 받은 실행에서 보내는 함수를 넘긴다.
+   * 생성 대기열은 이 능력이 있는지만 본다. 없거나 거짓이면 실행 중에는 아무것도 보낼 수 없다.
+   */
+  readonly supportsSteering?: boolean;
   /** 에이전트를 한 번 실행한다. 실패도 실행 보고로 돌려준다. */
   run(request: ExecutorRunRequest): Promise<ExecutorReport>;
 }

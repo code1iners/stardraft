@@ -1,14 +1,32 @@
 import { AssignmentDetection } from '../core/detection/assignment-detection';
 import { app, dialog, Menu, net, powerMonitor, safeStorage } from 'electron';
 import { autoUpdater } from 'electron-updater';
-import { userInfo } from 'node:os';
+import { readFile, stat } from 'node:fs/promises';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { AgentConnections } from '../core/agent/agent-connections';
 import { AgentPreferences } from '../core/agent/agent-preferences';
+import { readLoginShellVariables } from '../core/agent/login-shell-variables';
 import { NodeProcessRunner } from '../core/agent/node-process-runner';
-import { FlowAccount } from '../core/account/flow-account';
+import { AccountRecords } from '../core/account/account-records';
+import { FlowAccount, type FlowAccountRecords } from '../core/account/flow-account';
+import { HttpSentryApi } from '../core/sentry/http-sentry-api';
+import { SentryConnection, type SentryConnectionState } from '../core/sentry/sentry-connection';
+import { SentryDetection } from '../core/sentry/sentry-detection';
+import { DiagnosisAttachmentFolders } from '../core/sentry/diagnosis-attachments';
+import { DiagnosisExports, DiagnosisReportFolder } from '../core/sentry/diagnosis-exports';
+import { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
+import { ReproductionMcpLoader } from '../core/reproduction/mcp-loading';
+import { ReproductionSettings } from '../core/reproduction/reproduction-settings';
+import { osascriptCloner, ReproductionCopies } from '../core/reproduction/reproduction-copies';
+import { localPortOpen, Simulators } from '../core/reproduction/simulators';
+import { SentryProjects } from '../core/sentry/sentry-projects';
+import { SentryTargetAdapter } from '../core/sentry/sentry-target-adapter';
+import { readRepoGitState } from '../core/repos/repo-git-state';
+import { gitStatusReader } from './git-status';
 import { MentionBundles } from '../core/bundles/mention-bundles';
 import { BundleRetention } from '../core/bundles/retention';
+import { RepoWaitMonitor } from '../core/bundles/repo-wait-monitor';
 import { EditorOpener } from '../core/editors/editor-opener';
 import { collectBundleContext } from '../core/flow/bundle-context';
 import { MentionDetection } from '../core/detection/mention-detection';
@@ -18,13 +36,12 @@ import { HttpFlowApi } from '../core/flow/http-flow-api';
 import { MentionJudge } from '../core/flow/mention-judgement';
 import { errorFields } from '../core/logging/logger';
 import { LaunchAtLogin } from '../core/onboarding/launch-at-login';
+import { ParallelWork } from '../core/generation/parallel-work';
 import { Onboarding } from '../core/onboarding/onboarding';
 import { Posting } from '../core/posting/posting';
 import type { FlowConnection } from '../core/ports/flow-api';
-import { findSelectionScope } from '../core/repos/repo-candidates';
 import { RepoMappings } from '../core/repos/repo-mappings';
 import { RepoPicker } from '../core/repos/repo-picker';
-import { WorkFolders } from '../core/repos/work-folders';
 import { GlobalProblems, type ActiveGlobalProblem, type GlobalProblem } from '../core/problems/global-problems';
 import { ManualCheckSession } from '../core/manual-check/manual-check-session';
 import { ManualMentionCheck } from '../core/manual-check/manual-mention-check';
@@ -64,6 +81,12 @@ let drafts: DraftQueue | null = null;
 let posting: Posting | null = null;
 /** 처리됨 목록 정리. 끝낼 때 다음 정리를 멈춘다. */
 let retention: BundleRetention | null = null;
+/** 저장소 대기 묶음의 자동 재개. 끝낼 때 다음 확인을 멈춘다. */
+let repoWait: RepoWaitMonitor | null = null;
+/** Sentry 오류 이슈 감지. 끝낼 때 폴링을 멈춘다. */
+let sentryDetection: SentryDetection | null = null;
+/** 저장소 대기 진단의 자동 재개. 끝낼 때 다음 확인을 멈춘다. */
+let sentryRepoWait: RepoWaitMonitor | null = null;
 /** 앱 내 업데이트. 끝낼 때 다음 확인을 멈춘다. 소스 실행에서는 없다. */
 let appUpdate: InAppUpdate | null = null;
 /** 앱 내 업데이트의 다시 시작. 작은 창이 닫히면 다시 시작 확인 화면을 거둔다. 소스 실행에서는 없다. */
@@ -119,8 +142,13 @@ function start(): void {
     appData = await openDataOrQuit();
     if (!appData) return;
 
-    /** OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 멘션 묶음이 있으면 그 묶음을 연다. */
-    const notifier = new OsNotifier((bundleId) => windows?.openPopover(bundleId), logger);
+    /**
+     * OS 알림. 누르면 작은 창을 띄우고, 알림이 가리키는 Flow 초안이나 Sentry 진단이 있으면 그 대상을 연다.
+     */
+    const notifier = new OsNotifier((target) => {
+      if (target?.kind === 'diagnosis') windows?.openDiagnosis(target.id);
+      else windows?.openPopover(target?.kind === 'draft' ? target.id : null);
+    }, logger);
     /** 감지를 멈추게 하는 전역 문제. 알림을 누르면 띠가 보이는 작은 창을 띄운다. */
     const globalProblems = new GlobalProblems({
       notifier,
@@ -133,21 +161,90 @@ function start(): void {
       },
     });
 
+    /**
+     * 계정마다 보관하는 Flow 기록을 오가는 일. 묶음·초안 대기열·게시가 만들어진 뒤에 정해지므로, 계정 바꾸기는 그때까지 이 자리를 거친다.
+     * 키 확인은 설정 창에서만 시작하고 설정 창은 아래 연결을 마친 뒤에 열 수 있으므로, 정해지기 전에 불리지 않는다.
+     */
+    let accountRecords: FlowAccountRecords | null = null;
     /** 설정 창 "Flow 계정" 칸의 키 확인과 계정. Flow 요청은 OS 프록시와 인증서 설정을 따르는 Chromium 네트워크로 보낸다. */
     const flowAccount = new FlowAccount({
       connectFlow: (apiKey) => new HttpFlowApi({ apiKey, fetch: net.fetch, clock: systemClock }),
       secretStore: appData.secretStore,
       stateStore: appData.stateStore,
+      records: {
+        isStored: (userId) => requireRecords(accountRecords).isStored(userId),
+        switchTo: (account) => requireRecords(accountRecords).switchTo(account),
+        resume: () => requireRecords(accountRecords).resume(),
+      },
       clock: systemClock,
       logger,
       problems: globalProblems,
     });
     await flowAccount.load();
+    /** 설정 창 "Sentry" 칸의 토큰 확인과 조직. 토큰 문제는 Sentry 전역 문제만 올려 Flow 감지와 Flow 초안을 멈추지 않는다. Sentry 요청도 Chromium 네트워크로 보낸다. */
+    const sentryConnection = new SentryConnection({
+      connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
+      tokenStore: appData.sentryTokenStore,
+      settingsStore: appData.settingsStore,
+      logger,
+      problems: globalProblems,
+    });
+    await sentryConnection.load();
+    /** 진단 첨부 파일 폴더. 완료할 때 그 진단의 폴더를 지우고, 앱을 켤 때 표에 없는 진단의 폴더를 치운다. */
+    const attachmentFolders = new DiagnosisAttachmentFolders(dataFolderPath());
+    /**
+     * 감지한 Sentry 진단. 저장소 대기 진단은 프로젝트 단위로 알리고 매핑이나 폴더가 생기면 대기로 돌린다. 진단 실행은 생성 대기열의 Sentry 어댑터가 한다.
+     * 저장소 해석과 등록 확인은 아래 프로젝트 등록에 묻는다. 둘 다 등록을 만든 뒤에만 불린다.
+     */
+    const sentryDiagnoses: SentryDiagnoses = new SentryDiagnoses({
+      store: appData.sentryStore,
+      notifier,
+      logger,
+      clock: systemClock,
+      removeAttachments: (diagnosisId) => attachmentFolders.remove(diagnosisId),
+      replaceAttachments: (diagnosisId, staged) => attachmentFolders.replace(diagnosisId, staged),
+      discardAttachments: (staged) => attachmentFolders.discard(staged),
+      resolveRepo: (projectId) => sentryProjects.resolveRepo(projectId),
+      isRegistered: (registration) => sentryProjects.isRegistered(registration),
+    });
+    /** 진단할 Sentry 프로젝트의 등록과 저장소 매핑. 등록을 풀면 그 프로젝트의 감지 기록과 기다리던 진단을 치운다. */
+    const sentryProjects: SentryProjects = new SentryProjects({
+      connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
+      connection: sentryConnection,
+      settingsStore: appData.settingsStore,
+      clock: systemClock,
+      logger,
+      onUnregistered: (projectId) => sentryDiagnoses.removeProject(projectId),
+    });
+    await sentryProjects.load();
+    await sentryDiagnoses.load();
+    /** 보고서를 내보낼 폴더. 고르지 않았으면 사용자 문서 폴더 아래 `Stardraft/Reports/Sentry`다. */
+    const reportFolder = new DiagnosisReportFolder({
+      settingsStore: appData.settingsStore,
+      defaultFolder: join(app.getPath('documents'), 'Stardraft', 'Reports', 'Sentry'),
+      logger,
+    });
+    await reportFolder.load();
+    /** 검토 대기 보고서를 마크다운 파일로 내보낸다. 첨부는 앱 데이터의 진단별 폴더에서 복사한다. */
+    const diagnosisExports = new DiagnosisExports({
+      diagnoses: sentryDiagnoses,
+      folder: reportFolder,
+      attachments: { dirOf: (id) => attachmentFolders.dirOf(id), list: (id) => attachmentFolders.list(id) },
+      clock: systemClock,
+      logger,
+    });
+    // 완료했거나 목록에서 사라진 진단의 첨부 폴더가 지우다 만 채 남았을 수 있어 표에 없는 폴더를 치운다. 실패해도 앱을 막지 않는다.
+    void attachmentFolders
+      .removeUnknown(sentryDiagnoses.ids())
+      .catch((error: unknown) => logger.warn('sentry-diagnoses.attachments-sweep-failed', errorFields(error)));
 
     /** 작은 창과 설정 창. 콜백 안에서 `null` 검사를 하지 않으려고 지역 상수로도 잡는다. */
     const appWindows = new AppWindows(() => tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }, {
       // 설정 창을 닫으면 그 창에서 시작한 키 확인과 확인을 기다리던 계정 바꾸기를 그만둔다.
-      onSettingsClosed: () => flowAccount.cancelKeyCheck(),
+      onSettingsClosed: () => {
+        flowAccount.cancelKeyCheck();
+        sentryConnection.cancelTokenCheck();
+      },
       // 다시 시작 확인 화면을 띄운 작은 창을 닫으면 [나중에]와 같다.
       onPopoverClosed: () => appRestart?.cancelConfirm(),
     });
@@ -175,9 +272,6 @@ function start(): void {
       listedModels: (agent) => agentConnections.models(agent),
     });
     await agentPreferences.load();
-    /** 설정 "저장소" 칸의 작업 폴더와 "이 PC에서 찾은 폴더". */
-    const workFolders = new WorkFolders({ settingsStore: appData.settingsStore, logger, homeDir: app.getPath('home') });
-    await workFolders.load();
     /** 설정 "저장소" 칸의 저장소 매핑. 참여 Flow 프로젝트 목록은 지금 쓰는 키로 받는다. */
     /** 지금 쓰는 키로 Flow 연결을 만든다. 쓸 키가 없으면 `null`. */
     const connectCurrentFlow = (): FlowConnection | null => {
@@ -191,6 +285,35 @@ function start(): void {
     };
     const repoMappings = new RepoMappings({ settingsStore: appData.settingsStore, logger, connectFlow: connectCurrentFlow });
     await repoMappings.load();
+    /** Claude Code 설정 파일(`~/.claude.json`, 설정 폴더를 바꿨으면 그 폴더의 것). 재현 도구 목록과 재현에 싣는 MCP가 읽는다. */
+    const readClaudeConfig = () => readJsonFile(join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), '.claude.json'));
+    /** Codex CLI와 자식 환경. 아직 찾지 못했으면 `null`. */
+    const codexLaunch = () => {
+      /** Codex 연결 확인. */
+      const connection = agentConnections.get('codex');
+      /** Codex CLI 경로. */
+      const cliPath = connection?.state().details.cliPath ?? null;
+      /** 자식 환경. */
+      const env = connection?.processEnv() ?? null;
+      return cliPath !== null && env ? { cliPath, env } : null;
+    };
+    /** 설정 "저장소" 칸 재현 항목과 "에이전트" 칸 `재현` 탭의 재현 허용, 재현용 환경 파일, 재현 도구 권한. 설정만 다루고 실행은 하지 않는다. */
+    const reproduction = new ReproductionSettings({
+      settingsStore: appData.settingsStore,
+      logger,
+      platform: process.platform,
+      // Flow 매핑과 Sentry 매핑의 저장소를 모두 재현 허용 후보로 본다.
+      mappedRepoPaths: () => [
+        ...repoMappings.state().mappings.flatMap((mapping) => mapping.repos.map((repo) => repo.path)),
+        ...sentryProjects.state().projects.flatMap((project) => (project.repo ? [project.repo.path] : [])),
+      ],
+      readClaudeConfig,
+      runner: new NodeProcessRunner(),
+      codexLaunch,
+      cwd: dataFolderPath(),
+      isFile: async (path) => (await stat(path).catch(() => null))?.isFile() ?? false,
+    });
+    await reproduction.load();
     /** 감지한 멘션 묶음. 작은 창 대기열, 펼친 창 목록, 트레이 표시, 초안 준비됨·저장소 확인 필요 OS 알림이 따른다. */
     const mentionBundles = new MentionBundles({
       stateStore: appData.stateStore,
@@ -219,16 +342,72 @@ function start(): void {
         return result;
       },
       resolveRepos: (projectId) => repoMappings.resolve(projectId),
+      projectTitleOf: (projectId) => repoMappings.loadedProjectTitle(projectId),
     });
     await mentionBundles.load();
     bundles = mentionBundles;
     // 앱이 꺼지며 끊긴 묶음을 정리한다. 카운트다운 중이던 게시는 준비됨으로 돌린다.
     await mentionBundles.recoverAfterRestart().catch((error: unknown) => logger.error('bundle.restart-recovery-failed', errorFields(error)));
-    // 처리한 지 7일이 된 묶음을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
-    retention = new BundleRetention({ bundles: mentionBundles, clock: systemClock, logger });
+    // 자동 선택 때문에 멈췄던 묶음을 저장소 매핑 기준으로 한 번 다시 판정한다. 대기열을 시작하기 전에 해야 옛 묶음이 멈춘 채 남지 않는다.
+    await mentionBundles.reconcileRepoStates().catch((error: unknown) => logger.error('bundle.repo-state-reconcile-failed', errorFields(error)));
+    // 저장소 매핑 필요·저장소 확인 필요 묶음이 읽을 저장소를 얻었는지 앱을 켤 때, 매핑이 바뀔 때, 절전에서 깰 때, 폴더 없음이 있는 동안 60초마다 확인해 재개한다.
+    /** 저장소 대기 묶음을 재개하는 감시. 앱을 켤 때 시작하고, 매핑이 바뀔 때와 절전에서 깰 때 지금 확인한다. */
+    const repoWaitMonitor = new RepoWaitMonitor({ bundles: mentionBundles, clock: systemClock, logger });
+    repoWait = repoWaitMonitor;
+    repoWaitMonitor.start();
+    repoMappings.onChange(() => repoWaitMonitor.checkNow());
+    /** 저장소 대기 진단을 재개하는 감시. 묶음과 같은 때(앱을 켤 때, 매핑이 바뀔 때, 절전에서 깰 때, 폴더 없음이 있는 동안 60초마다) 다시 판정한다. */
+    const sentryRepoWaitMonitor = new RepoWaitMonitor({ bundles: sentryDiagnoses, clock: systemClock, logger });
+    sentryRepoWait = sentryRepoWaitMonitor;
+    sentryRepoWaitMonitor.start();
+    sentryProjects.onChange(() => sentryRepoWaitMonitor.checkNow());
+    // 처리한 지 7일이 된 묶음과 완료한 지 7일이 된 진단을 지금 정리하고, 그 뒤 하루에 한 번 정리한다.
+    retention = new BundleRetention({ bundles: mentionBundles, diagnoses: sentryDiagnoses, clock: systemClock, logger });
     retention.start();
+    /** 진단 보고서의 실행 정보에 적을 커밋하지 않은 변경 유무를 읽는다. */
+    const readGitStatus = gitStatusReader(process.platform);
     /**
-     * 초안 대기열. 생성 중 묶음을 기본 에이전트로 하나씩 실행한다. 실행마다 직전에 CLI 버전을 확인하고,
+     * 재현하는 진단의 사본. 홈 밖인 OS 임시 폴더에 둔다(Codex 권한 프로필은 홈 아래의 `.env`만 막을 수 있어, 사본의 `.env`를 열려면 사본이 홈 밖이어야 한다).
+     * 앱을 켤 때 지난 실행이 남긴 사본을 비운다. 기다리지 않는다.
+     */
+    const reproductionCopies = new ReproductionCopies({
+      root: join(app.getPath('temp'), 'stardraft-reproduction'),
+      clone: osascriptCloner(new NodeProcessRunner()),
+      logger,
+    });
+    void reproductionCopies.sweep();
+    /** 설정 저장소. 나중에 부르는 함수에서도 쓴다. */
+    const settingsStore = appData.settingsStore;
+    /**
+     * 재현하는 진단에 싣는 MCP. 실행할 때마다 실행하는 CLI의 정의와 재현 도구 권한을 다시 읽고,
+     * 정의가 참조한 변수만 로그인 셸에서 읽는다. 정의와 값은 디스크와 로그에 남기지 않는다.
+     */
+    const reproductionMcp = new ReproductionMcpLoader({
+      tools: async () => (await settingsStore.load()).reproductionTools,
+      readClaudeConfig,
+      readProjectFile: (repoPath) => readJsonFile(join(repoPath, '.mcp.json')),
+      runner: new NodeProcessRunner(),
+      codexLaunch,
+      cwd: dataFolderPath(),
+      readVariables: (names) =>
+        readLoginShellVariables({
+          runner: new NodeProcessRunner(),
+          shell: loginShellPath(),
+          env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+          cwd: app.getPath('home'),
+          names,
+        }),
+      logger,
+    });
+    /** 지금 쓸 수 있는 에이전트 CLI의 자식 환경. 시뮬레이터 정리가 adb를 찾는 데 쓴다. */
+    const agentEnv = () => agentConnections.get('claude-code')?.processEnv() ?? agentConnections.get('codex')?.processEnv() ?? null;
+    /** 재현하는 진단이 새로 켠 시뮬레이터·에뮬레이터 정리. */
+    const simulators = new Simulators({ runner: new NodeProcessRunner(), env: agentEnv, isPortOpen: localPortOpen, logger });
+    /** 설정 "에이전트" 칸 `병렬 작업` 탭의 병렬 작업 수. 초안 대기열이 다음 실행을 꺼낼 때마다 읽는다. */
+    const parallelWork = new ParallelWork({ settingsStore: appData.settingsStore, logger });
+    await parallelWork.load();
+    /**
+     * 초안 대기열. 생성 중 묶음을 기본 에이전트로 병렬 작업 수만큼 함께 실행한다. 실행마다 직전에 CLI 버전을 확인하고,
      * 에이전트 연결이 없거나 전역 실패면 연결될 때까지 멈춘다.
      */
     const draftQueue = new DraftQueue({
@@ -236,7 +415,8 @@ function start(): void {
       // 연결된 에이전트가 없으면 기본 에이전트가 없어 기다린다.
       agent: () => draftAgentFrom(agentPreferences.state(), agentConnections.all),
       onAgentChange: (listener) => unsubscribeAll([agentConnections.onChange(listener), agentPreferences.onChange(listener)]),
-      // "키 확인 필요"인 동안은 맥락을 조회할 수 없어 대기열을 멈춘다. 키를 다시 넣어 풀리면 다시 돈다.
+      parallelWork,
+      // "키 확인 필요"인 동안은 맥락을 조회할 수 없어 Flow 묶음만 멈춘다(Flow 어댑터 멈춤). 키를 다시 넣어 풀리면 다시 돈다.
       flowKeyUsable: () => flowAccount.apiKey() !== null && !globalProblems.has('flow-key'),
       onFlowKeyChange: (listener) => unsubscribeAll([globalProblems.onChange(listener), flowAccount.onChange(listener)]),
       settingsStore: appData.settingsStore,
@@ -246,16 +426,45 @@ function start(): void {
       projectTitle: (projectId) => repoMappings.projectTitle(projectId),
       clock: systemClock,
       logger,
+      // Sentry 진단도 같은 대기열에서 병렬 작업 수를 함께 쓴다. 토큰 문제와 Sentry 미도달은 Sentry 어댑터만 멈춘다.
+      extraAdapters: [
+        new SentryTargetAdapter({
+          diagnoses: sentryDiagnoses,
+          projects: sentryProjects,
+          connection: sentryConnection,
+          connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
+          settingsStore: appData.settingsStore,
+          repoState: (repository) => readRepoGitState(repository, readGitStatus),
+          exportFileExists: (path) => stat(path).then(
+            (info) => info.isFile(),
+            () => false,
+          ),
+          clock: systemClock,
+          logger,
+          // 재현 허용이 켜진 저장소(macOS)의 진단은 사본에서 재현한다. 재현하는 진단은 한 번에 하나만 돈다.
+          reproduction: {
+            platform: process.platform,
+            setting: (projectId) => {
+              /** 프로젝트에 매핑된 저장소. */
+              const path = sentryProjects.mappedRepoPath(projectId);
+              return path === null ? null : reproduction.settingFor(path);
+            },
+            copies: reproductionCopies,
+            devices: simulators,
+            attachments: attachmentFolders,
+            mcp: (agent, sourceRoot) => reproductionMcp.load(agent, sourceRoot),
+          },
+        }),
+      ],
     });
     drafts = draftQueue;
     /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. 패턴을 추가하면 실행 중인 실행을 다시 돌리고 게시하지 않은 초안을 다시 검사한다. */
     const draftSettings = new DraftSettings({ settingsStore: appData.settingsStore, logger, drafts: draftQueue, bundles: mentionBundles });
     await draftSettings.load();
-    /** 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. 창을 열 때마다 설정의 작업 폴더를 새로 훑는다. */
+    /** 저장소 선택 창. "저장소를 골라 만들기"와 "다른 저장소로 다시 만들기"가 같이 쓴다. */
     const repoPicker = new RepoPicker({
       bundle: (bundleId) => mentionBundles.get(bundleId),
       mappings: repoMappings,
-      findWorkFolderRepos: async () => (await findSelectionScope((await appData!.settingsStore.load()).workFolders)).candidates,
       regenerate: (bundleId, repos) => draftQueue.regenerateWithRepos(bundleId, repos),
     });
     mentionBundles.onChange(() => repoPicker.bundlesChanged());
@@ -268,15 +477,22 @@ function start(): void {
       logger,
     });
     posting = bundlePosting;
+    // 다른 계정의 키로 바꾸면 지금 계정의 생성·게시 대기를 멈추고 기록을 보관한 뒤, 새 계정의 보관한 기록을 이어 쓴다.
+    accountRecords = new AccountRecords({
+      bundles: mentionBundles,
+      drafts: draftQueue,
+      posting: bundlePosting,
+      stateStore: appData.stateStore,
+      settingsStore: appData.settingsStore,
+      logger,
+    });
     // 키를 처음 연결하거나 다른 계정으로 바꾸면 그 계정의 참여 Flow 프로젝트 목록을 다시 받는다.
-    // 다른 계정으로 바꾸며 기록을 비웠으면 옛 계정의 묶음이 남아 보이지 않게 묶음도 다시 읽는다.
     /** 목록을 받은 계정의 사용자 ID. */
     let projectsAccountId = flowAccount.state().account?.userId ?? null;
     flowAccount.onChange(({ account }) => {
       if ((account?.userId ?? null) === projectsAccountId) return;
       projectsAccountId = account?.userId ?? null;
       void repoMappings.refresh();
-      void mentionBundles.load();
     });
     /** 설정 "일반" 칸의 로그인 시 자동 시작. [감지 시작]이 켠다. */
     const launchAtLogin = new LaunchAtLogin({ settingsStore: appData.settingsStore, logger, applyToSystem: applyLoginItem });
@@ -284,7 +500,7 @@ function start(): void {
     /** 근거의 "에디터에서 열기". 기억한 에디터를 읽고 이 PC의 에디터를 찾아 둔다. */
     const editorOpener = new EditorOpener({ settingsStore: appData.settingsStore, logger, system: editorSystem() });
     void editorOpener.refresh().catch((error: unknown) => logger.warn('editor.refresh-failed', errorFields(error)));
-    /** 필수 세 가지와 [감지 시작]. 각 칸의 모듈이 저장한 상태에서 필수 항목을 읽는다. */
+    /** 필수 설정과 [감지 시작]. 각 칸의 모듈이 저장한 상태에서 필수 항목을 읽는다. */
     const onboarding = new Onboarding({
       settingsStore: appData.settingsStore,
       stateStore: appData.stateStore,
@@ -298,20 +514,21 @@ function start(): void {
         appWindows.openPopover();
       },
       setupInputs: () => ({
+        // Flow 계정은 감지할 대상(선택)이다. 필수 설정은 에이전트 연결 하나다.
         keyVerified: flowAccount.state().account !== null && !globalProblems.has('flow-key'),
+        sentryConnected: isSentryUsable(sentryConnection.state()),
         // 하나라도 연결되면 연결됨이다. 시작할 때 연결 확인이 돌기 전도 확인 중으로 본다.
         agent: agentConnections.setupStatus(),
-        workFolderCount: workFolders.state().folders.length,
       }),
     });
     await onboarding.load();
-    // 필수 세 가지의 입력이 바뀔 때마다 온보딩 상태를 다시 본다.
+    // 필수 설정과 감지할 대상의 입력이 바뀔 때마다 온보딩 상태를 다시 본다.
     /** 온보딩 상태를 다시 본다. */
     const refreshOnboarding = () => onboarding.refresh();
     flowAccount.onChange(refreshOnboarding);
+    sentryConnection.onChange(refreshOnboarding);
     globalProblems.onChange(refreshOnboarding);
     agentConnections.onChange(refreshOnboarding);
-    workFolders.onChange(refreshOnboarding);
     /** 담당 업무 감지 상태를 읽을 저장소. 함수 안에서는 `appData`가 null이 아님을 알 수 없어 따로 잡아 둔다. */
     const assignmentStateStore = appData.stateStore;
     /** 최근 멘션 확인. 감지에서 빠진 멘션까지 지금 키로 최근 멘션을 불러오고, 고른 멘션으로 게시할 수 있는 수동 요청 묶음을 만든다. */
@@ -387,10 +604,15 @@ function start(): void {
       windows: appWindows,
       logger,
       flowAccount,
+      sentryConnection,
+      sentryProjects,
+      reproduction,
+      sentryDiagnoses,
+      diagnosisExports,
+      reportFolder,
       globalProblems,
       agentConnections,
       agentPreferences,
-      workFolders,
       repoMappings,
       onboarding,
       launchAtLogin,
@@ -402,6 +624,7 @@ function start(): void {
       editorOpener,
       manualCheck,
       draftSettings,
+      parallelWork,
       notifier,
       inAppUpdate,
       updateRestart,
@@ -426,7 +649,7 @@ function start(): void {
     let detectionKey: string | null = null;
     /**
      * 감지를 시작했고 쓸 수 있는 키가 있으면 폴링을 시작한다. [감지 시작] 직후, 앱 시작 때 저장된 키를 읽은 뒤,
-     * 키를 새로 확인했을 때(다른 계정이면 기준점을 다시 잡음), "키 확인 필요"가 풀렸을 때 바로 조회하며 시작한다.
+     * 키를 새로 확인했을 때(다른 계정이면 그 계정의 기준점에서 72시간 안의 멘션만 이어 받음), "키 확인 필요"가 풀렸을 때 바로 조회하며 시작한다.
      */
     const syncDetection = () => {
       /** 지금 쓰는 키. "키 확인 필요"가 있으면 쓰지 않는다. */
@@ -442,17 +665,46 @@ function start(): void {
     onboarding.onChange(syncDetection);
     flowAccount.onChange(syncDetection);
     globalProblems.onChange(syncDetection);
+    /** Sentry 오류 이슈 감지. 감지를 시작했고 "토큰 확인 필요"가 없는 토큰이 있을 때 5분마다 조회한다. Flow 감지와 따로 돈다. */
+    const sentryErrorDetection = new SentryDetection({
+      connectSentry: (token) => new HttpSentryApi({ token, fetch: net.fetch, clock: systemClock }),
+      connection: sentryConnection,
+      projects: sentryProjects,
+      diagnoses: sentryDiagnoses,
+      clock: systemClock,
+      logger,
+    });
+    sentryDetection = sentryErrorDetection;
+    /** Sentry 폴링을 마지막으로 시작한 토큰. 같은 토큰으로 거듭 시작하지 않으려고 둔다. */
+    let sentryDetectionToken: string | null = null;
+    /**
+     * 감지를 시작했고 쓸 수 있는 토큰이 있으면 Sentry 폴링을 시작한다. [감지 시작] 직후, 앱 시작 때 저장된 토큰을 읽은 뒤,
+     * 새 토큰을 확인했을 때("토큰 확인 필요"가 풀렸을 때) 바로 조회하며 시작한다. 쓸 토큰이 없으면 폴링을 멈춘다.
+     */
+    const syncSentryDetection = () => {
+      /** 지금 쓰는 토큰. "토큰 확인 필요"가 있으면 쓰지 않는다. */
+      const token = sentryConnection.state().problem === null ? sentryConnection.token() : null;
+      if (!onboarding.state().detectionStarted || token === null) {
+        sentryDetectionToken = null;
+        sentryErrorDetection.stop();
+        return;
+      }
+      if (token === sentryDetectionToken) return;
+      sentryDetectionToken = token;
+      void sentryErrorDetection.start();
+    };
+    onboarding.onChange(syncSentryDetection);
+    sentryConnection.onChange(syncSentryDetection);
     // 잠자기에서 깨어나면 밀린 멘션을 바로 조회하고, 잠든 동안 멈춘 하루 타이머 대신 처리됨 목록도 정리한다.
     // 앱 내 업데이트는 마지막 확인이 4시간보다 오래됐을 때만 바로 확인한다.
     powerMonitor.on('resume', () => {
       void mentionDetection.checkNow();
+      void sentryErrorDetection.checkNow();
       retention?.cleanUpNow();
+      repoWait?.checkNow();
+      sentryRepoWait?.checkNow();
       void inAppUpdate?.checkIfDue();
     });
-
-    // 폴더 훑기는 시작을 늦추지 않게 기다리지 않는다. 훑는 대로 열린 창에 알린다.
-    // 참여 Flow 프로젝트 목록은 "저장소" 칸을 열 때 받는다.
-    void workFolders.refresh();
 
     /** 만든 트레이. 전역 문제를 따라 표시를 바꿀 때 `null` 검사를 하지 않으려고 지역 상수로 잡는다. */
     const appTray = new AppTray({
@@ -468,8 +720,8 @@ function start(): void {
       appTray.show(
         trayView(globalProblems.current(), {
           setupNeeded: !onboarding.state().detectionStarted,
-          reviewCount: mentionBundles.reviewCount(),
-          hasFailure: mentionBundles.hasFailure(),
+          reviewCount: mentionBundles.reviewCount() + sentryDiagnoses.reviewCount(),
+          hasFailure: mentionBundles.hasFailure() || sentryDiagnoses.hasFailure(),
           generating: mentionBundles.idsWithStatus('generating').length > 0,
         }),
       );
@@ -477,6 +729,7 @@ function start(): void {
     globalProblems.onChange(refreshTray);
     onboarding.onChange(refreshTray);
     mentionBundles.onChange(refreshTray);
+    sentryDiagnoses.onChange(refreshTray);
     // 감지를 시작하기 전이면 첫 실행처럼 필수 설정 전 작은 창을 트레이 옆에 띄운다. 메뉴 막대 앱이라 창이 없으면 앱을 놓친다.
     // 앱이 앞에 오지 않은 채 열면 작은 창이 포커스를 잃어 바로 닫히므로, 사용자가 직접 켠 이 경우에는 앞으로 가져온다.
     if (!onboarding.state().detectionStarted) {
@@ -497,6 +750,12 @@ function start(): void {
         void draftQueue.start();
         bundlePosting.recoverAfterRestart();
       });
+    // 저장된 Sentry 토큰도 트레이를 띄운 뒤에 읽는다. 키체인 재허용 때문에 끝나지 않을 수 있어 시작을 막지 않는다. 실패는 상태로 남기고 던지지 않는다.
+    // 토큰을 읽으면 감지를 시작한 앱은 바로 Sentry를 조회한다.
+    void sentryConnection
+      .checkStoredToken()
+      .then(syncSentryDetection)
+      .catch((error: unknown) => logger.error('sentry-connection.stored-token-check-failed', errorFields(error)));
     // 앱을 시작할 때 후보 에이전트의 연결을 확인한다(작동 확인 포함). 쓸 에이전트가 없으면 전역 문제가 트레이에 뜬다. 실패도 상태로 남기고 던지지 않는다.
     void agentConnections.checkAll();
     // 켜고 1분 뒤 처음 확인하고, 그 뒤 4시간마다 확인한다.
@@ -516,7 +775,10 @@ async function prepareQuit(): Promise<void> {
   tray?.destroy();
   // state.db를 닫은 뒤에 예약된 조회가 돌지 않게 폴링을 먼저 멈춘다.
   detection?.stop();
+  sentryDetection?.stop();
   retention?.stop();
+  repoWait?.stop();
+  sentryRepoWait?.stop();
   appUpdate?.stop();
   migrationBackups?.stop();
   try {
@@ -527,6 +789,17 @@ async function prepareQuit(): Promise<void> {
   } catch (error) {
     logger.error('app.quit-cleanup-failed', errorFields(error));
   }
+}
+
+/** 토큰을 연결했고 "토큰 확인 필요"가 없어 Sentry를 쓸 수 있는지 본다. */
+function isSentryUsable({ connected, problem }: SentryConnectionState): boolean {
+  return connected && problem === null;
+}
+
+/** 계정 기록을 오가는 일. 연결을 마치기 전에 불리면 앱의 순서가 틀린 것이라 던진다. */
+function requireRecords(records: FlowAccountRecords | null): FlowAccountRecords {
+  if (!records) throw new Error('계정 기록을 아직 연결하지 않았습니다.');
+  return records;
 }
 
 /** 구독을 끊는 함수 여럿을 한 번에 부르는 함수 하나로 묶는다. */
@@ -546,6 +819,16 @@ async function checkAppLocation(): Promise<BlockedLocationReason | null> {
   const bundlePath = macBundlePathOf(process.execPath);
   if (!bundlePath) throw new Error('실행 파일이 앱 번들 안에 있지 않습니다.');
   return checkInstallLocation(bundlePath);
+}
+
+/** JSON 파일을 읽는다. 파일이 없으면 `null`이다. 깨진 JSON은 던진다(오류 메시지에 파일 조각이 들 수 있어 부르는 쪽이 원문을 남기지 않는다). */
+async function readJsonFile(path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, 'utf8')) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 /** 사용자의 로그인 셸. Finder에서 켠 앱도 `$SHELL`을 받지만, 없으면 계정 정보의 셸을 쓴다. */

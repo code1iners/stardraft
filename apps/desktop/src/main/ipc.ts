@@ -1,20 +1,29 @@
 import { app, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 import { mkdir } from 'node:fs/promises';
+import { testNotification } from '../shared/notification-test-text';
 import type { MentionBundles } from '../core/bundles/mention-bundles';
 import { evidenceFileOf, type EditorOpener, type EditorOpenerState } from '../core/editors/editor-opener';
 import type { DraftQueue } from '../core/drafts/draft-queue';
 import type { DraftSettings, DraftSettingsState } from '../core/drafts/draft-settings';
+import type { ParallelWork } from '../core/generation/parallel-work';
 import type { Posting } from '../core/posting/posting';
 import type { AgentConnection, AgentConnectionState } from '../core/agent/agent-connection';
 import type { AgentConnections } from '../core/agent/agent-connections';
 import type { AgentPreferences, AgentPreferencesState } from '../core/agent/agent-preferences';
 import type { FlowAccount, FlowAccountState, FlowKeyCheckOutcome } from '../core/account/flow-account';
+import type { SentryConnection, SentryConnectionState, SentryTokenCheckOutcome } from '../core/sentry/sentry-connection';
+import type { DiagnosisExports, DiagnosisReportFolder } from '../core/sentry/diagnosis-exports';
+import type { SentryDiagnoses } from '../core/sentry/sentry-diagnoses';
+import { openableSentryUrl } from '../core/sentry/sentry-diagnosis';
+import { SENTRY_TARGET_KIND } from '../core/sentry/sentry-target-adapter';
+import type { ReproductionSettings, ReproductionState } from '../core/reproduction/reproduction-settings';
+import type { SentryProjects, SentryProjectsState, SentryRegisterOutcome, SentryUpdateOutcome } from '../core/sentry/sentry-projects';
 import { errorFields, type Logger } from '../core/logging/logger';
 import type { FlowEmployee } from '../core/ports/flow-api';
 import type { Notifier } from '../core/ports/notifier';
 import type { RepoMappings, RepoMappingsState } from '../core/repos/repo-mappings';
 import type { RepoPicker } from '../core/repos/repo-picker';
-import type { WorkFolders, WorkFoldersState } from '../core/repos/work-folders';
+import type { RejectedFolder, RejectedFolderReason } from '../core/repos/folder-rules';
 import type { LaunchAtLogin } from '../core/onboarding/launch-at-login';
 import type { Onboarding, OnboardingState } from '../core/onboarding/onboarding';
 import type { ActiveGlobalProblem, GlobalProblem, GlobalProblems } from '../core/problems/global-problems';
@@ -31,16 +40,23 @@ import {
   type AppCommand,
   type AppFolder,
   type AppSnapshot,
+  type DiagnosisProgressSnapshot,
   type DraftSettingsSnapshot,
+  type ParallelWorkSnapshot,
+  type ReportFolderSnapshot,
   type EditorSnapshot,
   type FlowAccountProfile,
   type FlowAccountSnapshot,
+  type ReproductionSaveResult,
+  type ReproductionSnapshot,
+  type SentryConnectionSnapshot,
+  type SentryProjectSaveResult,
+  type SentryProjectsSnapshot,
   type GlobalProblemSnapshot,
   type OnboardingSnapshot,
   type RepoMappingsSnapshot,
   type SiteSection,
   type UpdateStateSnapshot,
-  type WorkFoldersSnapshot,
 } from '../shared/ipc';
 import { appPlatform, dataFolderPath, logsFolderPath } from './app-identity';
 import type { AppWindows } from './app-windows';
@@ -57,17 +73,27 @@ export interface IpcServices {
   logger: Logger;
   /** "Flow 계정" 칸의 키 확인과 계정. */
   flowAccount: FlowAccount;
+  /** "Sentry" 칸의 토큰 확인과 조직. */
+  sentryConnection: SentryConnection;
+  /** "저장소" 칸 재현 항목과 "에이전트" 칸 `재현` 탭의 재현 허용, 환경 파일, 재현 도구 권한. */
+  reproduction: ReproductionSettings;
+  /** "Sentry" 칸의 프로젝트 등록과 "저장소" 칸 `Sentry` 탭의 저장소 매핑. */
+  sentryProjects: SentryProjects;
+  /** 감지한 Sentry 진단. 검토 화면의 `진단` 묶음과 프로젝트 줄의 "n건 대기"가 따른다. */
+  sentryDiagnoses: SentryDiagnoses;
+  /** 검토 대기 진단 보고서의 마크다운 내보내기. */
+  diagnosisExports: DiagnosisExports;
+  /** 설정 "Sentry" 칸의 "보고서를 내보낼 폴더". */
+  reportFolder: DiagnosisReportFolder;
   /** 작은 창 띠에 보일 전역 문제. */
   globalProblems: GlobalProblems;
   /** "에이전트" 칸의 연결 확인. 이 OS의 후보 에이전트마다 하나씩 있다. */
   agentConnections: AgentConnections;
   /** "에이전트" 칸의 기본 에이전트와 모델 선택. */
   agentPreferences: AgentPreferences;
-  /** "저장소" 칸의 작업 폴더. */
-  workFolders: WorkFolders;
   /** "저장소" 칸의 저장소 매핑. */
   repoMappings: RepoMappings;
-  /** 필수 세 가지와 [감지 시작]. */
+  /** 필수 설정과 [감지 시작]. */
   onboarding: Onboarding;
   /** "일반" 칸의 로그인 시 자동 시작. */
   launchAtLogin: LaunchAtLogin;
@@ -87,6 +113,8 @@ export interface IpcServices {
   manualCheck: ManualCheckSession;
   /** 설정 "초안" 칸의 추가 지침과 비밀 파일 패턴. */
   draftSettings: DraftSettings;
+  /** 설정 "에이전트" 칸 `병렬 작업` 탭의 병렬 작업 수. */
+  parallelWork: ParallelWork;
   /** 설정 "일반"의 [알림 시험]이 띄우는 OS 알림. */
   notifier: Notifier;
   /** 앱 내 업데이트. 소스에서 실행하면 업데이트를 끄므로 `null`이다. */
@@ -112,6 +140,20 @@ export function registerIpc(services: IpcServices): void {
   services.flowAccount.onChange((state) =>
     services.windows.broadcast({ type: 'flow-account-changed', flowAccount: flowAccountSnapshot(state) }),
   );
+  services.sentryConnection.onChange((state) =>
+    services.windows.broadcast({ type: 'sentry-changed', sentry: sentrySnapshot(state) }),
+  );
+  /** 등록한 Sentry 프로젝트와 그 줄의 "n건 대기"를 열린 창에 알린다. */
+  const broadcastSentryProjects = () =>
+    services.windows.broadcast({ type: 'sentry-projects-changed', sentryProjects: currentSentryProjectsSnapshot(services) });
+  services.sentryProjects.onChange(broadcastSentryProjects);
+  services.sentryDiagnoses.onChange(broadcastSentryProjects);
+  /** 재현 설정을 열린 창에 알린다. 저장소 줄은 매핑에서 오므로 어느 매핑이 바뀌어도 다시 보낸다. */
+  const broadcastReproduction = () =>
+    services.windows.broadcast({ type: 'reproduction-changed', reproduction: reproductionSnapshot(services.reproduction.state()) });
+  services.reproduction.onChange(broadcastReproduction);
+  services.repoMappings.onChange(broadcastReproduction);
+  services.sentryProjects.onChange(broadcastReproduction);
   services.globalProblems.onChange((current) =>
     services.windows.broadcast({ type: 'global-problem-changed', globalProblem: activeProblemSnapshot(current) }),
   );
@@ -127,12 +169,20 @@ export function registerIpc(services: IpcServices): void {
     broadcastPreferences();
   });
   services.agentPreferences.onChange(broadcastPreferences);
-  services.workFolders.onChange(() =>
-    services.windows.broadcast({ type: 'work-folders-changed', workFolders: workFoldersSnapshot(services.workFolders.state()) }),
-  );
-  services.repoMappings.onChange(() =>
-    services.windows.broadcast({ type: 'repo-mappings-changed', repoMappings: repoMappingsSnapshot(services.repoMappings.state()) }),
-  );
+  /** 저장소 매핑과 매핑을 기다리는 프로젝트를 열린 창에 알린다. */
+  const broadcastRepoMappings = () =>
+    services.windows.broadcast({ type: 'repo-mappings-changed', repoMappings: repoMappingsSnapshot(services.repoMappings.state(), services.bundles, services.repoMappings) });
+  services.repoMappings.onChange(broadcastRepoMappings);
+  // 매핑을 기다리는 묶음 수가 바뀔 때도 "저장소 매핑 없음 · n건 대기"를 다시 보낸다. 같은 값이면 보내지 않는다.
+  /** 마지막으로 보낸 매핑 대기 목록. */
+  let lastWaiting = JSON.stringify(services.bundles.waitingForMapping());
+  services.bundles.onChange(() => {
+    /** 지금 매핑 대기 목록. */
+    const waiting = JSON.stringify(services.bundles.waitingForMapping());
+    if (waiting === lastWaiting) return;
+    lastWaiting = waiting;
+    broadcastRepoMappings();
+  });
   services.onboarding.onChange((state) => services.windows.broadcast({ type: 'onboarding-changed', onboarding: onboardingSnapshot(state) }));
   services.launchAtLogin.onChange((enabled) => services.windows.broadcast({ type: 'launch-at-login-changed', launchAtLogin: enabled }));
   services.editorOpener.onChange(() => services.windows.broadcast({ type: 'editor-changed', editor: editorSnapshot(services.editorOpener.state()) }));
@@ -140,6 +190,7 @@ export function registerIpc(services: IpcServices): void {
   /** 묶음 상태를 열린 창에 알린다. */
   const broadcastReview = () => services.windows.broadcast({ type: 'review-changed', review: currentReviewSnapshot(services) });
   services.bundles.onChange(broadcastReview);
+  services.sentryDiagnoses.onChange(broadcastReview);
   services.drafts.onChange(broadcastReview);
   services.posting.onChange(broadcastReview);
   // 게시 실패는 그 순간 한 번만 토스트로 알린다. 묶음 상태에는 남지만 토스트는 다시 띄우지 않는다.
@@ -157,24 +208,82 @@ export function registerIpc(services: IpcServices): void {
   services.globalProblems.onChange(broadcastManualCheck);
   services.repoMappings.onChange(broadcastReview);
   services.repoPicker.onChange(broadcastReview);
+  // 진단 상세의 "재현도 다시 하기" 체크는 저장소의 재현 허용과 Sentry 매핑을 따른다.
+  services.reproduction.onChange(broadcastReview);
+  services.sentryProjects.onChange(broadcastReview);
   services.draftSettings.onChange(() =>
     services.windows.broadcast({ type: 'draft-settings-changed', draftSettings: draftSettingsSnapshot(services.draftSettings.state()) }),
   );
+  // 병렬 작업 수를 바꾸거나 진행 중인 수가 바뀌면 알린다. 진행 단계만 바뀐 알림은 보내지 않는다.
+  /** 마지막으로 보낸 병렬 작업 상태. */
+  let lastParallelWork = JSON.stringify(parallelWorkSnapshot(services));
+  /** 병렬 작업 상태가 바뀌었으면 열린 창에 알린다. */
+  const broadcastParallelWork = () => {
+    /** 지금 병렬 작업 상태. */
+    const parallelWork = parallelWorkSnapshot(services);
+    /** 비교할 JSON. */
+    const json = JSON.stringify(parallelWork);
+    if (json === lastParallelWork) return;
+    lastParallelWork = json;
+    services.windows.broadcast({ type: 'parallel-work-changed', parallelWork });
+  };
+  services.reportFolder.onChange(() => services.windows.broadcast({ type: 'report-folder-changed', reportFolder: reportFolderSnapshot(services) }));
+  services.parallelWork.onChange(broadcastParallelWork);
+  services.drafts.onChange(broadcastParallelWork);
   // 다시 시작은 앱 내 업데이트의 상태 변화도 함께 알린다.
   services.updateRestart?.onChange((state) => services.windows.broadcast({ type: 'update-changed', update: updateSnapshot(state) }));
 }
 
 /** 지금 묶음 상태의 스냅숏. 생성 중 묶음의 진행은 초안 대기열에서, 게시 카운트다운은 게시에서 읽는다. */
-function currentReviewSnapshot({ bundles, drafts, posting, reviewSections, repoMappings, repoPicker }: IpcServices) {
+function currentReviewSnapshot({ bundles, sentryDiagnoses, drafts, posting, reviewSections, repoMappings, repoPicker, sentryProjects, reproduction }: IpcServices) {
   return reviewSnapshot(
     bundles.state(),
+    sentryDiagnoses.list(),
     reviewSections.state(),
     projectLookup(repoMappings),
     (bundleId) => drafts.progress(bundleId),
     (projectId, repos) => repoMappings.matchOf(projectId, repos),
     repoPicker.state(),
     (bundleId) => posting.countdownEndsAt(bundleId),
+    (diagnosisId) => diagnosisProgress(drafts, diagnosisId),
+    (projectId) => {
+      /** 프로젝트에 매핑된 저장소. */
+      const path = sentryProjects.mappedRepoPath(projectId);
+      return path !== null && reproduction.settingFor(path)?.enabled === true;
+    },
   );
+}
+
+/** 진단 ID를 생성 대기열의 대상으로 바꾼다. */
+function sentryTarget(diagnosisId: number): { kind: string; targetId: number } {
+  return { kind: SENTRY_TARGET_KIND, targetId: diagnosisId };
+}
+
+/** 진단의 생성 대기열 진행. 진행 중이면 단계와 시작 시각, 기다리면 앞에 있는 수다. 대기열에 없으면 `null`. */
+function diagnosisProgress(drafts: IpcServices['drafts'], diagnosisId: number): DiagnosisProgressSnapshot | null {
+  /** 생성 대기열의 대상. */
+  const target = sentryTarget(diagnosisId);
+  /** 진행. */
+  const progress = drafts.targetProgress(target);
+  if (!progress) return null;
+  if (progress.status === 'waiting') return { status: 'waiting', ahead: drafts.aheadOf(target) };
+  return {
+    status: 'running',
+    step: progress.step,
+    filesRead: progress.filesRead,
+    startedAt: drafts.runningSince(target) ?? Date.now(),
+    ...(progress.extension ? { extension: { ...progress.extension } } : {}),
+  };
+}
+
+/** 지금 보고서를 내보낼 폴더. */
+function reportFolderSnapshot({ reportFolder }: IpcServices): ReportFolderSnapshot {
+  return { path: reportFolder.path(), isDefault: reportFolder.isDefault() };
+}
+
+/** 지금 병렬 작업 수와 진행 중인 초안·진단 수. */
+function parallelWorkSnapshot({ parallelWork, drafts }: IpcServices): ParallelWorkSnapshot {
+  return { count: parallelWork.count(), running: drafts.runningCount() };
 }
 
 /** 지금 최근 멘션 확인 상태의 스냅숏. */
@@ -198,23 +307,27 @@ function projectLookup(repoMappings: RepoMappings): ProjectLookup {
 /** 지금 앱 상태의 스냅숏. */
 function currentSnapshot(services: IpcServices): AppSnapshot {
   /** 상태를 읽을 main의 일. */
-  const { flowAccount, globalProblems, agentConnections, agentPreferences, workFolders, repoMappings, onboarding, launchAtLogin } = services;
+  const { flowAccount, sentryConnection, globalProblems, agentConnections, agentPreferences, repoMappings, onboarding, launchAtLogin } = services;
   return {
     appName: app.name,
     version: app.getVersion(),
     platform: appPlatform(),
     flowAccount: flowAccountSnapshot(flowAccount.state()),
+    sentry: sentrySnapshot(sentryConnection.state()),
+    sentryProjects: currentSentryProjectsSnapshot(services),
+    reproduction: reproductionSnapshot(services.reproduction.state()),
     globalProblem: activeProblemSnapshot(globalProblems.current()),
     agentConnections: agentConnectionsSnapshot(agentConnections),
     agentPreferences: agentPreferencesSnapshot(agentPreferences.state()),
-    workFolders: workFoldersSnapshot(workFolders.state()),
-    repoMappings: repoMappingsSnapshot(repoMappings.state()),
+    repoMappings: repoMappingsSnapshot(repoMappings.state(), services.bundles, repoMappings),
     onboarding: onboardingSnapshot(onboarding.state()),
     launchAtLogin: launchAtLogin.enabled(),
     editor: editorSnapshot(services.editorOpener.state()),
     review: currentReviewSnapshot(services),
     manualCheck: currentManualCheckSnapshot(services),
     draftSettings: draftSettingsSnapshot(services.draftSettings.state()),
+    parallelWork: parallelWorkSnapshot(services),
+    reportFolder: reportFolderSnapshot(services),
     update: services.updateRestart && updateSnapshot(services.updateRestart.state()),
   };
 }
@@ -226,9 +339,11 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     windows,
     logger,
     flowAccount,
+    sentryConnection,
+    sentryProjects,
+    reproduction,
     agentConnections,
     agentPreferences,
-    workFolders,
     repoMappings,
     onboarding,
     launchAtLogin,
@@ -260,6 +375,87 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'cancel-flow-key-check':
       flowAccount.cancelKeyCheck();
       return;
+    case 'check-sentry-token':
+      announceTokenCheckOutcome(windows, await sentryConnection.checkToken(command.token));
+      return;
+    case 'cancel-sentry-token-check':
+      sentryConnection.cancelTokenCheck();
+      return;
+    case 'disconnect-sentry':
+      await sentryConnection.disconnect();
+      return;
+    case 'refresh-sentry-projects':
+      await sentryProjects.refresh();
+      return;
+    case 'load-sentry-candidates':
+      await sentryProjects.loadCandidates();
+      return;
+    case 'register-sentry-project': {
+      /** 등록한 결과. */
+      const outcome = await sentryProjects.register(command.projectId, command);
+      if (outcome.kind === 'registered') await showRejectedFolders(outcome.rejected ? [outcome.rejected] : []);
+      windows.broadcast({ type: 'sentry-project-saved', result: saveResultOf(outcome) });
+      return;
+    }
+    case 'update-sentry-project': {
+      /** 저장한 결과. */
+      const outcome = await sentryProjects.update(command.projectId, command);
+      if (outcome.kind === 'updated') await showRejectedFolders(outcome.rejected ? [outcome.rejected] : []);
+      windows.broadcast({ type: 'sentry-project-saved', result: saveResultOf(outcome) });
+      return;
+    }
+    case 'unregister-sentry-project':
+      await sentryProjects.unregister(command.projectId);
+      return;
+    case 'pick-sentry-draft-folder': {
+      /** 고른 폴더. 고르지 않고 닫으면 `null`. */
+      const path = await pickSingleFolder(windows);
+      if (path !== null) windows.broadcast({ type: 'sentry-draft-folder-picked', path });
+      return;
+    }
+    case 'pick-sentry-project-repo': {
+      /** 고른 폴더. 고르지 않고 닫으면 `null`. */
+      const path = await pickSingleFolder(windows);
+      if (path === null) return;
+      /** 받지 않은 폴더. */
+      const rejected = await sentryProjects.setRepo(command.projectId, path);
+      await showRejectedFolders(rejected ? [rejected] : []);
+      return;
+    }
+    case 'refresh-reproduction-repos':
+      await reproduction.refreshRepos();
+      return;
+    case 'refresh-reproduction-servers':
+      await reproduction.refreshServers();
+      return;
+    case 'set-reproduction-enabled': {
+      /** 저장한 결과. */
+      const outcome = await reproduction.setRepoEnabled(command.repoPath, command.enabled, command.envFile);
+      // 켜는 요청만 확인 모달이 결과를 기다린다. 끄는 요청은 상태 변경으로 화면이 따라간다.
+      if (command.enabled) windows.broadcast({ type: 'reproduction-saved', result: reproductionSaveResult(outcome.kind) });
+      return;
+    }
+    case 'pick-reproduction-env-file': {
+      /** 고른 환경 파일. 고르지 않고 닫으면 `null`. */
+      const path = await pickEnvFile(windows);
+      if (path === null) return;
+      /** 지정한 결과. 거부돼도(없는 파일 등) 화면은 그대로이고 로그에 남긴다. */
+      const outcome = await reproduction.setEnvFile(command.repoPath, path);
+      if (outcome.kind !== 'saved') logger.warn('reproduction.env-file-rejected', { reason: outcome.kind });
+      return;
+    }
+    case 'pick-reproduction-env-file-draft': {
+      /** 고른 환경 파일. 고르지 않고 닫으면 `null`. */
+      const path = await pickEnvFile(windows);
+      if (path !== null) windows.broadcast({ type: 'reproduction-env-file-picked', path });
+      return;
+    }
+    case 'set-reproduction-tool-mode':
+      await reproduction.setToolMode(command.mode);
+      return;
+    case 'set-reproduction-server-enabled':
+      await reproduction.setServerEnabled(command.agent, command.name, command.enabled);
+      return;
     case 'check-agents':
       await agentConnections.checkAll();
       return;
@@ -287,23 +483,11 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'set-agent-model':
       await agentPreferences.setModel(command.agent, command.model);
       return;
-    case 'pick-work-folders':
-      await pickWorkFolders(windows, workFolders);
-      return;
-    case 'add-suggested-work-folder':
-      await workFolders.addSuggestion(command.path);
-      return;
-    case 'remove-work-folder':
-      await workFolders.remove(command.path);
-      return;
-    case 'refresh-work-folders':
-      await workFolders.refresh();
-      return;
     case 'refresh-repo-mappings':
       await repoMappings.refresh();
       return;
     case 'pick-mapping-repos':
-      await pickMappingRepos(windows, repoMappings, command.projectId);
+      await pickMappingRepos(windows, repoMappings, bundles, command.projectId);
       return;
     case 'remove-mapping-repo':
       await repoMappings.removeRepo(command.projectId, command.path);
@@ -316,6 +500,9 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       return;
     case 'set-launch-at-login':
       await launchAtLogin.set(command.enabled);
+      return;
+    case 'set-parallel-work-count':
+      await services.parallelWork.set(command.count);
       return;
     case 'ignore-bundle':
       await bundles.ignore(command.bundleId);
@@ -333,6 +520,68 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
     case 'open-bundle-in-flow':
       await openBundleInFlow(services, command.bundleId);
       return;
+    case 'cancel-diagnosis':
+      await services.drafts.cancelTarget(sentryTarget(command.diagnosisId));
+      return;
+    case 'retry-diagnosis':
+      await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), () =>
+        services.sentryDiagnoses.retry(command.diagnosisId),
+      );
+      return;
+    case 'retry-diagnosis-without-reproduction':
+      await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), async () => {
+        await services.sentryDiagnoses.retryWithoutReproduction(command.diagnosisId);
+      });
+      return;
+    case 'continue-diagnosis':
+      services.drafts.answerTimeExtension(sentryTarget(command.diagnosisId), 'continue');
+      return;
+    case 'stop-diagnosis':
+      services.drafts.answerTimeExtension(sentryTarget(command.diagnosisId), 'stop');
+      return;
+    case 'rediagnose':
+      await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), async () => {
+        await services.sentryDiagnoses.rediagnose(command.diagnosisId, null);
+      });
+      return;
+    case 'rediagnose-with-directive':
+      await services.drafts.changeTargetByUser(sentryTarget(command.diagnosisId), async () => {
+        await services.sentryDiagnoses.rediagnose(command.diagnosisId, command.directive, { reproduce: command.reproduce });
+      });
+      return;
+    case 'complete-diagnosis':
+      await services.sentryDiagnoses.complete(command.diagnosisId);
+      return;
+    case 'export-diagnosis':
+      await exportDiagnosis(services, command.diagnosisId);
+      return;
+    case 'pick-report-folder': {
+      /** 고른 폴더. 고르지 않고 닫으면 `null`. */
+      const path = await pickSingleFolder(windows, { title: '보고서를 내보낼 폴더 고르기', createDirectory: true });
+      if (path !== null) await services.reportFolder.set(path);
+      return;
+    }
+    case 'open-report-folder':
+      await openReportFolder(services);
+      return;
+    case 'open-diagnosis-in-sentry':
+      await openDiagnosisInSentry(services, command.diagnosisId);
+      return;
+    case 'open-diagnosis-evidence-in-editor':
+      await openDiagnosisEvidenceInEditor(services, command.diagnosisId, command.evidenceIndex);
+      return;
+    case 'open-sentry-repo-mapping': {
+      /** 저장소 대기인 진단. 없어졌으면 프로젝트를 모르므로 "저장소" 칸만 연다. */
+      const waiting = services.sentryDiagnoses.list().find((item) => item.id === command.diagnosisId);
+      windows.openSettings('repositories', undefined, waiting?.projectId);
+      return;
+    }
+    case 'open-repo-mapping': {
+      /** 저장소 대기인 묶음. 없어졌으면 프로젝트를 모르므로 "저장소" 칸만 연다. */
+      const waiting = bundles.get(command.bundleId);
+      windows.openSettings('repositories', waiting?.projectId);
+      return;
+    }
     case 'edit-draft':
       await bundles.editDraft(command.bundleId, command.text);
       return;
@@ -362,7 +611,7 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       await repoPicker.linkBundle(command.bundleId);
       return;
     case 'open-repo-picker':
-      await repoPicker.open(command.bundleId);
+      repoPicker.open(command.bundleId);
       return;
     case 'set-repo-picker-checked':
       repoPicker.setChecked(command.path, command.checked);
@@ -380,10 +629,10 @@ async function runCommand(services: IpcServices, command: AppCommand): Promise<v
       repoPicker.close();
       return;
     case 'expand-review':
-      windows.openReview(command.bundleId);
+      windows.openReview(command.bundleId, command.diagnosisId ?? null);
       return;
     case 'collapse-review':
-      await windows.collapseReview(command.bundleId);
+      await windows.collapseReview(command.bundleId, command.diagnosisId ?? null);
       return;
     case 'set-review-section':
       reviewSections.set(command.window, command.section, command.open);
@@ -477,11 +726,6 @@ export async function openSite(section: SiteSection, logger: Logger): Promise<vo
   }
 }
 
-/** [알림 시험]이 띄우는 알림. 초안 준비됨 알림처럼 보이되 묶음을 가리키지 않아 누르면 작은 창만 띄운다. */
-function testNotification(appName: string) {
-  return { title: `${appName} 알림 시험`, body: '알림이 이렇게 보입니다. 초안이 준비되면 같은 방식으로 알려 드립니다.' };
-}
-
 /** core의 설정 "초안" 칸 상태를 렌더러에 넘길 모양으로 바꾼다. */
 function draftSettingsSnapshot(state: DraftSettingsState): DraftSettingsSnapshot {
   return {
@@ -502,6 +746,62 @@ async function openEvidenceInEditor({ bundles, editorOpener, logger }: IpcServic
     return;
   }
   await editorOpener.open(target);
+}
+
+/** 진단 보고서의 근거 하나를 에디터에서 연다. 보고서가 없거나 열 수 없는 근거면 로그만 남긴다. 위치 검증을 거친 근거만 연다. */
+async function openDiagnosisEvidenceInEditor(
+  { sentryDiagnoses, editorOpener, logger }: IpcServices,
+  diagnosisId: number,
+  evidenceIndex: number,
+): Promise<void> {
+  /** 근거가 든 보고서. */
+  const report = sentryDiagnoses.get(diagnosisId)?.report;
+  /** 열 파일과 줄. */
+  const target = report && evidenceFileOf(report, evidenceIndex);
+  if (!target) {
+    logger.warn('editor.open-skipped', { diagnosisId, evidenceIndex });
+    return;
+  }
+  await editorOpener.open(target);
+}
+
+/** 진단 보고서를 내보내고 결과를 창에 알린다. 내보낼 수 없는 진단(이미 완료함 등)이면 아무것도 알리지 않고, 파일을 만들지 못하면 실패를 알린다. */
+async function exportDiagnosis({ diagnosisExports, windows, logger }: IpcServices, diagnosisId: number): Promise<void> {
+  try {
+    /** 만든 파일. 내보낼 수 없는 진단이면 `null`. */
+    const exported = await diagnosisExports.export(diagnosisId);
+    if (exported) windows.broadcast({ type: 'diagnosis-exported', diagnosisId, fileName: exported.fileName });
+  } catch (error) {
+    logger.warn('diagnosis-exports.failed', { diagnosisId, ...errorFields(error) });
+    windows.broadcast({ type: 'diagnosis-export-failed', diagnosisId });
+  }
+}
+
+/** 보고서를 내보낼 폴더를 OS 파일 관리자로 연다. 아직 없으면 만들어서 연다. 열지 못하면 로그만 남긴다. 경로는 로그에 남기지 않는다. */
+async function openReportFolder({ reportFolder, logger }: IpcServices): Promise<void> {
+  try {
+    await mkdir(reportFolder.path(), { recursive: true });
+    /** 실패했을 때 OS가 돌려준 오류 문구. 성공하면 빈 문자열이다. */
+    const failure = await shell.openPath(reportFolder.path());
+    if (failure) logger.warn('report-folder.open-failed', { errorMessage: failure });
+  } catch (error) {
+    logger.warn('report-folder.open-failed', errorFields(error));
+  }
+}
+
+/** 진단의 오류 이슈를 기본 브라우저로 Sentry에서 연다. 열 주소가 없거나 열지 못하면 로그만 남긴다. 주소는 로그에 남기지 않는다. */
+async function openDiagnosisInSentry({ sentryDiagnoses, logger }: IpcServices, diagnosisId: number): Promise<void> {
+  /** 열 주소. 공식 sentry.io 주소만 연다. */
+  const url = openableSentryUrl(sentryDiagnoses.get(diagnosisId)?.issue.permalink ?? null);
+  if (!url) {
+    logger.warn('sentry.open-skipped', { diagnosisId });
+    return;
+  }
+  try {
+    await shell.openExternal(url);
+  } catch (error) {
+    logger.warn('sentry.open-failed', { diagnosisId, ...errorFields(error) });
+  }
 }
 
 /** core의 에디터 열기 상태를 렌더러에 넘길 모양으로 바꾼다. */
@@ -541,7 +841,20 @@ async function pickRepoPickerFolders(windows: AppWindows, repoPicker: RepoPicker
   };
   /** 고른 폴더. */
   const paths = await windows.pickFoldersOverReview(options);
-  if (paths.length > 0) repoPicker.addFolders(paths);
+  if (paths.length > 0) await showRejectedFolders(repoPicker.addFolders(paths));
+}
+
+/** 저장소 폴더로 받지 않은 이유(네트워크·WSL)마다 알릴 문장. */
+const REJECTED_FOLDER_TEXT: Record<RejectedFolderReason, string> = {
+  network: '네트워크 폴더는 저장소로 쓸 수 없습니다. 이 PC에 있는 폴더를 골라 주세요.',
+  wsl: 'WSL 폴더는 저장소로 쓸 수 없습니다. Windows 쪽에 있는 폴더를 골라 주세요.',
+};
+
+/** 받지 않은 폴더가 있으면 이유마다 한 번씩 알린다. 없으면 아무것도 하지 않는다. */
+async function showRejectedFolders(rejected: readonly RejectedFolder[]): Promise<void> {
+  for (const reason of new Set(rejected.map((folder) => folder.reason))) {
+    await dialog.showMessageBox({ type: 'warning', message: REJECTED_FOLDER_TEXT[reason], buttons: ['확인'], noLink: true });
+  }
 }
 
 /** core의 온보딩 상태를 렌더러에 넘길 모양으로 바꾼다. */
@@ -550,7 +863,7 @@ function onboardingSnapshot(state: OnboardingState): OnboardingSnapshot {
 }
 
 /** 폴더 선택 창으로 저장소 폴더를 여러 개 받아 Flow 프로젝트에 연결한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
-async function pickMappingRepos(windows: AppWindows, repoMappings: RepoMappings, projectId: string): Promise<void> {
+async function pickMappingRepos(windows: AppWindows, repoMappings: RepoMappings, bundles: MentionBundles, projectId: string): Promise<void> {
   /** 폴더 선택 창 설정. git 저장소가 아닌 코드 폴더도 고를 수 있다. */
   const options: OpenDialogOptions = {
     title: '연결할 저장소 폴더 고르기',
@@ -562,45 +875,23 @@ async function pickMappingRepos(windows: AppWindows, repoMappings: RepoMappings,
   /** 고른 결과. */
   const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
   if (result.canceled || result.filePaths.length === 0) return;
-  await repoMappings.addRepos(projectId, result.filePaths);
+  /** 이 프로젝트의 묶음이 저장소 매핑을 기다리는 중인지 여부. 참여 목록에 없어도 기다리는 프로젝트에는 매핑을 만들 수 있다. */
+  const waiting = bundles.waitingForMapping().some((item) => item.projectId === projectId);
+  await showRejectedFolders(await repoMappings.addRepos(projectId, result.filePaths, waiting));
 }
 
-/** core의 저장소 매핑 상태를 렌더러에 넘길 모양으로 바꾼다. 프로젝트 주소는 화면에 쓰지 않으므로 넘기지 않는다. */
-function repoMappingsSnapshot(state: RepoMappingsState): RepoMappingsSnapshot {
+/**
+ * core의 저장소 매핑 상태를 렌더러에 넘길 모양으로 바꾼다. 프로젝트 주소는 화면에 쓰지 않으므로 넘기지 않는다.
+ * 저장소 매핑 필요로 기다리는 프로젝트(`waiting`)는 이름을 참여 목록에서 찾아 붙인다.
+ */
+function repoMappingsSnapshot(state: RepoMappingsState, bundles: MentionBundles, repoMappings: RepoMappings): RepoMappingsSnapshot {
   return {
     mappings: state.mappings.map((mapping) => ({ ...mapping, repos: mapping.repos.map((repo) => ({ ...repo })) })),
+    waiting: bundles.waitingForMapping().map(({ projectId, count }) => ({ projectId, title: repoMappings.loadedProjectTitle(projectId), waitingCount: count })),
     projects:
       state.projects.status === 'loaded'
         ? { status: 'loaded', projects: state.projects.projects.map(({ projectId, title }) => ({ projectId, title })) }
         : state.projects,
-  };
-}
-
-/** 폴더 선택 창으로 작업 폴더를 여러 개 받아 더한다. 고르지 않고 닫으면 아무 일도 하지 않는다. */
-async function pickWorkFolders(windows: AppWindows, workFolders: WorkFolders): Promise<void> {
-  /** 폴더 선택 창 설정. */
-  const options: OpenDialogOptions = {
-    title: '작업 폴더 추가',
-    buttonLabel: '추가',
-    properties: ['openDirectory', 'multiSelections'],
-  };
-  /** 설정 창. 있으면 그 위에 시트로 띄운다. */
-  const parent = windows.settingsWindow();
-  /** 고른 결과. */
-  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-  if (result.canceled || result.filePaths.length === 0) return;
-  await workFolders.add(result.filePaths);
-}
-
-/** core의 작업 폴더 상태를 렌더러에 넘길 모양으로 바꾼다. */
-function workFoldersSnapshot(state: WorkFoldersState): WorkFoldersSnapshot {
-  return {
-    folders: state.folders.map(({ path, scan }) => ({
-      path,
-      scan: scan.status === 'found' ? { status: 'found', repos: scan.repos.map((repo) => ({ ...repo })) } : { status: scan.status },
-    })),
-    suggestions: state.suggestions.map((suggestion) => ({ ...suggestion })),
-    rejected: state.rejected.map((folder) => ({ ...folder })),
   };
 }
 
@@ -667,20 +958,139 @@ function announceKeyCheckOutcome(windows: AppWindows, outcome: FlowKeyCheckOutco
   if (outcome.kind === 'failed') windows.broadcast({ type: 'flow-key-check-finished', result: outcome.reason });
 }
 
+/** 토큰 확인이 연결이나 실패로 끝났으면 열린 창에 알린다. 그만둔 경우는 상태 변경으로 충분하다. */
+function announceTokenCheckOutcome(windows: AppWindows, outcome: SentryTokenCheckOutcome): void {
+  if (outcome.kind === 'connected') windows.broadcast({ type: 'sentry-token-check-finished', result: 'connected' });
+  if (outcome.kind === 'failed') windows.broadcast({ type: 'sentry-token-check-finished', result: outcome.reason });
+}
+
+/** 프로젝트 등록·편집의 결과를 렌더러에 알릴 값으로 바꾼다. */
+function saveResultOf(outcome: SentryRegisterOutcome | SentryUpdateOutcome): SentryProjectSaveResult {
+  if (outcome.kind === 'registered') return 'registered';
+  if (outcome.kind === 'updated') return 'updated';
+  return outcome.reason;
+}
+
+/** 재현 설정의 결과를 렌더러에 알릴 값으로 바꾼다. */
+function reproductionSaveResult(kind: 'saved' | 'unsupported' | 'not-mapped' | 'invalid-env-file'): ReproductionSaveResult {
+  return kind;
+}
+
+/** 파일 선택 창으로 재현용 환경 파일을 하나 받는다. 점으로 시작하는 파일(`.env`)도 보이게 한다. 고르지 않고 닫으면 `null`. */
+async function pickEnvFile(windows: AppWindows): Promise<string | null> {
+  /** 파일 선택 창 설정. */
+  const options: OpenDialogOptions = {
+    title: '재현용 환경 파일 고르기',
+    buttonLabel: '선택',
+    properties: ['openFile', 'showHiddenFiles'],
+  };
+  /** 설정 창. 있으면 그 위에 띄운다. */
+  const parent = windows.settingsWindow();
+  /** 고른 결과. */
+  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+/** core의 재현 설정 상태를 렌더러에 넘길 모양으로 바꾼다. 서버 정의의 값은 core가 이미 버렸고, 여기서도 이름·종류·출처·도구만 옮긴다. */
+function reproductionSnapshot(state: ReproductionState): ReproductionSnapshot {
+  return {
+    supported: state.supported,
+    repos: state.repos.map(({ path, enabled, envFile, envFileMissing }) => ({ path, enabled, envFile, envFileMissing })),
+    tools: {
+      mode: state.tools.mode,
+      status: state.tools.status,
+      servers: state.tools.servers.map(({ agent, name, kind, external, deniedTools, enabled }) => ({
+        agent,
+        name,
+        kind,
+        external,
+        deniedTools: [...deniedTools],
+        enabled,
+      })),
+      codexListFailed: state.tools.codexListFailed,
+    },
+  };
+}
+
+/** 폴더 선택 창으로 저장소 폴더를 하나 받는다. 고르지 않고 닫으면 `null`. */
+async function pickSingleFolder(windows: AppWindows, { title = '저장소 폴더 고르기', createDirectory = false } = {}): Promise<string | null> {
+  /** 폴더 선택 창 설정. git 저장소가 아닌 코드 폴더도 고를 수 있다. */
+  const options: OpenDialogOptions = { title, buttonLabel: '선택', properties: createDirectory ? ['openDirectory', 'createDirectory'] : ['openDirectory'] };
+  /** 설정 창. 있으면 그 위에 시트로 띄운다. */
+  const parent = windows.settingsWindow();
+  /** 고른 결과. */
+  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+/** 지금 등록한 Sentry 프로젝트와 프로젝트마다 매핑을 기다리는 진단 수. */
+function currentSentryProjectsSnapshot({ sentryProjects, sentryDiagnoses }: IpcServices): SentryProjectsSnapshot {
+  return sentryProjectsSnapshot(sentryProjects.state(), (projectId) => sentryDiagnoses.waitingForMapping(projectId));
+}
+
+/**
+ * core의 Sentry 프로젝트 상태를 렌더러에 넘길 모양으로 바꾼다. 조직·프로젝트 slug와 등록 시각은 화면에 쓰지 않으므로 넘기지 않는다.
+ * `waitingCountOf`는 프로젝트마다 저장소 매핑을 기다리는 진단 수다.
+ */
+function sentryProjectsSnapshot(state: SentryProjectsState, waitingCountOf: (projectId: string) => number): SentryProjectsSnapshot {
+  return {
+    projects: state.projects.map(({ registration, access, repo }) => ({
+      projectId: registration.projectId,
+      organizationName: registration.organizationName,
+      projectName: registration.projectName,
+      environment: registration.environment,
+      levels: [...registration.levels],
+      repo: repo && { ...repo },
+      access,
+      waitingCount: waitingCountOf(registration.projectId),
+    })),
+    candidates:
+      state.candidates.status === 'loaded'
+        ? {
+            status: 'loaded',
+            incomplete: state.candidates.incomplete,
+            projects: state.candidates.projects.map(({ projectId, organizationName, projectName, environments }) => ({
+              projectId,
+              organizationName,
+              projectName,
+              environments: [...environments],
+            })),
+          }
+        : state.candidates,
+  };
+}
+
+/** core의 Sentry 연결 상태를 렌더러에 넘길 모양으로 바꾼다. 조직 이름만 넘기고 지역 주소와 ID는 화면에 쓰지 않으므로 넘기지 않는다. */
+function sentrySnapshot(state: SentryConnectionState): SentryConnectionSnapshot {
+  return {
+    connected: state.connected,
+    organizations: state.organizations.map(({ name }) => ({ name })),
+    tokenCheck: { status: state.tokenCheck.status },
+    tokenProblem: state.problem,
+  };
+}
+
 /** core의 Flow 계정 상태를 렌더러에 넘길 모양으로 바꾼다. */
 function flowAccountSnapshot(state: FlowAccountState): FlowAccountSnapshot {
   return {
     account: state.account && accountProfile(state.account),
     keyCheck:
       state.keyCheck.status === 'awaiting-confirmation'
-        ? { status: 'awaiting-confirmation', account: accountProfile(state.keyCheck.account) }
+        ? { status: 'awaiting-confirmation', account: accountProfile(state.keyCheck.account), stored: state.keyCheck.stored }
         : { status: state.keyCheck.status },
   };
 }
 
 /** core의 전역 문제를 렌더러·트레이·알림 문구가 쓰는 모양으로 바꾼다. */
 export function globalProblemSnapshot(problem: GlobalProblem): GlobalProblemSnapshot {
-  return problem.cause === 'agent' ? { cause: 'agent', agent: problem.agent, reason: problem.reason } : { cause: 'flow-key', reason: problem.reason };
+  switch (problem.cause) {
+    case 'agent':
+      return { cause: 'agent', agent: problem.agent, reason: problem.reason };
+    case 'sentry-token':
+      return { cause: 'sentry-token', reason: problem.reason };
+    case 'flow-key':
+      return { cause: 'flow-key', reason: problem.reason };
+  }
 }
 
 /** 지금 보일 전역 문제를 렌더러에 넘길 모양으로 바꾼다. 없으면 `null`. */

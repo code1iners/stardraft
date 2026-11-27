@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AgentCheckProgress, AgentConnectionSnapshot, AgentId, AgentPreferencesSnapshot } from '../../shared/ipc';
 import { AgentSection } from './AgentSection';
+import { UNSUPPORTED_REPRODUCTION } from './reproduction-fixtures';
 
 /** 가짜 연결 상태. 경로와 버전은 가짜다. */
 function connection(agent: AgentId, progress: AgentCheckProgress, cliPath: string | null, cliFound = cliPath !== null): AgentConnectionSnapshot {
@@ -30,7 +31,7 @@ const NO_PREFERENCES: AgentPreferencesSnapshot = { connectedAgents: [], defaultA
 
 /** 에이전트 칸을 macOS로 그린 HTML. */
 function htmlOf(agentConnections: AgentConnectionSnapshot[], agentPreferences = NO_PREFERENCES): string {
-  return renderToStaticMarkup(<AgentSection agentConnections={agentConnections} agentPreferences={agentPreferences} platform="darwin" />);
+  return renderToStaticMarkup(<AgentSection agentConnections={agentConnections} agentPreferences={agentPreferences} parallelWork={{ count: 1, running: 0 }} reproduction={UNSUPPORTED_REPRODUCTION} platform="darwin" />);
 }
 
 describe('설정 "에이전트" 칸', () => {

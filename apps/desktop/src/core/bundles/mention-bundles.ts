@@ -1,14 +1,15 @@
 import { contextPostOf, isSourceGone, markContextMentions, type BundleContext, type BundleContextResult } from '../flow/bundle-context';
 import { mentionLocationKey, mentionLocationOf, type Mention, type MentionLocation } from '../detection/mention';
 import { isPostBody } from '../flow/mention-place';
-import type { AutoSelection, ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
+import type { ContextFailureReason, Draft, DraftFailure, Regeneration, RegenerationPath, RunRecord } from '../drafts/draft';
 import { findSecretEvidence } from '../drafts/draft-check';
 import { flowTimeToEpochMs } from '../flow/flow-time';
 import type { MyAnswer, PlaceLookup } from '../flow/mention-judgement';
 import type { Logger } from '../logging/logger';
 import type { Clock } from '../ports/clock';
 import type { AppNotification, Notifier } from '../ports/notifier';
-import type { StateStore } from '../ports/state-store';
+import type { AccountSwitchResult, StateStore } from '../ports/state-store';
+import type { FlowEmployee } from '../ports/flow-api';
 import { bundleRecipients, draftEditorText, isPostable, postableBody } from '../drafts/post-body';
 import { isSameFlowUser } from '../flow/user-id';
 import { missingFolders, type RepoResolution } from '../repos/repo-mappings';
@@ -16,7 +17,7 @@ import { SerialQueue } from '../serial-queue';
 import type { RecentAssignment } from '../manual-check/recent-assignments';
 import type { RecentMention } from '../manual-check/recent-mentions';
 import { unseenChanges } from './bundle-changes';
-import { isExpired, minimalRecordOf } from './retention';
+import { ACCOUNT_RETENTION_MS, isExpired, minimalRecordOf } from './retention';
 import {
   activeMentions,
   answeredSinceAssignment,
@@ -26,12 +27,12 @@ import {
   canRegenerate,
   compareBundles,
   compareMentions,
-  countsForReview,
   hasUnpostedDraft,
   isBeforePostRequest,
   isProcessed,
   isAutoProcessed,
   isDraftTouched,
+  isRepoUndetermined,
   isRestorable,
   isUnassignedBlocked,
   isWatched,
@@ -56,7 +57,7 @@ import {
 export interface MentionBundlesOptions {
   /** 묶음을 두는 상태 저장소. */
   stateStore: StateStore;
-  /** 초안 준비됨과 저장소 확인 필요 묶음을 알릴 OS 알림. */
+  /** 초안 준비됨과 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)를 알릴 OS 알림. */
   notifier: Notifier;
   /** 묶음을 만들고 처리한 시각을 읽는 시계. */
   clock: Clock;
@@ -68,17 +69,21 @@ export interface MentionBundlesOptions {
   collectContext: (bundle: MentionBundle) => Promise<BundleContextResult | null>;
   /** Flow 프로젝트의 저장소 매핑을 지금 폴더 상태로 확인한다. 초안 없는 묶음을 생성 중으로 올릴지 정하고, 초안 실행 직전에 다시 확인한다. */
   resolveRepos: (projectId: string) => Promise<RepoResolution>;
+  /** 저장소 대기 알림 본문에 넣을 프로젝트 이름. 모르거나 없으면 "이 프로젝트"로 쓴다. */
+  projectTitleOf?: (projectId: string) => string | null;
 }
 
 /**
  * 생성을 시작할 때 읽을 저장소를 확인한 결과. 사용자가 저장소 선택 창에서 고른 구성이 있으면 그 구성(`user`)을,
- * 없으면 저장소 매핑을 보고 매핑의 폴더가 모두 있으면 그 저장소(`mapped`)를 읽고, 매핑이 없으면(`unmapped`) 작업 폴더에서 자동 선택으로 정한다.
- * 자동 선택으로 정한 초안을 다시 만들면 선택 실행을 다시 돌리지 않고 직전 초안의 저장소와 그 내력(`auto-selected`)을 쓴다.
+ * 없으면 저장소 매핑을 보고 매핑의 폴더가 모두 있으면 그 저장소(`mapped`)를 읽는다. 자동 선택은 없다.
  */
-export type RunRepos =
-  | Exclude<RepoResolution, { kind: 'missing-folders' }>
-  | { kind: 'user'; repos: string[] }
-  | { kind: 'auto-selected'; repos: string[]; autoSelection: AutoSelection };
+export type RunRepos = Extract<RepoResolution, { kind: 'mapped' }> | { kind: 'user'; repos: string[] };
+
+/**
+ * 묶음의 읽을 저장소를 지금 폴더 상태로 확인한 결과. 읽을 수 있으면 `RunRepos`이고, 아니면 저장소 대기의 두 상태다.
+ * `unmapped`는 매핑도 고른 저장소도 없음(저장소 매핑 필요), `missing-folders`는 정해 둔 저장소의 폴더가 없음(저장소 확인 필요)이다.
+ */
+export type BundleRepoResolution = RunRepos | Exclude<RepoResolution, { kind: 'mapped' }>;
 
 /** 최근 멘션 확인에서 고른 항목의 결과. 새로 만든 수동 요청 묶음이나, 그 위치에 이미 있어 대신 연 묶음의 ID다. */
 export type ManualRequestResult = { kind: 'created' | 'existing'; bundleId: number };
@@ -156,7 +161,7 @@ export class MentionBundles {
 
   constructor(private readonly options: MentionBundlesOptions) {}
 
-  /** 저장한 묶음을 읽는다. 앱을 시작할 때와 다른 계정으로 바꿔 기록을 비운 뒤에 부른다. */
+  /** 움직이는 계정의 저장한 묶음을 읽는다. 앱을 시작할 때 부른다. */
   load(): Promise<void> {
     return this.lane.run(async () => {
       this.bundles = await this.options.stateStore.listBundles();
@@ -166,7 +171,45 @@ export class MentionBundles {
   }
 
   /**
-   * 앱을 다시 켤 때 앱이 꺼지며 끊긴 묶음을 정리한다. 앱을 시작할 때 저장한 묶음을 읽은 뒤 한 번 부른다.
+   * 다른 Flow 계정으로 바꾼다. 지금 계정의 기록은 지우지 않고 보관하며(떠날 때의 비밀 파일 패턴 `secretPatterns`와 함께),
+   * 새 계정의 보관한 기록을 읽어 그 계정의 묶음만 보인다. 마지막으로 쓴 지 30일이 지난 계정은 먼저 지우므로, 그 계정이면 처음 넣는 계정처럼 시작한다.
+   * 묶음을 바꾸는 다른 일과 끼어들지 않게 같은 줄에서 한다. 이 앞에 맡긴 일은 지금 계정에, 뒤에 맡긴 일은 새 계정에 한다.
+   */
+  switchAccount(account: FlowEmployee, secretPatterns: readonly string[]): Promise<AccountSwitchResult> {
+    return this.lane.run(async () => {
+      /** 바꾸는 시각. 떠나는 계정이 마지막으로 쓴 시각이 된다. */
+      const now = this.options.clock.now();
+      await this.deleteAccountsUnusedSince(now);
+      /** 바꾼 결과. */
+      const result = await this.options.stateStore.switchAccount(account, { now, secretPatterns });
+      this.bundles = await this.options.stateStore.listBundles();
+      this.minimalRecords = await this.options.stateStore.listMinimalRecords();
+      // 떠난 계정의 게시를 누를 때의 확인과 맥락 조회는 버린다. 늦게 끝나도 새 계정의 묶음을 덮지 않는다.
+      this.postChecks.clear();
+      this.contextRequests.clear();
+      this.options.logger.info('bundle.account-switched', { returning: result.returning, bundleCount: this.bundles.length });
+      this.emit();
+      return result;
+    });
+  }
+
+  /** 마지막으로 쓴 지 30일이 지난 보관 계정의 기록 전체를 지운다. 보관 정리가 하루에 한 번, 계정을 바꾸기 전에 부른다. 지운 계정 수를 돌려준다. */
+  deleteUnusedAccounts(): Promise<number> {
+    /** 정리를 부른 시각. */
+    const now = this.options.clock.now();
+    return this.lane.run(() => this.deleteAccountsUnusedSince(now));
+  }
+
+  /** 줄 안에서 30일이 지난 보관 계정을 지운다. 사용자에게 알리지 않는다. */
+  private async deleteAccountsUnusedSince(now: number): Promise<number> {
+    /** 지운 계정 수. */
+    const deleted = await this.options.stateStore.deleteAccountsUnusedBefore(now - ACCOUNT_RETENTION_MS);
+    if (deleted > 0) this.options.logger.info('bundle.unused-accounts-deleted', { count: deleted });
+    return deleted;
+  }
+
+  /**
+   * 앱을 다시 켤 때 앱이 꺼지며 끊긴 묶음을 정리한다. 앱을 시작할 때 저장한 묶음을 읽은 뒤 한 번 부른다. 보관해 둔 계정으로 돌아왔을 때도 부른다.
    * 카운트다운 중이던 게시 중 묶음(보내기 전 기록이 없음)은 게시하지 않고 준비됨으로 돌리고 "앱이 꺼져서 게시하지 않았습니다"를 띄운다.
    * 게시를 누를 때 조회한 내용은 메모리에만 있어 이미 버려졌다.
    */
@@ -214,9 +257,11 @@ export class MentionBundles {
       .map((bundle) => bundle.id);
   }
 
-  /** 트레이 검토 수. 검토 대기 가운데 준비됨과 저장소 확인 필요 묶음 수다. */
+  /** 트레이 검토 수. 준비됨 묶음은 건마다, 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)는 프로젝트마다 1로 센다. */
   reviewCount(): number {
-    return this.bundles.filter((bundle) => countsForReview(bundle.status)).length;
+    /** 저장소 대기 묶음이 있는 프로젝트. */
+    const waitingProjects = new Set(this.bundles.filter(isRepoWaiting).map((bundle) => bundle.projectId));
+    return this.bundles.filter((bundle) => bundle.status === 'ready').length + waitingProjects.size;
   }
 
   /** 이 PC가 게시해 기록한 글의 ID(`commentId`, `replyId`) 전부. 처리됨 목록에서 빠져 최소 기록만 남은 글도 넣는다. */
@@ -253,7 +298,7 @@ export class MentionBundles {
    */
   async addAssignment(post: import('../ports/flow-api').FlowPost, projectId: string, accountId: string,
     { taskId, assignedAt }: Required<Pick<TaskAssignment, 'taskId' | 'assignedAt'>>, answers: readonly MyAnswer[]): Promise<void> {
-    /** 기존 저장소 매핑과 자동 선택 정책. */
+    /** 기존 저장소 매핑 정책. */
     const resolutions = await this.resolveProjects([projectId]);
     /** 저장소 확인을 기다리는 새 묶음은 원문도 바로 조회한다. */
     const created = await this.lane.run(async () => {
@@ -300,22 +345,29 @@ export class MentionBundles {
       this.emit();
       return saved;
     });
-    if (created && countsForReview(created.status)) this.options.notifier.notify(repoCheckNotification([created]));
+    if (created && isRepoWaiting(created)) this.announceRepoWait([created]);
     if (created && showsContextWithoutDraft(created)) await this.refreshContexts([created.id]);
   }
 
   /**
    * 판정을 통과한 멘션을 묶음에 넣고 기준점을 옮긴다. 둘은 함께 저장한다.
    * 같은 자리에 처리되지 않은 묶음이 있으면 합치고, 없거나 처리됨뿐이면 새 묶음을 만든다.
-   * 새 묶음은 저장소 매핑의 폴더가 모두 있거나 매핑이 없으면(자동 선택) 생성 중, 매핑된 폴더가 없으면 저장소 확인 필요로 올린다.
+   * 새 묶음은 저장소 매핑의 폴더가 모두 있으면 생성 중, 매핑이 없으면 저장소 매핑 필요, 매핑된 폴더가 없으면 저장소 확인 필요로 올린다.
    * 자리마다 `lookups`의 내 답으로 "이미 답함"을 판정하고, 모든 멘션이 빠진 묶음은 초안 없이 이미 답함으로 둔다.
    * 새로 저장소 확인 필요가 된 묶음이 있으면 OS 알림을 하나 띄운다.
    */
-  async addDetected(mentions: readonly Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baselineAlarmId: string): Promise<void> {
+  async addDetected(mentions: readonly Mention[], lookups: ReadonlyMap<string, PlaceLookup>, baselineAlarmId: string, accountId: string): Promise<void> {
     /** 멘션이 온 Flow 프로젝트마다 저장소 매핑을 확인한 결과. 새 묶음의 상태를 정한다. */
     const resolutions = await this.resolveProjects(mentions.map((mention) => mention.projectId));
     /** 멘션을 넣어 초안 없이 기다리게 된 묶음. 원문 영역에 보일 맥락을 새로 조회한다. */
     const changed = await this.lane.run(async (): Promise<number[]> => {
+      // 조회하는 사이에 다른 계정으로 바뀌었으면, 떠난 계정의 감지 결과를 새 계정의 기록에 넣지 않는다.
+      /** 지금 움직이는 계정. */
+      const current = await this.options.stateStore.getAccount();
+      if (!current || !isSameFlowUser(current.userId, accountId)) {
+        this.options.logger.info('bundle.detection-dropped-after-account-switch', { mentionCount: mentions.length });
+        return [];
+      }
       /** 지금 시각. */
       const now = this.options.clock.now();
       /** 이번에 바뀌는 묶음과 새로 넣은 멘션. 자리마다 하나다. */
@@ -356,7 +408,9 @@ export class MentionBundles {
       const entries = [...touched.values()];
       /** 저장할 묶음. 자리마다 조회한 결과로 "이미 답함"을 판정한다. */
       const updated = [...touched].map(([place, { bundle, added }]) => {
-        return applyDetection(bundle, added, lookups.get(place), now, ranges);
+        /** 그 묶음 Flow 프로젝트에 저장소 매핑이 있는지 여부. */
+        const resolution = resolutions.get(bundle.projectId);
+        return applyDetection(bundle, added, lookups.get(place), now, ranges, resolution ? resolution.kind !== 'unmapped' : true);
       });
       /** 저장한 묶음. */
       const saved = await this.options.stateStore.saveDetectedBundles(updated, baselineAlarmId);
@@ -392,9 +446,8 @@ export class MentionBundles {
         this.emitStopped(bundleId, stop);
       }
 
-      /** 새로 저장소 확인 필요가 된 묶음. 대기열 순서다. 생성 중 묶음은 초안이 준비될 때 알린다. */
-      const waiting = saved.filter((bundle) => createdIds.has(bundle.id) && countsForReview(bundle.status)).sort(compareBundles);
-      if (waiting.length > 0) this.options.notifier.notify(repoCheckNotification(waiting));
+      /** 새로 저장소 대기가 된 묶음. 생성 중 묶음은 초안이 준비될 때 알린다. */
+      this.announceRepoWait(saved.filter((bundle) => createdIds.has(bundle.id) && isRepoWaiting(bundle)));
       return saved.filter(showsContextWithoutDraft).map((bundle) => bundle.id);
     });
     // 초안 없이 기다리는 묶음은 원문 영역의 "스레드 보기"에 보일 맥락을 새로 조회한다.
@@ -633,29 +686,131 @@ export class MentionBundles {
 
   /**
    * 생성을 시작할 때 읽을 저장소를 지금 폴더 상태로 다시 확인한다. 기다리는 사이에 매핑이 생겼거나 지워졌거나 폴더가 사라졌을 수 있다.
-   * 사용자가 고른 구성이 있으면 저장소 매핑 대신 그 구성을 본다. 폴더가 모두 있으면 읽을 저장소를, 매핑이 없으면 자동 선택으로 정하라고 돌려준다.
-   * 읽을 폴더가 하나라도 없으면 자동 선택으로 넘어가지 않고, 생성 중 묶음을 초안 없이 저장소 확인 필요로 올리고 OS 알림을 띄운 뒤 `null`을 돌려준다.
-   * 자동 선택으로 정한 초안을 다시 만드는 묶음은 매핑이 여전히 없으면 직전 초안의 저장소를 쓴다. 그 폴더가 사라졌으면 자동 선택을 다시 한다.
+   * 사용자가 고른 구성이 있으면 저장소 매핑 대신 그 구성을 본다. 폴더가 모두 있으면 읽을 저장소를 돌려준다.
+   * 매핑도 고른 구성도 없으면 선택 실행 없이 저장소 매핑 필요로, 읽을 폴더가 하나라도 없으면 저장소 확인 필요로 생성 중 묶음을 올리고
+   * OS 알림을 띄운 뒤 `null`을 돌려준다.
    */
   async reposForRun(bundleId: number): Promise<RunRepos | null> {
     /** 실행할 묶음. */
     const bundle = this.bundles.find((item) => item.id === bundleId);
     if (!bundle || bundle.status !== 'generating') return null;
     /** 읽을 저장소를 확인한 결과. */
-    const resolution = bundle.userRepos ? await resolveUserRepos(bundle.userRepos) : await this.options.resolveRepos(bundle.projectId);
-    /** 직전 초안이 자동 선택으로 정한 저장소. */
-    const autoSelected = bundle.regeneration?.autoSelected;
-    if (resolution.kind === 'unmapped' && autoSelected && (await missingFolders(autoSelected.repositories)).length === 0) {
-      return { kind: 'auto-selected', repos: [...autoSelected.repositories], autoSelection: structuredClone(autoSelected.autoSelection) };
-    }
-    if (resolution.kind !== 'missing-folders') return resolution;
+    const resolution = await this.resolutionOf(bundle);
+    if (resolution.kind === 'mapped' || resolution.kind === 'user') return resolution;
 
-    /** 저장소 확인 필요가 된 묶음. 그사이 생성 중이 아니게 되었으면 `null`. */
+    /** 저장소 대기가 된 묶음. 그사이 생성 중이 아니게 되었으면 `null`. */
     const changed = await this.change(bundleId, 'bundle.repo-check-needed', (latest) =>
       latest.status === 'generating' ? { ...latest, ...statusWithoutDraft(resolution) } : null,
     );
-    if (changed) this.options.notifier.notify(repoCheckNotification([changed]));
+    if (changed) {
+      this.announceRepoWait([changed]);
+      // 초안 실행 직전에 조회하지 못했으므로, 원문 영역에 보일 맥락을 지금 조회한다.
+      await this.refreshContexts([bundleId]);
+    }
     return null;
+  }
+
+  /**
+   * 저장소 대기(저장소 매핑 필요, 저장소 확인 필요) 묶음을 지금 매핑과 폴더 상태로 다시 판정한다.
+   * 읽을 저장소가 생겼으면 생성 중으로 올려 `auto` 칸(수동 요청 묶음은 `user` 칸)의 대기열 순서대로 서게 하고, 합쳐져 있던 새 멘션은 이번 초안에 든다.
+   * 아직 읽을 수 없으면 사유만 지금 상태로 맞춘다. 옛 사유(후보 없음, 확신 없음, 코드와 무관함, 사유 없음)로 멈춰 있던 묶음은 이때 두 상태로 옮긴다.
+   * 매핑을 저장했을 때, 폴더가 돌아왔을 때, 앱을 켜거나 절전에서 깰 때 부른다. 생성 중으로 올린 묶음 수를 돌려준다.
+   */
+  async resumeRepoWaiting(): Promise<number> {
+    /** 다시 판정할 묶음. 초안 없이 기다리는 저장소 대기 묶음이다. 처음 보인 순서(대기열 순서)로 올려 `auto` 칸에 그 순서로 선다. */
+    const waiting = this.bundles.filter(isRepoWaiting).sort(compareBundles);
+    if (waiting.length === 0) return 0;
+    /** 묶음마다 확인한 결과. 확인하다 예외가 나면 그 묶음은 지금 상태 그대로 둔다(일시 오류로 매핑 없음으로 잘못 옮기지 않는다). */
+    const resolutions = new Map(
+      await Promise.all(waiting.map(async (bundle): Promise<[number, BundleRepoResolution | null]> => [bundle.id, await this.resolutionOf(bundle).catch(() => null)])),
+    );
+    /** 생성 중으로 올린 묶음 수. */
+    let resumed = 0;
+    for (const { id } of waiting) {
+      /** 지금 확인한 결과. */
+      const resolution = resolutions.get(id);
+      if (!resolution) continue;
+      await this.change(id, 'bundle.repo-wait-rechecked', (latest) => {
+        if (!isRepoWaiting(latest)) return null;
+        /** 다시 판정한 묶음. */
+        const next: MentionBundle = { ...latest, ...statusWithoutDraft(resolution), ...(resolution.kind === 'mapped' || resolution.kind === 'user' ? { newMentionCount: 0 } : {}) };
+        if (next.status === latest.status && JSON.stringify(next.repoCheck) === JSON.stringify(latest.repoCheck)) return null;
+        if (next.status === 'generating') resumed += 1;
+        return next;
+      });
+    }
+    return resumed;
+  }
+
+  /**
+   * 방금 저장소 대기가 된 묶음을 프로젝트 단위로 OS 알림에 띄운다. 프로젝트마다 한 번이다.
+   * 같은 프로젝트에 이미 저장소 대기로 기다리는 묶음이 있으면 풀리기 전이므로 알리지 않고 목록의 수만 늘어난다.
+   * 그 묶음이 모두 풀린 뒤 다시 대기가 되면 다시 알린다. 알림을 누르면 새로 대기가 된 묶음 가운데 대기열 순서로 첫 건을 연다.
+   * 묶음은 이미 `this.bundles`에 들어 있어야 한다.
+   */
+  private announceRepoWait(waiting: readonly MentionBundle[]): void {
+    /** 프로젝트별로 모은 새 대기 묶음. */
+    const groups = new Map<string, MentionBundle[]>();
+    for (const bundle of waiting) groups.set(bundle.projectId, [...(groups.get(bundle.projectId) ?? []), bundle]);
+    for (const [projectId, group] of groups) {
+      /** 이번 묶음 말고 이미 같은 프로젝트에서 기다리는 묶음. 있으면 이미 알렸다. */
+      const alreadyWaiting = this.bundles.some((bundle) => isRepoWaiting(bundle) && bundle.projectId === projectId && !group.some((item) => item.id === bundle.id));
+      if (alreadyWaiting) continue;
+      /** 알림이 열 첫 건. */
+      const first = [...group].sort(compareBundles)[0]!;
+      this.options.notifier.notify(repoWaitNotification(first, this.options.projectTitleOf?.(projectId) ?? null));
+    }
+  }
+
+  /**
+   * 저장소 매핑이 없어 기다리는 묶음(저장소 매핑 필요)을 Flow 프로젝트별로 센다. 대기 건수가 많은 순이고, 같으면 프로젝트 ID 순이다.
+   * 설정 "저장소" 칸 맨 위에 "저장소 매핑 없음 · n건 대기"로 보인다.
+   */
+  waitingForMapping(): { projectId: string; count: number }[] {
+    /** 프로젝트별 대기 건수. */
+    const counts = new Map<string, number>();
+    for (const bundle of this.bundles) {
+      if (isRepoWaiting(bundle) && bundle.repoCheck?.kind === 'unmapped') counts.set(bundle.projectId, (counts.get(bundle.projectId) ?? 0) + 1);
+    }
+    return [...counts].map(([projectId, count]) => ({ projectId, count })).sort((a, b) => b.count - a.count || a.projectId.localeCompare(b.projectId));
+  }
+
+  /** 정해 둔 저장소의 폴더가 없어 기다리는 묶음(저장소 확인 필요)이 있는지 본다. 폴더가 돌아오는지 60초마다 다시 확인할 대상이다. */
+  hasMissingFolderWaiting(): boolean {
+    return this.bundles.some((bundle) => isRepoWaiting(bundle) && bundle.repoCheck?.kind === 'missing-folders');
+  }
+
+  /**
+   * 앱을 켤 때 한 번, 자동 선택 때문에 멈췄던 묶음을 저장소 매핑 기준으로 다시 판정한다. 저장된 자동 선택 값은 읽지 않고 지우지도 않는다.
+   * - 초안 없이 생성 중이던 묶음 가운데 매핑도 고른 저장소도 없는 것은 저장소 매핑 필요가 된다. 자동 선택 결과는 이어 쓰지 않는다.
+   * - 선택 실행이 실패한 실패 묶음은 매핑이 있으면 생성 중(대기열), 폴더가 없으면 저장소 확인 필요, 매핑이 없으면 저장소 매핑 필요가 된다.
+   * - 옛 사유로 멈춰 있던 저장소 대기 묶음도 같은 기준으로 옮긴다(`resumeRepoWaiting`).
+   * 다시 판정한 묶음은 새 상태가 되어 이 조건에 들지 않으므로, 몇 번 불러도 같은 묶음을 두 번 옮기지 않는다. 알림은 띄우지 않는다.
+   * 오래 멈춰 있던 묶음이 한꺼번에 생성 중이 될 수 있다.
+   */
+  async reconcileRepoStates(): Promise<void> {
+    /** 다시 판정할 묶음. 초안이 없고, 생성 중이거나 선택 실행이 실패했다. */
+    const candidates = this.bundles.filter(isLegacySelectionStalled);
+    for (const { id } of candidates) {
+      /** 지금 묶음. */
+      const bundle = this.bundles.find((item) => item.id === id);
+      if (!bundle || !isLegacySelectionStalled(bundle)) continue;
+      /** 지금 확인한 결과. 확인하다 예외가 나면 그 묶음은 이번에 건드리지 않는다. */
+      const resolution = await this.resolutionOf(bundle).catch(() => null);
+      if (!resolution) continue;
+      await this.change(id, 'bundle.repo-state-reconciled', (latest) => {
+        if (!isLegacySelectionStalled(latest)) return null;
+        // 생성 중이던 묶음은 읽을 저장소가 있으면 그대로 대기열에 두고, 실패 묶음은 다시 시도와 같게 생성 중으로 올린다.
+        if (resolution.kind === 'mapped' || resolution.kind === 'user') return latest.status === 'failed' ? { ...latest, ...retried } : null;
+        return { ...latest, ...statusWithoutDraft(resolution), failure: null };
+      });
+    }
+    await this.resumeRepoWaiting();
+  }
+
+  /** 묶음이 읽을 저장소를 지금 폴더 상태로 확인한다. 사용자가 고른 구성이 있으면 저장소 매핑보다 먼저 본다. */
+  private async resolutionOf(bundle: Pick<MentionBundle, 'projectId' | 'userRepos'>): Promise<BundleRepoResolution> {
+    return bundle.userRepos ? resolveUserRepos(bundle.userRepos) : this.options.resolveRepos(bundle.projectId);
   }
 
   /**
@@ -669,7 +824,7 @@ export class MentionBundles {
       status: 'repo-check-needed',
       repoCheck: structuredClone(repoCheck),
     }));
-    if (changed) this.options.notifier.notify(repoCheckNotification([changed]));
+    if (changed) this.announceRepoWait([changed]);
     return changed !== null;
   }
 
@@ -765,13 +920,19 @@ export class MentionBundles {
    * 요구를 고치면 그때까지의 지시를 지운다. 받는 사람에서 뺀 사람은 초안 텍스트 밖이라 그대로 둔다.
    * 고친 요구는 한 문장이라 줄바꿈을 공백으로 잇는다. 준비됨이 아니거나 덧붙일 지시나 고친 요구가 비어 있으면 아무것도 하지 않는다.
    * 담당 해제로 막힌 묶음도 다시 만들지 않는다. 다시 만들면 초안과 편집본을 지우고, 생성 직전 확인이 곧 실행을 멈추기 때문이다.
+   * 저장소가 정해지지 않은 초안(고른 저장소도 매핑도 없음)도 다시 만들지 않는다. 다른 저장소로 다시 만들려면 `regenerateWithRepos`를 쓴다.
    */
   async regenerate(bundleId: number, request: RegenerationRequest): Promise<void> {
     /** 경로에 따라 바꿀 지시와 고친 요구. 덧붙일 지시나 고친 요구가 비었으면 `null`. */
     const inputs = regenerationInputsOf(request);
     if (!inputs) return;
+    /** 다시 만들 묶음. */
+    const target = this.bundles.find((item) => item.id === bundleId);
+    /** 그 묶음 Flow 프로젝트에 저장소 매핑이 있는지 여부. 조회하다 예외가 나면 없는 것으로 본다. */
+    const mapped = target ? await this.options.resolveRepos(target.projectId).then((resolution) => resolution.kind !== 'unmapped', () => false) : false;
     await this.change(bundleId, `bundle.regenerated-${request.path}`, (bundle) => {
-      if (!bundle.draft || !canRegenerate(bundle.status) || isUnassignedBlocked(bundle)) return null;
+      // 저장소가 정해지지 않은 초안은 다시 만들 저장소가 없어 다시 만들지 않는다. 초안을 버리지 않는다.
+      if (!bundle.draft || !canRegenerate(bundle.status) || isUnassignedBlocked(bundle) || isRepoUndetermined(bundle, mapped)) return null;
       return { ...bundle, ...regenerationOf(bundle, request.path), ...inputs(bundle.directives) };
     });
   }
@@ -991,7 +1152,7 @@ export class MentionBundles {
 
   /**
    * 무시함, 이미 답함, 원문 사라짐, 담당 해제에서 되돌린다. 초안이 있으면 그대로 준비됨이 되고, 없으면 새로 만들도록 생성 중으로 올린다.
-   * 초안이 없는데 매핑된 폴더가 사라졌으면 저장소 확인 필요로 돌아간다. 매핑이 없으면 생성 중으로 올라 자동 선택부터 한다.
+   * 초안이 없는데 정해 둔 저장소의 폴더가 사라졌으면 저장소 확인 필요로, 매핑도 고른 저장소도 없으면 저장소 매핑 필요로 돌아간다.
    * 이미 답함·원문 사라짐에서 되돌리면 그때 있던 내 답과 사라진 멘션을 기록해 이후 판정에서 뺀다. 내 답은 Flow에서 새로 조회한다.
    * 같은 답이나 같은 사라짐으로 다시 처리됨이 되지 않게 하려는 것이고, 그래서 빠졌던 멘션도 다시 든다. 조회하지 못하면 판정 때 기록한 답만 뺀다.
    * 무시함에서 되돌리면 답을 빼지 않아, 이미 답한 앞선 멘션은 빠진 채로 둔다.
@@ -1007,8 +1168,8 @@ export class MentionBundles {
     }
     /** 지금 Flow에 있는 내 답. 자동으로 옮겨진 묶음이 아니거나 조회하지 못하면 `null`. */
     const current = isAutoProcessed(bundle.status) ? await this.options.findMyAnswers(bundle).catch(() => null) : null;
-    /** 초안이 없을 때 돌아갈 상태를 정할 저장소 매핑. */
-    const resolution = await this.options.resolveRepos(bundle.projectId);
+    /** 초안이 없을 때 돌아갈 상태를 정할 읽을 저장소. 고른 구성이 있으면 그 구성, 없으면 저장소 매핑이다. */
+    const resolution = await this.resolutionOf(bundle);
 
     // 조회하는 사이에 상태가 바뀌었을 수 있으므로 줄에 들어가 지금 값으로 다시 본다.
     /** 되돌린 묶음. */
@@ -1182,7 +1343,7 @@ export class MentionBundles {
       return { kind: 'created', bundle: saved };
     });
     if (outcome.kind === 'created') {
-      if (countsForReview(outcome.bundle.status)) this.options.notifier.notify(repoCheckNotification([outcome.bundle]));
+      if (isRepoWaiting(outcome.bundle)) this.announceRepoWait([outcome.bundle]);
       if (showsContextWithoutDraft(outcome.bundle)) await this.refreshContexts([outcome.bundle.id]);
     }
     return { kind: outcome.kind, bundleId: outcome.bundle.id };
@@ -1197,6 +1358,14 @@ export class MentionBundles {
     /** 정리를 부른 시각. */
     const now = this.options.clock.now();
     return this.lane.run(async () => {
+      // 보관 중인 계정의 처리한 묶음도 시계대로 정리한다. 화면에 보이지 않으므로 알리지 않는다.
+      /** 보관 중인 계정에서 목록에서 뺄 묶음. */
+      const storedExpired = (await this.options.stateStore.listStoredBundles()).filter((bundle) => isExpired(bundle, now));
+      if (storedExpired.length > 0) {
+        await this.options.stateStore.archiveBundles(storedExpired.map(minimalRecordOf));
+        this.options.logger.info('bundle.stored-account-archived', { count: storedExpired.length });
+      }
+
       /** 목록에서 뺄 묶음. */
       const expired = this.bundles.filter((bundle) => isExpired(bundle, now));
       if (expired.length === 0) return 0;
@@ -1374,7 +1543,7 @@ const clearedForRegeneration = {
 
 /**
  * 준비됨 묶음을 `path` 경로로 다시 만들 때 바꿀 것. 직전 초안과 비교 기준을 지우고 다음 초안 실행에 넘길 재생성을 남긴다.
- * 지시를 덧붙이면 직전 결과를 남기고, 직전 초안이 자동 선택으로 정한 저장소였으면 선택 실행을 다시 돌리지 않게 그 저장소를 남긴다.
+ * 지시를 덧붙이면 직전 결과를 남긴다.
  */
 function regenerationOf(bundle: Pick<MentionBundle, 'draft'>, path: RegenerationPath): Pick<MentionBundle, 'regeneration'> & typeof clearedForRegeneration {
   /** 직전 초안. */
@@ -1383,7 +1552,8 @@ function regenerationOf(bundle: Pick<MentionBundle, 'draft'>, path: Regeneration
   const regeneration: Regeneration = {
     path,
     previous: path === 'directive' ? structuredClone({ requirement: draft.requirement, paragraphs: draft.paragraphs, evidence: draft.evidence }) : null,
-    autoSelected: draft.autoSelection ? { repositories: [...draft.repositories], autoSelection: structuredClone(draft.autoSelection) } : null,
+    // 자동 선택의 결과는 이어 쓰지 않는다. 저장된 값은 읽지 않는다.
+    autoSelected: null,
   };
   return { ...clearedForRegeneration, regeneration };
 }
@@ -1420,17 +1590,30 @@ async function resolveUserRepos(repos: readonly string[]): Promise<RunRepos | Ex
 }
 
 /**
- * 초안이 없는 묶음이 저장소 매핑에 따라 갈 상태. 매핑의 폴더가 모두 있거나 매핑이 없으면(자동 선택) 초안을 만들러 생성 중으로 간다.
- * 매핑된 폴더가 사라졌으면 자동 선택으로 넘어가지 않고 "연결된 저장소 폴더를 찾을 수 없음" 사유로 저장소 확인 필요다.
+ * 초안이 없는 묶음이 읽을 저장소 확인 결과에 따라 갈 상태. 읽을 저장소가 있으면 초안을 만들러 생성 중으로 간다.
+ * 매핑도 고른 저장소도 없으면 선택 실행 없이 저장소 매핑 필요, 정해 둔 폴더가 사라졌으면 "연결된 저장소 폴더를 찾을 수 없음" 사유로 저장소 확인 필요다.
  */
-function statusWithoutDraft(resolution: RepoResolution): Pick<MentionBundle, 'status' | 'repoCheck'> {
+function statusWithoutDraft(resolution: BundleRepoResolution): Pick<MentionBundle, 'status' | 'repoCheck'> {
   switch (resolution.kind) {
     case 'mapped':
-    case 'unmapped':
+    case 'user':
       return { status: 'generating', repoCheck: null };
+    case 'unmapped':
+      return { status: 'repo-check-needed', repoCheck: { kind: 'unmapped' } };
     case 'missing-folders':
       return { status: 'repo-check-needed', repoCheck: { kind: 'missing-folders', paths: [...resolution.paths] } };
   }
+}
+
+/** 초안 없이 저장소 대기(저장소 매핑 필요, 저장소 확인 필요)로 기다리는 묶음인지 본다. 읽을 저장소가 생기면 다시 만들 대상이다. */
+function isRepoWaiting(bundle: MentionBundle): boolean {
+  return bundle.draft === null && bundle.status === 'repo-check-needed';
+}
+
+/** 자동 선택 때문에 멈췄을 수 있는 묶음인지 본다. 초안이 없고 생성 중이거나, 선택 실행이 실패해 실패가 된 묶음이다. */
+function isLegacySelectionStalled(bundle: MentionBundle): boolean {
+  if (bundle.draft !== null) return false;
+  return bundle.status === 'generating' || (bundle.status === 'failed' && bundle.failure?.runKind === 'selection');
 }
 
 /**
@@ -1445,7 +1628,7 @@ function showsContextWithoutDraft(bundle: MentionBundle): boolean {
  * 멘션을 넣은 묶음에 자리를 조회한 결과를 반영한다. 게시물 제목·주소와 내 답을 바꾸고 "이미 답함"을 다시 판정한다.
  * 기존 묶음에 합친 멘션 가운데 묶음에 남은 것이 있으면 그 송신자를 받는 사람에 다시 더하고, 묶음 상태에 따라 처리한다.
  * - 생성 중: 처음부터 다시 만드는 초안에 들어가므로 "새 멘션"으로 세지 않는다.
- * - 준비됨(초안·요구·지시를 손대지 않음): 합치고 자동으로 다시 만든다(다시 만들기).
+ * - 준비됨(초안·요구·지시를 손대지 않음): 합치고 자동으로 다시 만든다(다시 만들기). 저장소가 정해지지 않은 초안은 합치고 "새 멘션"만 센다.
  * - 실패: 합치고 자동으로 다시 시도한다. 재생성 중에 실패했으면 같은 재생성 입력으로 다시 만든다.
  * - 그 밖(손댄 준비됨, 저장소 확인 필요): 합치기만 하고 "새 멘션"을 센다.
  * - 게시 중(게시를 누를 때의 확인이 끝나기 전): 게시를 멈추고 준비됨 규칙으로 합친다.
@@ -1457,6 +1640,7 @@ function applyDetection(
   lookup: PlaceLookup | undefined,
   now: number,
   postedRanges: PostedAnswerRanges,
+  mapped: boolean,
 ): UnsavedBundle {
   /** 반영한 묶음. */
   let next: UnsavedBundle = { ...bundle };
@@ -1472,7 +1656,7 @@ function applyDetection(
   const addedActive = next.assignment ? [] : next.mentions.filter((mention) => !mention.answered && added.has(mentionLocationKey(mention)));
   // 뺄 때는 이 새 요청이 없었으므로, 새 멘션의 송신자는 전에 받는 사람에서 뺐더라도 다시 더한다.
   next.removedRecipients = next.removedRecipients.filter((id) => !addedActive.some((mention) => isSameFlowUser(mention.senderId, id)));
-  if (bundle.id !== null && addedActive.length > 0) next = { ...next, ...mergedNewMentions(next, addedActive.length) };
+  if (bundle.id !== null && addedActive.length > 0) next = { ...next, ...mergedNewMentions(next, addedActive.length, mapped) };
   if (!next.assignment && activeMentions(next).length === 0) {
     next.status = 'already-answered';
     next.processedAt = now;
@@ -1554,15 +1738,16 @@ function sameIgnoringFetchTime(a: MentionBundle, b: MentionBundle): boolean {
  * 손대지 않은 준비됨은 다시 만들기로, 실패는 다시 시도로 생성 중에 올리고, 그 밖에는 "새 멘션"만 센다.
  * 게시를 누를 때의 확인이 끝나기 전의 게시 중 묶음은 게시를 멈추고 준비됨으로 보아 합친다.
  */
-function mergedNewMentions(bundle: UnsavedBundle, count: number): Partial<MentionBundle> {
+function mergedNewMentions(bundle: UnsavedBundle, count: number, mapped: boolean): Partial<MentionBundle> {
   switch (bundle.status) {
     case 'generating':
       return {};
     case 'posting':
       // 게시를 누를 때의 확인이 끝나기 전에 온 멘션이다. 게시를 멈추고 준비됨 규칙으로 합친다.
-      return { status: 'ready', ...mergedNewMentions({ ...bundle, status: 'ready' }, count) };
+      return { status: 'ready', ...mergedNewMentions({ ...bundle, status: 'ready' }, count, mapped) };
     case 'ready':
-      if (bundle.draft && !isDraftTouched(bundle)) return regenerationOf(bundle, 'again');
+      // 저장소가 정해지지 않은 초안은 다시 만들 저장소가 없어 저절로 다시 만들지 않는다.
+      if (bundle.draft && !isDraftTouched(bundle) && !isRepoUndetermined(bundle, mapped)) return regenerationOf(bundle, 'again');
       break;
     case 'failed':
       return retried;
@@ -1629,25 +1814,22 @@ function latestSenderName(bundle: MentionBundle): string {
 }
 
 /**
- * 새로 저장소 확인 필요가 된 묶음의 OS 알림. 송신자 이름만 넣고 Flow 글 본문은 넣지 않는다. 누르면 첫 묶음을 연다.
+ * 프로젝트가 저장소 대기가 될 때의 OS 알림. 프로젝트 이름만 넣고 송신자와 글 본문은 넣지 않는다. 누르면 `first`를 연다.
+ * 문구는 멘션 묶음과 담당 업무 초안에 같다.
  */
-function repoCheckNotification(waiting: readonly MentionBundle[]): AppNotification {
-  /** 대기열에서 가장 앞의 묶음. */
-  const first = waiting[0]!;
-  /** 그 묶음에서 답할 멘션의 송신자 이름. */
-  const sender = latestSenderName(first);
-  if (waiting.length === 1) {
+function repoWaitNotification(first: MentionBundle, projectTitle: string | null): AppNotification {
+  /** 본문에 쓸 프로젝트 이름. */
+  const project = projectTitle || '이 프로젝트';
+  /** 알림이 가리키는 첫 건. */
+  const target = { kind: 'draft', id: first.id } as const;
+  if (first.repoCheck?.kind === 'missing-folders') {
     return {
       title: '저장소 확인 필요',
-      body: first.assignment ? '담당 업무 초안에 사용할 저장소를 확인해주세요.' : sender ? `${sender}님이 나를 멘션했습니다.` : '나를 지목한 멘션이 왔습니다.',
-      bundleId: first.id,
+      body: `${project}에 연결한 저장소 폴더를 찾을 수 없습니다. 폴더가 돌아오거나 매핑을 고치면 이어 갑니다.`,
+      target,
     };
   }
-  return {
-    title: `저장소 확인 필요 ${waiting.length}건`,
-    body: sender ? `${sender}님 외 ${waiting.length - 1}건의 멘션이 왔습니다.` : `나를 지목한 멘션 ${waiting.length}건이 왔습니다.`,
-    bundleId: first.id,
-  };
+  return { title: '저장소 매핑 필요', body: `${project}에 연결한 저장소가 없습니다. 매핑하면 기다리는 초안을 만듭니다.`, target };
 }
 
 /** 초안이 준비된 묶음의 OS 알림. 송신자 이름만 넣고 Flow 글 본문과 초안은 넣지 않는다. 누르면 그 묶음을 연다. */
@@ -1657,6 +1839,6 @@ function draftReadyNotification(bundle: MentionBundle): AppNotification {
   return {
     title: '초안 준비됨',
     body: bundle.assignment ? '담당 업무 초안이 준비됐습니다.' : sender ? `${sender}님 멘션에 답할 초안이 준비됐습니다.` : '나를 지목한 멘션에 답할 초안이 준비됐습니다.',
-    bundleId: bundle.id,
+    target: { kind: 'draft', id: bundle.id },
   };
 }

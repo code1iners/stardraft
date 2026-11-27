@@ -8,10 +8,11 @@ import {
   FLOW_PROJECT_ID_MAX_LENGTH,
   parseAppCommand,
   RECIPIENT_NAME_MAX_LENGTH,
+  SENTRY_TOKEN_MAX_LENGTH,
   REGENERATION_TEXT_MAX_LENGTH,
   SECRET_PATTERN_MAX_LENGTH,
   UPDATE_BANNER_MAX_LENGTH,
-  WORK_FOLDER_PATH_MAX_LENGTH,
+  REPO_FOLDER_PATH_MAX_LENGTH,
 } from './ipc';
 
 describe('렌더러가 보낸 명령 검사', () => {
@@ -49,6 +50,54 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'check-flow-key', apiKey: 42 })).toBeNull();
     expect(parseAppCommand({ type: 'check-flow-key' })).toBeNull();
     expect(parseAppCommand({ type: 'check-flow-key', apiKey: 'k'.repeat(FLOW_API_KEY_MAX_LENGTH + 1) })).toBeNull();
+  });
+
+  it('토큰 확인 명령은 붙여 넣은 토큰을 그대로 받고, 비었거나 문자열이 아니거나 너무 길면 거부한다', () => {
+    expect(parseAppCommand({ type: 'check-sentry-token', token: ' fake-token-1\n' })).toEqual({
+      type: 'check-sentry-token',
+      token: ' fake-token-1\n',
+    });
+    expect(parseAppCommand({ type: 'check-sentry-token', token: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'check-sentry-token', token: ' \n ' })).toBeNull();
+    expect(parseAppCommand({ type: 'check-sentry-token', token: 42 })).toBeNull();
+    expect(parseAppCommand({ type: 'check-sentry-token' })).toBeNull();
+    expect(parseAppCommand({ type: 'check-sentry-token', token: 't'.repeat(SENTRY_TOKEN_MAX_LENGTH + 1) })).toBeNull();
+  });
+
+  it('토큰 확인 그만두기와 Sentry 연결 끊기 명령을 받는다', () => {
+    expect(parseAppCommand({ type: 'cancel-sentry-token-check' })).toEqual({ type: 'cancel-sentry-token-check' });
+    expect(parseAppCommand({ type: 'disconnect-sentry' })).toEqual({ type: 'disconnect-sentry' });
+  });
+
+  it('Sentry 프로젝트 등록·편집 명령은 환경(없으면 null)과 하나 이상의 아는 레벨과 저장소(없으면 null)를 받는다', () => {
+    /** 맞는 명령의 나머지 값. */
+    const ok = { projectId: '11', environment: 'production', levels: ['fatal', 'error'], repoPath: '/fake/work/web' };
+
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok })).toEqual({ type: 'register-sentry-project', ...ok });
+    expect(parseAppCommand({ type: 'update-sentry-project', ...ok, environment: null, repoPath: null })).toEqual({
+      type: 'update-sentry-project',
+      ...ok,
+      environment: null,
+      repoPath: null,
+    });
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, projectId: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, projectId: 11 })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, environment: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, environment: 'e'.repeat(65) })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, levels: [] })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, levels: ['error', 'critical'] })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, repoPath: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'register-sentry-project', ...ok, repoPath: undefined })).toBeNull();
+  });
+
+  it('Sentry 프로젝트 등록 해제와 저장소 고르기 명령은 프로젝트 ID를 받고, 목록·폴더 고르기 명령은 값 없이 받는다', () => {
+    expect(parseAppCommand({ type: 'unregister-sentry-project', projectId: '11' })).toEqual({ type: 'unregister-sentry-project', projectId: '11' });
+    expect(parseAppCommand({ type: 'pick-sentry-project-repo', projectId: '11' })).toEqual({ type: 'pick-sentry-project-repo', projectId: '11' });
+    expect(parseAppCommand({ type: 'unregister-sentry-project', projectId: '' })).toBeNull();
+    expect(parseAppCommand({ type: 'pick-sentry-project-repo' })).toBeNull();
+    for (const type of ['refresh-sentry-projects', 'load-sentry-candidates', 'pick-sentry-draft-folder']) {
+      expect(parseAppCommand({ type })).toEqual({ type });
+    }
   });
 
   it('다른 계정으로 바꾸기 확인과 키 확인 그만두기 명령을 받는다', () => {
@@ -98,27 +147,15 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'set-agent-model', agent: 'claude-code', model: 'm'.repeat(AGENT_MODEL_MAX_LENGTH + 1) })).toBeNull();
   });
 
-  it('작업 폴더 고르기와 다시 훑기 명령을 받고, 렌더러가 실은 경로는 버린다', () => {
-    expect(parseAppCommand({ type: 'pick-work-folders', paths: ['/tmp/evil'] })).toEqual({ type: 'pick-work-folders' });
-    expect(parseAppCommand({ type: 'refresh-work-folders' })).toEqual({ type: 'refresh-work-folders' });
+  it('폐지된 작업 폴더 명령은 받지 않는다', () => {
+    expect(parseAppCommand({ type: 'pick-work-folders' })).toBeNull();
+    expect(parseAppCommand({ type: 'refresh-work-folders' })).toBeNull();
+    expect(parseAppCommand({ type: 'add-suggested-work-folder', path: '/Users/me/workspace' })).toBeNull();
+    expect(parseAppCommand({ type: 'remove-work-folder', path: '/Users/me/workspace' })).toBeNull();
   });
 
-  it('제안 폴더 추가와 작업 폴더 지우기 명령은 경로 문자열을 받는다', () => {
-    expect(parseAppCommand({ type: 'add-suggested-work-folder', path: '/Users/me/workspace' })).toEqual({
-      type: 'add-suggested-work-folder',
-      path: '/Users/me/workspace',
-    });
-    expect(parseAppCommand({ type: 'remove-work-folder', path: 'C:\\Users\\me\\code' })).toEqual({
-      type: 'remove-work-folder',
-      path: 'C:\\Users\\me\\code',
-    });
-  });
-
-  it('경로가 비었거나 문자열이 아니거나 너무 길면 작업 폴더 명령을 거부한다', () => {
-    expect(parseAppCommand({ type: 'add-suggested-work-folder', path: '' })).toBeNull();
-    expect(parseAppCommand({ type: 'remove-work-folder', path: 1 })).toBeNull();
-    expect(parseAppCommand({ type: 'remove-work-folder' })).toBeNull();
-    expect(parseAppCommand({ type: 'remove-work-folder', path: '/'.repeat(WORK_FOLDER_PATH_MAX_LENGTH + 1) })).toBeNull();
+  it('경로가 너무 길면 저장소 매핑 명령을 거부한다', () => {
+    expect(parseAppCommand({ type: 'remove-mapping-repo', projectId: '101', path: '/'.repeat(REPO_FOLDER_PATH_MAX_LENGTH + 1) })).toBeNull();
   });
 
   it('저장소 매핑 명령은 Flow 프로젝트 ID를 받고, 폴더 고르기에서 렌더러가 실은 경로는 버린다', () => {
@@ -151,16 +188,71 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'set-launch-at-login', enabled: false })).toEqual({ type: 'set-launch-at-login', enabled: false });
     expect(parseAppCommand({ type: 'set-launch-at-login', enabled: 'yes' })).toBeNull();
     expect(parseAppCommand({ type: 'set-launch-at-login' })).toBeNull();
+    expect(parseAppCommand({ type: 'set-parallel-work-count', count: 3 })).toEqual({ type: 'set-parallel-work-count', count: 3 });
+    for (const count of [0, 6, 2.5, '3', null]) expect(parseAppCommand({ type: 'set-parallel-work-count', count })).toBeNull();
   });
 
-  it('묶음 무시·되돌리기·생성 취소·다시 시도·Flow에서 열기 명령은 묶음 ID(양의 정수)를 받는다', () => {
-    for (const type of ['ignore-bundle', 'restore-bundle', 'cancel-generation', 'retry-bundle', 'open-bundle-in-flow'] as const) {
+  it('묶음 무시·되돌리기·생성 취소·다시 시도·Flow에서 열기·저장소 매핑 열기 명령은 묶음 ID(양의 정수)를 받는다', () => {
+    for (const type of ['ignore-bundle', 'restore-bundle', 'cancel-generation', 'retry-bundle', 'open-bundle-in-flow', 'open-repo-mapping'] as const) {
       expect(parseAppCommand({ type, bundleId: 3 })).toEqual({ type, bundleId: 3 });
       expect(parseAppCommand({ type, bundleId: 0 })).toBeNull();
       expect(parseAppCommand({ type, bundleId: 1.5 })).toBeNull();
       expect(parseAppCommand({ type, bundleId: '3' })).toBeNull();
       expect(parseAppCommand({ type })).toBeNull();
     }
+  });
+
+  it('진단의 Sentry 저장소 매핑 열기 명령은 진단 ID(양의 정수)를 받는다', () => {
+    expect(parseAppCommand({ type: 'open-sentry-repo-mapping', diagnosisId: 4 })).toEqual({ type: 'open-sentry-repo-mapping', diagnosisId: 4 });
+    for (const diagnosisId of [0, 1.5, '4', null]) expect(parseAppCommand({ type: 'open-sentry-repo-mapping', diagnosisId })).toBeNull();
+  });
+
+  it('보고서 폴더 명령은 인자가 없고, 다른 갈래의 값은 받지 않는다', () => {
+    expect(parseAppCommand({ type: 'pick-report-folder' })).toEqual({ type: 'pick-report-folder' });
+    expect(parseAppCommand({ type: 'open-report-folder', path: '/아무데나' })).toEqual({ type: 'open-report-folder' });
+  });
+
+  it('진단의 취소·다시 시도·재현 없이 다시 시도·연장 답·완료 명령은 진단 ID(양의 정수)를 받는다', () => {
+    for (const type of ['cancel-diagnosis', 'retry-diagnosis', 'retry-diagnosis-without-reproduction', 'continue-diagnosis', 'stop-diagnosis', 'complete-diagnosis', 'export-diagnosis'] as const) {
+      expect(parseAppCommand({ type, diagnosisId: 7 })).toEqual({ type, diagnosisId: 7 });
+      for (const diagnosisId of [0, -1, 2.5, '7', undefined]) expect(parseAppCommand({ type, diagnosisId })).toBeNull();
+    }
+  });
+
+  it('[다시 진단] 명령은 진단 ID를, 지시를 덧붙인 [다시 진단] 명령은 진단 ID와 지시 글, 재현도 다시 하기를 받는다', () => {
+    expect(parseAppCommand({ type: 'rediagnose', diagnosisId: 7, directive: '무시됨' })).toEqual({ type: 'rediagnose', diagnosisId: 7 });
+    for (const diagnosisId of [0, -1, 2.5, '7', undefined]) expect(parseAppCommand({ type: 'rediagnose', diagnosisId })).toBeNull();
+    expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId: 7, directive: '캐시를 먼저 의심해 줘', reproduce: false })).toEqual({
+      type: 'rediagnose-with-directive',
+      diagnosisId: 7,
+      directive: '캐시를 먼저 의심해 줘',
+      reproduce: false,
+    });
+    for (const diagnosisId of [0, 2.5, '7', undefined]) expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId, directive: '지시', reproduce: true })).toBeNull();
+    for (const directive of [undefined, 3, null, 'x'.repeat(100_000)]) expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId: 7, directive, reproduce: true })).toBeNull();
+    for (const reproduce of [undefined, 'true', 1]) expect(parseAppCommand({ type: 'rediagnose-with-directive', diagnosisId: 7, directive: '지시', reproduce })).toBeNull();
+  });
+
+  it('진단의 [Sentry에서 열기] 명령은 진단 ID만 받고, 주소는 렌더러가 싣지 못한다', () => {
+    expect(parseAppCommand({ type: 'open-diagnosis-in-sentry', diagnosisId: 7, url: 'https://evil.example' })).toEqual({ type: 'open-diagnosis-in-sentry', diagnosisId: 7 });
+    for (const diagnosisId of [0, -1, 2.5, '7', undefined]) expect(parseAppCommand({ type: 'open-diagnosis-in-sentry', diagnosisId })).toBeNull();
+  });
+
+  it('진단 근거의 [에디터에서 열기] 명령은 진단 ID와 근거 위치(0 이상의 정수)만 받고, 렌더러가 실은 경로는 버린다', () => {
+    expect(parseAppCommand({ type: 'open-diagnosis-evidence-in-editor', diagnosisId: 7, evidenceIndex: 0, path: '/etc/passwd' })).toEqual({
+      type: 'open-diagnosis-evidence-in-editor',
+      diagnosisId: 7,
+      evidenceIndex: 0,
+    });
+    expect(parseAppCommand({ type: 'open-diagnosis-evidence-in-editor', diagnosisId: 0, evidenceIndex: 0 })).toBeNull();
+    for (const evidenceIndex of [-1, 1.5, '0', undefined]) expect(parseAppCommand({ type: 'open-diagnosis-evidence-in-editor', diagnosisId: 7, evidenceIndex })).toBeNull();
+  });
+
+  it('펼치기와 접기 명령은 진단 ID를 함께 실을 수 있고, 잘못된 진단 ID는 받지 않는다', () => {
+    expect(parseAppCommand({ type: 'expand-review', bundleId: null, diagnosisId: 4 })).toEqual({ type: 'expand-review', bundleId: null, diagnosisId: 4 });
+    expect(parseAppCommand({ type: 'collapse-review', bundleId: 3, diagnosisId: 4 })).toEqual({ type: 'collapse-review', bundleId: 3, diagnosisId: 4 });
+    expect(parseAppCommand({ type: 'collapse-review', bundleId: null, diagnosisId: null })).toEqual({ type: 'collapse-review', bundleId: null });
+    for (const diagnosisId of [0, -2, 1.5, '4']) expect(parseAppCommand({ type: 'expand-review', bundleId: null, diagnosisId })).toBeNull();
   });
 
   it('[게시]와 게시 취소 명령은 묶음 ID만 받고, 렌더러가 실은 게시 본문은 버린다', () => {
@@ -354,6 +446,49 @@ describe('렌더러가 보낸 명령 검사', () => {
     expect(parseAppCommand({ type: 'dismiss-update-banner', banner: 'x'.repeat(UPDATE_BANNER_MAX_LENGTH + 1) })).toBeNull();
     expect(parseAppCommand({ type: 'dismiss-update-banner', banner: '<script>' })).toBeNull();
     expect(parseAppCommand({ type: 'dismiss-update-banner' })).toBeNull();
+  });
+
+  it('재현 명령은 절대 경로 문자열, 아는 방식, 아는 에이전트와 비지 않은 서버 이름만 받는다', () => {
+    expect(parseAppCommand({ type: 'refresh-reproduction-repos', x: 1 })).toEqual({ type: 'refresh-reproduction-repos' });
+    expect(parseAppCommand({ type: 'refresh-reproduction-servers' })).toEqual({ type: 'refresh-reproduction-servers' });
+    expect(parseAppCommand({ type: 'pick-reproduction-env-file-draft' })).toEqual({ type: 'pick-reproduction-env-file-draft' });
+
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: true, envFile: '/fake/dev.env', extra: 1 })).toEqual({
+      type: 'set-reproduction-enabled',
+      repoPath: '/fake/web',
+      enabled: true,
+      envFile: '/fake/dev.env',
+    });
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: true, envFile: null })).toEqual({
+      type: 'set-reproduction-enabled',
+      repoPath: '/fake/web',
+      enabled: true,
+      envFile: null,
+    });
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: false })).toEqual({
+      type: 'set-reproduction-enabled',
+      repoPath: '/fake/web',
+      enabled: false,
+    });
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: 'yes' })).toBeNull();
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '', enabled: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-reproduction-enabled', repoPath: '/fake/web', enabled: true, envFile: 7 })).toBeNull();
+
+    expect(parseAppCommand({ type: 'pick-reproduction-env-file', repoPath: '/fake/web' })).toEqual({ type: 'pick-reproduction-env-file', repoPath: '/fake/web' });
+    expect(parseAppCommand({ type: 'pick-reproduction-env-file' })).toBeNull();
+
+    expect(parseAppCommand({ type: 'set-reproduction-tool-mode', mode: 'manual' })).toEqual({ type: 'set-reproduction-tool-mode', mode: 'manual' });
+    expect(parseAppCommand({ type: 'set-reproduction-tool-mode', mode: 'everything' })).toBeNull();
+
+    expect(parseAppCommand({ type: 'set-reproduction-server-enabled', agent: 'codex', name: 'playwright', enabled: true, env: { A: 'b' } })).toEqual({
+      type: 'set-reproduction-server-enabled',
+      agent: 'codex',
+      name: 'playwright',
+      enabled: true,
+    });
+    expect(parseAppCommand({ type: 'set-reproduction-server-enabled', agent: 'gemini', name: 'x', enabled: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-reproduction-server-enabled', agent: 'codex', name: '', enabled: true })).toBeNull();
+    expect(parseAppCommand({ type: 'set-reproduction-server-enabled', agent: 'codex', name: 'x'.repeat(201), enabled: true })).toBeNull();
   });
 
   it('모르는 칸, 모르는 명령, 객체가 아닌 값은 거부한다', () => {

@@ -10,10 +10,14 @@ import type { Settings } from '../ports/settings-store';
 import { LaunchAtLogin } from './launch-at-login';
 import { Onboarding, type SetupInputs } from './onboarding';
 
-/** 필수 세 가지가 모두 된 입력. */
-const ALL_DONE: SetupInputs = { keyVerified: true, agent: 'connected', workFolderCount: 1 };
-/** 필수 세 가지가 하나도 안 된 입력(첫 실행). */
-const NOTHING_DONE: SetupInputs = { keyVerified: false, agent: 'not-connected', workFolderCount: 0 };
+/** 필수 설정을 마치고 Flow도 연결한 입력. */
+const ALL_DONE: SetupInputs = { keyVerified: true, sentryConnected: false, agent: 'connected' };
+/** 필수 설정만 마치고 Flow는 연결하지 않은 입력. */
+const AGENT_ONLY: SetupInputs = { keyVerified: false, sentryConnected: false, agent: 'connected' };
+/** 필수 설정을 마치고 Sentry만 연결한 입력. */
+const SENTRY_ONLY: SetupInputs = { keyVerified: false, sentryConnected: true, agent: 'connected' };
+/** 아무것도 하지 않은 입력(첫 실행). */
+const NOTHING_DONE: SetupInputs = { keyVerified: false, sentryConnected: false, agent: 'not-connected' };
 
 /** 가짜 멘션 알림. 실제 사람이나 회사가 아니다. */
 function alarm(alarmId: string): FlowAlarm {
@@ -91,32 +95,49 @@ async function setup(inputs: SetupInputs, settings: Partial<Settings> = {}) {
   };
 }
 
-describe('온보딩: 필수 세 가지', () => {
-  it('첫 실행에는 세 가지가 모두 "필요"이고 감지를 시작하기 전이다', async () => {
+describe('온보딩: 필수 설정 하나와 감지할 대상', () => {
+  it('첫 실행에는 에이전트가 "필요"이고 감지를 시작하기 전이며, 감지할 대상은 없다', async () => {
     const { onboarding } = await setup(NOTHING_DONE);
 
-    expect(onboarding.state()).toMatchObject({
+    expect(onboarding.state()).toEqual({
       detectionStarted: false,
-      requirements: { 'flow-key': 'needed', agent: 'needed', 'work-folders': 'needed' },
+      requirements: { agent: 'needed' },
       ready: false,
+      hasDetectionTarget: false,
+      flowConnected: false,
+      sentryConnected: false,
+      start: { status: 'idle' },
     });
   });
 
-  it('통과한 항목만 ✓가 되고, 순서와 상관없이 셋이 다 되면 감지를 시작할 수 있다', async () => {
-    const { onboarding, setInputs, changes } = await setup(NOTHING_DONE);
+  it('Sentry만 연결해도 감지할 대상이 있다고 알리고, Flow 줄과 Sentry 줄은 따로 따른다', async () => {
+    const { onboarding, setInputs, changes } = await setup(AGENT_ONLY);
 
-    setInputs({ keyVerified: false, agent: 'not-connected', workFolderCount: 2 });
-    expect(onboarding.state()).toMatchObject({
-      requirements: { 'flow-key': 'needed', agent: 'needed', 'work-folders': 'done' },
-      ready: false,
-    });
+    setInputs(SENTRY_ONLY);
+
+    expect(onboarding.state()).toMatchObject({ ready: true, hasDetectionTarget: true, flowConnected: false, sentryConnected: true });
+    expect(changes.count).toBe(1);
 
     setInputs(ALL_DONE);
-    expect(onboarding.state()).toMatchObject({
-      requirements: { 'flow-key': 'done', agent: 'done', 'work-folders': 'done' },
-      ready: true,
-    });
-    expect(changes.count).toBe(2);
+
+    expect(onboarding.state()).toMatchObject({ hasDetectionTarget: true, flowConnected: true, sentryConnected: false });
+  });
+
+  it('필수는 에이전트 연결 하나라서 Flow 키 없이도 감지를 시작할 수 있다', async () => {
+    const { onboarding, setInputs, changes } = await setup(NOTHING_DONE);
+
+    setInputs(AGENT_ONLY);
+
+    expect(onboarding.state()).toMatchObject({ requirements: { agent: 'done' }, ready: true, hasDetectionTarget: false });
+    expect(changes.count).toBe(1);
+  });
+
+  it('Flow를 연결하면 감지할 대상이 있다고 알리지만, 필수 설정은 그대로다', async () => {
+    const { onboarding, setInputs } = await setup(AGENT_ONLY);
+
+    setInputs(ALL_DONE);
+
+    expect(onboarding.state()).toMatchObject({ requirements: { agent: 'done' }, ready: true, hasDetectionTarget: true });
   });
 
   it('에이전트 연결을 확인하는 중이면 "확인 중"이고 감지를 시작할 수 없다', async () => {
@@ -134,7 +155,7 @@ describe('온보딩: 필수 세 가지', () => {
   });
 
   it('필수 설정 전에는 감지를 시작하지 않고 Flow도 부르지 않는다', async () => {
-    const { onboarding, flow, stateStore, settingsStore, notifier } = await setup({ ...ALL_DONE, workFolderCount: 0 });
+    const { onboarding, flow, stateStore, settingsStore, notifier } = await setup({ ...ALL_DONE, agent: 'not-connected' });
 
     await expect(onboarding.startDetection()).resolves.toEqual({ kind: 'skipped' });
 
@@ -157,6 +178,19 @@ describe('온보딩: 감지 시작', () => {
     expect(settingsStore.settings).toMatchObject({ detectionStarted: true, launchAtLogin: true });
     expect(loginItem).toEqual([true]);
     expect(notifier.sent).toEqual([{ title: '멘션 감지를 시작했습니다', body: expect.any(String) }]);
+    expect(onboarding.state()).toMatchObject({ detectionStarted: true, start: { status: 'idle' } });
+  });
+
+  it('Flow를 연결하지 않았으면 Flow를 부르지 않고 기준점 없이 감지를 시작한다', async () => {
+    const { onboarding, flow, stateStore, settingsStore, notifier, loginItem } = await setup(AGENT_ONLY);
+
+    await expect(onboarding.startDetection()).resolves.toEqual({ kind: 'started' });
+
+    expect(flow.requests).toEqual([]);
+    expect(stateStore.baselineAlarmId).toBeNull();
+    expect(settingsStore.settings).toMatchObject({ detectionStarted: true, launchAtLogin: true });
+    expect(loginItem).toEqual([true]);
+    expect(notifier.sent).toHaveLength(1);
     expect(onboarding.state()).toMatchObject({ detectionStarted: true, start: { status: 'idle' } });
   });
 

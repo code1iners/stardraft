@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { codexNotLoggedInStream, codexStream as stream, codexSuccessStream, fakeCodexEvent } from '../fakes/fake-codex-events';
 import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
-import type { ExecutorRunRequest } from '../ports/executor';
+import type { ExecutorRunRequest, ReproductionMcp } from '../ports/executor';
 import type { AgentLaunch, AgentRunReport } from './agent-launch';
 import { CodexExecutor } from './codex-executor';
 import type { ProcessRequest } from './process-runner';
@@ -172,7 +172,7 @@ describe('Codex 실행기: 인수 묶음', () => {
     expect(schemaFileContent).toEqual(DRAFT_SCHEMA);
   });
 
-  it('선택 실행과 작동 확인(점검 실행)은 git 저장소가 아닌 폴더에서 돌므로 --skip-git-repo-check를 붙인다. 초안 실행은 첫 저장소가 git 저장소 안이면 붙이지 않는다', async () => {
+  it('작동 확인(점검 실행)은 git 저장소가 아닌 폴더에서 돌므로 --skip-git-repo-check를 붙인다. 초안 실행은 첫 저장소가 git 저장소 안이면 붙이지 않는다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, exited(0, codexSuccessStream({ requirement: '가짜 요구' })));
     /** git 저장소가 아닌 작업 폴더. */
@@ -182,15 +182,32 @@ describe('Codex 실행기: 인수 묶음', () => {
     /** git 저장소가 아닌 코드 폴더(저장소 매핑은 이런 폴더도 받는다). */
     const plainCode = makeDir('plain-code');
 
-    await executor.run(draftRequest({ kind: 'selection', readRoots: [workFolder, join(root, 'work')] }));
     await executor.run(draftRequest({ kind: 'check', readRoots: [workFolder] }));
     await executor.run(draftRequest({ kind: 'draft', readRoots: [repoA, plainCode] }));
     await executor.run(draftRequest({ kind: 'draft', readRoots: [inside] }));
     await executor.run(draftRequest({ kind: 'draft', readRoots: [plainCode, repoA] }));
 
-    expect(runner.requests.map((request) => request.args.includes('--skip-git-repo-check'))).toEqual([true, true, false, false, true]);
+    expect(runner.requests.map((request) => request.args.includes('--skip-git-repo-check'))).toEqual([true, false, false, true]);
     // 플래그는 -C 바로 뒤에 둔다.
     expect(runner.requests[0]?.args.slice(7, 10)).toEqual(['-C', workFolder, '--skip-git-repo-check']);
+  });
+
+  it('진단 실행은 초안 실행과 같은 읽기 전용 경계(같은 권한 프로필, MCP 없음)로 돈다. 첫 저장소가 git 저장소 안이면 --skip-git-repo-check를 붙이지 않는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, codexSuccessStream({ requirement: '가짜 요구' })));
+    /** git 저장소가 아닌 코드 폴더. */
+    const plainCode = makeDir('plain-diagnosis');
+
+    await executor.run(draftRequest({ readRoots: [repoA] }));
+    await executor.run(draftRequest({ kind: 'diagnosis', readRoots: [repoA], timeoutMs: 1_200_000 }));
+    await executor.run(draftRequest({ kind: 'diagnosis', readRoots: [plainCode] }));
+
+    /** 스키마 파일 경로를 뺀 인수. 실행마다 다르다. */
+    const [draft, diagnosis] = runner.requests.map((request) => request.args.map((arg) => (arg === flagValue(request, '--output-schema') ? '<스키마>' : arg)));
+    expect(diagnosis).toEqual(draft);
+    expect(diagnosis!.some((arg) => arg.startsWith('mcp_servers'))).toBe(false);
+    expect(runner.requests[1]?.timeoutMs).toBe(1_200_000);
+    expect(runner.requests[2]?.args).toContain('--skip-git-repo-check');
   });
 
   it('고른 모델은 표준 입력 표시(-) 앞에 -m으로 넘기고, 기본 모델이면 넘기지 않는다', async () => {
@@ -237,6 +254,161 @@ describe('Codex 실행기: 인수 묶음', () => {
     /** 파일 시스템 권한 값. */
     const filesystem = runner.requests[0]?.args.find((arg) => arg.startsWith('permissions.stardraft.filesystem=')) ?? '';
     expect(filesystem).toContain(`${[...DEFAULT_DENY_RULES, '"**/config/prod.yml"="deny"', '"**/vault"="deny"'].join(', ')}, ".git"="deny"}}`);
+  });
+});
+
+describe('Codex 실행기: 재현 경계', () => {
+  /** 재현 사본의 실제 경로. 홈 밖(임시 폴더)에 둔다. */
+  const COPY = '/private/var/folders/fake/T/stardraft-reproduction/run-abc';
+  /** 사본을 만든 원본 저장소. */
+  const SOURCE = '/Users/fake/work/web-app';
+
+  /** 테스트용 재현하는 진단 요청. */
+  function reproductionRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunRequest {
+    return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY, sourceRoot: SOURCE }, ...overrides });
+  }
+
+  it('사용자 설정과 rules를 끌어오지 않고, 권한 프로필에서 사본만 쓰기로 열고 네트워크를 연다. 비밀 패턴은 원본 경로에서도 막는다. 사본에는 .git이 없어 git 확인을 건너뛴다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
+
+    await executor.run(reproductionRequest({ secretPatterns: ['company/*.secret', '/private-config/'] }));
+
+    const [request] = runner.requests;
+    expect(request?.cwd).toBe(COPY);
+    expect(flagValue(request, '-C')).toBe(COPY);
+    expect(request?.args).toEqual(expect.arrayContaining(['--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check']));
+    /** `-c`로 넘긴 설정 값. */
+    const configs = request!.args.filter((_, index) => request!.args[index - 1] === '-c');
+    expect(configs).toContain(
+      `permissions.stardraft.filesystem={":root"="read", "~/**/.env"="deny", "~/**/.env.*"="deny", "~/.ssh"="deny", "~/.aws"="deny", "~/.npmrc"="deny", "~/.netrc"="deny", "~/.pypirc"="deny", "~/.config/gh"="deny", "~/.kube"="deny", "~/.docker"="deny", "~/.gnupg"="deny", "~/.config/gcloud"="deny", "~/.codex"="deny", ` +
+        `"${SOURCE}/**/*.pem"="deny", "${SOURCE}/**/*.key"="deny", "${SOURCE}/**/*.p12"="deny", "${SOURCE}/**/*.pfx"="deny", "${SOURCE}/**/*.jks"="deny", "${SOURCE}/**/*.keystore"="deny", "${SOURCE}/**/id_rsa*"="deny", "${SOURCE}/**/id_ed25519*"="deny", "${SOURCE}/**/.npmrc"="deny", "${SOURCE}/**/.pypirc"="deny", "${SOURCE}/**/.netrc"="deny", "${SOURCE}/**/secrets/**"="deny", "${SOURCE}/**/.git/**"="deny", "${SOURCE}/**/company/*.secret"="deny", "${SOURCE}/**/private-config"="deny", "${SOURCE}/**/.git"="deny", ` +
+        `":workspace_roots"={"."="write", "**/*.pem"="deny", "**/*.key"="deny", "**/*.p12"="deny", "**/*.pfx"="deny", "**/*.jks"="deny", "**/*.keystore"="deny", "**/id_rsa*"="deny", "**/id_ed25519*"="deny", "**/.npmrc"="deny", "**/.pypirc"="deny", "**/.netrc"="deny", "**/secrets/**"="deny", "**/.git/**"="deny", "**/company/*.secret"="deny", "**/private-config"="deny", "**/.git"="deny"}}`,
+    );
+    expect(configs).toContain('permissions.stardraft.network.enabled=true');
+    expect(configs).toContain('permissions.stardraft.workspace_roots={}');
+    // 임시 폴더 쓰기를 열면 같은 임시 폴더의 다른 사본도 열린다.
+    expect(configs.some((config) => config.includes(':tmpdir'))).toBe(false);
+    expect(configs).toEqual(expect.arrayContaining(['features.apps=false', 'features.hooks=false', 'web_search="disabled"']));
+    // 실을 서버가 없으면 MCP 설정을 넘기지 않는다.
+    expect(configs.some((config) => config.startsWith('mcp_servers'))).toBe(false);
+    expect(configs.some((config) => config.startsWith('shell_environment_policy'))).toBe(false);
+  });
+
+  it('환경 변수는 최소 목록만 넘기고, 강제로 끝낼 때 자손 프로세스 그룹(MCP 서버, 셸 명령)까지 끝내게 한다', async () => {
+    const { runner, executor } = setup(() => ({
+      cliPath: linkedCli,
+      env: { ...CHILD_ENV, TMPDIR: '/var/folders/fake/T/', CODEX_HOME: '/Users/fake/.codex', FAKE_SERVICE_TOKEN: 'fake-secret-value' },
+      version: '0.172.0',
+    }));
+    answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
+
+    await executor.run(reproductionRequest());
+    await executor.run(draftRequest());
+
+    expect(runner.requests[0]?.env).toEqual({ PATH: CHILD_ENV.PATH, HOME: CHILD_ENV.HOME, LANG: CHILD_ENV.LANG, TMPDIR: '/var/folders/fake/T/', CODEX_HOME: '/Users/fake/.codex' });
+    expect(runner.requests[0]?.killDescendants).toBe(true);
+    expect(runner.requests[1]?.killDescendants).toBeFalsy();
+  });
+
+  /** 정의의 평문 값을 옮긴 가짜 비밀 값. 명령줄 인자에 나오면 안 된다. */
+  const MCP_SECRET = 'FAKE-MCP-SECRET-0b7d';
+
+  /** 싣기 모듈이 만든 가짜 MCP. 평문 값은 이미 변수로 옮겨져 있다. */
+  const FAKE_MCP: ReproductionMcp = {
+    servers: [
+      { name: 'playwright', definition: { command: 'npx', args: ['@playwright/mcp'], env_vars: ['API_KEY'], disabled_tools: ['browser_close', 'browser_file_upload'] } },
+      { name: 'my.remote', definition: { url: 'https://fake.example/mcp', env_http_headers: { 'X-Api-Key': 'STARDRAFT_MCP_HEADER_1' }, enabled_tools: ['search'] } },
+    ],
+    env: { API_KEY: MCP_SECRET, STARDRAFT_MCP_HEADER_1: MCP_SECRET },
+    skipped: [],
+  };
+
+  /** 고정 deny 표의 모든 도구. */
+  const FIXED_DENIED = [
+    'browser_run_code_unsafe',
+    'browser_file_upload',
+    'upload_file',
+    'install_extension',
+    'execute_3p_developer_tool',
+    'mobile_batch_commands',
+    'mobile_uninstall_app',
+    'mobile_clear_app_data',
+    'mobile_login_to_cloud_provider',
+    'mobile_allocate_remote_device',
+    'debug_lldb_command',
+    'xcode_ide_call_tool',
+    'erase_sims',
+    'run_on_cloud',
+  ];
+
+  it('실을 서버를 인라인 설정 하나로 넘기고, 서버마다 도구 승인을 자동 허용으로, 고정 deny 목록을 사용자가 꺼 둔 도구와 합친다. 평문 값은 인자에 없고 프로세스 환경으로 넘긴다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
+
+    await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    const [request] = runner.requests;
+    /** `-c`로 넘긴 설정 값. */
+    const configs = request!.args.filter((_, index) => request!.args[index - 1] === '-c');
+    expect(configs.find((config) => config.startsWith('mcp_servers'))).toBe(
+      'mcp_servers={playwright={command="npx", args=["@playwright/mcp"], env_vars=["API_KEY"], ' +
+        // 사용자가 꺼 둔 도구가 앞이고, 고정 목록과 겹치는 도구는 한 번만 넣는다.
+        `disabled_tools=[${[...new Set(['browser_close', 'browser_file_upload', ...FIXED_DENIED])].map((tool) => `"${tool}"`).join(', ')}], default_tools_approval_mode="approve"}, ` +
+        '"my.remote"={url="https://fake.example/mcp", env_http_headers={X-Api-Key="STARDRAFT_MCP_HEADER_1"}, enabled_tools=["search"], ' +
+        `default_tools_approval_mode="approve", disabled_tools=[${FIXED_DENIED.map((tool) => `"${tool}"`).join(', ')}]}}`,
+    );
+    // 넘긴 변수는 셸 명령의 환경에서 뺀다.
+    expect(configs).toContain('shell_environment_policy.exclude=["API_KEY", "STARDRAFT_MCP_HEADER_1"]');
+    expect(request?.args.join(' ')).not.toContain(MCP_SECRET);
+    expect(request?.env).toMatchObject({ API_KEY: MCP_SECRET, STARDRAFT_MCP_HEADER_1: MCP_SECRET, RUST_LOG: 'codex_mcp=warn' });
+    expect(request?.args).toEqual(expect.arrayContaining(['--ignore-user-config', '--ignore-rules']));
+  });
+
+  it('표준 오류의 MCP 시작 실패 로그로 연결하지 못한 서버를 알리고, 그 로그 줄은 오류 원문에 넣지 않는다', async () => {
+    const { runner, executor } = setup();
+    /** 실측 형식의 MCP 로그. 오류 문장에는 서버가 낸 글이 들 수 있다. */
+    const stderr = [
+      `2026-11-26T10:42:29.189681Z  WARN codex_mcp::rmcp_client: MCP server startup failed server_name="my.remote" error=401 ${MCP_SECRET}`,
+      '2026-11-26T10:42:29.190959Z  WARN codex_mcp::rmcp_client: MCP server startup failed server_name="my.remote" error=again',
+      'Error: 가짜 CLI 오류',
+    ].join('\n');
+    answerCli(runner, exited(1, '', stderr));
+
+    const report = await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    expect(report.mcpFailedServers).toEqual(['my.remote']);
+    expect(report.outcome).toEqual({ type: 'failed', reason: 'cli-error', detail: 'Error: 가짜 CLI 오류' });
+    expect((await executor.run(reproductionRequest())).mcpFailedServers).toBeUndefined();
+  });
+
+  it('읽기 전용 진단과 Flow 초안에는 MCP 설정을 넘기지 않는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, codexSuccessStream({ summary: '가짜 요약' })));
+
+    await executor.run(draftRequest());
+    await executor.run(draftRequest({ kind: 'diagnosis' }));
+
+    for (const request of runner.requests) {
+      expect(request.args.some((arg) => arg.startsWith('mcp_servers') || arg.startsWith('shell_environment_policy'))).toBe(false);
+      expect(request.env.RUST_LOG).toBeUndefined();
+    }
+  });
+});
+
+describe('Codex 실행기: 실행 중 전달', () => {
+  it('실행 중 전달 능력이 없다. 전달을 쓰겠다는 요청을 받아도 보내는 함수를 넘기지 않고 입력은 한 번에 닫는다', async () => {
+    const { runner, executor } = setup();
+    /** 보내는 함수를 받은 횟수. */
+    let offered = 0;
+    answerCli(runner, exited(0, codexSuccessStream({ requirement: '가짜 요구' })));
+
+    await executor.run(draftRequest({ onSteerable: () => (offered += 1) }));
+
+    expect('supportsSteering' in executor).toBe(false);
+    expect(offered).toBe(0);
+    expect(runner.requests[0]?.onStdin).toBeUndefined();
+    expect(runner.requests[0]?.args).not.toContain('--input-format');
   });
 });
 

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { BundledMention, RepoCheck, UnsavedBundle } from '../bundles/mention-bundle';
+import type { BundledMention, MentionBundle, RepoCheck, UnsavedBundle } from '../bundles/mention-bundle';
 import type { Draft, RunRecord } from '../drafts/draft';
 import type { BundleContext } from '../flow/bundle-context';
 import type { FlowEmployee } from '../ports/flow-api';
@@ -23,6 +23,11 @@ afterEach(() => {
 const OLD_ACCOUNT: FlowEmployee = { userId: 'old@example.test', name: '옛 사용자', division: '옛 팀', email: 'old@example.test' };
 /** 새로 연결한 가짜 계정. */
 const NEW_ACCOUNT: FlowEmployee = { userId: 'new@example.test', name: '새 사용자', division: '새 팀', email: 'new@example.test' };
+
+/** 다른 계정으로 바꾼다. 떠나는 계정의 마지막으로 쓴 시각은 `now`다. */
+function switchTo(store: SqliteStateStore, account: FlowEmployee, now = 10_000) {
+  return store.switchAccount(account, { now, secretPatterns: ['**/.env'] });
+}
 
 // 포트를 거치지 않고 연결 설정만 보려고, 연 DB에 지울 행을 직접 만들어 검사한다.
 // 한 줄짜리 값을 덮어쓰는 것만으로는 secure_delete를 꺼도 흔적이 남지 않아 구분되지 않는다.
@@ -45,34 +50,228 @@ describe('state.db 연결', () => {
   });
 });
 
-describe('다른 계정으로 처음부터 시작', () => {
-  it('계정과 앱 버전 기록만 남기고 기준점과 다른 모든 기록을 지우며, 지운 글은 state.db와 WAL 어디에도 남지 않는다', async () => {
+describe('30일이 지난 계정 지우기', () => {
+  it('마지막으로 쓴 지 30일이 지난 보관 계정은 기준점·최소 기록까지 기록 전체를 지우고, 지운 글은 state.db와 WAL 어디에도 남지 않는다', async () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
     const store = new SqliteStateStore(db);
     await store.setAccount(OLD_ACCOUNT);
-    await store.setBaselineAlarmId('1001');
-    // 뒤 티켓이 더할 표를 흉내 낸다. 외래 키가 있어도 지우는 순서와 상관없이 지워져야 한다.
-    db.exec(`
-      CREATE TABLE mention_bundles (id TEXT PRIMARY KEY);
-      CREATE TABLE mentions (id TEXT PRIMARY KEY, bundle_id TEXT NOT NULL REFERENCES mention_bundles (id), body TEXT NOT NULL);
-      INSERT INTO mention_bundles VALUES ('b-1');
-      INSERT INTO mentions VALUES ('m-1', 'b-1', '옛 계정의 가짜 멘션 본문');
-    `);
+    await store.saveDetectedBundles(
+      [
+        bundle([mention('101', { text: '옛 계정의 가짜 멘션 본문' })]),
+        bundle([mention('102', { postId: '90000012' })], { postId: '90000012', status: 'ignored', processedAt: 2_000 }),
+      ],
+      '102',
+    );
+    await store.archiveBundles([{ bundleId: 2, postId: '90000012', remarkId: '-1', mentions: [{ postId: '90000012', remarkId: '-1', replyId: '-1' }], status: 'ignored', processedAt: 2_000, posted: null }]);
+    await store.setAssignmentState({ accountId: OLD_ACCOUNT.userId, enabledAt: 1_000, baselineReady: true, baselineAlarmId: '7', initialPostIds: [], pending: [] });
+    await store.setGenerationQueue([{ kind: 'flow', targetId: 1, priority: 'auto' }]);
+    await switchTo(store, NEW_ACCOUNT, 10_000);
 
-    await store.resetForAccount(NEW_ACCOUNT);
+    // 30일이 되기 전에는 지우지 않는다.
+    await expect(store.deleteAccountsUnusedBefore(10_000)).resolves.toBe(0);
+    await expect(store.isStoredAccount(OLD_ACCOUNT.userId)).resolves.toBe(true);
+    await expect(store.deleteAccountsUnusedBefore(10_001)).resolves.toBe(1);
 
-    await expect(store.getAccount()).resolves.toEqual(NEW_ACCOUNT);
-    await expect(store.getBaselineAlarmId()).resolves.toBeNull();
-    expect(db.prepare('SELECT COUNT(*) AS count FROM mentions').get()).toEqual({ count: 0 });
-    expect(db.prepare('SELECT COUNT(*) AS count FROM mention_bundles').get()).toEqual({ count: 0 });
+    await expect(store.isStoredAccount(OLD_ACCOUNT.userId)).resolves.toBe(false);
+    await expect(store.listStoredBundles()).resolves.toEqual([]);
+    for (const table of ['mention_bundle', 'mention', 'minimal_record', 'minimal_record_mention', 'assignment_detection', 'detection', 'draft_queue']) {
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE account_id = ?`).get(OLD_ACCOUNT.userId)).toEqual({ count: 0 });
+    }
     expect(db.prepare('SELECT app_version FROM app_meta').get()).toEqual({ app_version: '0.1.0' });
     /** 옛 계정의 글. */
     const oldBody = Buffer.from('옛 계정의 가짜 멘션 본문');
     expect(readFileSync(path).includes(oldBody)).toBe(false);
     expect(readFileSync(`${path}-wal`).includes(oldBody)).toBe(false);
+
+    // 그 뒤에 돌아오면 처음 넣는 계정처럼 시작한다.
+    await expect(switchTo(store, OLD_ACCOUNT, 20_000)).resolves.toEqual({ returning: false, secretPatternsWhenLeft: null });
+    await expect(store.getBaselineAlarmId()).resolves.toBeNull();
+    await expect(store.listBundles()).resolves.toEqual([]);
+    await expect(store.listMinimalRecords()).resolves.toEqual([]);
+    await expect(store.getAssignmentState()).resolves.toBeNull();
+    await expect(store.getGenerationQueue()).resolves.toEqual([]);
     db.close();
+  });
+
+  it('움직이는 계정은 오래 써도 지우지 않는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setAccount(OLD_ACCOUNT);
+    await store.saveDetectedBundles([bundle([mention('101')])], '101');
+
+    await expect(store.deleteAccountsUnusedBefore(Number.MAX_SAFE_INTEGER)).resolves.toBe(0);
+    await expect(store.listBundles()).resolves.toHaveLength(1);
+  });
+});
+
+describe('계정별 보관', () => {
+  it('다른 계정으로 바꾸면 지금 계정의 기록은 보이지 않게 보관되고, 돌아오면 묶음·최소 기록·기준점·담당 업무 감지 상태가 그대로 돌아온다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await store.setAccount(OLD_ACCOUNT);
+    const [ready] = await store.saveDetectedBundles([bundle([mention('101')], { status: 'ready' })], '101');
+    await store.setAssignmentState({ accountId: OLD_ACCOUNT.userId, enabledAt: 1_000, baselineReady: true, baselineAlarmId: '7', initialPostIds: [], pending: [] });
+
+    await expect(switchTo(store, NEW_ACCOUNT)).resolves.toEqual({ returning: false, secretPatternsWhenLeft: null });
+    await expect(store.getAccount()).resolves.toEqual(NEW_ACCOUNT);
+    await expect(store.listBundles()).resolves.toEqual([]);
+    await expect(store.getBaselineAlarmId()).resolves.toBeNull();
+    await expect(store.getAssignmentState()).resolves.toBeNull();
+    await expect(store.isStoredAccount(OLD_ACCOUNT.userId)).resolves.toBe(true);
+    await expect(store.isStoredAccount(NEW_ACCOUNT.userId)).resolves.toBe(false);
+    await store.setBaselineAlarmId('500');
+
+    // 떠날 때의 비밀 파일 패턴을 함께 돌려준다. 사용자 ID는 대소문자를 가리지 않는다.
+    await expect(switchTo(store, { ...OLD_ACCOUNT, userId: 'OLD@example.test', division: '바뀐 팀' })).resolves.toEqual({ returning: true, secretPatternsWhenLeft: ['**/.env'] });
+    await expect(store.getAccount()).resolves.toEqual({ ...OLD_ACCOUNT, division: '바뀐 팀' });
+    await expect(store.listBundles()).resolves.toMatchObject([{ id: ready!.id, status: 'ready' }]);
+    await expect(store.getBaselineAlarmId()).resolves.toBe('101');
+    await expect(store.getAssignmentState()).resolves.toMatchObject({ accountId: OLD_ACCOUNT.userId, baselineAlarmId: '7' });
+    await expect(store.listStoredBundles()).resolves.toEqual([]);
+    await switchTo(store, NEW_ACCOUNT);
+    await expect(store.getBaselineAlarmId()).resolves.toBe('500');
+  });
+
+  it('두 계정에 같은 멘션 위치와 업무 ID가 있어도 "이미 본 것"과 유일성은 계정 안에서만 걸린다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    /** 같은 업무 ID의 담당 업무. */
+    const assignment = { taskId: 'same-task', authorId: 'author@example.test', authorName: '작성자', assignedAt: '20261020090100' };
+    await store.setAccount(OLD_ACCOUNT);
+    await store.saveDetectedBundles([bundle([mention('101')])], '101');
+    await store.saveDetectedBundles([bundle([mention('102', { postId: '90000012' })], { postId: '90000012', status: 'ignored', processedAt: 2_000 })], '102');
+    await store.archiveBundles([{ bundleId: 2, postId: '90000012', remarkId: '-1', mentions: [{ postId: '90000012', remarkId: '-1', replyId: '-1' }], status: 'ignored', processedAt: 2_000, posted: null }]);
+    expect(await store.addAssignmentBundle(bundle([], { postId: '90000013', assignment }), OLD_ACCOUNT.userId)).not.toBeNull();
+
+    await switchTo(store, NEW_ACCOUNT);
+    await expect(store.hasMentionLocation(mention('101'))).resolves.toBe(false);
+    await expect(store.hasMentionLocation({ postId: '90000012', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
+    // 다른 회사의 같은 ID도 저장된다.
+    const [mine] = await store.saveDetectedBundles([bundle([mention('101', { text: '새 회사의 글' })])], '101');
+    expect(await store.addAssignmentBundle(bundle([], { postId: '90000013', assignment }), NEW_ACCOUNT.userId)).not.toBeNull();
+    await store.addManualBundle(bundle([mention('102', { postId: '90000012' })], { postId: '90000012' }), []);
+    await expect(store.listBundles()).resolves.toHaveLength(3);
+    await expect(store.hasMentionLocation(mention('101'))).resolves.toBe(true);
+
+    await switchTo(store, OLD_ACCOUNT);
+    /** 돌아온 계정의 묶음. */
+    const oldBundles = await store.listBundles();
+    expect(oldBundles.map((item) => item.mentions.map((m) => m.text))).toEqual([['@[테스트 사용자](me@example.test) 가짜 질문'], []]);
+    expect(oldBundles.some((item) => item.id === mine!.id)).toBe(false);
+    await expect(store.listMinimalRecords()).resolves.toMatchObject([{ bundleId: 2 }]);
+    expect(await store.addAssignmentBundle(bundle([], { postId: '90000013', assignment }), OLD_ACCOUNT.userId)).toBeNull();
+    // 보관 중인 계정의 묶음은 움직이는 계정의 저장으로 바꿀 수 없다.
+    await expect(store.saveBundle({ ...(mine as MentionBundle), status: 'ignored' })).rejects.toThrow();
+  });
+
+  it('대기열의 Flow 줄은 계정에 매여 보관되고, 다른 종류의 줄은 계정과 상관없이 남는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setAccount(OLD_ACCOUNT);
+    await store.setGenerationQueue([
+      { kind: 'flow', targetId: 1, priority: 'resume' },
+      { kind: 'diagnosis', targetId: 9, priority: 'auto' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
+    ]);
+
+    await switchTo(store, NEW_ACCOUNT);
+    await expect(store.getGenerationQueue()).resolves.toEqual([{ kind: 'diagnosis', targetId: 9, priority: 'auto' }]);
+    await store.setGenerationQueue([
+      { kind: 'diagnosis', targetId: 9, priority: 'auto' },
+      { kind: 'flow', targetId: 5, priority: 'user' },
+    ]);
+
+    await switchTo(store, OLD_ACCOUNT);
+    await expect(store.getGenerationQueue()).resolves.toEqual([
+      { kind: 'flow', targetId: 1, priority: 'resume' },
+      { kind: 'diagnosis', targetId: 9, priority: 'auto' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
+    ]);
+  });
+
+  it('보관 중인 계정의 처리한 묶음도 최소 기록으로 바꿀 수 있고, 최소 기록은 그 계정에 남는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setAccount(OLD_ACCOUNT);
+    const [ignored] = await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 2_000 })], '101');
+    await switchTo(store, NEW_ACCOUNT);
+
+    await expect(store.listStoredBundles()).resolves.toMatchObject([{ id: ignored!.id, status: 'ignored' }]);
+    await store.archiveBundles([{ bundleId: ignored!.id, postId: '90000011', remarkId: '-1', mentions: [{ postId: '90000011', remarkId: '-1', replyId: '-1' }], status: 'ignored', processedAt: 2_000, posted: null }]);
+    await expect(store.listStoredBundles()).resolves.toEqual([]);
+    await expect(store.listMinimalRecords()).resolves.toEqual([]);
+
+    await switchTo(store, OLD_ACCOUNT);
+    await expect(store.listMinimalRecords()).resolves.toMatchObject([{ bundleId: ignored!.id }]);
+    await expect(store.hasMentionLocation(mention('101'))).resolves.toBe(true);
+  });
+
+  it('계정을 넣기 전에 쌓인 기록은 처음 넣는 계정이 이어받는다', async () => {
+    const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.saveDetectedBundles([bundle([mention('101')])], '101');
+
+    await store.setAccount(OLD_ACCOUNT);
+    await switchTo(store, NEW_ACCOUNT);
+    await expect(store.listBundles()).resolves.toEqual([]);
+    await switchTo(store, OLD_ACCOUNT);
+    await expect(store.listBundles()).resolves.toHaveLength(1);
+    await expect(store.getBaselineAlarmId()).resolves.toBe('101');
+  });
+
+  it('형식 23에서 올리면 계정 표는 계정마다 한 줄이 되고, 기준점·담당 업무·묶음·최소 기록·대기열의 Flow 줄은 모두 그때 계정의 것으로 채워진다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 23으로 만든 DB. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 23), '0.1.10');
+    // 지금 저장 코드는 뒤 형식의 열까지 쓰므로, 형식 23의 줄은 직접 넣는다.
+    old.exec(`
+      INSERT INTO account (id, user_id, name, division, email) VALUES (1, 'old@example.test', '옛 사용자', '옛 팀', 'old@example.test');
+      INSERT INTO detection (id, baseline_alarm_id) VALUES (1, '301');
+      INSERT INTO assignment_detection (id, state) VALUES (1, '{"accountId":"old@example.test","enabledAt":1000,"baselineReady":true,"baselineAlarmId":"7","initialPostIds":[],"pending":[]}');
+      INSERT INTO mention_bundle (id, post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
+        VALUES (1, '90000011', '-1', '900001', 'ready', '가짜 게시물', NULL, 0, 1000, NULL);
+      INSERT INTO mention (post_id, remark_id, reply_id, bundle_id, project_id, alarm_id, sender_id, sender_name, registered_date_time, detected_at, text, answered)
+        VALUES ('90000011', '-1', '-1', 1, '900001', '301', 'sender@example.test', '보낸 사람', '20261020085900', 1000, '가짜 질문', 0);
+      INSERT INTO assignment_record (project_id, task_id, bundle_id) VALUES ('900001', 'old-task', 1);
+      INSERT INTO minimal_record (bundle_id, post_id, remark_id, status, processed_at, posted_id) VALUES (0, '90000010', '-1', 'ignored', 500, NULL);
+      INSERT INTO minimal_record_mention (post_id, remark_id, reply_id, bundle_id) VALUES ('90000010', '-1', '-1', 0);
+      INSERT INTO draft_queue (position, kind, target_id, priority) VALUES (0, 'flow', 1, 'resume');
+    `);
+    old.close();
+
+    /** 마지막 형식으로 올린 DB. */
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.11');
+    const store = new SqliteStateStore(db);
+    await expect(store.getAccount()).resolves.toEqual(OLD_ACCOUNT);
+    await expect(store.getBaselineAlarmId()).resolves.toBe('301');
+    await expect(store.getAssignmentState()).resolves.toMatchObject({ baselineAlarmId: '7' });
+    await expect(store.listBundles()).resolves.toMatchObject([{ id: 1, status: 'ready', mentions: [{ alarmId: '301', text: '가짜 질문' }] }]);
+    await expect(store.listMinimalRecords()).resolves.toMatchObject([{ bundleId: 0, mentions: [{ postId: '90000010' }] }]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([{ kind: 'flow', targetId: 1, priority: 'resume' }]);
+
+    // 모두 옛 계정의 것이라 다른 계정으로 바꾸면 보이지 않고, 돌아오면 그대로 있다.
+    await switchTo(store, NEW_ACCOUNT);
+    await expect(store.listBundles()).resolves.toEqual([]);
+    await expect(store.listMinimalRecords()).resolves.toEqual([]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([]);
+    await expect(store.hasMentionLocation({ postId: '90000010', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
+    expect(await store.addAssignmentBundle(bundle([], { assignment: { taskId: 'old-task', authorId: 'a@example.test', authorName: '작성자', assignedAt: '20261020090100' } }), NEW_ACCOUNT.userId)).not.toBeNull();
+    await switchTo(store, OLD_ACCOUNT);
+    await expect(store.listBundles()).resolves.toMatchObject([{ id: 1 }]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([{ kind: 'flow', targetId: 1, priority: 'resume' }]);
+    expect(await store.addAssignmentBundle(bundle([], { assignment: { taskId: 'old-task', authorId: 'a@example.test', authorName: '작성자', assignedAt: '20261020090100' } }), OLD_ACCOUNT.userId)).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS count FROM account').get()).toEqual({ count: 2 });
+    db.close();
+  });
+
+  it('형식 23에서 올릴 때 계정을 넣은 적 없는 설치본은 채울 줄이 없다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    openStateDatabase(path, STATE_MIGRATIONS.slice(0, 23), '0.1.10').close();
+
+    const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.11'));
+    await expect(store.getAccount()).resolves.toBeNull();
+    await expect(store.listBundles()).resolves.toEqual([]);
+    await expect(store.getBaselineAlarmId()).resolves.toBeNull();
   });
 });
 
@@ -210,24 +409,24 @@ describe('멘션 묶음', () => {
     expect(await store.getBaselineAlarmId()).toBe('101');
   });
 
-  it('지운 묶음의 ID는 다시 쓰지 않는다(다른 계정으로 처음부터 시작한 뒤에도)', async () => {
+  it('묶음 ID는 계정을 바꿔도 겹치지 않는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
     await store.setAccount(OLD_ACCOUNT);
     await store.saveDetectedBundles([bundle([mention('101')])], '101');
 
-    await store.resetForAccount(NEW_ACCOUNT);
+    await switchTo(store, NEW_ACCOUNT);
     /** 새 계정에서 처음 저장한 묶음. */
     const [next] = await store.saveDetectedBundles([bundle([mention('201')])], '201');
 
     expect(next?.id).toBe(2);
   });
 
-  it('다른 계정으로 처음부터 시작하면 묶음과 멘션도 지운다', async () => {
+  it('다른 계정으로 바꾸면 묶음과 멘션, 기준점이 보이지 않는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
     await store.setAccount(OLD_ACCOUNT);
     await store.saveDetectedBundles([bundle([mention('101')], { answers: [{ answerId: '9', registeredDateTime: '20261020080000', excluded: true }] })], '101');
 
-    await store.resetForAccount(NEW_ACCOUNT);
+    await switchTo(store, NEW_ACCOUNT);
 
     expect(await store.listBundles()).toEqual([]);
     expect(await store.hasMentionLocation(mention('101'))).toBe(false);
@@ -327,8 +526,8 @@ describe('멘션 묶음', () => {
       autoSelection: { kind: 'chosen', reason: '재시도 설정을 묻고 있어 서버 저장소를 골랐습니다.' },
       createdAt: 2_000,
     };
-    /** 선택 실행이 확신하지 못한 사유. */
-    const unsure: RepoCheck = {
+    /** 자동 선택 때 저장한 옛 사유. 지금 타입에는 없고 읽을 때 저장소 매핑 필요로 본다. */
+    const legacyUnsure = {
       kind: 'unsure',
       reason: '어느 저장소인지 알 수 없습니다.',
       candidates: [
@@ -336,7 +535,7 @@ describe('멘션 묶음', () => {
         { name: 'team/web', path: '/fake/work/team/web' },
       ],
       picked: ['/fake/work/team/web'],
-    };
+    } as unknown as RepoCheck;
     /** 저장할 실행 기록. */
     const run: RunRecord = {
       kind: 'draft',
@@ -362,8 +561,8 @@ describe('멘션 묶음', () => {
           runs: [{ ...run, kind: 'selection', result: 'timed-out', usage: null }],
         }),
         bundle([mention('103', { postId: '90000012' })], { repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] } }),
-        bundle([mention('104', { postId: '90000013' })], { repoCheck: { kind: 'no-candidates' } }),
-        bundle([mention('105', { postId: '90000014' })], { repoCheck: unsure }),
+        bundle([mention('104', { postId: '90000013' })], { repoCheck: { kind: 'no-candidates' } as unknown as RepoCheck }),
+        bundle([mention('105', { postId: '90000014' })], { repoCheck: legacyUnsure }),
       ],
       '105',
     );
@@ -381,8 +580,9 @@ describe('멘션 묶음', () => {
         runs: [{ ...run, kind: 'selection', result: 'timed-out', usage: null }],
       },
       { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'missing-folders', paths: ['/fake/gone'] }, runs: [] },
-      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'no-candidates' }, runs: [] },
-      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: unsure, runs: [] },
+      // 옛 사유는 저장소 매핑 필요로 읽는다. 앱을 켤 때의 다시 판정이 맞는 상태로 옮긴다.
+      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'unmapped' }, runs: [] },
+      { status: 'repo-check-needed', draft: null, failure: null, repoCheck: { kind: 'unmapped' }, runs: [] },
     ]);
     expect([ready?.id, failed?.id]).toEqual([1, 2]);
   });
@@ -831,12 +1031,13 @@ describe('최소 기록', () => {
     expect(saved?.id).toBe(2);
   });
 
-  it('다른 계정으로 처음부터 시작하면 최소 기록도 지운다', async () => {
+  it('다른 계정으로 바꾸면 최소 기록도 보이지 않는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setAccount(OLD_ACCOUNT);
     await store.saveDetectedBundles([bundle([mention('101')], { status: 'ignored', processedAt: 6_000 })], '101');
     await store.archiveBundles([{ ...POSTED_RECORD, status: 'ignored', posted: null }]);
 
-    await store.resetForAccount(NEW_ACCOUNT);
+    await switchTo(store, NEW_ACCOUNT);
 
     await expect(store.listMinimalRecords()).resolves.toEqual([]);
     await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
@@ -886,25 +1087,25 @@ describe('다시 켜기', () => {
     /** `state.db` 경로. */
     const path = join(dir, 'state.db');
     const store = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
-    await expect(store.getDraftQueue()).resolves.toEqual([]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([]);
 
-    await store.setDraftQueue([
-      { bundleId: 3, priority: 'resume' },
-      { bundleId: 1, priority: 'user' },
-      { bundleId: 2, priority: 'auto' },
+    await store.setGenerationQueue([
+      { kind: 'flow', targetId: 3, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'user' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
     ]);
     /** 다시 연 저장소. */
     const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
-    await expect(reopened.getDraftQueue()).resolves.toEqual([
-      { bundleId: 3, priority: 'resume' },
-      { bundleId: 1, priority: 'user' },
-      { bundleId: 2, priority: 'auto' },
+    await expect(reopened.getGenerationQueue()).resolves.toEqual([
+      { kind: 'flow', targetId: 3, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'user' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
     ]);
 
-    await reopened.setDraftQueue([{ bundleId: 2, priority: 'auto' }]);
-    await expect(reopened.getDraftQueue()).resolves.toEqual([{ bundleId: 2, priority: 'auto' }]);
-    await reopened.setDraftQueue([]);
-    await expect(reopened.getDraftQueue()).resolves.toEqual([]);
+    await reopened.setGenerationQueue([{ kind: 'flow', targetId: 2, priority: 'auto' }]);
+    await expect(reopened.getGenerationQueue()).resolves.toEqual([{ kind: 'flow', targetId: 2, priority: 'auto' }]);
+    await reopened.setGenerationQueue([]);
+    await expect(reopened.getGenerationQueue()).resolves.toEqual([]);
   });
 
   it('묶음을 지우면 묶음·멘션·내 답을 지우고 최소 기록도 남기지 않으며, 지운 글은 state.db와 WAL 어디에도 남지 않는다', async () => {
@@ -974,7 +1175,7 @@ describe('다시 켜기', () => {
     const store = new SqliteStateStore(db);
 
     expect((await store.listBundles()).map(({ id, postId, status, mentions }) => [id, postId, status, mentions.length])).toEqual([[1, '90000011', 'ready', 1]]);
-    await expect(store.getDraftQueue()).resolves.toEqual([{ bundleId: 1, priority: 'user' }]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([{ kind: 'flow', targetId: 1, priority: 'user' }]);
     expect((await store.listMinimalRecords()).map(({ bundleId }) => bundleId)).toEqual([9]);
     expect(db.prepare('SELECT COUNT(*) AS count FROM bundle_answer').get()).toEqual({ count: 1 });
     // 시험 전용 표와 열은 없어지고, 시험이던 위치는 다시 감지하지 않을 위치로 남지 않는다.
@@ -982,6 +1183,40 @@ describe('다시 켜기', () => {
     expect((db.prepare('PRAGMA table_info(mention_bundle)').all() as { name: string }[]).map(({ name }) => name)).not.toContain('trial');
     await expect(store.hasMentionLocation({ postId: '90000012', remarkId: '-1', replyId: '-1' })).resolves.toBe(false);
     db.close();
+  });
+
+  it('형식 22에서 올리면 남긴 대기열의 줄은 순서와 자리 그대로 Flow 대상이 되고, 다른 종류의 대상도 함께 남길 수 있다', async () => {
+    /** `state.db` 경로. */
+    const path = join(dir, 'state.db');
+    /** 형식 22로 만든 DB. 대기열 줄은 묶음 ID만 담는다. */
+    const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 22), '0.0.22');
+    /** 대기열 한 줄을 넣는 문장. */
+    const insertQueued = old.prepare('INSERT INTO draft_queue (position, bundle_id, priority) VALUES (?, ?, ?)');
+    insertQueued.run(0, 3, 'resume');
+    insertQueued.run(1, 1, 'user');
+    insertQueued.run(2, 2, 'auto');
+    old.close();
+
+    /** 마지막 형식으로 올린 DB. */
+    const db = openStateDatabase(path, STATE_MIGRATIONS, '0.1.0');
+    const store = new SqliteStateStore(db);
+
+    await expect(store.getGenerationQueue()).resolves.toEqual([
+      { kind: 'flow', targetId: 3, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'user' },
+      { kind: 'flow', targetId: 2, priority: 'auto' },
+    ]);
+    await store.setGenerationQueue([
+      { kind: 'sentry', targetId: 1, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'auto' },
+    ]);
+    db.close();
+    /** 다시 연 저장소. */
+    const reopened = new SqliteStateStore(openStateDatabase(path, STATE_MIGRATIONS, '0.1.0'));
+    await expect(reopened.getGenerationQueue()).resolves.toEqual([
+      { kind: 'sentry', targetId: 1, priority: 'resume' },
+      { kind: 'flow', targetId: 1, priority: 'auto' },
+    ]);
   });
 
   it('저장하지 않은 묶음이 하나라도 있으면 지우지 못하고 아무것도 바꾸지 않는다', async () => {
@@ -993,13 +1228,14 @@ describe('다시 켜기', () => {
     expect((await store.listBundles()).map(({ id }) => id)).toEqual([1]);
   });
 
-  it('다른 계정으로 처음부터 시작하면 남긴 초안 대기열도 지운다', async () => {
+  it('다른 계정으로 바꾸면 남긴 초안 대기열도 보이지 않는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
-    await store.setDraftQueue([{ bundleId: 1, priority: 'resume' }]);
+    await store.setAccount(OLD_ACCOUNT);
+    await store.setGenerationQueue([{ kind: 'flow', targetId: 1, priority: 'resume' }]);
 
-    await store.resetForAccount(NEW_ACCOUNT);
+    await switchTo(store, NEW_ACCOUNT);
 
-    await expect(store.getDraftQueue()).resolves.toEqual([]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([]);
   });
 
   it('형식 14에서 올리면 이미 있던 묶음은 카운트다운 중 종료 표시가 없고, 남긴 대기열은 없다', async () => {
@@ -1021,7 +1257,7 @@ describe('다시 켜기', () => {
     expect((await store.listBundles()).map(({ status, quitDuringCountdown }) => ({ status, quitDuringCountdown }))).toEqual([
       { status: 'posting', quitDuringCountdown: false },
     ]);
-    await expect(store.getDraftQueue()).resolves.toEqual([]);
+    await expect(store.getGenerationQueue()).resolves.toEqual([]);
   });
 });
 
@@ -1164,11 +1400,13 @@ describe('앱 내 업데이트', () => {
     await expect(store.getSignatureFailedVersions()).resolves.toEqual(['0.3.0']);
   });
 
-  it('다른 계정으로 처음부터 시작해도 서명 검증에 실패한 버전은 남는다', async () => {
+  it('다른 계정으로 바꾸거나 계정을 지워도 서명 검증에 실패한 버전은 남는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setAccount(OLD_ACCOUNT);
     await store.addSignatureFailedVersion('0.2.0');
 
-    await store.resetForAccount(NEW_ACCOUNT);
+    await switchTo(store, NEW_ACCOUNT);
+    await store.deleteAccountsUnusedBefore(Number.MAX_SAFE_INTEGER);
 
     await expect(store.getSignatureFailedVersions()).resolves.toEqual(['0.2.0']);
   });
@@ -1203,11 +1441,13 @@ describe('앱 내 업데이트', () => {
     await expect(store.getUpdateAttempt()).resolves.toBeNull();
   });
 
-  it('다른 계정으로 처음부터 시작해도 업데이트 시도는 남는다', async () => {
+  it('다른 계정으로 바꾸거나 계정을 지워도 업데이트 시도는 남는다', async () => {
     const store = new SqliteStateStore(openStateDatabase(join(dir, 'state.db'), STATE_MIGRATIONS, '0.1.0'));
+    await store.setAccount(OLD_ACCOUNT);
     await store.setUpdateAttempt({ fromVersion: '0.1.0', toVersion: '0.2.0', attemptedAt: 1_000, rejected: false });
 
-    await store.resetForAccount(NEW_ACCOUNT);
+    await switchTo(store, NEW_ACCOUNT);
+    await store.deleteAccountsUnusedBefore(Number.MAX_SAFE_INTEGER);
 
     await expect(store.getUpdateAttempt()).resolves.toMatchObject({ toVersion: '0.2.0' });
   });
@@ -1224,7 +1464,7 @@ describe('앱 내 업데이트', () => {
   });
 });
 
-it('담당 업무 기준과 별도 감지 사유를 재시작 후 복원하고 계정 전환 때 격리한다', async () => {
+it('담당 업무 기준과 별도 감지 사유를 재시작 후 복원하고 계정 전환 때 계정마다 따로 보관한다', async () => {
   /** 실제 데이터베이스 파일. */
   const path = join(dir, 'assignment.db');
   /** 첫 연결과 저장소. */
@@ -1246,11 +1486,14 @@ it('담당 업무 기준과 별도 감지 사유를 재시작 후 복원하고 �
     expect((await reopened.listBundles())[0]).toMatchObject({ assignment: assigned.assignment, mentions: [], status: 'already-answered', answers: assigned.answers });
     expect(await reopened.addAssignmentBundle(assigned, OLD_ACCOUNT.userId)).toBeNull();
     expect(await reopened.getBaselineAlarmId()).toBe('77');
-    await reopened.resetForAccount(NEW_ACCOUNT);
+    await switchTo(reopened, NEW_ACCOUNT);
     expect(await reopened.getAssignmentState()).toBeNull();
     expect(await reopened.listBundles()).toEqual([]);
     expect(await reopened.addAssignmentBundle(assigned, OLD_ACCOUNT.userId)).toBeNull();
     expect(await reopened.addAssignmentBundle(assigned, NEW_ACCOUNT.userId)).not.toBeNull();
+    await switchTo(reopened, OLD_ACCOUNT);
+    expect(await reopened.getAssignmentState()).toMatchObject({ enabledAt: 1000 });
+    expect(await reopened.listBundles()).toMatchObject([{ assignment: assigned.assignment }]);
   } finally { reopenedDb.close(); }
 });
 
@@ -1306,22 +1549,18 @@ it('형식 19에서 올리면 이미 있던 최소 기록과 그 멘션 위치·
   const path = join(dir, 'state.db');
   /** 형식 19로 만든 DB. */
   const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 19), '0.0.19');
-  /** 형식 19의 저장소. */
-  const oldStore = new SqliteStateStore(old);
   /** 게시됨 최소 기록. */
   const record = {
     bundleId: 1, postId: '90000011', remarkId: '-1', mentions: [{ postId: '90000011', remarkId: '-1', replyId: '-1' }],
     status: 'posted' as const, processedAt: 6_000,
     posted: { postedId: '950000001', answeredMentions: [{ postId: '90000011', remarkId: '-1', replyId: '-1' }, { postId: '90000011', remarkId: '701', replyId: '-1' }] },
   };
-  // 지금 저장 코드는 뒤 형식의 열까지 쓰므로, 형식 19의 묶음 줄은 직접 넣는다.
-  old
-    .prepare(
-      `INSERT INTO mention_bundle (id, post_id, remark_id, project_id, status, post_title, connect_url, new_mention_count, created_at, processed_at)
-       VALUES (1, '90000011', '-1', '900001', 'posted', '가짜 게시물', NULL, 0, 1000, 6000)`,
-    )
-    .run();
-  await oldStore.archiveBundles([record]);
+  // 지금 저장 코드는 뒤 형식의 열까지 쓰므로, 형식 19의 최소 기록은 직접 넣는다.
+  old.exec(`
+    INSERT INTO minimal_record (bundle_id, post_id, remark_id, status, processed_at, posted_id) VALUES (1, '90000011', '-1', 'posted', 6000, '950000001');
+    INSERT INTO minimal_record_mention (post_id, remark_id, reply_id, bundle_id) VALUES ('90000011', '-1', '-1', 1);
+    INSERT INTO minimal_record_answered (bundle_id, post_id, remark_id, reply_id) VALUES (1, '90000011', '-1', '-1'), (1, '90000011', '701', '-1');
+  `);
   old.close();
 
   /** 마지막 형식으로 올린 저장소. */
@@ -1329,8 +1568,6 @@ it('형식 19에서 올리면 이미 있던 최소 기록과 그 멘션 위치·
 
   await expect(store.listMinimalRecords()).resolves.toEqual([record]);
   await expect(store.hasMentionLocation({ postId: '90000011', remarkId: '-1', replyId: '-1' })).resolves.toBe(true);
-  await store.resetForAccount(NEW_ACCOUNT);
-  await expect(store.listMinimalRecords()).resolves.toEqual([]);
 });
 
 it('형식 18에서 올리면 이미 있던 묶음은 담당 업무 사유 없이 남고 감지 기준 없이 시작하며, 그 본문에 더한 배정은 재시작 뒤에도 한 번만 기록된다', async () => {
@@ -1338,7 +1575,8 @@ it('형식 18에서 올리면 이미 있던 묶음은 담당 업무 사유 없�
   const path = join(dir, 'state.db');
   /** 담당 업무 저장 구조가 생기기 전 형식 18로 만든 DB. */
   const old = openStateDatabase(path, STATE_MIGRATIONS.slice(0, 18), '0.1.4');
-  await new SqliteStateStore(old).setAccount(OLD_ACCOUNT);
+  // 지금 저장 코드는 계정 표의 뒤 형식을 쓰므로, 형식 18의 계정 줄은 직접 넣는다.
+  old.prepare("INSERT INTO account (id, user_id, name, division, email) VALUES (1, 'old@example.test', '옛 사용자', '옛 팀', 'old@example.test')").run();
   // 담당 업무 기능 전에 감지한 본문 묶음. 지금 저장소는 새 열까지 쓰므로 그 형식의 열만 직접 넣는다.
   old
     .prepare(

@@ -1,15 +1,15 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claudeNotLoggedInStream, claudeStream as stream, fakeClaudeEvent } from '../fakes/fake-claude-stream';
 import { exited, FakeProcessRunner, type FakeProcessReply } from '../fakes/fake-process-runner';
-import type { ExecutorProgress, ExecutorRunRequest } from '../ports/executor';
+import type { ExecutorProgress, ExecutorRunRequest, ReproductionMcp } from '../ports/executor';
 import type { AgentLaunch, AgentRunReport } from './agent-launch';
 import { ClaudeCodeExecutor } from './claude-code-executor';
 import { NodeProcessRunner } from './node-process-runner';
-import type { ProcessRequest } from './process-runner';
+import type { ProcessInput, ProcessRequest } from './process-runner';
 
 /** 테스트마다 만드는 임시 폴더. 지침 파일을 여기에 쓴다. */
 let tempRoot: string;
@@ -111,6 +111,25 @@ describe('Claude Code 실행기: 인수 묶음', () => {
     expect(request?.args).not.toContain('--model');
   });
 
+  it('진단 실행은 초안 실행과 같은 읽기 전용 경계로 돌고 턴 상한만 진단 실행의 값이다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: { requirement: '가짜 요구' } }))));
+
+    await executor.run(draftRequest());
+    await executor.run(draftRequest({ kind: 'diagnosis', timeoutMs: 1_200_000 }));
+
+    /** 초안 실행과 진단 실행의 인수. 지침 파일 경로는 실행마다 다르다. */
+    const [draft, diagnosis] = runner.requests.map((request) => request.args.map((arg) => (arg.endsWith('instructions.md') ? '<지침 파일>' : arg)));
+    expect(flagValue(runner.requests[0], '--max-turns')).toBe('60');
+    expect(flagValue(runner.requests[1], '--max-turns')).toBe('120');
+    expect(diagnosis).toEqual(draft!.map((arg) => (arg === '60' ? '120' : arg)));
+    // 셸·편집 도구와 MCP는 열리지 않고 사용자 설정을 끌어오지 않는다.
+    expect(flagValue(runner.requests[1], '--tools')).toBe('Read,Glob,Grep');
+    expect(diagnosis).toEqual(expect.arrayContaining(['--disallowedTools', 'mcp__*', '--restricted', '--strict-mcp-config']));
+    expect(diagnosis).not.toContain('--mcp-config');
+    expect(runner.requests[1]?.timeoutMs).toBe(1_200_000);
+  });
+
   it('비밀 파일은 기본 목록과 추가 패턴을 Read(//**/<패턴>) 형식의 deny 규칙으로 넣는다', async () => {
     const { runner, executor } = setup();
     answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
@@ -195,6 +214,359 @@ describe('Claude Code 실행기: 인수 묶음', () => {
     await executor.run(draftRequest({ timeoutMs: 123_000, signal: controller.signal }));
 
     expect(runner.requests[0]).toMatchObject({ timeoutMs: 123_000, signal: controller.signal });
+  });
+});
+
+/** 재현 사본의 실제 경로. */
+const COPY = '/private/var/folders/fake/T/stardraft-reproduction/run-abc';
+/** 사본을 만든 원본 저장소. */
+const SOURCE = '/Users/fake/work/web-app';
+
+/** 스펙 7절 고정 deny 표의 모든 도구를 막는 규칙. */
+const FIXED_DENY_RULES = [
+  'mcp__*__browser_run_code_unsafe',
+  'mcp__*__browser_file_upload',
+  'mcp__*__upload_file',
+  'mcp__*__install_extension',
+  'mcp__*__execute_3p_developer_tool',
+  'mcp__*__mobile_batch_commands',
+  'mcp__*__mobile_uninstall_app',
+  'mcp__*__mobile_clear_app_data',
+  'mcp__*__mobile_login_to_cloud_provider',
+  'mcp__*__mobile_allocate_remote_device',
+  'mcp__*__debug_lldb_command',
+  'mcp__*__xcode_ide_call_tool',
+  'mcp__*__erase_sims',
+  'mcp__*__run_on_cloud',
+];
+
+/** 테스트용 재현하는 진단 요청. 읽을 루트는 사본 하나다. */
+function reproductionRequest(overrides: Partial<ExecutorRunRequest> = {}): ExecutorRunRequest {
+  return draftRequest({ kind: 'diagnosis', readRoots: [COPY], timeoutMs: 1_200_000, reproduction: { copyRoot: COPY, sourceRoot: SOURCE }, ...overrides });
+}
+
+describe('Claude Code 실행기: 재현 경계', () => {
+  it('셸과 편집 도구를 열고, 사용자 설정을 끌어오지 않는 플래그는 그대로 두며, 사본을 cwd로 쓴다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest());
+
+    const [request] = runner.requests;
+    expect(request?.cwd).toBe(COPY);
+    expect(flagValue(request, '--tools')).toBe('Read,Glob,Grep,Bash,Edit,Write');
+    expect(flagValue(request, '--permission-mode')).toBe('dontAsk');
+    expect(flagValue(request, '--permission-prompts')).toBe('none');
+    expect(flagValue(request, '--max-turns')).toBe('120');
+    expect(request?.args).toEqual(expect.arrayContaining(['--restricted', '--strict-mcp-config', '--no-session-persistence']));
+    // 실을 서버가 없으면 MCP 설정을 넘기지 않는다. 엄격 모드라 사용자 설정의 서버도 실리지 않는다.
+    expect(request?.args).not.toContain('--mcp-config');
+    expect(request?.args).not.toContain('--disallowedTools');
+    expect(request?.args).not.toContain('--add-dir');
+    expect(request?.args).not.toContain('--bare');
+  });
+
+  it('셸 명령을 OS 샌드박스 안에 가두고, 쓰기는 사본으로, 네트워크와 localhost는 열고, .env 계열만 사본에서 푼다. 다른 비밀 패턴은 사본과 원본 경로 모두에서 막는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest({ secretPatterns: ['company/*.secret', '/private-config/'] }));
+
+    /** `--settings`로 넘긴 설정. */
+    const settings: unknown = JSON.parse(flagValue(runner.requests[0], '--settings') ?? 'null');
+    /** 이번 실행의 임시 폴더(실제 경로). 지침과 MCP 정의 파일이 있어 읽지 못하게 막는다. */
+    const runDir = join(realpathSync(tempRoot), basename(dirname(flagValue(runner.requests[0], '--append-system-prompt-file') ?? '')));
+    expect(settings).toEqual({
+      permissions: {
+        allow: ['Bash', 'Edit', 'Write'],
+        // 사본 경로로 좁힌 형식이다. 루트 전체 형식을 샌드박스에 합치면 TLS 인증서와 ~/.npmrc까지 막혀 HTTPS가 깨진다.
+        // 원본 저장소도 같은 패턴으로 막는다. 원본 경로로 원본의 비밀 파일을 읽는 길을 닫는다. 폴더 패턴의 끝 `/`는 그대로 둔다.
+        deny: [
+          `Read(/${COPY}/**/*.pem)`,
+          `Read(/${COPY}/**/*.key)`,
+          `Read(/${COPY}/**/*.p12)`,
+          `Read(/${COPY}/**/*.pfx)`,
+          `Read(/${COPY}/**/*.jks)`,
+          `Read(/${COPY}/**/*.keystore)`,
+          `Read(/${COPY}/**/id_rsa*)`,
+          `Read(/${COPY}/**/id_ed25519*)`,
+          `Read(/${COPY}/**/.npmrc)`,
+          `Read(/${COPY}/**/.pypirc)`,
+          `Read(/${COPY}/**/.netrc)`,
+          `Read(/${COPY}/**/secrets/**)`,
+          `Read(/${COPY}/**/.git/**)`,
+          `Read(/${COPY}/**/company/*.secret)`,
+          `Read(/${COPY}/**/private-config/)`,
+          `Read(/${SOURCE}/**/*.pem)`,
+          `Read(/${SOURCE}/**/*.key)`,
+          `Read(/${SOURCE}/**/*.p12)`,
+          `Read(/${SOURCE}/**/*.pfx)`,
+          `Read(/${SOURCE}/**/*.jks)`,
+          `Read(/${SOURCE}/**/*.keystore)`,
+          `Read(/${SOURCE}/**/id_rsa*)`,
+          `Read(/${SOURCE}/**/id_ed25519*)`,
+          `Read(/${SOURCE}/**/.npmrc)`,
+          `Read(/${SOURCE}/**/.pypirc)`,
+          `Read(/${SOURCE}/**/.netrc)`,
+          `Read(/${SOURCE}/**/secrets/**)`,
+          `Read(/${SOURCE}/**/.git/**)`,
+          `Read(/${SOURCE}/**/company/*.secret)`,
+          `Read(/${SOURCE}/**/private-config/)`,
+          `Read(/${runDir}/**)`,
+          // 고정 deny 목록의 도구는 서버 이름과 상관없이 도구 이름 glob으로 막는다.
+          ...FIXED_DENY_RULES,
+        ],
+      },
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        allowUnsandboxedCommands: false,
+        network: { allowedDomains: ['*'], allowLocalBinding: true },
+        filesystem: {
+          denyRead: ['/**/.env', '/**/.env.*', '~/.ssh', '~/.aws', '~/.npmrc', '~/.netrc', '~/.pypirc', '~/.config/gh', '~/.kube', '~/.docker', '~/.gnupg', '~/.config/gcloud', '~/.codex', runDir],
+          allowRead: [`${COPY}/**/.env`, `${COPY}/**/.env.*`],
+        },
+      },
+    });
+  });
+
+  it('환경 변수는 최소 목록만 넘기고, 프록시를 타게 하는 값과 백그라운드 명령 대기 상한(진단 시간 상한)을 더한다', async () => {
+    const { runner, executor } = setup({
+      cliPath: CLI,
+      env: { ...CHILD_ENV, TMPDIR: '/var/folders/fake/T/', USER: 'fake', SHELL: '/bin/zsh', FAKE_SERVICE_TOKEN: 'fake-secret-value', ANTHROPIC_API_KEY: 'sk-fake-key' },
+      version: '2.1.332',
+    });
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest());
+
+    expect(runner.requests[0]?.env).toEqual({
+      ...CHILD_ENV,
+      TMPDIR: '/var/folders/fake/T/',
+      USER: 'fake',
+      SHELL: '/bin/zsh',
+      NODE_USE_ENV_PROXY: '1',
+      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '1200000',
+    });
+  });
+
+  it('강제로 끝낼 때 자손 프로세스 그룹까지 끝내게 한다. 셸 명령은 명령마다 따로 그룹을 만들어 CLI 그룹 종료로는 남는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest());
+    await executor.run(draftRequest());
+
+    expect(runner.requests[0]?.killDescendants).toBe(true);
+    expect(runner.requests[1]?.killDescendants).toBeFalsy();
+  });
+
+  it('결과를 낸 뒤 백그라운드 명령 때문에 CLI가 끝나지 않으면 남은 프로세스를 끝내고 그 결과를 쓴다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, async (request) => {
+      for (const line of [fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: { summary: '가짜 요약' } })]) request.onStdoutLine?.(line);
+      // 실제 CLI처럼 백그라운드 명령(dev 서버 등)이 끝나기를 기다리며 열려 있다가, 끝내라는 신호를 받아야 끝난다.
+      await new Promise<void>((resolve) => {
+        if (request.signal?.aborted) resolve();
+        else request.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return { kind: 'aborted', stdout: '', stderr: '' };
+    });
+
+    const report = await executor.run(reproductionRequest());
+
+    expect(report.outcome).toEqual({ type: 'completed', output: { summary: '가짜 요약' } });
+  });
+});
+
+describe('Claude Code 실행기: 실행 중 전달', () => {
+  /** 입력을 기록하는 가짜 표준 입력. */
+  function fakeInput() {
+    /** 쓴 내용. */
+    const written: string[] = [];
+    /** 닫은 횟수. */
+    const state = { ended: 0 };
+    const input: ProcessInput = {
+      write: (text) => {
+        written.push(text);
+        return true;
+      },
+      end: () => {
+        state.ended += 1;
+      },
+    };
+    return { input, written, state };
+  }
+
+  it('전달을 쓰지 않는 실행은 입력 형식 플래그도 열린 표준 입력도 없이 입력 문서를 그대로 넘긴다. 이 실행기는 전달 능력이 있다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+    expect(executor.supportsSteering).toBe(true);
+
+    await executor.run(reproductionRequest());
+
+    const [request] = runner.requests;
+    expect(request?.args).not.toContain('--input-format');
+    expect(request?.onStdin).toBeUndefined();
+    expect(request?.stdin).toBe('## 데이터\n가짜 멘션 원문');
+  });
+
+  it('전달을 쓰면 입력을 stream-json으로 받아 사용자 메시지 한 줄로 넘기고 표준 입력을 열어 둔 채, 보내는 함수를 넘긴다', async () => {
+    const { runner, executor } = setup();
+    const { input, written } = fakeInput();
+    /** 보내는 함수. */
+    let send: ((message: string) => boolean) | null = null;
+    answerCli(runner, (request) => {
+      request.onStdin?.(input);
+      for (const line of [fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} })]) request.onStdoutLine?.(line);
+      return exited(0);
+    });
+
+    await executor.run(reproductionRequest({ onSteerable: (fn) => (send = fn) }));
+
+    const [request] = runner.requests;
+    /** 인수에서 입력 형식 플래그의 위치. */
+    const at = request?.args.indexOf('--input-format') ?? -1;
+    expect(request?.args.slice(at, at + 2)).toEqual(['--input-format', 'stream-json']);
+    expect(request?.args).toContain('--output-format');
+    expect(JSON.parse(request?.stdin ?? '')).toEqual({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '## 데이터\n가짜 멘션 원문' }] } });
+    expect(request?.stdin?.endsWith('\n')).toBe(true);
+    expect(send).toBeTypeOf('function');
+    // 이 시험의 가짜 CLI는 입력을 쓰기 전에 끝났다.
+    expect(written).toEqual([]);
+  });
+
+  it('보낸 메시지는 사용자 메시지 한 줄(JSON)로 표준 입력에 쓰이고, 결과를 받으면 표준 입력을 닫아 그 뒤의 메시지는 보내지지 않는다', async () => {
+    const { runner, executor } = setup();
+    const { input, written, state } = fakeInput();
+    /** 보낸 결과. */
+    const sent: boolean[] = [];
+    /** 보내는 함수. */
+    let send: (message: string) => boolean = () => false;
+    answerCli(runner, (request) => {
+      request.onStdin?.(input);
+      request.onStdoutLine?.(fakeClaudeEvent.init());
+      sent.push(send('지금 멈추고 보고서를 써라'));
+      request.onStdoutLine?.(fakeClaudeEvent.result({ structured_output: { summary: '마무리' } }));
+      sent.push(send('늦은 메시지'));
+      return exited(0);
+    });
+
+    const report = await executor.run(reproductionRequest({ onSteerable: (fn) => (send = fn) }));
+
+    expect(written.map((line) => JSON.parse(line))).toEqual([{ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '지금 멈추고 보고서를 써라' }] } }]);
+    expect(written[0]?.endsWith('\n')).toBe(true);
+    expect(sent).toEqual([true, false]);
+    expect(state.ended).toBe(1);
+    expect(report.outcome).toEqual({ type: 'completed', output: { summary: '마무리' } });
+  });
+
+  it('실행이 끝난 뒤에는 보내는 함수가 보내지 않는다', async () => {
+    const { runner, executor } = setup();
+    const { input, written } = fakeInput();
+    /** 보내는 함수. */
+    let send: (message: string) => boolean = () => false;
+    answerCli(runner, (request) => {
+      request.onStdin?.(input);
+      return exited(1, '', '비정상 종료');
+    });
+
+    await executor.run(reproductionRequest({ onSteerable: (fn) => (send = fn) }));
+
+    expect(send('늦은 메시지')).toBe(false);
+    expect(written).toEqual([]);
+  });
+});
+
+/** 정의에 평문으로 든 가짜 비밀 값. 명령줄 인자에 나오면 안 된다. */
+const MCP_SECRET = 'FAKE-MCP-SECRET-5d1e';
+
+/** 실을 가짜 MCP. 평문 값을 담은 stdio 서버 하나, 변수를 참조하는 원격 서버 하나, 점이 든 이름 하나다. */
+const FAKE_MCP: ReproductionMcp = {
+  servers: [
+    { name: 'playwright', definition: { command: 'npx', args: ['@playwright/mcp'], env: { API_KEY: MCP_SECRET } } },
+    { name: 'docs', definition: { type: 'http', url: 'https://fake.example/mcp', headers: { Authorization: 'Bearer ${DOCS_TOKEN}' } } },
+    { name: 'my.server', definition: { command: 'my-server' } },
+  ],
+  env: { DOCS_TOKEN: 'fake-docs-token' },
+  skipped: [{ name: 'off', reason: 'disabled' }],
+};
+
+describe('Claude Code 실행기: 재현에 MCP 싣기', () => {
+  it('실을 서버의 정의를 사본 밖 임시 파일(0600)로 --mcp-config에 넘기고, 평문 값은 명령줄 인자에 없다. 파일은 실행이 끝나면 지운다', async () => {
+    const { runner, executor } = setup();
+    /** 실행 중에 본 정의 파일의 내용과 권한. */
+    let seen: { content: unknown; mode: number } | null = null;
+    answerCli(runner, async (request) => {
+      /** 정의 파일. */
+      const file = flagValue(request, '--mcp-config') ?? '';
+      seen = { content: JSON.parse(readFileSync(file, 'utf8')), mode: statSync(file).mode & 0o777 };
+      return exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} })));
+    });
+
+    await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    const [request] = runner.requests;
+    /** 정의 파일. */
+    const file = flagValue(request, '--mcp-config') ?? '';
+    // 여러 값을 받는 인수라 맨 뒤에 있다.
+    expect(request?.args.slice(-2)).toEqual(['--mcp-config', file]);
+    expect(file.startsWith(COPY)).toBe(false);
+    expect(seen).toEqual({
+      content: { mcpServers: { playwright: FAKE_MCP.servers[0]?.definition, docs: FAKE_MCP.servers[1]?.definition, 'my.server': { command: 'my-server' } } },
+      mode: 0o600,
+    });
+    expect(request?.args.join(' ')).not.toContain(MCP_SECRET);
+    expect(existsSync(file)).toBe(false);
+    expect(request?.args).toEqual(expect.arrayContaining(['--restricted', '--strict-mcp-config']));
+  });
+
+  it('실은 서버마다 도구 전체를 허용하고 고정 deny 목록은 그대로 걸며, 정의가 참조한 변수를 실행 환경에 더한다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    /** `--settings`로 넘긴 권한. */
+    const permissions = (JSON.parse(flagValue(runner.requests[0], '--settings') ?? '{}') as { permissions: { allow: string[]; deny: string[] } }).permissions;
+    expect(permissions.allow).toEqual(['Bash', 'Edit', 'Write', 'mcp__playwright__*', 'mcp__docs__*', 'mcp__my_server__*']);
+    expect(permissions.deny).toEqual(expect.arrayContaining(FIXED_DENY_RULES));
+    expect(runner.requests[0]?.env).toMatchObject({ DOCS_TOKEN: 'fake-docs-token' });
+  });
+
+  it('init 이벤트에서 연결하지 못한 서버를 알린다. init을 받기 전에 끝나면 연결됐는지 몰라 모두 연결하지 못한 것으로 본다', async () => {
+    const { runner, executor } = setup();
+    /** 서버 상태를 담은 init 이벤트. */
+    const init = JSON.stringify({
+      ...(JSON.parse(fakeClaudeEvent.init()) as object),
+      mcp_servers: [
+        { name: 'playwright', status: 'connected' },
+        { name: 'docs', status: 'needs-auth' },
+      ],
+    });
+    answerCli(runner, exited(0, stream(init, fakeClaudeEvent.result({ structured_output: {} }))));
+
+    const report = await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }));
+
+    expect(report.mcpFailedServers).toEqual(['docs', 'my.server']);
+
+    answerCli(runner, exited(1, '', 'crash'));
+    expect((await executor.run(reproductionRequest({ reproduction: { copyRoot: COPY, sourceRoot: SOURCE, mcp: FAKE_MCP } }))).mcpFailedServers).toEqual(['playwright', 'docs', 'my.server']);
+    expect((await executor.run(reproductionRequest())).mcpFailedServers).toBeUndefined();
+  });
+
+  it('읽기 전용 진단과 Flow 초안의 인수 묶음은 그대로다. MCP를 모두 막고 정의 파일을 넘기지 않는다', async () => {
+    const { runner, executor } = setup();
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: {} }))));
+
+    await executor.run(draftRequest());
+    await executor.run(draftRequest({ kind: 'diagnosis', readRoots: [SOURCE] }));
+
+    for (const request of runner.requests) {
+      expect(flagValue(request, '--disallowedTools')).toBe('mcp__*');
+      expect(flagValue(request, '--tools')).toBe('Read,Glob,Grep');
+      expect(request.args).not.toContain('--mcp-config');
+    }
   });
 });
 
@@ -321,31 +693,30 @@ describe('Claude Code 실행기: 결과', () => {
     expect(outcome).toEqual({ type: 'completed', output: { requirement: '재시도 횟수를 알고 싶다' } });
   });
 
-  it('선택 실행은 첫 작업 폴더를 cwd로, 나머지 작업 폴더를 --add-dir로 붙이고, 턴 상한은 초안 실행(60)보다 짧은 40이다', async () => {
+  it('초안 실행은 첫 저장소를 cwd로, 나머지 저장소를 --add-dir로 붙이고, 턴 상한은 60이다', async () => {
     const { runner, executor } = setup();
-    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: { verdict: 'unrelated' } }))));
+    answerCli(runner, exited(0, stream(fakeClaudeEvent.init(), fakeClaudeEvent.result({ structured_output: { requirement: '가짜 요구' } }))));
 
-    await executor.run(draftRequest({ kind: 'selection', readRoots: ['/fake/work', '/fake/side'], timeoutMs: 300_000 }));
-    await executor.run(draftRequest());
+    await executor.run(draftRequest({ readRoots: ['/fake/work', '/fake/side'], timeoutMs: 600_000 }));
 
-    /** 선택 실행과 초안 실행의 프로세스 요청. */
-    const [selection, draft] = runner.requests;
-    expect(selection).toMatchObject({ cwd: '/fake/work', timeoutMs: 300_000 });
-    expect(selection?.args.slice(-2)).toEqual(['--add-dir', '/fake/side']);
+    /** 초안 실행의 프로세스 요청. */
+    const [draft] = runner.requests;
+    expect(draft).toMatchObject({ cwd: '/fake/work', timeoutMs: 600_000 });
+    expect(draft?.args.slice(-2)).toEqual(['--add-dir', '/fake/side']);
     /** 요청의 `--max-turns` 값. */
     const maxTurns = (args: readonly string[] | undefined) => args?.[args.indexOf('--max-turns') + 1];
-    expect([maxTurns(selection?.args), maxTurns(draft?.args)]).toEqual(['40', '60']);
+    expect(maxTurns(draft?.args)).toBe('60');
   });
 
   it('실행에서 본 CLI 버전과 결과를 보고한다', async () => {
     const { runner, executor, reports } = setup();
     answerCli(runner, exited(0, stream(fakeClaudeEvent.init('2.1.310'), fakeClaudeEvent.result({ structured_output: { ok: true } }))));
 
-    await executor.run(draftRequest({ kind: 'selection' }));
+    await executor.run(draftRequest());
 
     expect(reports).toEqual([
       {
-        kind: 'selection',
+        kind: 'draft',
         cliVersion: '2.1.310',
         model: 'claude-fake-model',
         usage: { costUsd: 0.01, inputTokens: null, outputTokens: null },

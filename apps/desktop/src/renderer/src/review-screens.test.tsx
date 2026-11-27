@@ -1719,6 +1719,17 @@ it('생성 중 담당자에서 제외된 담당 업무는 처리됨의 담당 �
 describe('펼친 창: 진단', () => {
   /** 감지 시각. 2026-11-26 09:50(이 PC 시간대와 무관하게 같은 날로 보이도록 시각 글자는 따로 비교하지 않는다). */
   const DETECTED_AT = new Date(2026, 10, 26, 9, 50).getTime();
+  /** 화면을 그리는 기본 시각. 감지한 날 오후라서 감지 시각이 시각만 보인다. 어느 날에 돌려도 같은 결과가 나오도록 시계를 고정한다. */
+  const SAME_DAY_NOW = new Date(2026, 10, 26, 15, 0).getTime();
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(SAME_DAY_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   /** 가짜 진단. 실제 오류가 아니다. 기본은 저장소 매핑 필요다. */
   function diagnosis(id: number, overrides: Partial<DiagnosisSnapshot> = {}): DiagnosisSnapshot {
@@ -1774,6 +1785,13 @@ describe('펼친 창: 진단', () => {
     );
 
     expect(text).toMatch(/진단 2 시험 오류 1 \S+ \S+ 가짜 프로젝트 · app\/checkout 저장소 매핑 필요 시험 오류 2 \S+ \S+ 가짜 프로젝트 · app\/checkout 대기 초안 1 /);
+  });
+
+  it('감지한 날이 지나면 목록의 감지 시각에 날짜가 붙는다', () => {
+    vi.setSystemTime(new Date(2026, 10, 28, 9, 0).getTime());
+    const text = textOf(<ReviewContent snapshot={withDiagnoses([diagnosis(1)])} initialDiagnosisId={1} />);
+
+    expect(text).toMatch(/진단 1 시험 오류 1 11월 26일 \S+ \S+ 가짜 프로젝트 · app\/checkout/);
   });
 
   it('저장소 매핑 필요 진단의 상세는 `오류 정보`와 노란 바닥 줄(진단용 글, 주 버튼 하나, 치우는 버튼 없음)이다', () => {

@@ -173,6 +173,14 @@ async function settle(): Promise<void> {
   }
 }
 
+/** 조건이 참이 될 때까지 기다린 뒤 한 번 더 가라앉힌다. 사본 만들기처럼 실제 파일 작업이 낀 시험은 고정 시간으로 기다리면 부하 때 모자란다. */
+async function settleUntil(done: () => boolean, limitMs = 10_000): Promise<void> {
+  /** 기다리기 시작한 시각. */
+  const startedAt = Date.now();
+  while (!done() && Date.now() - startedAt < limitMs) await new Promise((resolve) => setTimeout(resolve, 5));
+  await settle();
+}
+
 /** 읽기 전용 진단의 올바른 출력. 근거는 저장소의 `src/fake.ts` 1~2줄이다. */
 function reportOutput(repository: string, evidencePath = 'src/fake.ts') {
   return {
@@ -998,7 +1006,7 @@ describe('Sentry 어댑터: 재현하는 진단', () => {
     });
 
     await env.queue.start();
-    await settle();
+    await settleUntil(() => env.byIssue('101')?.report != null);
 
     /** 실행기가 받은 요청. */
     const request = env.executor.requests[0]!;
